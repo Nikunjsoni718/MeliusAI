@@ -1,1 +1,1 @@
-# MeliusAI
+# meliusiq

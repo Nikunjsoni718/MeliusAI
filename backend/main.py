@@ -1,0 +1,322 @@
+import os
+import base64
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from openai import OpenAI
+from dotenv import load_dotenv
+
+# --- MULTIMODAL PARSER EXTENSIONS ---
+import fitz  # PyMuPDF
+from pptx import Presentation
+import docx  # python-docx
+import pandas as pd  # pandas for Excel automation
+
+# 1. ENVIRONMENT CONFIGURATION MAPPING (Look up one level to target root .env.local)
+backend_dir = Path(__file__).resolve().parent
+root_dir = backend_dir.parent
+env_path = root_dir / ".env.local"
+load_dotenv(dotenv_path=env_path)
+
+# 2. APPLICATION INITIALIZATION
+app = FastAPI(title="MeliusAI Omnivorous Multimodal Agent")
+
+# Enable Cross-Origin Resource Sharing (CORS) for Next.js frontend port loop
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize OpenAI Client (Guaranteed to read from root .env.local now)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+# --- FILE PARSING ENGINE UTILITIES ---
+def parse_pdf(path):
+    doc = fitz.open(path)
+    return "\n".join(page.get_text() for page in doc)
+
+def parse_pptx(path):
+    prs = Presentation(path)
+    text = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text") and shape.text.strip():
+                text.append(shape.text.strip())
+    return "\n".join(text)
+
+def parse_docx(path):
+    doc = docx.Document(path)
+    return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+
+def parse_excel(path):
+    sheets_text = []
+    
+    # Using a context manager ensures Windows completely releases the file handle immediately
+    with pd.ExcelFile(path) as excel_file:
+        for sheet_name in excel_file.sheet_names:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name)
+            sheets_text.append(f"--- Sheet: {sheet_name} ---\n{df.to_markdown(index=False)}")
+            
+    return "\n\n".join(sheets_text)
+
+def encode_image_to_base64(path):
+    with open(path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+# --- EXPERT REVIEWS ENDPOINT ---
+@app.post("/api/review")
+async def review_portfolio_asset(file: UploadFile):
+    upload_dir = Path("uploads")
+    upload_dir.mkdir(exist_ok=True)
+    temp_file_path = upload_dir / file.filename
+    temporary_processing_paths = []
+    code_extensions = [
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json",
+        ".cpp", ".c", ".h", ".cs", ".java", ".go", ".rs", ".php",
+        ".rb", ".swift", ".kt", ".sql", ".sh", ".yaml", ".yml", ".md"
+    ]
+
+    try:
+        # Stream raw incoming file bytes down to local server disk storage
+        with open(temp_file_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        extension = temp_file_path.suffix.lower()
+        content_stream = ""
+        agent_mode = "General Portfolio Analyst"
+        is_image = False
+
+        # A. AGENT PARSER ROUTING GATEWAY
+        if extension == ".pdf":
+            content_stream = parse_pdf(temp_file_path)
+            agent_mode = "Document Reviewer (PDF)"
+        elif extension in [".ppt", ".pptx"]:
+            content_stream = parse_pptx(temp_file_path)
+            agent_mode = "Document Reviewer (PowerPoint Presentation)"
+        elif extension in [".doc", ".docx"]:
+            content_stream = parse_docx(temp_file_path)
+            agent_mode = "Document Reviewer (Word Document)"
+        elif extension in [".xls", ".xlsx"]:
+            content_stream = parse_excel(temp_file_path)
+            agent_mode = "Data Operations Auditor (Excel Spreadsheet)"
+        elif extension in code_extensions:
+            agent_mode = "Source Code Engineering Architecture Validator"
+            content_stream = temp_file_path.read_text(errors="ignore")
+            content_stream = f"[SOURCE CODE FILE CONTENT FRAMEWORK - {extension}]:\n\n{content_stream}"
+        elif extension in [".mp4", ".m4a", ".mp3", ".wav"]:
+            agent_mode = "Media Ingestion Agent (Large File Chunking Engine)"
+            from pydub import AudioSegment
+            import math
+
+            processing_target = temp_file_path
+            original_file_size_bytes = temp_file_path.stat().st_size
+            max_media_size_bytes = 200 * 1024 * 1024
+            max_chunk_size_bytes = 24 * 1024 * 1024
+
+            if original_file_size_bytes > max_media_size_bytes:
+                file_size_mb = round(original_file_size_bytes / (1024 * 1024), 2)
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Media file size ({file_size_mb} MB) exceeds the maximum supported limit of 200 MB. "
+                        "Please compress your media or upload a shorter clip."
+                    ),
+                )
+
+            # Phase A: Large MP4 files carry heavy video frames; strip them to an audio-only MP3 first.
+            if extension == ".mp4" and original_file_size_bytes > max_chunk_size_bytes:
+                try:
+                    from moviepy.editor import VideoFileClip
+                except ImportError:
+                    from moviepy import VideoFileClip
+
+                audio_extract_path = temp_file_path.with_suffix(".mp3")
+                temporary_processing_paths.append(audio_extract_path)
+                video_clip = VideoFileClip(str(temp_file_path))
+
+                try:
+                    if video_clip.audio is None:
+                        raise HTTPException(status_code=400, detail="This MP4 file does not contain an extractable audio track.")
+
+                    video_clip.audio.write_audiofile(str(audio_extract_path), bitrate="64k", logger=None)
+                finally:
+                    video_clip.close()
+
+                processing_target = audio_extract_path
+
+            # Phase B: If the processing target is under OpenAI's payload cap, transcribe directly.
+            target_size_bytes = processing_target.stat().st_size
+
+            if target_size_bytes <= max_chunk_size_bytes:
+                with open(processing_target, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
+                content_stream = f"[AUDIO TRANSCRIPT]:\n{transcript.text}"
+
+            # Phase C: Long media still above the safe cap is split into sequential 15-minute MP3 chunks.
+            else:
+                sound = AudioSegment.from_file(str(processing_target))
+                fifteen_minutes_ms = 15 * 60 * 1000
+                total_duration_ms = len(sound)
+                num_chunks = math.ceil(total_duration_ms / fifteen_minutes_ms)
+                accumulated_transcripts = []
+
+                for i in range(num_chunks):
+                    start_time = i * fifteen_minutes_ms
+                    end_time = min((i + 1) * fifteen_minutes_ms, total_duration_ms)
+                    audio_chunk = sound[start_time:end_time]
+                    chunk_filename = upload_dir / f"chunk_{i}_{processing_target.stem}.mp3"
+                    temporary_processing_paths.append(chunk_filename)
+
+                    audio_chunk.export(str(chunk_filename), format="mp3", bitrate="64k")
+
+                    with open(chunk_filename, "rb") as chunk_file:
+                        chunk_transcript = client.audio.transcriptions.create(model="whisper-1", file=chunk_file)
+
+                    accumulated_transcripts.append(chunk_transcript.text)
+
+                    if chunk_filename.exists():
+                        chunk_filename.unlink()
+                    if chunk_filename in temporary_processing_paths:
+                        temporary_processing_paths.remove(chunk_filename)
+
+                full_text_transcript = " ".join(accumulated_transcripts)
+                content_stream = f"[SPLIT-STREAM AUDIO TRANSCRIPT]:\n{full_text_transcript}"
+
+            if processing_target != temp_file_path and processing_target.exists():
+                processing_target.unlink()
+            if processing_target in temporary_processing_paths:
+                temporary_processing_paths.remove(processing_target)
+        elif extension in [".png", ".jpg", ".jpeg", ".webp"]:
+            is_image = True
+            base64_image = encode_image_to_base64(temp_file_path)
+            agent_mode = "Multimodal UX/UI and Design Vision Reviewer"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file format extension: {extension}")
+
+        # B. DYNAMIC CONTENT SECURITY VALIDATION
+        if not is_image and not content_stream.strip():
+            raise HTTPException(status_code=400, detail="File processed successfully but yielded zero extractable text context data.")
+
+        # High-energy, supportive peer/mentor prompt mapping with Scoring
+        system_prompt = (
+            "You are MeliusAI, an incredibly bright, high-energy, supportive tech mentor, and close developer friend! "
+            "Your tone is warm, alive, deeply encouraging, and filled with modern developer energy. "
+            "Use helpful emojis naturally throughout your sentences to keep things lively. 🔥🚀\n\n"
+            "CRITICAL FORMAT RULE FOR DISCUSSING PROJECTS:\n"
+            "Whenever the user asks you about their project, file asset, or asks for feedback on a piece of work, "
+            "you MUST organize your friendly answer into exactly these four conversational sections in this order:\n\n"
+            "📝 The Breakdown: [Write a warm, enthusiastic, friendly paragraph explaining what the file/project is and what makes it interesting from a developer's perspective!]\n\n"
+            "✨ The Good Stuff: [Provide a bulleted list using encouraging emojis of the absolute wins, awesome architecture choices, or beautiful logic patterns in their work! 🙌]\n\n"
+            "🌱 Growth Areas: [Provide a bulleted list of helpful, constructive tips on what can be improved or refactored. Frame it like a friendly tip over coffee! ☕]\n\n"
+            "🏆 Mentor Score: [Provide an objective engineering mark out of 100 based on the quality of the asset, followed by an encouraging high-five sentence! Example: '85/100 — You are building a rock-solid foundation here, keep pushing!']\n\n"
+            "Remember: Never output rigid markdown table grids or boring raw blocks. Speak like a real human teammate who has their back!"
+        )
+
+        # Assemble Payload Configuration Context shapes
+        if is_image:
+            mime_type = f"image/{extension.replace('.', '')}"
+            user_content = [
+                {"type": "text", "text": "Execute a deep architectural visual and configuration design review on this asset layout screen."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}
+                }
+            ]
+        else:
+            user_content = f"Evaluate my attached asset profile records file contents:\n\n{content_stream[:18000]}"
+
+        # Clean up temporary disk storage allocations immediately before streaming to avoid locked file errors
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+
+        # D. ASYNCHRONOUS TOKEN GENERATOR FUNCTION
+        def stream_generator():
+            chat_stream = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.2,
+                stream=True  # Unlocks chunk-by-chunk instant network emissions
+            )
+            for chunk in chat_stream:
+                token = chunk.choices[0].delta.content
+                if token:
+                    yield token
+
+        return StreamingResponse(stream_generator(), media_type="text/plain")
+
+    except HTTPException:
+        for generated_path in temporary_processing_paths:
+            if generated_path.exists():
+                generated_path.unlink()
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+        raise
+    except Exception as error:
+        # Safe cleanup block in case of pipeline processing interruptions
+        for generated_path in temporary_processing_paths:
+            if generated_path.exists():
+                generated_path.unlink()
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+# =====================================================================
+# ENGINE 2: CONVERSATIONAL INTERACTIVE CHAT STATION (Context-Aware)
+# =====================================================================
+from pydantic import BaseModel
+from typing import List, Dict
+
+
+class ChatHistoryRequest(BaseModel):
+    messages: List[Dict[str, str]]
+
+
+@app.post("/api/chat")
+async def interactive_chat_station(request: ChatHistoryRequest):
+    try:
+        system_prompt = (
+            "You are MeliusAI, an incredibly bright, high-energy, supportive tech mentor, and close developer friend! "
+            "Your tone is warm, alive, deeply encouraging, and filled with modern developer energy. 🔥🚀\n\n"
+            "CRITICAL DYNAMIC ROUTING RULES:\n"
+            "1. THE GENERAL EVALUATION CASE: If the user requests a 'full review', output sections for "
+            "📝 The Breakdown, ✨ The Good Stuff, 🌱 Growth Areas, and 🏆 Mentor Score.\n"
+            "2. THE TARGETED FOLLOW-UP CASE: If the user asks a specific continuous or follow-up question "
+            "(e.g., 'tell me what could be improved to make it better'), BYPASS the full template layout. "
+            "Answer their question directly, conversationally, and naturally like an engineering peer over coffee! ☕"
+        )
+
+        # 🛠️ INNER GENERATOR CORE INTEGRITY PROTECTION
+        def stream_generator():
+            try:
+                chat_stream = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "system", "content": system_prompt}] + request.messages,
+                    temperature=0.8,
+                    stream=True
+                )
+                for chunk in chat_stream:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        token = chunk.choices[0].delta.content
+                        if token:
+                            yield token
+            except Exception as inner_stream_error:
+                # Catch errors inside the thread context and pass them safely as text tokens
+                yield (
+                    "\n\n⚠️ MeliusAI stream recovery notice: "
+                    f"{str(inner_stream_error)}"
+                )
+
+        return StreamingResponse(stream_generator(), media_type="text/plain")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

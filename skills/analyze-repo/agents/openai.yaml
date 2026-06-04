@@ -1,0 +1,7 @@
+interface:
+  display_name: "Analyze Repo"
+  short_description: "Score GitHub repos with 3 tips"
+  default_prompt: "Use $analyze-repo to score this GitHub repository and return only the 1-100 score plus exactly 3 actionable improvement tips."
+
+policy:
+  allow_implicit_invocation: true
