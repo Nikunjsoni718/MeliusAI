@@ -6,6 +6,3 @@ openai
 python-multipart
 moviepy
 pydub
-# Run locally with:
-# cd C:\projects\meliusiq\backend
-python -m uvicorn main:app --reload --port 8000
