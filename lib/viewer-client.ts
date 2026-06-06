@@ -3,6 +3,12 @@
 import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 
+import {
+  clearPersistedAuthState,
+  persistAuthenticatedUser,
+  readPersistedAuthState,
+  type PersistedUserRole,
+} from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import type { UserRow } from '@/types/supabase';
 
@@ -38,8 +44,14 @@ export function useViewerProfile() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ViewerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [persistedRole, setPersistedRole] = useState<PersistedUserRole | null>(null);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const persistedState = readPersistedAuthState();
+      setPersistedRole(persistedState.userRole);
+    }
+
     if (!supabase) {
       return;
     }
@@ -67,11 +79,16 @@ export function useViewerProfile() {
       setUser(currentUser ?? null);
 
       if (!currentUser) {
+        clearPersistedAuthState();
+        setPersistedRole(null);
         setProfile(null);
         setError(null);
         setLoading(false);
         return;
       }
+
+      persistAuthenticatedUser(currentUser);
+      setPersistedRole(readPersistedAuthState().userRole);
 
       const response = await fetch('/api/auth/profile', { cache: 'no-store' });
       const body = (await response.json().catch(() => null)) as ProfileResponse | null;
@@ -117,6 +134,7 @@ export function useViewerProfile() {
     error,
     loading,
     profile,
+    persistedRole,
     supabase,
     user,
   };

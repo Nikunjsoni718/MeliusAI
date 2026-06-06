@@ -3,17 +3,51 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
 
 type ActiveTab = 'overview' | 'ai_matcher';
 
-interface TeamMember {
+export type OrganizationLinkedProfile = {
   id: string;
   name: string;
   role: string;
-  photoUrl: string;
-  meliusProfileUrl: string;
-}
+  profile_link: string;
+};
+
+type MemberVerificationResponse =
+  | {
+      status: 'verified';
+      id: string;
+      full_name: string;
+      username: string;
+      avatar_url: string | null;
+    }
+  | {
+      status: 'failed';
+      message: string;
+    };
+
+type OrganizationRecord = {
+  bio: string | null;
+  linked_profiles: unknown;
+};
+
+type OrganizationTableClient = {
+  from: (table: 'organizations') => {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        maybeSingle: () => Promise<{ data: OrganizationRecord | null; error: { message: string } | null }>;
+      };
+    };
+    update: (values: {
+      bio: string;
+      linked_profiles: OrganizationLinkedProfile[];
+    }) => {
+      eq: (column: string, value: string) => Promise<{ error: { message: string } | null }>;
+    };
+  };
+};
 
 const navItems: Array<{
   label: string;
@@ -23,25 +57,63 @@ const navItems: Array<{
   { label: 'AI Matcher', tab: 'ai_matcher' },
   { label: 'AI Scrutiny Hub', tab: null },
   { label: 'Talent Discovery', tab: null },
-  { label: 'Company Profile', tab: null },
 ];
 
-const WORKSPACE_BIO_STORAGE_KEY = 'melius_workspace_bio';
-const WORKSPACE_MEMBERS_STORAGE_KEY = 'melius_workspace_members';
+const MEMBER_SEARCH_ENDPOINT = 'http://localhost:8000/api/search-member';
+
+function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => {
+      return typeof item === 'object' && item !== null;
+    })
+    .map((item) => {
+      const id =
+        typeof item.id === 'string'
+          ? item.id
+          : typeof item.userId === 'string'
+            ? item.userId
+            : '';
+      const legacyUsername = typeof item.username === 'string' ? item.username : '';
+      const profileLink =
+        typeof item.profile_link === 'string'
+          ? item.profile_link
+          : legacyUsername
+            ? `/profile/${legacyUsername}`
+            : '';
+      const profileHandle = profileLink.replace('/profile/', '').trim();
+
+      return {
+        id,
+        name:
+          typeof item.name === 'string' && item.name.trim()
+            ? item.name
+            : profileHandle || 'Workspace Member',
+        role: typeof item.role === 'string' ? item.role : 'Workspace Member',
+        profile_link: profileLink,
+      };
+    })
+    .filter((item) => item.id.trim().length > 0 && item.profile_link.trim().length > 0);
+}
 
 export default function OrganizationDashboard() {
   const router = useRouter();
   const { authEnabled, loading, supabase, user } = useViewerProfile();
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string>('');
   const [workspaceUsername, setWorkspaceUsername] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
-  const [bio, setBio] = useState<string>('');
-  const [bioSaveState, setBioSaveState] = useState<'idle' | 'saved'>('idle');
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [newMemberName, setNewMemberName] = useState<string>('');
-  const [newMemberRole, setNewMemberRole] = useState<string>('');
-  const [newMemberProfileUrl, setNewMemberProfileUrl] = useState<string>('');
+  const [bioState, setBioState] = useState<string>('');
+  const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
+  const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const [memberName, setMemberName] = useState<string>('');
+  const [memberRole, setMemberRole] = useState<string>('');
+  const [profileLink, setProfileLink] = useState<string>('');
   const [memberError, setMemberError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState<boolean>(false);
 
@@ -57,15 +129,73 @@ export default function OrganizationDashboard() {
     );
   }
 
-  async function handleAddMember() {
-    const inputUsername = newMemberProfileUrl
-      .replace(/^https?:\/\/[^/]+/i, '')
-      .replace('/profile/', '')
-      .replace(/^@/, '')
-      .trim()
-      .toLowerCase();
+  function getOrganizationClient() {
+    return supabase as unknown as OrganizationTableClient;
+  }
 
-    if (!inputUsername || !supabase) {
+  function handleDeleteLinkedProfile(targetIndex: number) {
+    setLinkedProfilesState((currentProfiles) => currentProfiles.filter((_, index) => index !== targetIndex));
+    setProfileSaveState('idle');
+    setProfileSaveError(null);
+  }
+
+  function getMemberSearchQuery() {
+    const rawQuery = profileLink.trim() || memberName.trim();
+    const profileHandleMatch = rawQuery.match(/\/profile\/([^/?#]+)/i);
+    const normalizedQuery = profileHandleMatch ? profileHandleMatch[1] : rawQuery;
+
+    return normalizedQuery.replace(/^@/, '').trim();
+  }
+
+  function clearMemberInputs() {
+    setMemberName('');
+    setMemberRole('');
+    setProfileLink('');
+  }
+
+  function appendVerifiedProfile(profile: OrganizationLinkedProfile) {
+    const alreadyLinked = linkedProfilesState.some((linkedProfile) => {
+      const sameId = linkedProfile.id === profile.id;
+      const sameProfileLink =
+        linkedProfile.profile_link.trim().toLowerCase() === profile.profile_link.trim().toLowerCase();
+
+      return sameId || sameProfileLink;
+    });
+
+    if (alreadyLinked) {
+      setMemberError(`${profile.name} is already linked to this workspace.`);
+      return false;
+    }
+
+    setLinkedProfilesState((currentProfiles) => [...currentProfiles, profile]);
+    clearMemberInputs();
+    setProfileSaveState('idle');
+    return true;
+  }
+
+  function linkVerifiedMember(verifiedData: Extract<MemberVerificationResponse, { status: 'verified' }>) {
+    if (!verifiedData.id || !verifiedData.username) {
+      setMemberError('Verification failed: This profile record is missing required account fields.');
+      return;
+    }
+
+    const wasAdded = appendVerifiedProfile({
+      id: verifiedData.id,
+      name: verifiedData.full_name,
+      role: memberRole.trim() || 'Workspace Member',
+      profile_link: `/profile/${verifiedData.username}`,
+    });
+
+    if (wasAdded) {
+      setMemberError(null);
+    }
+  }
+
+  async function handleAddMember() {
+    const searchQuery = getMemberSearchQuery();
+
+    if (!searchQuery) {
+      setMemberError('Verification failed: Enter an existing MeliusAI username or full name.');
       return;
     }
 
@@ -73,81 +203,92 @@ export default function OrganizationDashboard() {
     setMemberError(null);
 
     try {
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', inputUsername)
-        .single();
+      const response = await fetch(MEMBER_SEARCH_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ search_query: searchQuery }),
+      });
 
-      if (error || !profile) {
-        setMemberError('No such account exists.');
+      if (!response.ok) {
+        let errorDetail = `Search failed with status ${response.status}.`;
+        const errorText = await response.text();
+
+        if (errorText) {
+          try {
+            const errorJson = JSON.parse(errorText) as { detail?: string };
+            errorDetail = errorJson.detail || errorText;
+          } catch {
+            errorDetail = errorText;
+          }
+        }
+
+        throw new Error(errorDetail);
+      }
+
+      const verificationData = (await response.json()) as MemberVerificationResponse;
+
+      if (verificationData.status === 'failed') {
+        setMemberError(verificationData.message);
         return;
       }
 
-      const verifiedProfile = profile as {
-        id?: string;
-        username?: string | null;
-        full_name?: string | null;
-        avatar_url?: string | null;
-      };
-      const verifiedUsername = verifiedProfile.username || inputUsername;
+      if (verificationData.status === 'verified') {
+        linkVerifiedMember(verificationData);
+        return;
+      }
 
-      setMembers((currentMembers) => {
-        const updatedList = [
-          ...currentMembers,
-          {
-            id: verifiedProfile.id || Date.now().toString(),
-            name: verifiedProfile.full_name || newMemberName.trim() || verifiedUsername,
-            role: newMemberRole.trim() || 'Workspace Member',
-            photoUrl: verifiedProfile.avatar_url || '',
-            meliusProfileUrl: `/profile/${verifiedUsername}`,
-          },
-        ];
-
-        localStorage.setItem(WORKSPACE_MEMBERS_STORAGE_KEY, JSON.stringify(updatedList));
-        return updatedList;
-      });
-      setNewMemberName('');
-      setNewMemberRole('');
-      setNewMemberProfileUrl('');
+      setMemberError('Verification failed: Unexpected response from member verification service.');
     } catch (error) {
-      console.error('Error validating workspace member profile:', error);
-      setMemberError('No such account exists.');
+      console.error('Error searching workspace member profiles:', error);
+      setMemberError(
+        error instanceof Error
+          ? `Verification failed: ${error.message}`
+          : 'Verification failed: Member verification service is unavailable.',
+      );
     } finally {
       setIsAdding(false);
     }
   }
 
-  function handleSaveBio() {
-    localStorage.setItem(WORKSPACE_BIO_STORAGE_KEY, bio);
-    setBioSaveState('saved');
-    window.setTimeout(() => setBioSaveState('idle'), 1600);
-  }
-
-  function handleDeleteMember(targetId: string) {
-    const filteredList = members.filter((member) => member.id !== targetId);
-    setMembers(filteredList);
-    localStorage.setItem(WORKSPACE_MEMBERS_STORAGE_KEY, JSON.stringify(filteredList));
-  }
-
-  useEffect(() => {
-    const savedBio = localStorage.getItem(WORKSPACE_BIO_STORAGE_KEY);
-    if (savedBio !== null) {
-      setBio(savedBio);
+  async function handleSaveOrganizationProfile() {
+    if (!supabase) {
+      setProfileSaveState('error');
+      setProfileSaveError('Supabase is not configured for this workspace.');
+      return;
     }
 
-    const savedMembers = localStorage.getItem(WORKSPACE_MEMBERS_STORAGE_KEY);
-    if (savedMembers) {
-      try {
-        const parsedMembers = JSON.parse(savedMembers);
-        if (Array.isArray(parsedMembers)) {
-          setMembers(parsedMembers);
-        }
-      } catch (e) {
-        console.error('Failed to parse saved workspace roster profiles:', e);
+    if (!currentUserId) {
+      setProfileSaveState('error');
+      setProfileSaveError('Unable to identify this organization workspace.');
+      return;
+    }
+
+    setProfileSaveState('saving');
+    setProfileSaveError(null);
+
+    try {
+      const { error } = await getOrganizationClient()
+        .from('organizations')
+        .update({
+          bio: bioState,
+          linked_profiles: linkedProfilesState,
+        })
+        .eq('id', currentUserId);
+
+      if (error) {
+        throw new Error(error.message);
       }
+
+      setProfileSaveState('saved');
+      window.setTimeout(() => setProfileSaveState('idle'), 1600);
+    } catch (error) {
+      console.error('Error saving organization profile data:', error);
+      setProfileSaveState('error');
+      setProfileSaveError(error instanceof Error ? error.message : 'Unable to save organization profile data.');
     }
-  }, []);
+  }
 
   useEffect(() => {
     if (loading) {
@@ -180,11 +321,14 @@ export default function OrganizationDashboard() {
         }
 
         if (activeUser && active) {
+          setCurrentUserId(activeUser.id);
+
           const sessionUser = activeUser as typeof activeUser & {
             raw_user_meta_data?: {
               company_name?: string;
               org_username?: string;
               bio?: string;
+              linked_profiles?: unknown;
             };
           };
           const meta =
@@ -194,16 +338,31 @@ export default function OrganizationDashboard() {
                   company_name?: string;
                   org_username?: string;
                   bio?: string;
+                  linked_profiles?: unknown;
                 }
               | undefined);
 
-          setCompanyName(meta?.company_name || 'Verified Organisation');
-          setWorkspaceUsername(meta?.org_username || 'workspace');
-          const savedBio = localStorage.getItem(WORKSPACE_BIO_STORAGE_KEY);
-          if (savedBio !== null) {
-            setBio(savedBio);
-          } else if (meta?.bio) {
-            setBio(meta.bio);
+          const metadataCompanyName = meta?.company_name || 'Verified Organisation';
+          const metadataWorkspaceUsername = meta?.org_username || 'workspace';
+
+          setCompanyName(metadataCompanyName);
+          setWorkspaceUsername(metadataWorkspaceUsername);
+          setBioState(meta?.bio ?? '');
+          setLinkedProfilesState(normalizeLinkedProfiles(meta?.linked_profiles));
+
+          const { data: organization, error: organizationError } = await getOrganizationClient()
+            .from('organizations')
+            .select('bio, linked_profiles')
+            .eq('id', activeUser.id)
+            .maybeSingle();
+
+          if (organizationError) {
+            throw new Error(organizationError.message);
+          }
+
+          if (organization && active) {
+            setBioState(organization.bio ?? '');
+            setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
         }
       } catch (err) {
@@ -228,17 +387,9 @@ export default function OrganizationDashboard() {
     }
 
     await supabase.auth.signOut();
-    window.location.assign('/auth/organization');
+    clearPersistedAuthState();
+    router.replace('/');
   }
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-[#030512] text-slate-400 text-sm tracking-wide">
-        Loading organisation workspace...
-      </div>
-    );
-  }
-
   return (
     <div className="flex min-h-screen w-full bg-[#030512] text-slate-100 overflow-hidden">
       <aside className="w-64 border-r border-slate-800/60 bg-[#060817] flex flex-col justify-between p-6 h-screen shrink-0">
@@ -329,18 +480,33 @@ export default function OrganizationDashboard() {
                 </p>
                 <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Company Profile & Mission</h3>
                 <textarea
-                  value={bio}
-                  onChange={(event) => setBio(event.target.value)}
+                  value={bioState}
+                  onChange={(event) => {
+                    setBioState(event.target.value);
+                    setProfileSaveState('idle');
+                    setProfileSaveError(null);
+                  }}
                   placeholder="Enter your company bio, creative focus, or structural design philosophy here..."
                   className="mt-5 w-full bg-[#040615]/60 border border-slate-800/80 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all resize-none h-28"
                 />
+
+              
+
+                {profileSaveError ? (
+                  <p className="mt-3 text-xs font-medium text-rose-400">{profileSaveError}</p>
+                ) : null}
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={handleSaveBio}
-                    className="mt-3 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg px-5 py-2.5 transition-all shadow-lg shadow-purple-900/20 active:scale-[0.98] self-end"
+                    onClick={() => void handleSaveOrganizationProfile()}
+                    disabled={profileSaveState === 'saving'}
+                    className="mt-3 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 text-white text-xs font-semibold rounded-lg px-5 py-2.5 transition-all shadow-lg shadow-purple-900/20 active:scale-[0.98] self-end"
                   >
-                    {bioSaveState === 'saved' ? 'Saved ✓' : 'Save Bio'}
+                    {profileSaveState === 'saving'
+                      ? 'Saving...'
+                      : profileSaveState === 'saved'
+                        ? 'Saved ✓'
+                        : 'Save Profile'}
                   </button>
                 </div>
               </div>
@@ -350,23 +516,19 @@ export default function OrganizationDashboard() {
                   <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Workspace Members</p>
 
                   <div className="mt-5 space-y-4 mb-6">
-                    {members.map((member) => (
+                    {linkedProfilesState.map((member, index) => (
                       <div
                         key={member.id}
                         className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
                       >
                         <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
-                          {member.photoUrl ? (
-                            <img src={member.photoUrl} alt={member.name} className="h-full w-full object-cover" />
-                          ) : (
-                            getInitials(member.name)
-                          )}
+                          {getInitials(member.name)}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="font-medium text-slate-200">{member.name}</p>
                           <p className="text-xs text-slate-400">{member.role}</p>
                           <a
-                            href={member.meliusProfileUrl}
+                            href={member.profile_link}
                             className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
                           >
                             View MeliusAI Profile
@@ -374,13 +536,18 @@ export default function OrganizationDashboard() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleDeleteMember(member.id)}
+                          onClick={() => handleDeleteLinkedProfile(index)}
                           className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
                         >
                           Delete
                         </button>
                       </div>
                     ))}
+                    {linkedProfilesState.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
+                        No linked talent profiles yet. Add a verified username below to connect a member.
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="bg-[#040615]/40 border border-slate-800/50 rounded-xl p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
@@ -390,9 +557,9 @@ export default function OrganizationDashboard() {
                       </label>
                       <input
                         type="text"
-                        value={newMemberName}
+                        value={memberName}
                         onChange={(event) => {
-                          setNewMemberName(event.target.value);
+                          setMemberName(event.target.value);
                           setMemberError(null);
                         }}
                         className="mt-2 w-full rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
@@ -405,9 +572,9 @@ export default function OrganizationDashboard() {
                       </label>
                       <input
                         type="text"
-                        value={newMemberRole}
+                        value={memberRole}
                         onChange={(event) => {
-                          setNewMemberRole(event.target.value);
+                          setMemberRole(event.target.value);
                           setMemberError(null);
                         }}
                         className="mt-2 w-full rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
@@ -420,9 +587,9 @@ export default function OrganizationDashboard() {
                       </label>
                       <input
                         type="text"
-                        value={newMemberProfileUrl}
+                        value={profileLink}
                         onChange={(event) => {
-                          setNewMemberProfileUrl(event.target.value);
+                          setProfileLink(event.target.value);
                           setMemberError(null);
                         }}
                         className="mt-2 w-full rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"

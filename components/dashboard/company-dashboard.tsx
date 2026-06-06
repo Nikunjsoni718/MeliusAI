@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { getDashboardHref, useViewerProfile } from '@/lib/viewer-client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,7 +60,8 @@ export function CompanyDashboard() {
     }
 
     await supabase.auth.signOut();
-    window.location.assign('/');
+    clearPersistedAuthState();
+    router.replace('/');
   }
 
   if (!authEnabled) {

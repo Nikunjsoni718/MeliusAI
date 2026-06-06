@@ -6,3 +6,4 @@ openai
 python-multipart
 moviepy
 pydub
+supabase

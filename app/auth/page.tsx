@@ -3,6 +3,8 @@
 import React from 'react';
 import { useRouter } from 'next/navigation';
 
+import { SessionRouteGuard } from '@/components/auth/session-route-guard';
+
 const talentRows = ['Save your projects', 'Get a clear review', 'Grow step by step'];
 const organisationRows = ['See reviewed talent', 'Keep hiring organized', 'Use your work domain'];
 
@@ -10,6 +12,7 @@ export default function MeliusIQWorkspaceSelector() {
   const router = useRouter();
 
   return (
+    <SessionRouteGuard>
     <div className="min-h-screen bg-[#030512] text-slate-100 px-5 py-10 md:px-12 flex flex-col items-center justify-center font-[var(--font-sans)] select-none relative overflow-hidden">
       <div className="absolute top-[-20%] left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-purple-500/5 blur-[150px] pointer-events-none" />
       <div className="absolute top-[-8%] left-1/2 h-[360px] w-[560px] -translate-x-1/2 rounded-full bg-cyan-500/5 blur-[120px] pointer-events-none" />
@@ -131,5 +134,6 @@ export default function MeliusIQWorkspaceSelector() {
         <span>MeliusIQ Protected Node</span>
       </footer>
     </div>
+    </SessionRouteGuard>
   );
 }

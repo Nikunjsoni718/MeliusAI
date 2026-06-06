@@ -1,11 +1,16 @@
 import os
 import base64
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from dotenv import load_dotenv
+
+try:
+    from supabase import create_client
+except ImportError:
+    create_client = None
 
 # --- MULTIMODAL PARSER EXTENSIONS ---
 import fitz  # PyMuPDF
@@ -33,6 +38,35 @@ app.add_middleware(
 
 # Initialize OpenAI Client (Guaranteed to read from root .env.local now)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+supabase_backend_client = None
+
+
+def get_supabase_backend_client():
+    global supabase_backend_client
+
+    if create_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="The supabase-py package is not installed in the Python backend environment.",
+        )
+
+    if supabase_backend_client is None:
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        supabase_key = (
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        )
+
+        if not supabase_url or not supabase_key:
+            raise HTTPException(
+                status_code=500,
+                detail="Supabase URL/key environment variables are not configured for member search.",
+            )
+
+        supabase_backend_client = create_client(supabase_url, supabase_key)
+
+    return supabase_backend_client
 
 
 # --- FILE PARSING ENGINE UTILITIES ---
@@ -274,7 +308,79 @@ async def review_portfolio_asset(file: UploadFile):
 # ENGINE 2: CONVERSATIONAL INTERACTIVE CHAT STATION (Context-Aware)
 # =====================================================================
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import Any, Dict, List
+
+
+def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
+    username = row.get("username") or ""
+    full_name = row.get("full_name") or username
+
+    return {
+        "status": "verified",
+        "id": row.get("id"),
+        "full_name": full_name,
+        "username": username,
+        "avatar_url": row.get("avatar_url"),
+    }
+
+
+@app.post("/api/search-member")
+async def search_member(request: Request):
+    body = await request.json()
+
+    if isinstance(body, str):
+        raw_query = body
+    elif isinstance(body, dict):
+        raw_query = body.get("search_query") or body.get("query") or ""
+    else:
+        raw_query = ""
+
+    raw_query = str(raw_query).strip()
+    if "/profile/" in raw_query:
+        cleaned_query = raw_query.rsplit("/profile/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    else:
+        cleaned_query = raw_query
+
+    cleaned_query = cleaned_query.replace("@", "").strip().strip("/")
+
+    if not cleaned_query:
+        return []
+
+    try:
+        supabase_client = get_supabase_backend_client()
+
+        exact_username_response = (
+            supabase_client.table("profiles")
+            .select("id, full_name, username, avatar_url")
+            .eq("username", cleaned_query.lower())
+            .limit(1)
+            .execute()
+        )
+        exact_username_matches = exact_username_response.data or []
+
+        if exact_username_matches:
+            return normalize_member_profile(exact_username_matches[0])
+
+        exact_name_response = (
+            supabase_client.table("profiles")
+            .select("id, full_name, username, avatar_url")
+            .eq("full_name", cleaned_query)
+            .limit(1)
+            .execute()
+        )
+        exact_name_matches = exact_name_response.data or []
+
+        if exact_name_matches:
+            return normalize_member_profile(exact_name_matches[0])
+
+        return {
+            "status": "failed",
+            "message": "Verification failed: No registered MeliusAI user matches this username or name.",
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 class ChatHistoryRequest(BaseModel):

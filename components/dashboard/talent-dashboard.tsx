@@ -13,6 +13,7 @@ import { Select } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import type { PortfolioAssessmentResult } from '@/lib/mentor';
 import { useViewerProfile } from '@/lib/viewer-client';
 
@@ -94,7 +95,8 @@ export function TalentDashboard() {
     }
 
     await supabase.auth.signOut();
-    window.location.assign('/');
+    clearPersistedAuthState();
+    router.replace('/');
   }
 
   function handleAutoApply() {

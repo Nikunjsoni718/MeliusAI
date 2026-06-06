@@ -1,14 +1,7 @@
 import { redirect } from 'next/navigation';
 
+import { getAuthenticatedDestination } from '@/lib/auth-session-routing';
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
-
-function getProfileHandle(user: {
-  id: string;
-  raw_user_meta_data?: { username?: string };
-  user_metadata?: { username?: string };
-}) {
-  return user.raw_user_meta_data?.username || user.user_metadata?.username || user.id;
-}
 
 export default async function ProfileRedirectPage() {
   if (!hasSupabaseServerEnv()) {
@@ -24,5 +17,5 @@ export default async function ProfileRedirectPage() {
     redirect('/auth/login');
   }
 
-  redirect(`/profile/${encodeURIComponent(getProfileHandle(user))}`);
+  redirect(getAuthenticatedDestination(user));
 }

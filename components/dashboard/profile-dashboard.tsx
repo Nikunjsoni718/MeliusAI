@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
@@ -2624,7 +2625,8 @@ Return Markdown sections for goods, bads, project description, and a final score
       return;
     }
     await supabase.auth.signOut();
-    window.location.assign('/');
+    clearPersistedAuthState();
+    router.replace('/');
   }
 
   if (loading) {

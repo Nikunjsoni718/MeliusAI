@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { clearPersistedAuthState, persistAuthenticatedRouteState, persistAuthenticatedUser } from '@/lib/auth-session-routing';
 import { cn } from '@/lib/utils';
 import { getDashboardHref, useViewerProfile } from '@/lib/viewer-client';
 import type { UserRole } from '@/types/supabase';
@@ -476,11 +477,18 @@ export function AuthPage() {
 
         if (!signUpData.session) {
           setPendingAction(null);
+          clearPersistedAuthState();
           setMessage('We sent you a quick email. Just click the link inside to verify your account and get started.');
           return;
         }
 
+        if (signUpData.user) {
+          persistAuthenticatedUser(signUpData.user);
+        } else {
+          persistAuthenticatedRouteState('individual');
+        }
         setMessage('Your account is ready.');
+        router.replace(`/profile/${encodeURIComponent(normalizedUsername || signUpData.user?.id || 'member')}`);
         return;
       }
 
@@ -502,12 +510,14 @@ export function AuthPage() {
           ((data.user as { raw_user_meta_data?: { username?: string } } | null)?.raw_user_meta_data?.username) ||
           (data.user.user_metadata?.username as string | undefined) ||
           data.user.id;
+        persistAuthenticatedUser(data.user);
         setMessage('Welcome back.');
-        router.push(`/profile/${encodeURIComponent(profileHandle)}`);
+        router.replace(`/profile/${encodeURIComponent(profileHandle)}`);
         return;
       }
 
       if (data.user) {
+        clearPersistedAuthState();
         setPendingAction(null);
         setError('This account is not registered as an individual talent workspace.');
       }

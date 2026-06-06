@@ -1,15 +1,9 @@
 import { redirect } from 'next/navigation';
 
+import { SessionRouteGuard } from '@/components/auth/session-route-guard';
 import { AuthPage } from '@/components/auth/auth-page';
+import { getAuthenticatedDestination, getUserMetadataRole } from '@/lib/auth-session-routing';
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
-
-function getProfileHandle(user: {
-  id: string;
-  raw_user_meta_data?: { username?: string };
-  user_metadata?: { username?: string };
-}) {
-  return user.raw_user_meta_data?.username || user.user_metadata?.username || user.id;
-}
 
 async function readSignedInUser() {
   if (!hasSupabaseServerEnv()) {
@@ -36,9 +30,13 @@ async function readSignedInUser() {
 export default async function Page() {
   const user = await readSignedInUser();
 
-  if (user) {
-    redirect(`/profile/${encodeURIComponent(getProfileHandle(user))}`);
+  if (user && getUserMetadataRole(user)) {
+    redirect(getAuthenticatedDestination(user));
   }
 
-  return <AuthPage />;
+  return (
+    <SessionRouteGuard>
+      <AuthPage />
+    </SessionRouteGuard>
+  );
 }

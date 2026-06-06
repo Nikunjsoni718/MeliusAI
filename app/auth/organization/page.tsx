@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { SessionRouteGuard } from '@/components/auth/session-route-guard';
+import { persistAuthenticatedRouteState, persistAuthenticatedUser } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
 type AuthTab = 'login' | 'register';
@@ -85,7 +87,12 @@ export default function CorporateOrganisationAuthPage() {
       }
 
       if (readAuthRole(data.user) === 'corporate') {
-        router.push('/organization/dashboard');
+        if (data.user) {
+          persistAuthenticatedUser(data.user);
+        } else {
+          persistAuthenticatedRouteState('organization');
+        }
+        router.replace('/organization/dashboard');
         return;
       }
 
@@ -134,7 +141,12 @@ export default function CorporateOrganisationAuthPage() {
       }
 
       if (data.session && readAuthRole(data.user) === 'corporate') {
-        router.push('/organization/dashboard');
+        if (data.user) {
+          persistAuthenticatedUser(data.user);
+        } else {
+          persistAuthenticatedRouteState('organization');
+        }
+        router.replace('/organization/dashboard');
         return;
       }
 
@@ -153,6 +165,7 @@ export default function CorporateOrganisationAuthPage() {
       : 'text-slate-500 hover:text-slate-300 rounded-xl py-2 px-6';
 
   return (
+    <SessionRouteGuard>
     <div className="min-h-screen bg-[#030512] flex items-center justify-center p-4 font-[var(--font-sans)] text-slate-100 select-none">
       <div className="w-full max-w-md rounded-[24px] border border-slate-800/60 bg-gradient-to-br from-[#191336] via-[#070a1e] to-[#030512] p-6 shadow-2xl shadow-slate-950/50 md:p-8">
         <div className="text-center">
@@ -327,5 +340,6 @@ export default function CorporateOrganisationAuthPage() {
         </div>
       </div>
     </div>
+    </SessionRouteGuard>
   );
 }
