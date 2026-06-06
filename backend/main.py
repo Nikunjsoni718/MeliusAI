@@ -336,7 +336,8 @@ async def verify_member(data: dict):
         clean_username = profile_link.strip().lower()
         
     # 3. Query Supabase looking ONLY at the "username" column
-    result = supabase.table("profiles").select("*").eq("username", clean_username).execute()
+    supabase_client = get_supabase_backend_client()
+    result = supabase_client.table("profiles").select("*").eq("username", clean_username).execute()
     
     # 4. If no rows return, throw the error
     if not result.data:
@@ -347,6 +348,10 @@ async def verify_member(data: dict):
     
     # --- Your existing code to add them to organization_members continues here ---
     return {"success": True, "user": matched_user}
+
+
+class ChatHistoryRequest(BaseModel):
+    messages: List[Dict[str, str]]
 
 
 @app.post("/api/chat")
