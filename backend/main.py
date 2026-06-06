@@ -324,67 +324,29 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/search-member")
-async def search_member(request: Request):
-    body = await request.json()
-
-    if isinstance(body, str):
-        raw_query = body
-    elif isinstance(body, dict):
-        raw_query = body.get("search_query") or body.get("query") or ""
+@app.post("/api/search-member")  # or your specific verification route name
+async def verify_member(data: dict):
+    # 1. Grab the input data from the frontend form
+    profile_link = data.get("meliusai_profile_link", "")  # matches your form field
+    
+    # 2. Extract and clean the username (e.g., "/profile/nikunj_soni" -> "nikunj_soni")
+    if "/profile/" in profile_link:
+        clean_username = profile_link.split("/profile/")[-1].strip().lower()
     else:
-        raw_query = ""
-
-    raw_query = str(raw_query).strip()
-    if "/profile/" in raw_query:
-        cleaned_query = raw_query.rsplit("/profile/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
-    else:
-        cleaned_query = raw_query
-
-    cleaned_query = cleaned_query.replace("@", "").strip().strip("/")
-
-    if not cleaned_query:
-        return []
-
-    try:
-        supabase_client = get_supabase_backend_client()
-
-        exact_username_response = (
-            supabase_client.table("profiles")
-            .select("id, full_name, username, avatar_url")
-            .eq("username", cleaned_query.lower())
-            .limit(1)
-            .execute()
-        )
-        exact_username_matches = exact_username_response.data or []
-
-        if exact_username_matches:
-            return normalize_member_profile(exact_username_matches[0])
-
-        exact_name_response = (
-            supabase_client.table("profiles")
-            .select("id, full_name, username, avatar_url")
-            .eq("full_name", cleaned_query)
-            .limit(1)
-            .execute()
-        )
-        exact_name_matches = exact_name_response.data or []
-
-        if exact_name_matches:
-            return normalize_member_profile(exact_name_matches[0])
-
-        return {
-            "status": "failed",
-            "message": "Verification failed: No registered MeliusAI user matches this username or name.",
-        }
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-
-class ChatHistoryRequest(BaseModel):
-    messages: List[Dict[str, str]]
+        clean_username = profile_link.strip().lower()
+        
+    # 3. Query Supabase looking ONLY at the "username" column
+    result = supabase.table("profiles").select("*").eq("username", clean_username).execute()
+    
+    # 4. If no rows return, throw the error
+    if not result.data:
+        return {"success": False, "message": "Verification failed: No registered MeliusAI user matches this username."}
+        
+    # 5. Success! Fetch the user profile row data
+    matched_user = result.data[0]
+    
+    # --- Your existing code to add them to organization_members continues here ---
+    return {"success": True, "user": matched_user}
 
 
 @app.post("/api/chat")
