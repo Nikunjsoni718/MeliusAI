@@ -59,7 +59,7 @@ const navItems: Array<{
   { label: 'Talent Discovery', tab: null },
 ];
 
-const MEMBER_SEARCH_ENDPOINT = 'http://localhost:8000/api/search-member';
+const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
