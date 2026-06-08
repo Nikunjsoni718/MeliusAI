@@ -15,16 +15,24 @@ export type OrganizationLinkedProfile = {
   profile_link: string;
 };
 
+type MemberSearchUser = {
+  id: string;
+  full_name?: string | null;
+  username?: string | null;
+  avatar_url?: string | null;
+};
+
 type MemberVerificationResponse =
   | {
-      status: 'verified';
-      id: string;
-      full_name: string;
-      username: string;
-      avatar_url: string | null;
+      success: true;
+      status?: string;
+      user: MemberSearchUser;
+      data?: MemberSearchUser;
+      member?: MemberSearchUser;
     }
   | {
-      status: 'failed';
+      success: false;
+      status?: string;
       message: string;
     };
 
@@ -115,6 +123,8 @@ export default function OrganizationDashboard() {
   const [memberRole, setMemberRole] = useState<string>('');
   const [profileLink, setProfileLink] = useState<string>('');
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [searchedUser, setSearchedUser] = useState<MemberSearchUser | null>(null);
+  const [showSearchWindow, setShowSearchWindow] = useState(false);
   const [isAdding, setIsAdding] = useState<boolean>(false);
 
   function getInitials(name: string) {
@@ -173,7 +183,7 @@ export default function OrganizationDashboard() {
     return true;
   }
 
-  function linkVerifiedMember(verifiedData: Extract<MemberVerificationResponse, { status: 'verified' }>) {
+  function linkVerifiedMember(verifiedData: MemberSearchUser) {
     if (!verifiedData.id || !verifiedData.username) {
       setMemberError('Verification failed: This profile record is missing required account fields.');
       return;
@@ -181,26 +191,32 @@ export default function OrganizationDashboard() {
 
     const wasAdded = appendVerifiedProfile({
       id: verifiedData.id,
-      name: verifiedData.full_name,
+      name: verifiedData.full_name || verifiedData.username,
       role: memberRole.trim() || 'Workspace Member',
       profile_link: `/profile/${verifiedData.username}`,
     });
 
     if (wasAdded) {
       setMemberError(null);
+      setShowSearchWindow(false);
+      setSearchedUser(null);
     }
   }
 
-  async function handleAddMember() {
+  async function handleSearchMember() {
     const searchQuery = getMemberSearchQuery();
 
     if (!searchQuery) {
       setMemberError('Verification failed: Enter an existing MeliusAI username or full name.');
+      setSearchedUser(null);
+      setShowSearchWindow(false);
       return;
     }
 
     setIsAdding(true);
     setMemberError(null);
+    setSearchedUser(null);
+    setShowSearchWindow(false);
 
     try {
       const response = await fetch(MEMBER_SEARCH_ENDPOINT, {
@@ -208,7 +224,10 @@ export default function OrganizationDashboard() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ search_query: searchQuery }),
+        body: JSON.stringify({
+          profile_link: profileLink.trim() || searchQuery,
+          username: searchQuery,
+        }),
       });
 
       if (!response.ok) {
@@ -229,17 +248,15 @@ export default function OrganizationDashboard() {
 
       const verificationData = (await response.json()) as MemberVerificationResponse;
 
-      if (verificationData.status === 'failed') {
+      if (!verificationData.success) {
         setMemberError(verificationData.message);
+        setSearchedUser(null);
+        setShowSearchWindow(false);
         return;
       }
 
-      if (verificationData.status === 'verified') {
-        linkVerifiedMember(verificationData);
-        return;
-      }
-
-      setMemberError('Verification failed: Unexpected response from member verification service.');
+      setSearchedUser(verificationData.user);
+      setShowSearchWindow(true);
     } catch (error) {
       console.error('Error searching workspace member profiles:', error);
       setMemberError(
@@ -247,6 +264,8 @@ export default function OrganizationDashboard() {
           ? `Verification failed: ${error.message}`
           : 'Verification failed: Member verification service is unavailable.',
       );
+      setSearchedUser(null);
+      setShowSearchWindow(false);
     } finally {
       setIsAdding(false);
     }
@@ -561,6 +580,8 @@ export default function OrganizationDashboard() {
                         onChange={(event) => {
                           setMemberName(event.target.value);
                           setMemberError(null);
+                          setSearchedUser(null);
+                          setShowSearchWindow(false);
                         }}
                         className="mt-2 w-full rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
                         placeholder="e.g. Aarav Mehta"
@@ -591,6 +612,8 @@ export default function OrganizationDashboard() {
                         onChange={(event) => {
                           setProfileLink(event.target.value);
                           setMemberError(null);
+                          setSearchedUser(null);
+                          setShowSearchWindow(false);
                         }}
                         className="mt-2 w-full rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
                         placeholder="/profile/name"
@@ -598,13 +621,55 @@ export default function OrganizationDashboard() {
                     </div>
                     <button
                       type="button"
-                      onClick={handleAddMember}
+                      onClick={handleSearchMember}
                       disabled={isAdding}
                       className="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 text-white font-medium text-xs rounded-lg px-4 py-2.5 transition-all"
                     >
-                      {isAdding ? 'Checking...' : '+ Add Member'}
+                      {isAdding ? 'Searching...' : '🔍 Search Member'}
                     </button>
                   </div>
+                  {showSearchWindow && searchedUser ? (
+                    <div className="relative mt-4 rounded-2xl border border-slate-800/70 bg-slate-950/95 p-5 shadow-xl shadow-purple-950/20">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSearchWindow(false);
+                          setSearchedUser(null);
+                        }}
+                        className="absolute right-3 top-3 rounded-full border border-slate-800 bg-slate-900/80 px-2 py-0.5 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
+                      >
+                        X
+                      </button>
+                      <div className="flex items-center gap-4 pr-8">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-purple-500/30 bg-slate-900 text-sm font-bold text-purple-200">
+                          {searchedUser.avatar_url ? (
+                            <img
+                              src={searchedUser.avatar_url}
+                              alt={searchedUser.username || 'MeliusAI member'}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            getInitials(searchedUser.full_name || searchedUser.username || 'Member')
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-100">
+                            {searchedUser.full_name || searchedUser.username || 'Verified Member'}
+                          </p>
+                          <p className="mt-1 truncate text-xs font-medium text-purple-300">
+                            @{searchedUser.username || 'unknown'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => linkVerifiedMember(searchedUser)}
+                        className="mt-5 w-full rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 active:scale-[0.99]"
+                      >
+                        📩 Send Invitation to Organization
+                      </button>
+                    </div>
+                  ) : null}
                   {memberError && <p className="text-xs text-rose-500 font-medium mt-2">{memberError}</p>}
                 </div>
               </div>
