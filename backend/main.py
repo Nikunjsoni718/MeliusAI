@@ -1,5 +1,6 @@
 import os
 import base64
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -356,6 +357,118 @@ async def verify_member(request: Request):
         return {"success": False, "message": f"No user found with username '{target_username}'"}
 
     return {"success": True, "user": result.data[0]}
+
+
+def parse_supabase_timestamp(value):
+    if not value:
+        return None
+
+    try:
+        normalized_value = str(value).replace("Z", "+00:00")
+        parsed_value = datetime.fromisoformat(normalized_value)
+
+        if parsed_value.tzinfo is None:
+            return parsed_value.replace(tzinfo=timezone.utc)
+
+        return parsed_value
+    except ValueError:
+        return None
+
+
+@app.post("/api/invite-member")
+async def invite_member(request: Request):
+    data = await request.json()
+    organization_id = data.get("organization_id")
+    invited_profile_id = data.get("invited_profile_id")
+
+    if not organization_id or not invited_profile_id:
+        return {"success": False, "message": "organization_id and invited_profile_id are required."}
+
+    supabase = get_supabase_backend_client()
+    insert_result = (
+        supabase.table("organization_invitations")
+        .insert({
+            "organization_id": organization_id,
+            "invited_profile_id": invited_profile_id,
+        })
+        .execute()
+    )
+
+    if not insert_result.data:
+        return {"success": False, "message": "Unable to dispatch invitation."}
+
+    return {"success": True, "message": "Invitation dispatched successfully."}
+
+
+@app.get("/api/organization-invitations")
+async def organization_invitations(request: Request):
+    organization_id = request.query_params.get("organization_id")
+
+    if not organization_id:
+        return {"success": False, "message": "organization_id is required.", "invitations": []}
+
+    supabase = get_supabase_backend_client()
+    invitation_result = (
+        supabase.table("organization_invitations")
+        .select("*")
+        .eq("organization_id", organization_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    invitations = invitation_result.data or []
+    invited_profile_ids = [
+        invitation.get("invited_profile_id")
+        for invitation in invitations
+        if invitation.get("invited_profile_id")
+    ]
+    profiles_by_id = {}
+
+    if invited_profile_ids:
+        profiles_result = (
+            supabase.table("profiles")
+            .select("id, full_name, username, avatar_url")
+            .in_("id", invited_profile_ids)
+            .execute()
+        )
+        profiles_by_id = {
+            profile.get("id"): profile
+            for profile in (profiles_result.data or [])
+            if profile.get("id")
+        }
+
+    now = datetime.now(timezone.utc)
+    hydrated_invitations = []
+
+    for invitation in invitations:
+        output_invitation = dict(invitation)
+        expires_at = parse_supabase_timestamp(invitation.get("expires_at"))
+
+        if invitation.get("status") == "pending" and expires_at and now > expires_at:
+            output_invitation["status"] = "expired"
+
+            try:
+                supabase.table("organization_invitations").update({"status": "expired"}).eq("id", invitation.get("id")).execute()
+            except Exception as update_error:
+                print(f"--- WARNING: Failed to update expired invitation {invitation.get('id')}: {update_error} ---")
+
+        output_invitation["profile"] = profiles_by_id.get(invitation.get("invited_profile_id"))
+        hydrated_invitations.append(output_invitation)
+
+    return {"success": True, "invitations": hydrated_invitations}
+
+
+@app.post("/api/cancel-invitation")
+async def cancel_invitation(request: Request):
+    data = await request.json()
+    invitation_id = data.get("id")
+
+    if not invitation_id:
+        return {"success": False, "message": "Invitation id is required."}
+
+    supabase = get_supabase_backend_client()
+    supabase.table("organization_invitations").update({"status": "cancelled"}).eq("id", invitation_id).execute()
+
+    return {"success": True, "message": "Invitation cancelled successfully."}
 
 
 class ChatHistoryRequest(BaseModel):

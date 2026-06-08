@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -20,6 +20,16 @@ type MemberSearchUser = {
   full_name?: string | null;
   username?: string | null;
   avatar_url?: string | null;
+};
+
+type OrganizationInvitation = {
+  id: string;
+  organization_id: string;
+  invited_profile_id: string;
+  status: 'pending' | 'accepted' | 'cancelled' | 'expired' | string;
+  created_at?: string | null;
+  expires_at?: string | null;
+  profile?: MemberSearchUser | null;
 };
 
 type MemberVerificationResponse =
@@ -64,6 +74,9 @@ const navItems: Array<{
 ];
 
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
+const INVITE_MEMBER_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/invite-member`;
+const ORGANIZATION_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/organization-invitations`;
+const CANCEL_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/cancel-invitation`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -120,6 +133,11 @@ export default function OrganizationDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [isAdding, setIsAdding] = useState<boolean>(false);
+  const [invitations, setInvitations] = useState<OrganizationInvitation[]>([]);
+  const [memberPanelTab, setMemberPanelTab] = useState<'members' | 'invitations'>('members');
+  const [invitationError, setInvitationError] = useState('');
+  const [invitationLoading, setInvitationLoading] = useState(false);
+  const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
 
   function getInitials(name: string) {
     return (
@@ -131,6 +149,46 @@ export default function OrganizationDashboard() {
         .join('')
         .toUpperCase() || 'TM'
     );
+  }
+
+  function getInvitationStatusClass(status: string) {
+    if (status === 'accepted') {
+      return 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300';
+    }
+
+    if (status === 'pending') {
+      return 'border-amber-500/30 bg-amber-950/30 text-amber-300';
+    }
+
+    return 'border-rose-500/30 bg-rose-950/30 text-rose-300';
+  }
+
+  function getInvitationTimeRemaining(expiresAt?: string | null) {
+    if (!expiresAt) {
+      return 'Expiration unavailable';
+    }
+
+    const expiresTime = new Date(expiresAt).getTime();
+
+    if (Number.isNaN(expiresTime)) {
+      return 'Expiration unavailable';
+    }
+
+    const remainingMs = expiresTime - currentTimeMs;
+
+    if (remainingMs <= 0) {
+      return 'Expired';
+    }
+
+    const totalMinutes = Math.floor(remainingMs / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (hours <= 0) {
+      return `${minutes}m remaining`;
+    }
+
+    return `${hours}h ${minutes}m remaining`;
   }
 
   function getOrganizationClient() {
@@ -248,6 +306,100 @@ export default function OrganizationDashboard() {
       setIsModalOpen(false);
     } finally {
       setIsAdding(false);
+    }
+  }
+
+  const fetchInvitations = useCallback(async () => {
+    if (!currentUserId) {
+      return;
+    }
+
+    setInvitationLoading(true);
+    setInvitationError('');
+
+    try {
+      const response = await fetch(
+        `${ORGANIZATION_INVITATIONS_ENDPOINT}?organization_id=${encodeURIComponent(currentUserId)}`,
+      );
+      const data = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        invitations?: OrganizationInvitation[];
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Invitation fetch failed with status ${response.status}.`);
+      }
+
+      setInvitations(Array.isArray(data.invitations) ? data.invitations : []);
+    } catch (error) {
+      console.error('Unable to load organization invitations:', error);
+      setInvitationError(error instanceof Error ? error.message : 'Unable to load invitations.');
+    } finally {
+      setInvitationLoading(false);
+    }
+  }, [currentUserId]);
+
+  async function handleSendInvitationToWorkspace() {
+    if (!currentUserId || !searchResult?.id) {
+      setSearchError('Unable to send invitation without a workspace and verified profile.');
+      return;
+    }
+
+    setIsAdding(true);
+    setSearchError('');
+
+    try {
+      const response = await fetch(INVITE_MEMBER_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          organization_id: currentUserId,
+          invited_profile_id: searchResult.id,
+        }),
+      });
+      const data = (await response.json()) as { success?: boolean; message?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Invitation failed with status ${response.status}.`);
+      }
+
+      setIsModalOpen(false);
+      setSearchResult(null);
+      setSearchQuery('');
+      setMemberPanelTab('invitations');
+      await fetchInvitations();
+    } catch (error) {
+      console.error('Unable to dispatch organization invitation:', error);
+      setSearchError(error instanceof Error ? error.message : 'Unable to send invitation.');
+    } finally {
+      setIsAdding(false);
+    }
+  }
+
+  async function handleCancelInvitation(invitationId: string) {
+    setInvitationError('');
+
+    try {
+      const response = await fetch(CANCEL_INVITATION_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: invitationId }),
+      });
+      const data = (await response.json()) as { success?: boolean; message?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Cancellation failed with status ${response.status}.`);
+      }
+
+      await fetchInvitations();
+    } catch (error) {
+      console.error('Unable to cancel invitation:', error);
+      setInvitationError(error instanceof Error ? error.message : 'Unable to cancel invitation.');
     }
   }
 
@@ -379,6 +531,18 @@ export default function OrganizationDashboard() {
       active = false;
     };
   }, [supabase]);
+
+  useEffect(() => {
+    void fetchInvitations();
+  }, [fetchInvitations]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTimeMs(Date.now());
+    }, 60000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   async function handleSignOut() {
     if (!supabase) {
@@ -514,68 +678,165 @@ export default function OrganizationDashboard() {
                 <div className="rounded-2xl border border-slate-800/60 bg-[#060817]/50 p-6">
                   <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Workspace Members</p>
 
-                  <div className="mt-5 space-y-4 mb-6">
-                    {linkedProfilesState.map((member, index) => (
-                      <div
-                        key={member.id}
-                        className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
-                      >
-                        <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
-                          {getInitials(member.name)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-slate-200">{member.name}</p>
-                          <p className="text-xs text-slate-400">{member.role}</p>
-                          <a
-                            href={member.profile_link}
-                            className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
-                          >
-                            View MeliusAI Profile
-                          </a>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteLinkedProfile(index)}
-                          className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ))}
-                    {linkedProfilesState.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
-                        No linked talent profiles yet. Add a verified username below to connect a member.
-                      </div>
-                    ) : null}
+                  <div className="mt-5 flex flex-col gap-2 rounded-xl border border-slate-800/50 bg-[#040615]/40 p-1.5 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => setMemberPanelTab('members')}
+                      className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                        memberPanelTab === 'members'
+                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/20'
+                          : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-200'
+                      }`}
+                    >
+                      Active Members
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMemberPanelTab('invitations')}
+                      className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                        memberPanelTab === 'invitations'
+                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/20'
+                          : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-200'
+                      }`}
+                    >
+                      Invitations Log ({invitations.filter((invitation) => invitation.status === 'pending').length} Pending)
+                    </button>
                   </div>
 
-                  <div className="rounded-xl border border-slate-800/50 bg-[#040615]/40 p-4">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                      Search Members
-                    </label>
-                    <div className="mt-3 flex flex-col gap-3 md:flex-row">
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(event) => {
-                          setSearchQuery(event.target.value);
-                          setSearchError('');
-                          setSearchResult(null);
-                        }}
-                        className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
-                        placeholder="Enter MeliusAI username or link..."
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSearchMember}
-                        disabled={isAdding}
-                        className="rounded-lg bg-purple-600 px-5 py-2.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
-                      >
-                        {isAdding ? 'Searching...' : '🔍 Search Member'}
-                      </button>
+                  {memberPanelTab === 'members' ? (
+                    <>
+                      <div className="mt-5 space-y-4 mb-6">
+                        {linkedProfilesState.map((member, index) => (
+                          <div
+                            key={member.id}
+                            className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
+                              {getInitials(member.name)}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-slate-200">{member.name}</p>
+                              <p className="text-xs text-slate-400">{member.role}</p>
+                              <a
+                                href={member.profile_link}
+                                className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
+                              >
+                                View MeliusAI Profile
+                              </a>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteLinkedProfile(index)}
+                              className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ))}
+                        {linkedProfilesState.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
+                            No linked talent profiles yet. Search for a verified MeliusAI user below.
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800/50 bg-[#040615]/40 p-4">
+                        <label className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                          Search Members
+                        </label>
+                        <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(event) => {
+                              setSearchQuery(event.target.value);
+                              setSearchError('');
+                              setSearchResult(null);
+                            }}
+                            className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
+                            placeholder="Enter MeliusAI username or link..."
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSearchMember}
+                            disabled={isAdding}
+                            className="rounded-lg bg-purple-600 px-5 py-2.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
+                          >
+                            {isAdding ? 'Searching...' : '🔍 Search Member'}
+                          </button>
+                        </div>
+                        {searchError ? <p className="mt-2 text-xs font-medium text-rose-500">{searchError}</p> : null}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-slate-800/60 bg-[#040615]/40 p-4">
+                      {invitationLoading ? (
+                        <p className="py-6 text-center text-xs font-medium text-slate-500">Loading invitations...</p>
+                      ) : null}
+                      {invitationError ? (
+                        <p className="mb-3 text-xs font-medium text-rose-500">{invitationError}</p>
+                      ) : null}
+                      {!invitationLoading && invitations.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#030512]/50 p-6 text-center">
+                          <p className="text-xs font-semibold text-slate-400">No invitations dispatched yet.</p>
+                          <p className="mt-2 text-[11px] text-slate-500">
+                            Search a verified MeliusAI profile and send an invitation to begin tracking activity.
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="space-y-3">
+                        {invitations.map((invitation) => {
+                          const profile = invitation.profile;
+                          const displayName = profile?.full_name || profile?.username || 'Unknown profile';
+                          const username = profile?.username || 'unknown';
+
+                          return (
+                            <div
+                              key={invitation.id}
+                              className="flex flex-col gap-4 rounded-xl border border-slate-900/70 bg-[#030512]/70 p-4 md:flex-row md:items-center md:justify-between"
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-800 bg-slate-900 text-xs font-bold text-purple-200">
+                                  {profile?.avatar_url ? (
+                                    <img src={profile.avatar_url} alt={username} className="h-full w-full object-cover" />
+                                  ) : (
+                                    getInitials(displayName)
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-200">{displayName}</p>
+                                  <p className="truncate text-xs text-purple-300">@{username}</p>
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    {invitation.status === 'pending'
+                                      ? getInvitationTimeRemaining(invitation.expires_at)
+                                      : invitation.expires_at
+                                        ? `Expired window: ${new Date(invitation.expires_at).toLocaleString()}`
+                                        : 'No expiration timestamp'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 md:justify-end">
+                                <span
+                                  className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${getInvitationStatusClass(invitation.status)}`}
+                                >
+                                  {invitation.status}
+                                </span>
+                                {invitation.status === 'pending' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelInvitation(invitation.id)}
+                                    className="rounded-full border border-rose-500/30 bg-rose-950/20 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-rose-300 transition-all hover:border-rose-400/60 hover:text-rose-200"
+                                  >
+                                    Cancel Invite
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    {searchError ? <p className="mt-2 text-xs font-medium text-rose-500">{searchError}</p> : null}
-                  </div>
+                  )}
 
                   {isModalOpen && searchResult ? (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -607,10 +868,11 @@ export default function OrganizationDashboard() {
                         <p className="mt-1 text-sm font-medium text-purple-300">@{searchResult.username || 'unknown'}</p>
                         <button
                           type="button"
-                          onClick={() => linkVerifiedMember(searchResult)}
-                          className="mt-6 w-full rounded-xl bg-purple-600 px-4 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 active:scale-[0.99]"
+                          onClick={() => void handleSendInvitationToWorkspace()}
+                          disabled={isAdding}
+                          className="mt-6 w-full rounded-xl bg-purple-600 px-4 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 active:scale-[0.99]"
                         >
-                          📩 Send Invitation to Workspace
+                          {isAdding ? 'Dispatching...' : '📩 Send Invitation to Workspace'}
                         </button>
                       </div>
                     </div>
