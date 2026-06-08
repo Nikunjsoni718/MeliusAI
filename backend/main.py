@@ -326,18 +326,16 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/search-member")  # or your specific verification route name
 async def verify_member(data: dict):
-    # 1. Grab the input data from the frontend form
-    profile_link = data.get("meliusai_profile_link", "")  # matches your form field
-    
-    # 2. Extract and clean the username (e.g., "/profile/nikunj_soni" -> "nikunj_soni")
-    if "/profile/" in profile_link:
-        clean_username = profile_link.split("/profile/")[-1].strip().lower()
-    else:
-        clean_username = profile_link.strip().lower()
-        
-    # 3. Query Supabase looking ONLY at the "username" column
-    supabase_client = get_supabase_backend_client()
-    result = supabase_client.table("profiles").select("*").eq("username", clean_username).execute()
+    profile_link = data.get("meliusai_profile_link", "").strip()
+    clean_username = profile_link.replace("https://melius-ai.vercel.app/profile/", "")
+    clean_username = clean_username.replace("/profile/", "")
+    clean_username = clean_username.replace("/", "")
+    target_username = clean_username.strip().lower()
+
+    print(f"--- DEBUG: Searching Supabase for username: '{target_username}' ---")
+
+    supabase = get_supabase_backend_client()
+    result = supabase.table("profiles").select("*").ilike("username", target_username).execute()
     
     # 4. If no rows return, throw the error
     if not result.data:
