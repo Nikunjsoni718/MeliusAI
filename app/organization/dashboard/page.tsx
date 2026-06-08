@@ -157,6 +157,7 @@ export default function OrganizationDashboard() {
   const [searchResult, setSearchResult] = useState<MemberSearchUser | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [inviteDispatchError, setInviteDispatchError] = useState('');
   const [isAdding, setIsAdding] = useState<boolean>(false);
   const [invitations, setInvitations] = useState<OrganizationInvitation[]>([]);
   const [memberPanelTab, setMemberPanelTab] = useState<'members' | 'invitations'>('members');
@@ -275,6 +276,7 @@ export default function OrganizationDashboard() {
 
   async function handleSearchMember() {
     setSearchError('');
+    setInviteDispatchError('');
 
     const targetQuery = searchQuery.trim();
 
@@ -409,21 +411,21 @@ export default function OrganizationDashboard() {
   async function handleSendInvitationToWorkspace() {
     // Organization validation belongs only to the modal invitation action.
     const currentOrganizationIdForInvite = resolvedOrganizationId;
+    setInviteDispatchError('');
 
     if (!currentOrganizationIdForInvite) {
-      setSearchError(
+      setInviteDispatchError(
         'Error: No active organization ID found to tie this invitation to. Refresh the dashboard after the workspace finishes loading, then try again.',
       );
       return;
     }
 
     if (!searchResult?.id) {
-      setSearchError('Unable to send invitation without a verified profile.');
+      setInviteDispatchError('Unable to send invitation without a verified profile.');
       return;
     }
 
     setIsAdding(true);
-    setSearchError('');
 
     try {
       const response = await fetch(INVITE_MEMBER_ENDPOINT, {
@@ -445,11 +447,12 @@ export default function OrganizationDashboard() {
       setIsModalOpen(false);
       setSearchResult(null);
       setSearchQuery('');
+      setInviteDispatchError('');
       setMemberPanelTab('invitations');
       await fetchInvitations();
     } catch (error) {
       console.error('Unable to dispatch organization invitation:', error);
-      setSearchError(error instanceof Error ? error.message : 'Unable to send invitation.');
+      setInviteDispatchError(error instanceof Error ? error.message : 'Unable to send invitation.');
     } finally {
       setIsAdding(false);
     }
@@ -906,6 +909,7 @@ export default function OrganizationDashboard() {
                             onChange={(event) => {
                               setSearchQuery(event.target.value);
                               setSearchError('');
+                              setInviteDispatchError('');
                               setSearchResult(null);
                             }}
                             className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
@@ -1001,6 +1005,7 @@ export default function OrganizationDashboard() {
                           onClick={() => {
                             setIsModalOpen(false);
                             setSearchResult(null);
+                            setInviteDispatchError('');
                           }}
                           className="absolute right-4 top-4 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
                         >
@@ -1029,6 +1034,9 @@ export default function OrganizationDashboard() {
                         >
                           {isAdding ? 'Dispatching...' : '📩 Send Invitation to Workspace'}
                         </button>
+                        {inviteDispatchError ? (
+                          <p className="mt-3 text-xs font-medium leading-5 text-rose-400">{inviteDispatchError}</p>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
