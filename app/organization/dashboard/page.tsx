@@ -144,7 +144,8 @@ export default function OrganizationDashboard() {
   const [invitationLoading, setInvitationLoading] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
   // The sidebar and invitation pipeline share this active organization row.
-  const resolvedOrganizationId = organizationRecord?.id || currentOrganizationId;
+  const activeOrganization = organizationRecord;
+  const resolvedOrganizationId = activeOrganization?.id || currentOrganizationId;
 
   function getInitials(name: string) {
     return (
@@ -249,6 +250,8 @@ export default function OrganizationDashboard() {
   }
 
   async function handleSearchMember() {
+    setSearchError('');
+
     const targetQuery = searchQuery.trim();
 
     if (!targetQuery) {
@@ -259,7 +262,6 @@ export default function OrganizationDashboard() {
     }
 
     setIsAdding(true);
-    setSearchError('');
     setSearchResult(null);
     setIsModalOpen(false);
 
@@ -348,6 +350,7 @@ export default function OrganizationDashboard() {
   }, [resolvedOrganizationId]);
 
   async function handleSendInvitationToWorkspace() {
+    // Organization validation belongs only to the modal invitation action.
     const currentOrganizationIdForInvite = resolvedOrganizationId;
 
     if (!currentOrganizationIdForInvite) {
