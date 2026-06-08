@@ -378,26 +378,27 @@ def parse_supabase_timestamp(value):
 @app.post("/api/invite-member")
 async def invite_member(request: Request):
     data = await request.json()
-    organization_id = data.get("organization_id")
-    invited_profile_id = data.get("invited_profile_id")
+    org_id = data.get("organization_id")
+    profile_id = data.get("invited_profile_id")
 
-    if not organization_id or not invited_profile_id:
+    if not org_id or not profile_id:
         return {"success": False, "message": "organization_id and invited_profile_id are required."}
 
     supabase = get_supabase_backend_client()
-    insert_result = (
-        supabase.table("organization_invitations")
-        .insert({
-            "organization_id": organization_id,
-            "invited_profile_id": invited_profile_id,
-        })
-        .execute()
-    )
 
-    if not insert_result.data:
-        return {"success": False, "message": "Unable to dispatch invitation."}
-
-    return {"success": True, "message": "Invitation dispatched successfully."}
+    try:
+        supabase.table("organization_invitations").insert({
+            "organization_id": org_id,
+            "invited_profile_id": profile_id,
+            "status": "pending"
+        }).execute()
+        return {"success": True, "message": "Invitation dispatched successfully."}
+    except Exception as e:
+        print(f"--- INVITATION ERROR: {str(e)} ---")
+        return {
+            "success": False,
+            "message": "Failed to issue invitation: Invalid or missing Organization identification identifier."
+        }
 
 
 @app.get("/api/organization-invitations")

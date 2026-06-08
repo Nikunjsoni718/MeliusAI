@@ -43,6 +43,7 @@ type MemberVerificationResponse =
     };
 
 type OrganizationRecord = {
+  id: string | null;
   bio: string | null;
   linked_profiles: unknown;
 };
@@ -120,6 +121,7 @@ export default function OrganizationDashboard() {
   const router = useRouter();
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentOrganizationId, setCurrentOrganizationId] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string>('');
   const [workspaceUsername, setWorkspaceUsername] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -310,7 +312,7 @@ export default function OrganizationDashboard() {
   }
 
   const fetchInvitations = useCallback(async () => {
-    if (!currentUserId) {
+    if (!currentOrganizationId) {
       return;
     }
 
@@ -319,7 +321,7 @@ export default function OrganizationDashboard() {
 
     try {
       const response = await fetch(
-        `${ORGANIZATION_INVITATIONS_ENDPOINT}?organization_id=${encodeURIComponent(currentUserId)}`,
+        `${ORGANIZATION_INVITATIONS_ENDPOINT}?organization_id=${encodeURIComponent(currentOrganizationId)}`,
       );
       const data = (await response.json()) as {
         success?: boolean;
@@ -338,11 +340,18 @@ export default function OrganizationDashboard() {
     } finally {
       setInvitationLoading(false);
     }
-  }, [currentUserId]);
+  }, [currentOrganizationId]);
 
   async function handleSendInvitationToWorkspace() {
-    if (!currentUserId || !searchResult?.id) {
-      setSearchError('Unable to send invitation without a workspace and verified profile.');
+    const currentOrganizationIdForInvite = currentOrganizationId;
+
+    if (!currentOrganizationIdForInvite) {
+      setSearchError('Error: No active organization ID found to tie this invitation to.');
+      return;
+    }
+
+    if (!searchResult?.id) {
+      setSearchError('Unable to send invitation without a verified profile.');
       return;
     }
 
@@ -356,7 +365,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          organization_id: currentUserId,
+          organization_id: currentOrganizationIdForInvite,
           invited_profile_id: searchResult.id,
         }),
       });
@@ -473,6 +482,7 @@ export default function OrganizationDashboard() {
 
         if (activeUser && active) {
           setCurrentUserId(activeUser.id);
+          setCurrentOrganizationId(null);
 
           const sessionUser = activeUser as typeof activeUser & {
             raw_user_meta_data?: {
@@ -501,17 +511,40 @@ export default function OrganizationDashboard() {
           setBioState(meta?.bio ?? '');
           setLinkedProfilesState(normalizeLinkedProfiles(meta?.linked_profiles));
 
-          const { data: organization, error: organizationError } = await getOrganizationClient()
+          let organization: OrganizationRecord | null = null;
+
+          const { data: organizationByUserId, error: organizationByUserIdError } = await getOrganizationClient()
             .from('organizations')
-            .select('bio, linked_profiles')
+            .select('id, bio, linked_profiles')
             .eq('id', activeUser.id)
             .maybeSingle();
 
-          if (organizationError) {
-            throw new Error(organizationError.message);
+          if (organizationByUserIdError) {
+            console.warn('Unable to resolve organization by auth user id:', organizationByUserIdError.message);
+          }
+
+          organization = organizationByUserId;
+
+          if (!organization && metadataWorkspaceUsername) {
+            const { data: organizationByWorkspaceUsername, error: organizationByWorkspaceUsernameError } =
+              await getOrganizationClient()
+                .from('organizations')
+                .select('id, bio, linked_profiles')
+                .eq('org_username', metadataWorkspaceUsername)
+                .maybeSingle();
+
+            if (organizationByWorkspaceUsernameError) {
+              console.warn(
+                'Unable to resolve organization by workspace username:',
+                organizationByWorkspaceUsernameError.message,
+              );
+            }
+
+            organization = organizationByWorkspaceUsername;
           }
 
           if (organization && active) {
+            setCurrentOrganizationId(organization.id);
             setBioState(organization.bio ?? '');
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
