@@ -324,18 +324,20 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/search-member")  # or your specific verification route name
-async def verify_member(data: dict):
+@app.post("/api/search-member")
+async def verify_member(request: Request):
+    data = await request.json()
     print(f"--- DEBUG: Full Raw Payload Received: {data} ---")
 
-    raw_input = (
-        data.get("meliusai_profile_link") or 
-        data.get("profile_link") or 
-        data.get("profileLink") or 
-        data.get("meliusaiProfileLink") or 
-        data.get("username") or
-        ""
-    )
+    if isinstance(data, dict):
+        raw_input = (
+            data.get("meliusai_profile_link")
+            or data.get("username")
+            or data.get("query")
+            or ""
+        )
+    else:
+        raw_input = data or ""
 
     clean_handle = str(raw_input).strip()
     for prefix in ["https://melius-ai.vercel.app/profile/", "http://localhost:3000/profile/", "/profile/", "/"]:
@@ -345,22 +347,15 @@ async def verify_member(data: dict):
     print(f"--- DEBUG: Looking up clean target username: '{target_username}' ---")
 
     if not target_username:
-        return {"success": False, "message": "Verification failed: No username provided."}
+        return {"success": False, "message": "No username provided."}
 
     supabase = get_supabase_backend_client()
     result = supabase.table("profiles").select("*").ilike("username", target_username).execute()
 
     if not result.data:
-        return {"success": False, "message": f"Verification failed: No registered MeliusAI user matches '{target_username}'."}
+        return {"success": False, "message": f"No user found with username '{target_username}'"}
 
-    matched_user = result.data[0]
-    return {
-        "success": True, 
-        "status": "success",
-        "user": matched_user, 
-        "data": matched_user,
-        "member": matched_user
-    }
+    return {"success": True, "user": result.data[0]}
 
 
 class ChatHistoryRequest(BaseModel):
