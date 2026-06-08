@@ -44,6 +44,8 @@ type MemberVerificationResponse =
 
 type OrganizationRecord = {
   id: string | null;
+  company_name?: string | null;
+  org_username?: string | null;
   bio: string | null;
   linked_profiles: unknown;
 };
@@ -141,6 +143,7 @@ export default function OrganizationDashboard() {
   const [invitationError, setInvitationError] = useState('');
   const [invitationLoading, setInvitationLoading] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
+  // The sidebar and invitation pipeline share this active organization row.
   const resolvedOrganizationId = organizationRecord?.id || currentOrganizationId;
 
   function getInitials(name: string) {
@@ -523,7 +526,7 @@ export default function OrganizationDashboard() {
 
             const { data, error } = await getOrganizationClient()
               .from('organizations')
-              .select('id, bio, linked_profiles')
+              .select('id, company_name, org_username, bio, linked_profiles')
               .eq(column, value)
               .maybeSingle();
 
@@ -545,6 +548,8 @@ export default function OrganizationDashboard() {
           if (organization && active) {
             setCurrentOrganizationId(organization.id);
             setOrganizationRecord(organization);
+            setCompanyName(organization.company_name || metadataCompanyName);
+            setWorkspaceUsername(organization.org_username || metadataWorkspaceUsername);
             setBioState(organization.bio ?? '');
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
