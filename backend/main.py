@@ -326,13 +326,25 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/search-member")  # or your specific verification route name
 async def verify_member(data: dict):
-    profile_link = data.get("meliusai_profile_link", "").strip()
-    clean_username = profile_link.replace("https://melius-ai.vercel.app/profile/", "")
+    # 1. Print the full raw dictionary to the logs so we can see the exact frontend keys
+    print(f"--- DEBUG: Full incoming request payload: {data} ---")
+
+    # 2. Try multiple key combinations to catch any frontend naming style
+    raw_link = (
+        data.get("meliusai_profile_link") or
+        data.get("profile_link") or
+        data.get("profileLink") or
+        data.get("meliusaiProfileLink") or
+        ""
+    ).strip()
+
+    # 3. Clean the extracted link down to a raw username handle
+    clean_username = raw_link.replace("https://melius-ai.vercel.app/profile/", "")
     clean_username = clean_username.replace("/profile/", "")
     clean_username = clean_username.replace("/", "")
     target_username = clean_username.strip().lower()
 
-    print(f"--- DEBUG: Searching Supabase for username: '{target_username}' ---")
+    print(f"--- DEBUG: Extracted final username to query: '{target_username}' ---")
 
     supabase = get_supabase_backend_client()
     result = supabase.table("profiles").select("*").ilike("username", target_username).execute()
