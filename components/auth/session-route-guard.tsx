@@ -6,9 +6,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   clearPersistedAuthState,
   getAuthenticatedDestination,
-  getPersistedDestination,
   persistAuthenticatedUser,
-  readPersistedAuthState,
 } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
@@ -30,6 +28,7 @@ function PublicRouteLoadingFallback() {
 export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
+  const [authenticatedDestination, setAuthenticatedDestination] = useState<string | null>(null);
   const supabase = useMemo(() => {
     if (!hasSupabaseBrowserEnv()) {
       return null;
@@ -51,20 +50,10 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
     let isMounted = true;
 
     async function resolveSessionDestination() {
-      const persistedState = readPersistedAuthState();
-      const persistedDestination = getPersistedDestination(
-        persistedState.userRole,
-        persistedState.userDestination
-      );
-
-      if (persistedState.loginStatus && persistedDestination) {
-        router.replace(persistedDestination);
-        return;
-      }
-
       if (!supabase) {
         clearPersistedAuthState();
         if (isMounted) {
+          setAuthenticatedDestination(null);
           setIsLoading(false);
         }
         return;
@@ -77,21 +66,24 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
         } = await supabase.auth.getSession();
 
         if (error || !session?.user) {
-          if (persistedState.loginStatus) {
-            clearPersistedAuthState();
-          }
+          clearPersistedAuthState();
           if (isMounted) {
+            setAuthenticatedDestination(null);
             setIsLoading(false);
           }
           return;
         }
 
         persistAuthenticatedUser(session.user);
-        router.replace(getAuthenticatedDestination(session.user));
+        if (isMounted) {
+          setAuthenticatedDestination(getAuthenticatedDestination(session.user));
+          setIsLoading(false);
+        }
       } catch (error) {
         console.error('Unable to resolve persistent workspace session:', error);
         clearPersistedAuthState();
         if (isMounted) {
+          setAuthenticatedDestination(null);
           setIsLoading(false);
         }
       }
@@ -102,9 +94,17 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
     return () => {
       isMounted = false;
     };
-  }, [router, supabase]);
+  }, [supabase]);
 
-  if (isLoading) {
+  useEffect(() => {
+    if (isLoading || !authenticatedDestination) {
+      return;
+    }
+
+    router.replace(authenticatedDestination);
+  }, [authenticatedDestination, isLoading, router]);
+
+  if (isLoading || authenticatedDestination) {
     return <PublicRouteLoadingFallback />;
   }
 
