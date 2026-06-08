@@ -326,38 +326,41 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/search-member")  # or your specific verification route name
 async def verify_member(data: dict):
-    # 1. Print the full raw dictionary to the logs so we can see the exact frontend keys
-    print(f"--- DEBUG: Full incoming request payload: {data} ---")
+    print(f"--- DEBUG: Full Raw Payload Received: {data} ---")
 
-    # 2. Try multiple key combinations to catch any frontend naming style
-    raw_link = (
-        data.get("meliusai_profile_link") or
-        data.get("profile_link") or
-        data.get("profileLink") or
-        data.get("meliusaiProfileLink") or
+    raw_input = (
+        data.get("meliusai_profile_link") or 
+        data.get("profile_link") or 
+        data.get("profileLink") or 
+        data.get("meliusaiProfileLink") or 
+        data.get("username") or
         ""
-    ).strip()
+    )
 
-    # 3. Clean the extracted link down to a raw username handle
-    clean_username = raw_link.replace("https://melius-ai.vercel.app/profile/", "")
-    clean_username = clean_username.replace("/profile/", "")
-    clean_username = clean_username.replace("/", "")
-    target_username = clean_username.strip().lower()
+    clean_handle = str(raw_input).strip()
+    for prefix in ["https://melius-ai.vercel.app/profile/", "http://localhost:3000/profile/", "/profile/", "/"]:
+        clean_handle = clean_handle.replace(prefix, "")
+    target_username = clean_handle.strip().lower()
 
-    print(f"--- DEBUG: Extracted final username to query: '{target_username}' ---")
+    print(f"--- DEBUG: Looking up clean target username: '{target_username}' ---")
+
+    if not target_username:
+        return {"success": False, "message": "Verification failed: No username provided."}
 
     supabase = get_supabase_backend_client()
     result = supabase.table("profiles").select("*").ilike("username", target_username).execute()
-    
-    # 4. If no rows return, throw the error
+
     if not result.data:
-        return {"success": False, "message": "Verification failed: No registered MeliusAI user matches this username."}
-        
-    # 5. Success! Fetch the user profile row data
+        return {"success": False, "message": f"Verification failed: No registered MeliusAI user matches '{target_username}'."}
+
     matched_user = result.data[0]
-    
-    # --- Your existing code to add them to organization_members continues here ---
-    return {"success": True, "user": matched_user}
+    return {
+        "success": True, 
+        "status": "success",
+        "user": matched_user, 
+        "data": matched_user,
+        "member": matched_user
+    }
 
 
 class ChatHistoryRequest(BaseModel):
