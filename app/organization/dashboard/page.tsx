@@ -13,6 +13,10 @@ export type OrganizationLinkedProfile = {
   name: string;
   role: string;
   profile_link: string;
+  username?: string;
+  profiles?: {
+    username?: string | null;
+  } | null;
 };
 
 type MemberSearchUser = {
@@ -26,10 +30,16 @@ type OrganizationInvitation = {
   id: string;
   organization_id: string;
   invited_profile_id: string;
-  status: 'pending' | 'accepted' | 'cancelled' | 'expired' | string;
+  status: 'pending' | 'accepted' | 'cancelled' | 'declined' | 'expired' | string;
   created_at?: string | null;
   expires_at?: string | null;
   profile?: MemberSearchUser | null;
+  organization?: {
+    id?: string | null;
+    company_name?: string | null;
+    org_username?: string | null;
+    display_name?: string | null;
+  } | null;
 };
 
 type MemberVerificationResponse =
@@ -80,6 +90,8 @@ const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-me
 const INVITE_MEMBER_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/invite-member`;
 const ORGANIZATION_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/organization-invitations`;
 const CANCEL_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/cancel-invitation`;
+const MY_PENDING_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/my-pending-invitations`;
+const RESPOND_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/respond-invitation`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -105,6 +117,12 @@ function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
             ? `/profile/${legacyUsername}`
             : '';
       const profileHandle = profileLink.replace('/profile/', '').trim();
+      const nestedProfiles =
+        typeof item.profiles === 'object' && item.profiles !== null
+          ? (item.profiles as Record<string, unknown>)
+          : null;
+      const nestedUsername =
+        nestedProfiles && typeof nestedProfiles.username === 'string' ? nestedProfiles.username : '';
 
       return {
         id,
@@ -114,6 +132,8 @@ function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
             : profileHandle || 'Workspace Member',
         role: typeof item.role === 'string' ? item.role : 'Workspace Member',
         profile_link: profileLink,
+        username: legacyUsername || nestedUsername || profileHandle || undefined,
+        profiles: nestedUsername ? { username: nestedUsername } : null,
       };
     })
     .filter((item) => item.id.trim().length > 0 && item.profile_link.trim().length > 0);
@@ -142,6 +162,10 @@ export default function OrganizationDashboard() {
   const [memberPanelTab, setMemberPanelTab] = useState<'members' | 'invitations'>('members');
   const [invitationError, setInvitationError] = useState('');
   const [invitationLoading, setInvitationLoading] = useState(false);
+  const [incomingInvite, setIncomingInvite] = useState<OrganizationInvitation | null>(null);
+  const [showInvitePopup, setShowInvitePopup] = useState(false);
+  const [inviteResponseLoading, setInviteResponseLoading] = useState(false);
+  const [inviteResponseMessage, setInviteResponseMessage] = useState('');
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
   // The sidebar and invitation pipeline share this active organization row.
   const activeOrganization = organizationRecord;
@@ -349,6 +373,39 @@ export default function OrganizationDashboard() {
     }
   }, [resolvedOrganizationId]);
 
+  const fetchIncomingInvitations = useCallback(async () => {
+    if (!currentUserId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${MY_PENDING_INVITATIONS_ENDPOINT}?profile_id=${encodeURIComponent(currentUserId)}`,
+      );
+      const data = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        invitations?: OrganizationInvitation[];
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Pending invitation fetch failed with status ${response.status}.`);
+      }
+
+      const firstPendingInvite = Array.isArray(data.invitations) ? data.invitations[0] : null;
+
+      if (firstPendingInvite) {
+        setIncomingInvite(firstPendingInvite);
+        setShowInvitePopup(true);
+      } else {
+        setIncomingInvite(null);
+        setShowInvitePopup(false);
+      }
+    } catch (error) {
+      console.error('Unable to load incoming organization invitations:', error);
+    }
+  }, [currentUserId]);
+
   async function handleSendInvitationToWorkspace() {
     // Organization validation belongs only to the modal invitation action.
     const currentOrganizationIdForInvite = resolvedOrganizationId;
@@ -419,6 +476,46 @@ export default function OrganizationDashboard() {
     } catch (error) {
       console.error('Unable to cancel invitation:', error);
       setInvitationError(error instanceof Error ? error.message : 'Unable to cancel invitation.');
+    }
+  }
+
+  async function handleRespondToIncomingInvitation(responseValue: 'yes' | 'no') {
+    if (!incomingInvite?.id) {
+      return;
+    }
+
+    setInviteResponseLoading(true);
+    setInviteResponseMessage('');
+
+    try {
+      const response = await fetch(RESPOND_INVITATION_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          invitation_id: incomingInvite.id,
+          response: responseValue,
+        }),
+      });
+      const data = (await response.json()) as { success?: boolean; message?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Invitation response failed with status ${response.status}.`);
+      }
+
+      setShowInvitePopup(false);
+      setIncomingInvite(null);
+
+      if (responseValue === 'yes') {
+        setInviteResponseMessage(data.message || 'Successfully joined the organization!');
+        await fetchInvitations();
+      }
+    } catch (error) {
+      console.error('Unable to respond to incoming invitation:', error);
+      setInviteResponseMessage(error instanceof Error ? error.message : 'Unable to respond to invitation.');
+    } finally {
+      setInviteResponseLoading(false);
     }
   }
 
@@ -578,6 +675,10 @@ export default function OrganizationDashboard() {
   }, [fetchInvitations]);
 
   useEffect(() => {
+    void fetchIncomingInvitations();
+  }, [fetchIncomingInvitations]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setCurrentTimeMs(Date.now());
     }, 60000);
@@ -674,6 +775,11 @@ export default function OrganizationDashboard() {
             <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">
               Here is your organization&apos;s talent pipeline tracking metrics for today.
             </p>
+            {inviteResponseMessage ? (
+              <p className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3 text-xs font-medium text-emerald-300">
+                {inviteResponseMessage}
+              </p>
+            ) : null}
           </header>
 
           {activeTab === 'overview' ? (
@@ -747,33 +853,41 @@ export default function OrganizationDashboard() {
                   {memberPanelTab === 'members' ? (
                     <>
                       <div className="mt-5 space-y-4 mb-6">
-                        {linkedProfilesState.map((member, index) => (
-                          <div
-                            key={member.id}
-                            className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
-                          >
-                            <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
-                              {getInitials(member.name)}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-medium text-slate-200">{member.name}</p>
-                              <p className="text-xs text-slate-400">{member.role}</p>
-                              <a
-                                href={member.profile_link}
-                                className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
-                              >
-                                View MeliusAI Profile
-                              </a>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteLinkedProfile(index)}
-                              className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
+                        {linkedProfilesState.map((member, index) => {
+                          const memberUsername =
+                            member.profiles?.username ||
+                            member.username ||
+                            member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
+                          const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
+
+                          return (
+                            <div
+                              key={member.id}
+                              className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
                             >
-                              Delete
-                            </button>
-                          </div>
-                        ))}
+                              <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
+                                {getInitials(member.name)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-slate-200">{member.name}</p>
+                                <p className="text-xs text-slate-400">{member.role}</p>
+                                <a
+                                  href={memberProfileHref}
+                                  className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
+                                >
+                                  View MeliusAI Profile
+                                </a>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteLinkedProfile(index)}
+                                className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          );
+                        })}
                         {linkedProfilesState.length === 0 ? (
                           <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
                             No linked talent profiles yet. Search for a verified MeliusAI user below.
@@ -987,6 +1101,59 @@ export default function OrganizationDashboard() {
                 </div>
               </div>
             </section>
+          ) : null}
+
+          {showInvitePopup && incomingInvite ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md">
+              <div className="relative w-full max-w-lg rounded-3xl border border-slate-800/70 bg-slate-950 p-7 text-center shadow-2xl shadow-purple-950/30">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowInvitePopup(false);
+                    setIncomingInvite(null);
+                  }}
+                  className="absolute right-4 top-4 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
+                >
+                  X
+                </button>
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-purple-500/30 bg-purple-950/40 text-2xl">
+                  🏢
+                </div>
+                <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.2em] text-purple-300">
+                  Workspace Invitation
+                </p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+                  {incomingInvite.organization?.display_name ||
+                    incomingInvite.organization?.company_name ||
+                    'A verified organization'}{' '}
+                  has invited you to collaborate in their workspace.
+                </h3>
+                <p className="mt-4 text-sm leading-6 text-slate-400">
+                  Would you like to accept this invitation and join their official organization roster?
+                </p>
+                <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleRespondToIncomingInvitation('yes')}
+                    disabled={inviteResponseLoading}
+                    className="rounded-xl bg-purple-600 px-5 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
+                  >
+                    {inviteResponseLoading ? 'Processing...' : 'YES / JOIN'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRespondToIncomingInvitation('no')}
+                    disabled={inviteResponseLoading}
+                    className="rounded-xl border border-slate-800/80 bg-slate-900/40 px-5 py-3 text-xs font-semibold text-slate-300 transition-all hover:border-slate-700 hover:text-white disabled:text-slate-600"
+                  >
+                    NO / DECLINE
+                  </button>
+                </div>
+                {inviteResponseMessage ? (
+                  <p className="mt-4 text-xs font-medium text-slate-400">{inviteResponseMessage}</p>
+                ) : null}
+              </div>
+            </div>
           ) : null}
         </div>
       </main>
