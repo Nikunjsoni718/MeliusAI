@@ -60,6 +60,12 @@ type OrganizationRecord = {
   linked_profiles: unknown;
 };
 
+type ActiveWorkspaceContext = {
+  id: string | null;
+  title: string;
+  slug: string;
+};
+
 type OrganizationTableClient = {
   from: (table: 'organizations') => {
     select: (columns: string) => {
@@ -145,6 +151,11 @@ export default function OrganizationDashboard() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentOrganizationId, setCurrentOrganizationId] = useState<string | null>(null);
   const [organizationRecord, setOrganizationRecord] = useState<OrganizationRecord | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<ActiveWorkspaceContext>({
+    id: null,
+    title: '',
+    slug: '',
+  });
   const [companyName, setCompanyName] = useState<string>('');
   const [workspaceUsername, setWorkspaceUsername] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -170,7 +181,9 @@ export default function OrganizationDashboard() {
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
   // The sidebar and invitation pipeline share this active organization row.
   const activeOrganization = organizationRecord;
-  const resolvedOrganizationId = activeOrganization?.id || currentOrganizationId;
+  const resolvedOrganizationId = activeWorkspace.id || activeOrganization?.id || currentOrganizationId;
+  const sidebarCompanyName = activeWorkspace.title || companyName;
+  const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
 
   function getInitials(name: string) {
     return (
@@ -403,8 +416,12 @@ export default function OrganizationDashboard() {
 
   async function handleSendInvitationToWorkspace() {
     // Organization validation belongs only to the modal invitation action.
-    const currentOrganizationIdForInvite = resolvedOrganizationId;
+    setSearchError('');
     setInviteDispatchError('');
+    const currentOrganizationIdForInvite =
+      [activeWorkspace.id, activeOrganization?.id, currentOrganizationId].find(
+        (candidate): candidate is string => Boolean(candidate?.trim()),
+      ) ?? null;
 
     if (!currentOrganizationIdForInvite) {
       setInviteDispatchError(
@@ -590,11 +607,20 @@ export default function OrganizationDashboard() {
           setCurrentUserId(activeUser.id);
           setCurrentOrganizationId(null);
           setOrganizationRecord(null);
+          setActiveWorkspace({
+            id: null,
+            title: '',
+            slug: '',
+          });
 
           const sessionUser = activeUser as typeof activeUser & {
             raw_user_meta_data?: {
+              organization_id?: string;
+              org_id?: string;
+              workspace_id?: string;
               company_name?: string;
               slug?: string;
+              org_username?: string;
               bio?: string;
               linked_profiles?: unknown;
             };
@@ -603,18 +629,29 @@ export default function OrganizationDashboard() {
             sessionUser.raw_user_meta_data ??
             (sessionUser.user_metadata as
               | {
+                  organization_id?: string;
+                  org_id?: string;
+                  workspace_id?: string;
                   company_name?: string;
                   slug?: string;
+                  org_username?: string;
                   bio?: string;
                   linked_profiles?: unknown;
                 }
               | undefined);
 
+          const metadataOrganizationId = meta?.organization_id || meta?.org_id || meta?.workspace_id || null;
           const metadataCompanyName = meta?.company_name || 'Verified Organisation';
-          const metadataWorkspaceUsername = meta?.slug || 'workspace';
+          const metadataWorkspaceUsername = meta?.slug || meta?.org_username || 'workspace';
 
+          setCurrentOrganizationId(metadataOrganizationId);
           setCompanyName(metadataCompanyName);
           setWorkspaceUsername(metadataWorkspaceUsername);
+          setActiveWorkspace({
+            id: metadataOrganizationId,
+            title: metadataCompanyName,
+            slug: metadataWorkspaceUsername,
+          });
           setBioState(meta?.bio ?? '');
           setLinkedProfilesState(normalizeLinkedProfiles(meta?.linked_profiles));
 
@@ -638,15 +675,24 @@ export default function OrganizationDashboard() {
           }
 
           const organization =
+            (await resolveOrganizationBy('id', metadataOrganizationId)) ||
             (await resolveOrganizationBy('id', activeUser.id)) ||
             (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
           if (organization && active) {
+            const resolvedWorkspaceTitle = organization.company_name || metadataCompanyName;
+            const resolvedWorkspaceSlug = organization.slug || metadataWorkspaceUsername;
+
             setCurrentOrganizationId(organization.id);
             setOrganizationRecord(organization);
-            setCompanyName(organization.company_name || metadataCompanyName);
-            setWorkspaceUsername(organization.slug || metadataWorkspaceUsername);
+            setCompanyName(resolvedWorkspaceTitle);
+            setWorkspaceUsername(resolvedWorkspaceSlug);
+            setActiveWorkspace({
+              id: organization.id,
+              title: resolvedWorkspaceTitle,
+              slug: resolvedWorkspaceSlug,
+            });
             setBioState(organization.bio ?? '');
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
@@ -698,17 +744,17 @@ export default function OrganizationDashboard() {
         <div>
           <div className="mb-10 rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#191336] via-[#070a1e] to-[#030512] p-4">
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-purple-500/30 bg-purple-950/40 text-sm font-bold tracking-widest text-purple-200">
-              {companyName ? companyName.substring(0, 2).toUpperCase() : 'HQ'}
+              {sidebarCompanyName ? sidebarCompanyName.substring(0, 2).toUpperCase() : 'HQ'}
             </div>
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Workspace Profile</p>
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-purple-300">
               Verified Organisation
             </p>
             <h1 className="mt-4 truncate text-lg font-semibold tracking-tight text-white">
-              {isLoading ? 'Loading...' : companyName}
+              {isLoading ? 'Loading...' : sidebarCompanyName}
             </h1>
-            {workspaceUsername ? (
-              <p className="mt-1 truncate text-[11px] font-medium text-slate-500">@{workspaceUsername}</p>
+            {sidebarWorkspaceUsername ? (
+              <p className="mt-1 truncate text-[11px] font-medium text-slate-500">@{sidebarWorkspaceUsername}</p>
             ) : null}
           </div>
 

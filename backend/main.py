@@ -408,7 +408,7 @@ async def my_pending_invitations(request: Request):
         supabase = get_supabase_backend_client()
         result = (
             supabase.table("organization_invitations")
-            .select("*, organization:organizations(name, slug)")
+            .select("*, organizations(*)")
             .eq("invited_profile_id", profile_id)
             .eq("status", "pending")
             .order("created_at", desc=True)
