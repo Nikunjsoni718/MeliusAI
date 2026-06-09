@@ -642,7 +642,7 @@ export default function OrganizationDashboard() {
                 }
               | undefined);
 
-          const metadataOrganizationId = meta?.organization_id || meta?.org_id || meta?.workspace_id || activeUser.id;
+          const metadataOrganizationId = meta?.organization_id || meta?.org_id || meta?.workspace_id || null;
           const metadataCompanyName = meta?.company_name || 'Verified Organisation';
           const metadataWorkspaceUsername = meta?.slug || meta?.org_username || 'workspace';
 
@@ -678,7 +678,6 @@ export default function OrganizationDashboard() {
 
           const organization =
             (await resolveOrganizationBy('id', metadataOrganizationId)) ||
-            (await resolveOrganizationBy('id', activeUser.id)) ||
             (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
