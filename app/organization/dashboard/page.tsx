@@ -343,6 +343,7 @@ export default function OrganizationDashboard() {
       setSearchResult(verificationData.user);
       setIsModalOpen(true);
       setSearchError('');
+      setInviteDispatchError('');
     } catch (error) {
       console.error('Error searching workspace member profiles:', error);
       setSearchError(
@@ -416,14 +417,15 @@ export default function OrganizationDashboard() {
 
   async function handleSendInvitationToWorkspace() {
     // Organization validation belongs only to the modal invitation action.
+    const organization = activeOrganization;
+    const currentOrg = activeWorkspace;
+    console.log('--- FRONTEND DEBUG: Current Organization State Object ---', organization || currentOrg);
+
     setSearchError('');
     setInviteDispatchError('');
-    const currentOrganizationIdForInvite =
-      [activeWorkspace.id, activeOrganization?.id, currentOrganizationId].find(
-        (candidate): candidate is string => Boolean(candidate?.trim()),
-      ) ?? null;
+    const orgId = organization?.id || currentOrg?.id || activeWorkspace?.id || currentOrganizationId || currentUserId;
 
-    if (!currentOrganizationIdForInvite) {
+    if (!orgId) {
       setInviteDispatchError(
         'Error: No active organization ID found to tie this invitation to. Refresh the dashboard after the workspace finishes loading, then try again.',
       );
@@ -444,7 +446,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          organization_id: currentOrganizationIdForInvite,
+          organization_id: orgId,
           invited_profile_id: searchResult.id,
         }),
       });
@@ -640,7 +642,7 @@ export default function OrganizationDashboard() {
                 }
               | undefined);
 
-          const metadataOrganizationId = meta?.organization_id || meta?.org_id || meta?.workspace_id || null;
+          const metadataOrganizationId = meta?.organization_id || meta?.org_id || meta?.workspace_id || activeUser.id;
           const metadataCompanyName = meta?.company_name || 'Verified Organisation';
           const metadataWorkspaceUsername = meta?.slug || meta?.org_username || 'workspace';
 
