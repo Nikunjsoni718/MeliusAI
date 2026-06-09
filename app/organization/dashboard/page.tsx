@@ -423,9 +423,9 @@ export default function OrganizationDashboard() {
 
     setSearchError('');
     setInviteDispatchError('');
-    const orgId = organization?.id || currentOrg?.id || activeWorkspace?.id || currentOrganizationId || currentUserId;
+    const organizationIdForInvite = resolvedOrganizationId;
 
-    if (!orgId) {
+    if (!organizationIdForInvite) {
       setInviteDispatchError(
         'Error: No active organization ID found to tie this invitation to. Refresh the dashboard after the workspace finishes loading, then try again.',
       );
@@ -446,7 +446,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          organization_id: orgId,
+          organization_id: organizationIdForInvite,
           invited_profile_id: searchResult.id,
         }),
       });

@@ -379,6 +379,7 @@ def parse_supabase_timestamp(value):
 async def invite_member(request: Request):
     try:
         data = await request.json()
+        print(f"--- DEBUG: Incoming Invite Payload Data: {data} ---")
         org_id = data.get("organization_id")
         profile_id = data.get("invited_profile_id")
 
