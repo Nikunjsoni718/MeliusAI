@@ -1,6 +1,8 @@
 import os
 import base64
+import smtplib
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -392,6 +394,76 @@ async def invite_member(request: Request):
             "invited_profile_id": profile_id,
             "status": "pending"
         }).execute()
+
+        try:
+            organization_result = (
+                supabase.table("organizations")
+                .select("*")
+                .eq("id", org_id)
+                .limit(1)
+                .execute()
+            )
+            profile_result = (
+                supabase.table("profiles")
+                .select("*")
+                .eq("id", profile_id)
+                .limit(1)
+                .execute()
+            )
+
+            organization_row = (organization_result.data or [{}])[0]
+            profile_row = (profile_result.data or [{}])[0]
+            org_name = (
+                organization_row.get("company_name")
+                or organization_row.get("name")
+                or organization_row.get("display_name")
+                or organization_row.get("slug")
+                or "this organization"
+            )
+            recipient_email = (
+                profile_row.get("email")
+                or profile_row.get("contact_email")
+                or profile_row.get("work_email")
+                or profile_row.get("user_email")
+            )
+            dispatch_email = os.getenv("EMAIL_ADDRESS")
+            dispatch_password = os.getenv("EMAIL_PASSWORD")
+            frontend_url = (os.getenv("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+
+            if not recipient_email:
+                print("--- INVITATION EMAIL SKIPPED: Invited profile has no email field. ---")
+            elif not dispatch_email or not dispatch_password:
+                print("--- INVITATION EMAIL SKIPPED: EMAIL_ADDRESS or EMAIL_PASSWORD is not configured. ---")
+            else:
+                email_message = EmailMessage()
+                email_message["From"] = f"MeliusAI Workspaces <{dispatch_email}>"
+                email_message["To"] = recipient_email
+                email_message["Subject"] = f"🏢 Collaboration Invitation to join {org_name} on MeliusAI"
+                email_message.set_content(
+                    f"Hello,\n\n"
+                    f"You have been formally invited to join the {org_name} workspace group on MeliusAI "
+                    f"as a collaborator.\n\n"
+                    f"This entry link will remain valid for the next 24 hours.\n\n"
+                    f"View and Respond to Invite: {frontend_url}/profile"
+                )
+                email_message.add_alternative(
+                    f"""
+                    <h3>MeliusAI Workspace Notification</h3>
+                    <p>Hello,</p>
+                    <p>You have been formally invited to join the <strong>{org_name}</strong> workspace group on MeliusAI as a collaborator.</p>
+                    <p>This entry link will remain valid for the next 24 hours.</p>
+                    <br />
+                    <a href='{frontend_url}/profile' style='background:#6d28d9;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;'>View and Respond to Invite</a>
+                    """,
+                    subtype="html",
+                )
+
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp_server:
+                    smtp_server.login(dispatch_email, dispatch_password)
+                    smtp_server.send_message(email_message)
+        except Exception as email_error:
+            print(f"--- INVITATION EMAIL ERROR: {str(email_error)} ---")
+
         return {"success": True, "message": "Invitation successfully dispatched."}
     except Exception as e:
         print(f"--- INVITATION ERROR: {str(e)} ---")

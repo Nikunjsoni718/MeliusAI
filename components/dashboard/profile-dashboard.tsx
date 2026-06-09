@@ -72,6 +72,9 @@ type WorkspaceInvitationItem = {
   expires_at?: string | null;
   organizations?: {
     name?: string | null;
+    company_name?: string | null;
+    display_name?: string | null;
+    title?: string | null;
     slug?: string | null;
   } | null;
   organization?: {
@@ -1591,6 +1594,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     }
 
     setIsLoadingInvites(true);
+    setInvitationActionMessage(null);
 
     try {
       const response = await fetch(
@@ -3190,6 +3194,9 @@ Return Markdown sections for goods, bads, project description, and a final score
                         {invitations.map((invitation) => {
                           const organizationName =
                             invitation.organizations?.name ||
+                            invitation.organizations?.company_name ||
+                            invitation.organizations?.display_name ||
+                            invitation.organizations?.title ||
                             invitation.organization?.name ||
                             invitation.organization?.display_name ||
                             invitation.organization?.company_name ||
