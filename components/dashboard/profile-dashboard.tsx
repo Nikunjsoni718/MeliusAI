@@ -70,7 +70,12 @@ type WorkspaceInvitationItem = {
   invited_profile_id: string;
   status: string;
   expires_at?: string | null;
+  organizations?: {
+    name?: string | null;
+    slug?: string | null;
+  } | null;
   organization?: {
+    name?: string | null;
     display_name?: string | null;
     company_name?: string | null;
     slug?: string | null;
@@ -1429,7 +1434,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [invitations, setInvitations] = useState<WorkspaceInvitationItem[]>([]);
-  const [loadingInvites, setLoadingInvites] = useState(true);
+  const [isLoadingInvites, setIsLoadingInvites] = useState(true);
   const [invitationActionMessage, setInvitationActionMessage] = useState<string | null>(null);
   const [respondingInviteId, setRespondingInviteId] = useState<string | null>(null);
   const [invitationNowMs, setInvitationNowMs] = useState(() => Date.now());
@@ -1578,14 +1583,14 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     return activeUser.id;
   }, [supabase]);
 
-  const fetchMyInvitations = useCallback(async () => {
+  const loadUserInvitations = useCallback(async () => {
     if (!currentUser?.id) {
       setInvitations([]);
-      setLoadingInvites(false);
+      setIsLoadingInvites(false);
       return;
     }
 
-    setLoadingInvites(true);
+    setIsLoadingInvites(true);
 
     try {
       const response = await fetch(
@@ -1607,7 +1612,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       setInvitations([]);
       setInvitationActionMessage(error instanceof Error ? error.message : 'Unable to load workspace invitations.');
     } finally {
-      setLoadingInvites(false);
+      setIsLoadingInvites(false);
     }
   }, [currentUser?.id]);
 
@@ -1637,7 +1642,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           ? data.message || 'Workspace invitation accepted successfully.'
           : 'Invitation declined.',
       );
-      await fetchMyInvitations();
+      if (responseValue === 'yes') {
+        window.alert(data.message || 'Successfully joined workspace!');
+      }
+      await loadUserInvitations();
     } catch (error) {
       console.error('Unable to respond to workspace invitation:', error);
       setInvitationActionMessage(error instanceof Error ? error.message : 'Unable to respond to invitation.');
@@ -1661,8 +1669,8 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       return;
     }
 
-    void fetchMyInvitations();
-  }, [fetchMyInvitations, loading]);
+    void loadUserInvitations();
+  }, [loadUserInvitations, loading]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -3164,7 +3172,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                       </div>
                     ) : null}
 
-                    {loadingInvites ? (
+                    {isLoadingInvites ? (
                       <div className="mt-5 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-5">
                         <div className="animate-pulse space-y-3">
                           <div className="h-4 w-40 rounded-full bg-white/10" />
@@ -3173,18 +3181,24 @@ Return Markdown sections for goods, bads, project description, and a final score
                       </div>
                     ) : invitations.length === 0 ? (
                       <div className="mt-5 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-6 text-center">
-                        <p className="text-base font-semibold text-white">No active workspace invitations.</p>
-                        <p className="mt-2 text-sm text-slate-400">You are completely caught up!</p>
+                        <p className="text-base font-semibold text-white">
+                          No active workspace invitations. You&apos;re completely up to date!
+                        </p>
                       </div>
                     ) : (
                       <div className="mt-5 space-y-4">
                         {invitations.map((invitation) => {
                           const organizationName =
+                            invitation.organizations?.name ||
+                            invitation.organization?.name ||
                             invitation.organization?.display_name ||
                             invitation.organization?.company_name ||
+                            invitation.organizations?.slug ||
                             invitation.organization?.slug ||
                             'A verified organization';
                           const isResponding = respondingInviteId === invitation.id;
+                          const countdownText = formatInvitationCountdown(invitation.expires_at, invitationNowMs);
+                          const isExpired = countdownText === 'Expired';
 
                           return (
                             <div
@@ -3192,11 +3206,18 @@ Return Markdown sections for goods, bads, project description, and a final score
                               className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-5"
                             >
                               <p className="text-sm leading-6 text-slate-200">
-                                🏢 {organizationName} has invited you to collaborate in their workspace.
+                                🏢 {organizationName} has invited you to collaborate in their team workspace.
                               </p>
-                              <p className="mt-2 text-xs font-medium text-slate-500">
-                                {formatInvitationCountdown(invitation.expires_at, invitationNowMs)}
-                              </p>
+                              <span
+                                className={cn(
+                                  'mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-bold',
+                                  isExpired
+                                    ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
+                                    : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                                )}
+                              >
+                                {countdownText}
+                              </span>
                               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                                 <button
                                   type="button"

@@ -377,98 +377,44 @@ def parse_supabase_timestamp(value):
 
 @app.post("/api/invite-member")
 async def invite_member(request: Request):
-    data = await request.json()
-    org_id = data.get("organization_id")
-    profile_id = data.get("invited_profile_id")
-
-    if not org_id or not profile_id:
-        return {"success": False, "message": "organization_id and invited_profile_id are required."}
-
-    supabase = get_supabase_backend_client()
-
     try:
+        data = await request.json()
+        org_id = data.get("organization_id")
+        profile_id = data.get("invited_profile_id")
+
+        if not org_id or not profile_id:
+            return {"success": False, "message": "Invalid Organization or User identification token."}
+
+        supabase = get_supabase_backend_client()
         supabase.table("organization_invitations").insert({
             "organization_id": org_id,
             "invited_profile_id": profile_id,
             "status": "pending"
         }).execute()
-        return {"success": True, "message": "Invitation dispatched successfully."}
+        return {"success": True, "message": "Invitation successfully dispatched."}
     except Exception as e:
         print(f"--- INVITATION ERROR: {str(e)} ---")
-        return {
-            "success": False,
-            "message": "Failed to issue invitation: Invalid or missing Organization identification identifier."
-        }
+        return {"success": False, "message": "Invalid Organization or User identification token."}
 
 
 @app.get("/api/my-pending-invitations")
 async def my_pending_invitations(request: Request):
-    profile_id = request.query_params.get("profile_id") or request.headers.get("x-profile-id")
+    profile_id = request.query_params.get("profile_id")
 
     if not profile_id:
         return {"success": False, "message": "profile_id is required.", "invitations": []}
 
-    supabase = get_supabase_backend_client()
-
     try:
-        invitation_result = (
+        supabase = get_supabase_backend_client()
+        result = (
             supabase.table("organization_invitations")
-            .select("*")
+            .select("*, organization:organizations(name, slug)")
             .eq("invited_profile_id", profile_id)
             .eq("status", "pending")
             .order("created_at", desc=True)
             .execute()
         )
-        invitations = invitation_result.data or []
-        organization_ids = [
-            invitation.get("organization_id")
-            for invitation in invitations
-            if invitation.get("organization_id")
-        ]
-        organizations_by_id = {}
-
-        if organization_ids:
-            organizations_result = (
-                supabase.table("organizations")
-                .select("id, company_name, slug")
-                .in_("id", organization_ids)
-                .execute()
-            )
-            organizations_by_id = {
-                organization.get("id"): organization
-                for organization in (organizations_result.data or [])
-                if organization.get("id")
-            }
-
-        hydrated_invitations = []
-        now = datetime.now(timezone.utc)
-
-        for invitation in invitations:
-            output_invitation = dict(invitation)
-            expires_at = parse_supabase_timestamp(invitation.get("expires_at"))
-
-            if invitation.get("status") == "pending" and expires_at and now > expires_at:
-                try:
-                    supabase.table("organization_invitations").update({"status": "expired"}).eq("id", invitation.get("id")).execute()
-                except Exception as update_error:
-                    print(f"--- WARNING: Failed to update expired incoming invitation {invitation.get('id')}: {update_error} ---")
-
-                continue
-
-            organization = organizations_by_id.get(invitation.get("organization_id"))
-
-            if organization:
-                display_name = organization.get("company_name") or organization.get("slug") or "Verified Organisation"
-                output_invitation["organization"] = {
-                    **organization,
-                    "display_name": display_name,
-                }
-            else:
-                output_invitation["organization"] = None
-
-            hydrated_invitations.append(output_invitation)
-
-        return {"success": True, "invitations": hydrated_invitations}
+        return {"success": True, "invitations": result.data or []}
     except Exception as e:
         print(f"--- PENDING INVITATIONS ERROR: {str(e)} ---")
         return {"success": False, "message": "Unable to load pending invitations.", "invitations": []}
@@ -547,22 +493,21 @@ async def cancel_invitation(request: Request):
 
 @app.post("/api/respond-invitation")
 async def respond_invitation(request: Request):
-    data = await request.json()
-    invitation_id = data.get("invitation_id")
-    response = str(data.get("response", "")).strip().lower()
-
-    if not invitation_id:
-        return {"success": False, "message": "invitation_id is required."}
-
-    if response not in ["yes", "no"]:
-        return {"success": False, "message": "response must be either 'yes' or 'no'."}
-
-    supabase = get_supabase_backend_client()
-
     try:
+        data = await request.json()
+        invitation_id = data.get("invitation_id")
+        response = str(data.get("response", "")).strip().lower()
+
+        if not invitation_id:
+            return {"success": False, "message": "invitation_id is required."}
+
+        if response not in ["yes", "no"]:
+            return {"success": False, "message": "response must be either 'yes' or 'no'."}
+
+        supabase = get_supabase_backend_client()
         invitation_result = (
             supabase.table("organization_invitations")
-            .select("*")
+            .select("organization_id, invited_profile_id, expires_at")
             .eq("id", invitation_id)
             .execute()
         )
@@ -574,9 +519,19 @@ async def respond_invitation(request: Request):
         invitation = invitations[0]
         organization_id = invitation.get("organization_id")
         invited_profile_id = invitation.get("invited_profile_id")
+        expires_at = parse_supabase_timestamp(invitation.get("expires_at"))
 
         if not organization_id or not invited_profile_id:
             return {"success": False, "message": "Invitation is missing organization or profile identifiers."}
+
+        if expires_at and datetime.now(timezone.utc) > expires_at:
+            (
+                supabase.table("organization_invitations")
+                .update({"status": "expired"})
+                .eq("id", invitation_id)
+                .execute()
+            )
+            return {"success": False, "message": "This workspace invitation has expired."}
 
         if response == "no":
             (
@@ -585,7 +540,7 @@ async def respond_invitation(request: Request):
                 .eq("id", invitation_id)
                 .execute()
             )
-            return {"success": True, "message": "Invitation declined safely."}
+            return {"success": True, "message": "Invitation declined."}
 
         (
             supabase.table("organization_invitations")
@@ -594,19 +549,12 @@ async def respond_invitation(request: Request):
             .execute()
         )
 
-        try:
-            supabase.table("organization_members").insert({
-                "organization_id": organization_id,
-                "profile_id": invited_profile_id,
-            }).execute()
-        except Exception as profile_id_error:
-            print(f"--- ORGANIZATION MEMBER profile_id INSERT ERROR: {str(profile_id_error)} ---")
-            supabase.table("organization_members").insert({
-                "organization_id": organization_id,
-                "invited_profile_id": invited_profile_id,
-            }).execute()
+        supabase.table("organization_members").insert({
+            "organization_id": organization_id,
+            "invited_profile_id": invited_profile_id,
+        }).execute()
 
-        return {"success": True, "message": "Successfully joined the organization!"}
+        return {"success": True, "message": "Successfully joined workspace!"}
     except Exception as e:
         print(f"--- INVITATION RESPONSE ERROR: {str(e)} ---")
         return {"success": False, "message": "Unable to process invitation response safely."}
