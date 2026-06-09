@@ -430,7 +430,7 @@ async def my_pending_invitations(request: Request):
         if organization_ids:
             organizations_result = (
                 supabase.table("organizations")
-                .select("id, company_name, org_username")
+                .select("id, company_name, slug")
                 .in_("id", organization_ids)
                 .execute()
             )
@@ -458,7 +458,7 @@ async def my_pending_invitations(request: Request):
             organization = organizations_by_id.get(invitation.get("organization_id"))
 
             if organization:
-                display_name = organization.get("company_name") or organization.get("org_username") or "Verified Organisation"
+                display_name = organization.get("company_name") or organization.get("slug") or "Verified Organisation"
                 output_invitation["organization"] = {
                     **organization,
                     "display_name": display_name,

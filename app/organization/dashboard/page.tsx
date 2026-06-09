@@ -37,7 +37,7 @@ type OrganizationInvitation = {
   organization?: {
     id?: string | null;
     company_name?: string | null;
-    org_username?: string | null;
+    slug?: string | null;
     display_name?: string | null;
   } | null;
 };
@@ -55,7 +55,7 @@ type MemberVerificationResponse =
 type OrganizationRecord = {
   id: string | null;
   company_name?: string | null;
-  org_username?: string | null;
+  slug?: string | null;
   bio: string | null;
   linked_profiles: unknown;
 };
@@ -163,10 +163,10 @@ export default function OrganizationDashboard() {
   const [memberPanelTab, setMemberPanelTab] = useState<'members' | 'invitations'>('members');
   const [invitationError, setInvitationError] = useState('');
   const [invitationLoading, setInvitationLoading] = useState(false);
-  const [incomingInvite, setIncomingInvite] = useState<OrganizationInvitation | null>(null);
-  const [showInvitePopup, setShowInvitePopup] = useState(false);
   const [inviteResponseLoading, setInviteResponseLoading] = useState(false);
   const [inviteResponseMessage, setInviteResponseMessage] = useState('');
+  const [notifications, setNotifications] = useState<OrganizationInvitation[]>([]);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
   // The sidebar and invitation pipeline share this active organization row.
   const activeOrganization = organizationRecord;
@@ -375,7 +375,7 @@ export default function OrganizationDashboard() {
     }
   }, [resolvedOrganizationId]);
 
-  const fetchIncomingInvitations = useCallback(async () => {
+  const fetchUserNotifications = useCallback(async () => {
     if (!currentUserId) {
       return;
     }
@@ -394,17 +394,10 @@ export default function OrganizationDashboard() {
         throw new Error(data.message || `Pending invitation fetch failed with status ${response.status}.`);
       }
 
-      const firstPendingInvite = Array.isArray(data.invitations) ? data.invitations[0] : null;
-
-      if (firstPendingInvite) {
-        setIncomingInvite(firstPendingInvite);
-        setShowInvitePopup(true);
-      } else {
-        setIncomingInvite(null);
-        setShowInvitePopup(false);
-      }
+      setNotifications(Array.isArray(data.invitations) ? data.invitations : []);
     } catch (error) {
       console.error('Unable to load incoming organization invitations:', error);
+      setNotifications([]);
     }
   }, [currentUserId]);
 
@@ -482,8 +475,8 @@ export default function OrganizationDashboard() {
     }
   }
 
-  async function handleRespondToIncomingInvitation(responseValue: 'yes' | 'no') {
-    if (!incomingInvite?.id) {
+  async function handleRespondToIncomingInvitation(invitationId: string, responseValue: 'yes' | 'no') {
+    if (!invitationId) {
       return;
     }
 
@@ -497,7 +490,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          invitation_id: incomingInvite.id,
+          invitation_id: invitationId,
           response: responseValue,
         }),
       });
@@ -507,12 +500,15 @@ export default function OrganizationDashboard() {
         throw new Error(data.message || `Invitation response failed with status ${response.status}.`);
       }
 
-      setShowInvitePopup(false);
-      setIncomingInvite(null);
+      setNotifications((currentNotifications) =>
+        currentNotifications.filter((notification) => notification.id !== invitationId),
+      );
 
       if (responseValue === 'yes') {
         setInviteResponseMessage(data.message || 'Successfully joined the organization!');
         await fetchInvitations();
+      } else {
+        setInviteResponseMessage('');
       }
     } catch (error) {
       console.error('Unable to respond to incoming invitation:', error);
@@ -598,7 +594,7 @@ export default function OrganizationDashboard() {
           const sessionUser = activeUser as typeof activeUser & {
             raw_user_meta_data?: {
               company_name?: string;
-              org_username?: string;
+              slug?: string;
               bio?: string;
               linked_profiles?: unknown;
             };
@@ -608,14 +604,14 @@ export default function OrganizationDashboard() {
             (sessionUser.user_metadata as
               | {
                   company_name?: string;
-                  org_username?: string;
+                  slug?: string;
                   bio?: string;
                   linked_profiles?: unknown;
                 }
               | undefined);
 
           const metadataCompanyName = meta?.company_name || 'Verified Organisation';
-          const metadataWorkspaceUsername = meta?.org_username || 'workspace';
+          const metadataWorkspaceUsername = meta?.slug || 'workspace';
 
           setCompanyName(metadataCompanyName);
           setWorkspaceUsername(metadataWorkspaceUsername);
@@ -629,7 +625,7 @@ export default function OrganizationDashboard() {
 
             const { data, error } = await getOrganizationClient()
               .from('organizations')
-              .select('id, company_name, org_username, bio, linked_profiles')
+              .select('id, company_name, slug, bio, linked_profiles')
               .eq(column, value)
               .maybeSingle();
 
@@ -643,8 +639,6 @@ export default function OrganizationDashboard() {
 
           const organization =
             (await resolveOrganizationBy('id', activeUser.id)) ||
-            (await resolveOrganizationBy('org_username', metadataWorkspaceUsername)) ||
-            (await resolveOrganizationBy('username', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
@@ -652,7 +646,7 @@ export default function OrganizationDashboard() {
             setCurrentOrganizationId(organization.id);
             setOrganizationRecord(organization);
             setCompanyName(organization.company_name || metadataCompanyName);
-            setWorkspaceUsername(organization.org_username || metadataWorkspaceUsername);
+            setWorkspaceUsername(organization.slug || metadataWorkspaceUsername);
             setBioState(organization.bio ?? '');
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
@@ -678,8 +672,8 @@ export default function OrganizationDashboard() {
   }, [fetchInvitations]);
 
   useEffect(() => {
-    void fetchIncomingInvitations();
-  }, [fetchIncomingInvitations]);
+    void fetchUserNotifications();
+  }, [fetchUserNotifications]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -771,13 +765,87 @@ export default function OrganizationDashboard() {
       <main className="flex-1 h-screen overflow-y-auto bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512] p-8 md:p-10">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
           <header className="rounded-[2rem] border border-slate-800/60 bg-[#060817]/50 p-7 backdrop-blur-xl">
-            <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-purple-300">Enterprise Overview</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-tight text-white md:text-5xl">
-              Welcome back, {companyName || 'Organization'}
-            </h2>
-            <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">
-              Here is your organization&apos;s talent pipeline tracking metrics for today.
-            </p>
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-purple-300">Enterprise Overview</p>
+                <h2 className="mt-4 text-4xl font-semibold tracking-tight text-white md:text-5xl">
+                  Welcome back, {companyName || 'Organization'}
+                </h2>
+                <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">
+                  Here is your organization&apos;s talent pipeline tracking metrics for today.
+                </p>
+              </div>
+
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsNotifOpen((current) => !current)}
+                  className="relative rounded-2xl border border-slate-800/70 bg-slate-950/50 px-4 py-3 text-xs font-semibold text-slate-300 transition-all hover:border-purple-400/40 hover:bg-slate-900/80 hover:text-white"
+                >
+                  🔔 Notifications
+                  {notifications.length > 0 ? (
+                    <span className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white shadow-lg shadow-rose-950/30">
+                      {notifications.length}
+                    </span>
+                  ) : null}
+                </button>
+
+                {isNotifOpen ? (
+                  <div className="absolute right-0 top-full z-50 mt-3 w-80 rounded-xl border border-slate-800/70 bg-slate-950 p-4 shadow-2xl shadow-black/40">
+                    <div className="mb-3 flex items-center justify-between border-b border-slate-800/70 pb-3">
+                      <h3 className="text-sm font-semibold text-white">Notifications</h3>
+                      <span className="rounded-full border border-purple-500/30 bg-purple-950/30 px-2.5 py-1 text-[10px] font-bold text-purple-200">
+                        {notifications.length} unread
+                      </span>
+                    </div>
+
+                    {notifications.length === 0 ? (
+                      <p className="rounded-lg border border-slate-900/70 bg-[#040615]/70 p-4 text-xs text-slate-500">
+                        You&apos;re all caught up! No new notifications.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {notifications.map((notification) => {
+                          const organizationName =
+                            notification.organization?.display_name ||
+                            notification.organization?.company_name ||
+                            'A verified organization';
+
+                          return (
+                            <div
+                              key={notification.id}
+                              className="rounded-xl border border-slate-900/80 bg-[#040615]/80 p-3"
+                            >
+                              <p className="text-xs leading-5 text-slate-300">
+                                🏢 {organizationName} has invited you to join their workspace.
+                              </p>
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRespondToIncomingInvitation(notification.id, 'yes')}
+                                  disabled={inviteResponseLoading}
+                                  className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-semibold text-white transition-all hover:bg-emerald-500 disabled:bg-emerald-950 disabled:text-slate-500"
+                                >
+                                  Yes, Join
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRespondToIncomingInvitation(notification.id, 'no')}
+                                  disabled={inviteResponseLoading}
+                                  className="flex-1 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] font-semibold text-slate-300 transition-all hover:border-rose-500/40 hover:text-rose-300 disabled:text-slate-600"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </div>
             {inviteResponseMessage ? (
               <p className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3 text-xs font-medium text-emerald-300">
                 {inviteResponseMessage}
@@ -1111,58 +1179,6 @@ export default function OrganizationDashboard() {
             </section>
           ) : null}
 
-          {showInvitePopup && incomingInvite ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md">
-              <div className="relative w-full max-w-lg rounded-3xl border border-slate-800/70 bg-slate-950 p-7 text-center shadow-2xl shadow-purple-950/30">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowInvitePopup(false);
-                    setIncomingInvite(null);
-                  }}
-                  className="absolute right-4 top-4 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
-                >
-                  X
-                </button>
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-purple-500/30 bg-purple-950/40 text-2xl">
-                  🏢
-                </div>
-                <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.2em] text-purple-300">
-                  Workspace Invitation
-                </p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                  {incomingInvite.organization?.display_name ||
-                    incomingInvite.organization?.company_name ||
-                    'A verified organization'}{' '}
-                  has invited you to collaborate in their workspace.
-                </h3>
-                <p className="mt-4 text-sm leading-6 text-slate-400">
-                  Would you like to accept this invitation and join their official organization roster?
-                </p>
-                <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleRespondToIncomingInvitation('yes')}
-                    disabled={inviteResponseLoading}
-                    className="rounded-xl bg-purple-600 px-5 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
-                  >
-                    {inviteResponseLoading ? 'Processing...' : 'YES / JOIN'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleRespondToIncomingInvitation('no')}
-                    disabled={inviteResponseLoading}
-                    className="rounded-xl border border-slate-800/80 bg-slate-900/40 px-5 py-3 text-xs font-semibold text-slate-300 transition-all hover:border-slate-700 hover:text-white disabled:text-slate-600"
-                  >
-                    NO / DECLINE
-                  </button>
-                </div>
-                {inviteResponseMessage ? (
-                  <p className="mt-4 text-xs font-medium text-slate-400">{inviteResponseMessage}</p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
         </div>
       </main>
     </div>
