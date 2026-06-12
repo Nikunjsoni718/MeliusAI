@@ -1,8 +1,6 @@
 import os
 import base64
-import smtplib
 from datetime import datetime, timezone
-from email.message import EmailMessage
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -377,122 +375,6 @@ def parse_supabase_timestamp(value):
         return None
 
 
-@app.post("/api/invite-member")
-async def invite_member(request: Request):
-    try:
-        data = await request.json()
-        print(f"--- DEBUG: Incoming Invite Payload Data: {data} ---")
-        org_id = data.get("organization_id")
-        profile_id = data.get("invited_profile_id")
-
-        if not org_id or not profile_id:
-            return {"success": False, "message": "Invalid Organization or User identification token."}
-
-        supabase = get_supabase_backend_client()
-        supabase.table("organization_invitations").insert({
-            "organization_id": org_id,
-            "invited_profile_id": profile_id,
-            "status": "pending"
-        }).execute()
-
-        try:
-            organization_result = (
-                supabase.table("organizations")
-                .select("*")
-                .eq("id", org_id)
-                .limit(1)
-                .execute()
-            )
-            profile_result = (
-                supabase.table("profiles")
-                .select("*")
-                .eq("id", profile_id)
-                .limit(1)
-                .execute()
-            )
-
-            organization_row = (organization_result.data or [{}])[0]
-            profile_row = (profile_result.data or [{}])[0]
-            org_name = (
-                organization_row.get("company_name")
-                or organization_row.get("name")
-                or organization_row.get("display_name")
-                or organization_row.get("slug")
-                or "this organization"
-            )
-            recipient_email = (
-                profile_row.get("email")
-                or profile_row.get("contact_email")
-                or profile_row.get("work_email")
-                or profile_row.get("user_email")
-            )
-            dispatch_email = os.getenv("EMAIL_ADDRESS")
-            dispatch_password = os.getenv("EMAIL_PASSWORD")
-            frontend_url = (os.getenv("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
-
-            if not recipient_email:
-                print("--- INVITATION EMAIL SKIPPED: Invited profile has no email field. ---")
-            elif not dispatch_email or not dispatch_password:
-                print("--- INVITATION EMAIL SKIPPED: EMAIL_ADDRESS or EMAIL_PASSWORD is not configured. ---")
-            else:
-                email_message = EmailMessage()
-                email_message["From"] = f"MeliusAI Workspaces <{dispatch_email}>"
-                email_message["To"] = recipient_email
-                email_message["Subject"] = f"🏢 Collaboration Invitation to join {org_name} on MeliusAI"
-                email_message.set_content(
-                    f"Hello,\n\n"
-                    f"You have been formally invited to join the {org_name} workspace group on MeliusAI "
-                    f"as a collaborator.\n\n"
-                    f"This entry link will remain valid for the next 24 hours.\n\n"
-                    f"View and Respond to Invite: {frontend_url}/profile"
-                )
-                email_message.add_alternative(
-                    f"""
-                    <h3>MeliusAI Workspace Notification</h3>
-                    <p>Hello,</p>
-                    <p>You have been formally invited to join the <strong>{org_name}</strong> workspace group on MeliusAI as a collaborator.</p>
-                    <p>This entry link will remain valid for the next 24 hours.</p>
-                    <br />
-                    <a href='{frontend_url}/profile' style='background:#6d28d9;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;'>View and Respond to Invite</a>
-                    """,
-                    subtype="html",
-                )
-
-                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp_server:
-                    smtp_server.login(dispatch_email, dispatch_password)
-                    smtp_server.send_message(email_message)
-        except Exception as email_error:
-            print(f"--- INVITATION EMAIL ERROR: {str(email_error)} ---")
-
-        return {"success": True, "message": "Invitation successfully dispatched."}
-    except Exception as e:
-        print(f"--- INVITATION ERROR: {str(e)} ---")
-        return {"success": False, "message": "Invalid Organization or User identification token."}
-
-
-@app.get("/api/my-pending-invitations")
-async def my_pending_invitations(request: Request):
-    profile_id = request.query_params.get("profile_id")
-
-    if not profile_id:
-        return {"success": False, "message": "profile_id is required.", "invitations": []}
-
-    try:
-        supabase = get_supabase_backend_client()
-        result = (
-            supabase.table("organization_invitations")
-            .select("*, organizations(*)")
-            .eq("invited_profile_id", profile_id)
-            .eq("status", "pending")
-            .order("created_at", desc=True)
-            .execute()
-        )
-        return {"success": True, "invitations": result.data or []}
-    except Exception as e:
-        print(f"--- PENDING INVITATIONS ERROR: {str(e)} ---")
-        return {"success": False, "message": "Unable to load pending invitations.", "invitations": []}
-
-
 @app.get("/api/organization-invitations")
 async def organization_invitations(request: Request):
     organization_id = request.query_params.get("organization_id")
@@ -562,75 +444,6 @@ async def cancel_invitation(request: Request):
     supabase.table("organization_invitations").update({"status": "cancelled"}).eq("id", invitation_id).execute()
 
     return {"success": True, "message": "Invitation cancelled successfully."}
-
-
-@app.post("/api/respond-invitation")
-async def respond_invitation(request: Request):
-    try:
-        data = await request.json()
-        invitation_id = data.get("invitation_id")
-        response = str(data.get("response", "")).strip().lower()
-
-        if not invitation_id:
-            return {"success": False, "message": "invitation_id is required."}
-
-        if response not in ["yes", "no"]:
-            return {"success": False, "message": "response must be either 'yes' or 'no'."}
-
-        supabase = get_supabase_backend_client()
-        invitation_result = (
-            supabase.table("organization_invitations")
-            .select("organization_id, invited_profile_id, expires_at")
-            .eq("id", invitation_id)
-            .execute()
-        )
-        invitations = invitation_result.data or []
-
-        if not invitations:
-            return {"success": False, "message": "Invitation could not be found."}
-
-        invitation = invitations[0]
-        organization_id = invitation.get("organization_id")
-        invited_profile_id = invitation.get("invited_profile_id")
-        expires_at = parse_supabase_timestamp(invitation.get("expires_at"))
-
-        if not organization_id or not invited_profile_id:
-            return {"success": False, "message": "Invitation is missing organization or profile identifiers."}
-
-        if expires_at and datetime.now(timezone.utc) > expires_at:
-            (
-                supabase.table("organization_invitations")
-                .update({"status": "expired"})
-                .eq("id", invitation_id)
-                .execute()
-            )
-            return {"success": False, "message": "This workspace invitation has expired."}
-
-        if response == "no":
-            (
-                supabase.table("organization_invitations")
-                .update({"status": "declined"})
-                .eq("id", invitation_id)
-                .execute()
-            )
-            return {"success": True, "message": "Invitation declined."}
-
-        (
-            supabase.table("organization_invitations")
-            .update({"status": "accepted"})
-            .eq("id", invitation_id)
-            .execute()
-        )
-
-        supabase.table("organization_members").insert({
-            "organization_id": organization_id,
-            "invited_profile_id": invited_profile_id,
-        }).execute()
-
-        return {"success": True, "message": "Successfully joined workspace!"}
-    except Exception as e:
-        print(f"--- INVITATION RESPONSE ERROR: {str(e)} ---")
-        return {"success": False, "message": "Unable to process invitation response safely."}
 
 
 class ChatHistoryRequest(BaseModel):

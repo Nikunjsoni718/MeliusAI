@@ -64,26 +64,6 @@ type JobItem = Pick<JobRow, 'id' | 'company_name' | 'role_title' | 'location' | 
 type UserApplicationItem = Pick<UserApplicationRow, 'id' | 'job_id' | 'status' | 'created_at'>;
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
 type SavedUserProfileItem = Pick<UserRow, 'display_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
-type WorkspaceInvitationItem = {
-  id: string;
-  organization_id: string;
-  invited_profile_id: string;
-  status: string;
-  expires_at?: string | null;
-  organizations?: {
-    name?: string | null;
-    company_name?: string | null;
-    display_name?: string | null;
-    title?: string | null;
-    slug?: string | null;
-  } | null;
-  organization?: {
-    name?: string | null;
-    display_name?: string | null;
-    company_name?: string | null;
-    slug?: string | null;
-  } | null;
-};
 type ProjectAuditSummary = {
   score?: number | null;
   summary: string;
@@ -117,9 +97,6 @@ type UploadState = {
   error?: string;
 };
 
-const MY_PENDING_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/my-pending-invitations`;
-const RESPOND_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/respond-invitation`;
-
 const visibleJobStatuses = ['active', 'Active', 'open', 'Open', 'new', 'New'];
 
 function formatBirthday(value: string | null | undefined) {
@@ -139,30 +116,6 @@ function formatScanDate(value: string) {
     return 'Recent scan';
   }
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function formatInvitationCountdown(expiresAt?: string | null, now = Date.now()) {
-  if (!expiresAt) {
-    return 'Expiration unavailable';
-  }
-
-  const expiresTime = new Date(expiresAt).getTime();
-
-  if (Number.isNaN(expiresTime)) {
-    return 'Expiration unavailable';
-  }
-
-  const remainingMs = expiresTime - now;
-
-  if (remainingMs <= 0) {
-    return 'Expired';
-  }
-
-  const totalMinutes = Math.floor(remainingMs / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  return `Expires in: ${hours} hours, ${minutes} minutes`;
 }
 
 function isPostedInLast48Hours(value: string) {
@@ -1436,11 +1389,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
-  const [invitations, setInvitations] = useState<WorkspaceInvitationItem[]>([]);
-  const [isLoadingInvites, setIsLoadingInvites] = useState(true);
-  const [invitationActionMessage, setInvitationActionMessage] = useState<string | null>(null);
-  const [respondingInviteId, setRespondingInviteId] = useState<string | null>(null);
-  const [invitationNowMs, setInvitationNowMs] = useState(() => Date.now());
   const [bio, setBio] = useState('');
   const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
   const [bioToastMessage, setBioToastMessage] = useState<string | null>(null);
@@ -1586,78 +1534,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     return activeUser.id;
   }, [supabase]);
 
-  const loadUserInvitations = useCallback(async () => {
-    if (!currentUser?.id) {
-      setInvitations([]);
-      setIsLoadingInvites(false);
-      return;
-    }
-
-    setIsLoadingInvites(true);
-    setInvitationActionMessage(null);
-
-    try {
-      const response = await fetch(
-        `${MY_PENDING_INVITATIONS_ENDPOINT}?profile_id=${encodeURIComponent(currentUser.id)}`,
-      );
-      const data = (await response.json()) as {
-        success?: boolean;
-        message?: string;
-        invitations?: WorkspaceInvitationItem[];
-      };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Invitation fetch failed with status ${response.status}.`);
-      }
-
-      setInvitations(Array.isArray(data.invitations) ? data.invitations : []);
-    } catch (error) {
-      console.error('Unable to load workspace invitations:', error);
-      setInvitations([]);
-      setInvitationActionMessage(error instanceof Error ? error.message : 'Unable to load workspace invitations.');
-    } finally {
-      setIsLoadingInvites(false);
-    }
-  }, [currentUser?.id]);
-
-  async function handleInvitationResponse(invitationId: string, responseValue: 'yes' | 'no') {
-    setRespondingInviteId(invitationId);
-    setInvitationActionMessage(null);
-
-    try {
-      const response = await fetch(RESPOND_INVITATION_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          invitation_id: invitationId,
-          response: responseValue,
-        }),
-      });
-      const data = (await response.json()) as { success?: boolean; message?: string };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Invitation response failed with status ${response.status}.`);
-      }
-
-      setInvitationActionMessage(
-        responseValue === 'yes'
-          ? data.message || 'Workspace invitation accepted successfully.'
-          : 'Invitation declined.',
-      );
-      if (responseValue === 'yes') {
-        window.alert(data.message || 'Successfully joined workspace!');
-      }
-      await loadUserInvitations();
-    } catch (error) {
-      console.error('Unable to respond to workspace invitation:', error);
-      setInvitationActionMessage(error instanceof Error ? error.message : 'Unable to respond to invitation.');
-    } finally {
-      setRespondingInviteId(null);
-    }
-  }
-
   useEffect(() => {
     if (loading) {
       return;
@@ -1667,22 +1543,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       router.replace('/auth');
     }
   }, [authEnabled, loading, router, user]);
-
-  useEffect(() => {
-    if (loading) {
-      return;
-    }
-
-    void loadUserInvitations();
-  }, [loadUserInvitations, loading]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setInvitationNowMs(Date.now());
-    }, 60000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -3155,103 +3015,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                 </CardContent>
               </Card>
             </section>
-
-            {isOwner ? (
-              <section className="space-y-4">
-                <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                  <CardContent className="p-6">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-sm text-slate-400">Notifications</p>
-                        <h2 className="mt-1 text-2xl font-semibold text-white">📩 Workspace Invitations</h2>
-                      </div>
-                      <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                        {invitations.length} active
-                      </Badge>
-                    </div>
-
-                    {invitationActionMessage ? (
-                      <div className="mt-4 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4 text-sm text-sky-100">
-                        {invitationActionMessage}
-                      </div>
-                    ) : null}
-
-                    {isLoadingInvites ? (
-                      <div className="mt-5 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-5">
-                        <div className="animate-pulse space-y-3">
-                          <div className="h-4 w-40 rounded-full bg-white/10" />
-                          <div className="h-4 w-64 rounded-full bg-white/5" />
-                        </div>
-                      </div>
-                    ) : invitations.length === 0 ? (
-                      <div className="mt-5 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-6 text-center">
-                        <p className="text-base font-semibold text-white">
-                          No active workspace invitations. You&apos;re completely up to date!
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="mt-5 space-y-4">
-                        {invitations.map((invitation) => {
-                          const organizationName =
-                            invitation.organizations?.name ||
-                            invitation.organizations?.company_name ||
-                            invitation.organizations?.display_name ||
-                            invitation.organizations?.title ||
-                            invitation.organization?.name ||
-                            invitation.organization?.display_name ||
-                            invitation.organization?.company_name ||
-                            invitation.organizations?.slug ||
-                            invitation.organization?.slug ||
-                            'A verified organization';
-                          const isResponding = respondingInviteId === invitation.id;
-                          const countdownText = formatInvitationCountdown(invitation.expires_at, invitationNowMs);
-                          const isExpired = countdownText === 'Expired';
-
-                          return (
-                            <div
-                              key={invitation.id}
-                              className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-5"
-                            >
-                              <p className="text-sm leading-6 text-slate-200">
-                                🏢 {organizationName} has invited you to collaborate in their team workspace.
-                              </p>
-                              <span
-                                className={cn(
-                                  'mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-bold',
-                                  isExpired
-                                    ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
-                                    : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
-                                )}
-                              >
-                                {countdownText}
-                              </span>
-                              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                                <button
-                                  type="button"
-                                  onClick={() => void handleInvitationResponse(invitation.id, 'yes')}
-                                  disabled={isResponding}
-                                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-950 disabled:text-slate-500"
-                                >
-                                  {isResponding ? 'Responding...' : 'YES / ACCEPT'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleInvitationResponse(invitation.id, 'no')}
-                                  disabled={isResponding}
-                                  className="rounded-lg border border-slate-800 bg-slate-900/70 px-4 py-2.5 text-xs font-semibold text-slate-300 transition hover:border-rose-500/40 hover:text-rose-300 disabled:cursor-not-allowed disabled:text-slate-600"
-                                >
-                                  NO / DECLINE
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </section>
-            ) : null}
 
             <section id="my-work-assets" className="space-y-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

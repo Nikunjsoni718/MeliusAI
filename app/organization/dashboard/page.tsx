@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -24,22 +24,6 @@ type MemberSearchUser = {
   full_name?: string | null;
   username?: string | null;
   avatar_url?: string | null;
-};
-
-type OrganizationInvitation = {
-  id: string;
-  organization_id: string;
-  invited_profile_id: string;
-  status: 'pending' | 'accepted' | 'cancelled' | 'declined' | 'expired' | string;
-  created_at?: string | null;
-  expires_at?: string | null;
-  profile?: MemberSearchUser | null;
-  organization?: {
-    id?: string | null;
-    company_name?: string | null;
-    slug?: string | null;
-    display_name?: string | null;
-  } | null;
 };
 
 type MemberVerificationResponse =
@@ -93,11 +77,6 @@ const navItems: Array<{
 ];
 
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
-const INVITE_MEMBER_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/invite-member`;
-const ORGANIZATION_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/organization-invitations`;
-const CANCEL_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/cancel-invitation`;
-const MY_PENDING_INVITATIONS_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/my-pending-invitations`;
-const RESPOND_INVITATION_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/respond-invitation`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -149,8 +128,6 @@ export default function OrganizationDashboard() {
   const router = useRouter();
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [currentOrganizationId, setCurrentOrganizationId] = useState<string | null>(null);
-  const [organizationRecord, setOrganizationRecord] = useState<OrganizationRecord | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<ActiveWorkspaceContext>({
     id: null,
     title: '',
@@ -168,20 +145,7 @@ export default function OrganizationDashboard() {
   const [searchResult, setSearchResult] = useState<MemberSearchUser | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchError, setSearchError] = useState('');
-  const [inviteDispatchError, setInviteDispatchError] = useState('');
   const [isAdding, setIsAdding] = useState<boolean>(false);
-  const [invitations, setInvitations] = useState<OrganizationInvitation[]>([]);
-  const [memberPanelTab, setMemberPanelTab] = useState<'members' | 'invitations'>('members');
-  const [invitationError, setInvitationError] = useState('');
-  const [invitationLoading, setInvitationLoading] = useState(false);
-  const [inviteResponseLoading, setInviteResponseLoading] = useState(false);
-  const [inviteResponseMessage, setInviteResponseMessage] = useState('');
-  const [notifications, setNotifications] = useState<OrganizationInvitation[]>([]);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
-  // The sidebar and invitation pipeline share this active organization row.
-  const activeOrganization = organizationRecord;
-  const resolvedOrganizationId = activeWorkspace.id || activeOrganization?.id || currentOrganizationId;
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
 
@@ -195,46 +159,6 @@ export default function OrganizationDashboard() {
         .join('')
         .toUpperCase() || 'TM'
     );
-  }
-
-  function getInvitationStatusClass(status: string) {
-    if (status === 'accepted') {
-      return 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300';
-    }
-
-    if (status === 'pending') {
-      return 'border-amber-500/30 bg-amber-950/30 text-amber-300';
-    }
-
-    return 'border-rose-500/30 bg-rose-950/30 text-rose-300';
-  }
-
-  function getInvitationTimeRemaining(expiresAt?: string | null) {
-    if (!expiresAt) {
-      return 'Expiration unavailable';
-    }
-
-    const expiresTime = new Date(expiresAt).getTime();
-
-    if (Number.isNaN(expiresTime)) {
-      return 'Expiration unavailable';
-    }
-
-    const remainingMs = expiresTime - currentTimeMs;
-
-    if (remainingMs <= 0) {
-      return 'Expired';
-    }
-
-    const totalMinutes = Math.floor(remainingMs / 60000);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-
-    if (hours <= 0) {
-      return `${minutes}m remaining`;
-    }
-
-    return `${hours}h ${minutes}m remaining`;
   }
 
   function getOrganizationClient() {
@@ -289,7 +213,6 @@ export default function OrganizationDashboard() {
 
   async function handleSearchMember() {
     setSearchError('');
-    setInviteDispatchError('');
 
     const targetQuery = searchQuery.trim();
 
@@ -343,7 +266,6 @@ export default function OrganizationDashboard() {
       setSearchResult(verificationData.user);
       setIsModalOpen(true);
       setSearchError('');
-      setInviteDispatchError('');
     } catch (error) {
       console.error('Error searching workspace member profiles:', error);
       setSearchError(
@@ -355,185 +277,6 @@ export default function OrganizationDashboard() {
       setIsModalOpen(false);
     } finally {
       setIsAdding(false);
-    }
-  }
-
-  const fetchInvitations = useCallback(async () => {
-    if (!resolvedOrganizationId) {
-      return;
-    }
-
-    setInvitationLoading(true);
-    setInvitationError('');
-
-    try {
-      const response = await fetch(
-        `${ORGANIZATION_INVITATIONS_ENDPOINT}?organization_id=${encodeURIComponent(resolvedOrganizationId)}`,
-      );
-      const data = (await response.json()) as {
-        success?: boolean;
-        message?: string;
-        invitations?: OrganizationInvitation[];
-      };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Invitation fetch failed with status ${response.status}.`);
-      }
-
-      setInvitations(Array.isArray(data.invitations) ? data.invitations : []);
-    } catch (error) {
-      console.error('Unable to load organization invitations:', error);
-      setInvitationError(error instanceof Error ? error.message : 'Unable to load invitations.');
-    } finally {
-      setInvitationLoading(false);
-    }
-  }, [resolvedOrganizationId]);
-
-  const fetchUserNotifications = useCallback(async () => {
-    if (!currentUserId) {
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `${MY_PENDING_INVITATIONS_ENDPOINT}?profile_id=${encodeURIComponent(currentUserId)}`,
-      );
-      const data = (await response.json()) as {
-        success?: boolean;
-        message?: string;
-        invitations?: OrganizationInvitation[];
-      };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Pending invitation fetch failed with status ${response.status}.`);
-      }
-
-      setNotifications(Array.isArray(data.invitations) ? data.invitations : []);
-    } catch (error) {
-      console.error('Unable to load incoming organization invitations:', error);
-      setNotifications([]);
-    }
-  }, [currentUserId]);
-
-  async function handleSendInvitationToWorkspace() {
-    // Organization validation belongs only to the modal invitation action.
-    const organization = activeOrganization;
-    const currentOrg = activeWorkspace;
-    console.log('--- FRONTEND DEBUG: Current Organization State Object ---', organization || currentOrg);
-
-    setSearchError('');
-    setInviteDispatchError('');
-    const organizationIdForInvite = resolvedOrganizationId;
-
-    if (!organizationIdForInvite) {
-      setInviteDispatchError(
-        'Error: No active organization ID found to tie this invitation to. Refresh the dashboard after the workspace finishes loading, then try again.',
-      );
-      return;
-    }
-
-    if (!searchResult?.id) {
-      setInviteDispatchError('Unable to send invitation without a verified profile.');
-      return;
-    }
-
-    setIsAdding(true);
-
-    try {
-      const response = await fetch(INVITE_MEMBER_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          organization_id: organizationIdForInvite,
-          invited_profile_id: searchResult.id,
-        }),
-      });
-      const data = (await response.json()) as { success?: boolean; message?: string };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Invitation failed with status ${response.status}.`);
-      }
-
-      setIsModalOpen(false);
-      setSearchResult(null);
-      setSearchQuery('');
-      setInviteDispatchError('');
-      setMemberPanelTab('invitations');
-      await fetchInvitations();
-    } catch (error) {
-      console.error('Unable to dispatch organization invitation:', error);
-      setInviteDispatchError(error instanceof Error ? error.message : 'Unable to send invitation.');
-    } finally {
-      setIsAdding(false);
-    }
-  }
-
-  async function handleCancelInvitation(invitationId: string) {
-    setInvitationError('');
-
-    try {
-      const response = await fetch(CANCEL_INVITATION_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ id: invitationId }),
-      });
-      const data = (await response.json()) as { success?: boolean; message?: string };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Cancellation failed with status ${response.status}.`);
-      }
-
-      await fetchInvitations();
-    } catch (error) {
-      console.error('Unable to cancel invitation:', error);
-      setInvitationError(error instanceof Error ? error.message : 'Unable to cancel invitation.');
-    }
-  }
-
-  async function handleRespondToIncomingInvitation(invitationId: string, responseValue: 'yes' | 'no') {
-    if (!invitationId) {
-      return;
-    }
-
-    setInviteResponseLoading(true);
-    setInviteResponseMessage('');
-
-    try {
-      const response = await fetch(RESPOND_INVITATION_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          invitation_id: invitationId,
-          response: responseValue,
-        }),
-      });
-      const data = (await response.json()) as { success?: boolean; message?: string };
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || `Invitation response failed with status ${response.status}.`);
-      }
-
-      setNotifications((currentNotifications) =>
-        currentNotifications.filter((notification) => notification.id !== invitationId),
-      );
-
-      if (responseValue === 'yes') {
-        setInviteResponseMessage(data.message || 'Successfully joined the organization!');
-        await fetchInvitations();
-      } else {
-        setInviteResponseMessage('');
-      }
-    } catch (error) {
-      console.error('Unable to respond to incoming invitation:', error);
-      setInviteResponseMessage(error instanceof Error ? error.message : 'Unable to respond to invitation.');
-    } finally {
-      setInviteResponseLoading(false);
     }
   }
 
@@ -607,8 +350,6 @@ export default function OrganizationDashboard() {
 
         if (activeUser && active) {
           setCurrentUserId(activeUser.id);
-          setCurrentOrganizationId(null);
-          setOrganizationRecord(null);
           setActiveWorkspace({
             id: null,
             title: '',
@@ -646,7 +387,6 @@ export default function OrganizationDashboard() {
           const metadataCompanyName = meta?.company_name || 'Verified Organisation';
           const metadataWorkspaceUsername = meta?.slug || meta?.org_username || 'workspace';
 
-          setCurrentOrganizationId(metadataOrganizationId);
           setCompanyName(metadataCompanyName);
           setWorkspaceUsername(metadataWorkspaceUsername);
           setActiveWorkspace({
@@ -685,8 +425,6 @@ export default function OrganizationDashboard() {
             const resolvedWorkspaceTitle = organization.company_name || metadataCompanyName;
             const resolvedWorkspaceSlug = organization.slug || metadataWorkspaceUsername;
 
-            setCurrentOrganizationId(organization.id);
-            setOrganizationRecord(organization);
             setCompanyName(resolvedWorkspaceTitle);
             setWorkspaceUsername(resolvedWorkspaceSlug);
             setActiveWorkspace({
@@ -713,22 +451,6 @@ export default function OrganizationDashboard() {
       active = false;
     };
   }, [supabase]);
-
-  useEffect(() => {
-    void fetchInvitations();
-  }, [fetchInvitations]);
-
-  useEffect(() => {
-    void fetchUserNotifications();
-  }, [fetchUserNotifications]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setCurrentTimeMs(Date.now());
-    }, 60000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   async function handleSignOut() {
     if (!supabase) {
@@ -822,82 +544,7 @@ export default function OrganizationDashboard() {
                   Here is your organization&apos;s talent pipeline tracking metrics for today.
                 </p>
               </div>
-
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsNotifOpen((current) => !current)}
-                  className="relative rounded-2xl border border-slate-800/70 bg-slate-950/50 px-4 py-3 text-xs font-semibold text-slate-300 transition-all hover:border-purple-400/40 hover:bg-slate-900/80 hover:text-white"
-                >
-                  🔔 Notifications
-                  {notifications.length > 0 ? (
-                    <span className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white shadow-lg shadow-rose-950/30">
-                      {notifications.length}
-                    </span>
-                  ) : null}
-                </button>
-
-                {isNotifOpen ? (
-                  <div className="absolute right-0 top-full z-50 mt-3 w-80 rounded-xl border border-slate-800/70 bg-slate-950 p-4 shadow-2xl shadow-black/40">
-                    <div className="mb-3 flex items-center justify-between border-b border-slate-800/70 pb-3">
-                      <h3 className="text-sm font-semibold text-white">Notifications</h3>
-                      <span className="rounded-full border border-purple-500/30 bg-purple-950/30 px-2.5 py-1 text-[10px] font-bold text-purple-200">
-                        {notifications.length} unread
-                      </span>
-                    </div>
-
-                    {notifications.length === 0 ? (
-                      <p className="rounded-lg border border-slate-900/70 bg-[#040615]/70 p-4 text-xs text-slate-500">
-                        You&apos;re all caught up! No new notifications.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {notifications.map((notification) => {
-                          const organizationName =
-                            notification.organization?.display_name ||
-                            notification.organization?.company_name ||
-                            'A verified organization';
-
-                          return (
-                            <div
-                              key={notification.id}
-                              className="rounded-xl border border-slate-900/80 bg-[#040615]/80 p-3"
-                            >
-                              <p className="text-xs leading-5 text-slate-300">
-                                🏢 {organizationName} has invited you to join their workspace.
-                              </p>
-                              <div className="mt-3 flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void handleRespondToIncomingInvitation(notification.id, 'yes')}
-                                  disabled={inviteResponseLoading}
-                                  className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-semibold text-white transition-all hover:bg-emerald-500 disabled:bg-emerald-950 disabled:text-slate-500"
-                                >
-                                  Yes, Join
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleRespondToIncomingInvitation(notification.id, 'no')}
-                                  disabled={inviteResponseLoading}
-                                  className="flex-1 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] font-semibold text-slate-300 transition-all hover:border-rose-500/40 hover:text-rose-300 disabled:text-slate-600"
-                                >
-                                  No
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
             </div>
-            {inviteResponseMessage ? (
-              <p className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3 text-xs font-medium text-emerald-300">
-                {inviteResponseMessage}
-              </p>
-            ) : null}
           </header>
 
           {activeTab === 'overview' ? (
@@ -943,174 +590,76 @@ export default function OrganizationDashboard() {
                 <div className="rounded-2xl border border-slate-800/60 bg-[#060817]/50 p-6">
                   <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Workspace Members</p>
 
-                  <div className="mt-5 flex flex-col gap-2 rounded-xl border border-slate-800/50 bg-[#040615]/40 p-1.5 sm:flex-row">
-                    <button
-                      type="button"
-                      onClick={() => setMemberPanelTab('members')}
-                      className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                        memberPanelTab === 'members'
-                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/20'
-                          : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-200'
-                      }`}
-                    >
-                      Active Members
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMemberPanelTab('invitations')}
-                      className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                        memberPanelTab === 'invitations'
-                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/20'
-                          : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-200'
-                      }`}
-                    >
-                      Invitations Log ({invitations.filter((invitation) => invitation.status === 'pending').length} Pending)
-                    </button>
-                  </div>
+                  <div className="mt-5 space-y-4 mb-6">
+                    {linkedProfilesState.map((member, index) => {
+                      const memberUsername =
+                        member.profiles?.username ||
+                        member.username ||
+                        member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
+                      const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
 
-                  {memberPanelTab === 'members' ? (
-                    <>
-                      <div className="mt-5 space-y-4 mb-6">
-                        {linkedProfilesState.map((member, index) => {
-                          const memberUsername =
-                            member.profiles?.username ||
-                            member.username ||
-                            member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
-                          const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
-
-                          return (
-                            <div
-                              key={member.id}
-                              className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
-                            >
-                              <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
-                                {getInitials(member.name)}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="font-medium text-slate-200">{member.name}</p>
-                                <p className="text-xs text-slate-400">{member.role}</p>
-                                <a
-                                  href={memberProfileHref}
-                                  className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
-                                >
-                                  View MeliusAI Profile
-                                </a>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteLinkedProfile(index)}
-                                className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          );
-                        })}
-                        {linkedProfilesState.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
-                            No linked talent profiles yet. Search for a verified MeliusAI user below.
+                      return (
+                        <div
+                          key={member.id}
+                          className="flex items-center gap-3 rounded-xl border border-slate-900/70 bg-[#040615]/60 p-4"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
+                            {getInitials(member.name)}
                           </div>
-                        ) : null}
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800/50 bg-[#040615]/40 p-4">
-                        <label className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                          Search Members
-                        </label>
-                        <div className="mt-3 flex flex-col gap-3 md:flex-row">
-                          <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(event) => {
-                              setSearchQuery(event.target.value);
-                              setSearchError('');
-                              setInviteDispatchError('');
-                              setSearchResult(null);
-                            }}
-                            className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
-                            placeholder="Enter MeliusAI username or link..."
-                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-slate-200">{member.name}</p>
+                            <p className="text-xs text-slate-400">{member.role}</p>
+                            <a
+                              href={memberProfileHref}
+                              className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
+                            >
+                              View MeliusAI Profile
+                            </a>
+                          </div>
                           <button
                             type="button"
-                            onClick={handleSearchMember}
-                            disabled={isAdding}
-                            className="rounded-lg bg-purple-600 px-5 py-2.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
+                            onClick={() => handleDeleteLinkedProfile(index)}
+                            className="text-xs text-rose-500 hover:text-rose-400/80 p-2 transition-all"
                           >
-                            {isAdding ? 'Searching...' : '🔍 Search Member'}
+                            Delete
                           </button>
                         </div>
-                        {searchError ? <p className="mt-2 text-xs font-medium text-rose-500">{searchError}</p> : null}
+                      );
+                    })}
+                    {linkedProfilesState.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-5 text-center text-xs text-slate-500">
+                        No linked talent profiles yet. Search for a verified MeliusAI user below.
                       </div>
-                    </>
-                  ) : (
-                    <div className="mt-5 rounded-2xl border border-slate-800/60 bg-[#040615]/40 p-4">
-                      {invitationLoading ? (
-                        <p className="py-6 text-center text-xs font-medium text-slate-500">Loading invitations...</p>
-                      ) : null}
-                      {invitationError ? (
-                        <p className="mb-3 text-xs font-medium text-rose-500">{invitationError}</p>
-                      ) : null}
-                      {!invitationLoading && invitations.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-slate-800/70 bg-[#030512]/50 p-6 text-center">
-                          <p className="text-xs font-semibold text-slate-400">No invitations dispatched yet.</p>
-                          <p className="mt-2 text-[11px] text-slate-500">
-                            Search a verified MeliusAI profile and send an invitation to begin tracking activity.
-                          </p>
-                        </div>
-                      ) : null}
-                      <div className="space-y-3">
-                        {invitations.map((invitation) => {
-                          const profile = invitation.profile;
-                          const displayName = profile?.full_name || profile?.username || 'Unknown profile';
-                          const username = profile?.username || 'unknown';
+                    ) : null}
+                  </div>
 
-                          return (
-                            <div
-                              key={invitation.id}
-                              className="flex flex-col gap-4 rounded-xl border border-slate-900/70 bg-[#030512]/70 p-4 md:flex-row md:items-center md:justify-between"
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-800 bg-slate-900 text-xs font-bold text-purple-200">
-                                  {profile?.avatar_url ? (
-                                    <img src={profile.avatar_url} alt={username} className="h-full w-full object-cover" />
-                                  ) : (
-                                    getInitials(displayName)
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-slate-200">{displayName}</p>
-                                  <p className="truncate text-xs text-purple-300">@{username}</p>
-                                  <p className="mt-1 text-[11px] text-slate-500">
-                                    {invitation.status === 'pending'
-                                      ? getInvitationTimeRemaining(invitation.expires_at)
-                                      : invitation.expires_at
-                                        ? `Expired window: ${new Date(invitation.expires_at).toLocaleString()}`
-                                        : 'No expiration timestamp'}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 md:justify-end">
-                                <span
-                                  className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${getInvitationStatusClass(invitation.status)}`}
-                                >
-                                  {invitation.status}
-                                </span>
-                                {invitation.status === 'pending' ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCancelInvitation(invitation.id)}
-                                    className="rounded-full border border-rose-500/30 bg-rose-950/20 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-rose-300 transition-all hover:border-rose-400/60 hover:text-rose-200"
-                                  >
-                                    Cancel Invite
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                  <div className="rounded-xl border border-slate-800/50 bg-[#040615]/40 p-4">
+                    <label className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Search Members
+                    </label>
+                    <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(event) => {
+                          setSearchQuery(event.target.value);
+                          setSearchError('');
+                          setSearchResult(null);
+                        }}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
+                        placeholder="Enter MeliusAI username or link..."
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSearchMember}
+                        disabled={isAdding}
+                        className="rounded-lg bg-purple-600 px-5 py-2.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
+                      >
+                        {isAdding ? 'Searching...' : '🔍 Search Member'}
+                      </button>
                     </div>
-                  )}
+                    {searchError ? <p className="mt-2 text-xs font-medium text-rose-500">{searchError}</p> : null}
+                  </div>
 
                   {isModalOpen && searchResult ? (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -1120,7 +669,6 @@ export default function OrganizationDashboard() {
                           onClick={() => {
                             setIsModalOpen(false);
                             setSearchResult(null);
-                            setInviteDispatchError('');
                           }}
                           className="absolute right-4 top-4 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
                         >
@@ -1141,17 +689,9 @@ export default function OrganizationDashboard() {
                           {searchResult.full_name || searchResult.username || 'Verified Member'}
                         </h4>
                         <p className="mt-1 text-sm font-medium text-purple-300">@{searchResult.username || 'unknown'}</p>
-                        <button
-                          type="button"
-                          onClick={() => void handleSendInvitationToWorkspace()}
-                          disabled={isAdding}
-                          className="mt-6 w-full rounded-xl bg-purple-600 px-4 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 active:scale-[0.99]"
-                        >
-                          {isAdding ? 'Dispatching...' : '📩 Send Invitation to Workspace'}
-                        </button>
-                        {inviteDispatchError ? (
-                          <p className="mt-3 text-xs font-medium leading-5 text-rose-400">{inviteDispatchError}</p>
-                        ) : null}
+                        <p className="mt-5 rounded-xl border border-slate-800/70 bg-[#040615]/70 px-4 py-3 text-xs leading-5 text-slate-400">
+                          Verified talent profile found. Use the profile link or save workflow to continue.
+                        </p>
                       </div>
                     </div>
                   ) : null}
