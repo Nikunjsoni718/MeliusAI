@@ -84,6 +84,7 @@ const navItems: Array<{
 
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
 const TALENT_MATCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-talent`;
+const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -158,6 +159,7 @@ export default function OrganizationDashboard() {
   const [matchError, setMatchError] = useState('');
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
+  const currentOrg = activeWorkspace;
 
   function scrollToSection(targetId: string) {
     document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -315,7 +317,10 @@ export default function OrganizationDashboard() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          organization_id: currentOrg.id,
+        }),
       });
       const data = (await response.json()) as {
         success?: boolean;
@@ -337,6 +342,30 @@ export default function OrganizationDashboard() {
       );
     } finally {
       setIsMatching(false);
+    }
+  }
+
+  async function handleMatchFeedback(candidate: MatchedCandidate, action: 'clicked' | 'shortlisted' | 'skipped') {
+    if (!currentOrg.id || !candidate.id || !matchPrompt.trim()) {
+      return;
+    }
+
+    try {
+      await fetch(TALENT_MATCH_FEEDBACK_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        keepalive: true,
+        body: JSON.stringify({
+          organization_id: currentOrg.id,
+          candidate_id: candidate.id,
+          search_prompt: matchPrompt,
+          action,
+        }),
+      });
+    } catch (error) {
+      console.warn('Unable to capture talent match feedback signal:', error);
     }
   }
 
@@ -669,7 +698,7 @@ export default function OrganizationDashboard() {
 
             {isMatching ? (
               <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/10 p-5 text-sm font-semibold text-cyan-300 shadow-[0_0_35px_rgba(34,211,238,0.08)] animate-pulse">
-                MeliusAI Core Engine processing semantic candidate database vectors... Please stand by...
+                MeliusAI Machine Learning Engine mapping profile semantic vectors and optimizing feedback scores... Processing...
               </div>
             ) : null}
 
@@ -712,6 +741,7 @@ export default function OrganizationDashboard() {
                       </div>
                       <a
                         href={candidate.username ? `/profile/${candidate.username}` : '#talent-discovery'}
+                        onClick={() => void handleMatchFeedback(candidate, 'clicked')}
                         className="shrink-0 rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-2 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white"
                       >
                         Review Profile Dossier

@@ -1,5 +1,6 @@
 import os
 import base64
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -396,6 +397,166 @@ def get_profile_search_corpus(profile: Dict[str, Any]) -> str:
     return " ".join(stringify_profile_value(profile.get(field)) for field in searchable_fields).lower()
 
 
+def build_candidate_profile_text(profile: Dict[str, Any]) -> str:
+    candidate_fields = [
+        "full_name",
+        "username",
+        "bio",
+        "headline",
+        "professional_headline",
+        "role",
+        "target_role",
+        "title",
+        "skills",
+        "tags",
+        "tech_stack",
+        "specialties",
+        "experience",
+        "experience_summary",
+        "search_parameters",
+        "portfolio_summary",
+    ]
+    return "\n".join(
+        f"{field}: {stringify_profile_value(profile.get(field))}"
+        for field in candidate_fields
+        if stringify_profile_value(profile.get(field)).strip()
+    )
+
+
+def build_organization_context(organization: Dict[str, Any] | None) -> str:
+    if not organization:
+        return ""
+
+    organization_fields = [
+        "company_name",
+        "name",
+        "display_name",
+        "slug",
+        "bio",
+        "mission",
+        "industry",
+        "focus",
+        "specialties",
+        "linked_profiles",
+    ]
+    return "\n".join(
+        f"{field}: {stringify_profile_value(organization.get(field))}"
+        for field in organization_fields
+        if stringify_profile_value(organization.get(field)).strip()
+    )
+
+
+def cosine_similarity(left: List[float], right: List[float]) -> float:
+    dot_product = sum(left_value * right_value for left_value, right_value in zip(left, right))
+    left_norm = math.sqrt(sum(left_value * left_value for left_value in left))
+    right_norm = math.sqrt(sum(right_value * right_value for right_value in right))
+
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+
+    return dot_product / (left_norm * right_norm)
+
+
+def fetch_openai_embeddings(texts: List[str]) -> List[List[float]]:
+    embedding_response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[text[:7000] for text in texts],
+    )
+    return [item.embedding for item in embedding_response.data]
+
+
+def compute_keyword_signal(match_terms: List[str], corpus: str) -> tuple[int, List[str]]:
+    matched_terms = [term for term in match_terms if term in corpus]
+
+    if not matched_terms:
+        return 0, []
+
+    coverage_ratio = len(matched_terms) / max(len(match_terms), 1)
+    density_bonus = min(sum(corpus.count(term) for term in matched_terms), 8)
+    return int(coverage_ratio * 12 + density_bonus), matched_terms
+
+
+def compute_feedback_boost(profile: Dict[str, Any], feedback_rows: List[Dict[str, Any]], match_terms: List[str]) -> int:
+    if not feedback_rows:
+        return 0
+
+    profile_id = profile.get("id")
+    corpus = get_profile_search_corpus(profile)
+    boost = 0
+
+    for row in feedback_rows[:50]:
+        action = str(row.get("action", "")).lower()
+        feedback_prompt_terms = extract_match_terms(str(row.get("search_prompt", "")))
+        overlap_count = len([term for term in feedback_prompt_terms if term in corpus or term in match_terms])
+        is_same_candidate = profile_id and row.get("candidate_id") == profile_id
+
+        if action == "shortlisted":
+            boost += (8 if is_same_candidate else 3) + min(overlap_count, 3)
+        elif action == "clicked":
+            boost += (5 if is_same_candidate else 2) + min(overlap_count, 2)
+        elif action == "skipped" and is_same_candidate:
+            boost -= 5
+
+    return max(-8, min(boost, 15))
+
+
+def build_match_tags(matched_terms: List[str], match_index: int, semantic_score: int, feedback_boost: int) -> List[str]:
+    tags = []
+
+    for term in matched_terms[:4]:
+        tag_score = min(99, max(82, match_index - len(tags) * 3))
+        tag_label = term.replace("_", " ").replace("-", " ").title()
+        tags.append(f"{tag_label}: {tag_score}%")
+
+    if not tags:
+        tags.append(f"Semantic Alignment: {max(75, semantic_score)}%")
+
+    if feedback_boost > 0:
+        tags.append(f"Feedback Boost: +{feedback_boost}%")
+
+    return tags[:5]
+
+
+def deterministic_candidate_match(
+    profiles: List[Dict[str, Any]],
+    prompt: str,
+    organization_context: str,
+    feedback_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    match_terms = extract_match_terms(f"{prompt} {organization_context}")
+    candidates = []
+
+    for profile in profiles:
+        corpus = get_profile_search_corpus(profile)
+        keyword_score, matched_terms = compute_keyword_signal(match_terms, corpus)
+        feedback_boost = compute_feedback_boost(profile, feedback_rows, match_terms)
+        match_index = max(60, min(99, 60 + keyword_score + feedback_boost))
+
+        if match_index < 70:
+            continue
+
+        profile_role = (
+            profile.get("headline")
+            or profile.get("professional_headline")
+            or profile.get("role")
+            or profile.get("target_role")
+            or profile.get("title")
+            or profile.get("bio")
+            or "Verified MeliusAI Talent"
+        )
+
+        candidates.append({
+            "id": profile.get("id"),
+            "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
+            "username": profile.get("username") or "",
+            "role": str(profile_role)[:140],
+            "match_index": match_index,
+            "tags": build_match_tags(matched_terms, match_index, match_index, feedback_boost),
+        })
+
+    return sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
+
+
 @app.post("/api/search-member")
 async def verify_member(request: Request):
     data = await request.json()
@@ -435,46 +596,92 @@ async def match_talent(request: Request):
     try:
         data = await request.json()
         prompt = str(data.get("prompt", "") if isinstance(data, dict) else "").strip()
+        organization_id = data.get("organization_id") if isinstance(data, dict) else None
 
         if not prompt:
             return {"success": True, "candidates": []}
 
-        match_terms = extract_match_terms(prompt)
-        if not match_terms:
-            return {"success": True, "candidates": []}
-
         supabase = get_supabase_backend_client()
-        result = (
+        organization = None
+        feedback_rows = []
+
+        if organization_id:
+            try:
+                organization_result = (
+                    supabase.table("organizations")
+                    .select("*")
+                    .eq("id", organization_id)
+                    .limit(1)
+                    .execute()
+                )
+                organization = (organization_result.data or [None])[0]
+            except Exception as organization_error:
+                print(f"--- TALENT MATCH ORG CONTEXT WARNING: {str(organization_error)} ---")
+
+            try:
+                feedback_result = (
+                    supabase.table("matching_feedback")
+                    .select("*")
+                    .eq("organization_id", organization_id)
+                    .order("created_at", desc=True)
+                    .limit(75)
+                    .execute()
+                )
+                feedback_rows = feedback_result.data or []
+            except Exception as feedback_error:
+                print(f"--- TALENT MATCH FEEDBACK WARNING: {str(feedback_error)} ---")
+
+        profiles_result = (
             supabase.table("profiles")
             .select("*")
             .execute()
         )
+        profiles = [
+            profile
+            for profile in (profiles_result.data or [])
+            if profile.get("is_active", True) is not False
+            and str(profile.get("status", "active")).lower() not in ["inactive", "deleted", "disabled"]
+        ]
+
+        if not profiles:
+            return {"success": True, "candidates": []}
+
+        organization_context = build_organization_context(organization)
+        semantic_query = (
+            "Organization context:\n"
+            f"{organization_context or 'No explicit organization context available.'}\n\n"
+            "Operator requirement:\n"
+            f"{prompt}"
+        )
+        match_terms = extract_match_terms(f"{prompt} {organization_context}")
+
+        try:
+            candidate_texts = [build_candidate_profile_text(profile) for profile in profiles]
+            embeddings = fetch_openai_embeddings([semantic_query, *candidate_texts])
+            query_embedding = embeddings[0]
+            candidate_embeddings = embeddings[1:]
+        except Exception as embedding_error:
+            print(f"--- TALENT MATCH EMBEDDING WARNING: {str(embedding_error)} ---")
+            fallback_candidates = deterministic_candidate_match(profiles, prompt, organization_context, feedback_rows)
+            return {"success": True, "candidates": fallback_candidates}
 
         candidates = []
-        for profile in result.data or []:
+        for profile, embedding in zip(profiles, candidate_embeddings):
             corpus = get_profile_search_corpus(profile)
-            matched_terms = [term for term in match_terms if term in corpus]
-
-            if not matched_terms:
-                continue
-
-            coverage_ratio = len(matched_terms) / max(len(match_terms), 1)
-            density_bonus = min(sum(corpus.count(term) for term in matched_terms) * 2, 14)
-            match_index = min(99, max(60, int(60 + coverage_ratio * 30 + density_bonus)))
+            semantic_similarity = cosine_similarity(query_embedding, embedding)
+            semantic_score = int(60 + max(0, min(1, (semantic_similarity - 0.58) / 0.32)) * 28)
+            keyword_score, matched_terms = compute_keyword_signal(match_terms, corpus)
+            feedback_boost = compute_feedback_boost(profile, feedback_rows, match_terms)
+            match_index = max(60, min(99, semantic_score + keyword_score + feedback_boost))
 
             if match_index < 70:
                 continue
-
-            tags = []
-            for term in matched_terms[:4]:
-                tag_score = min(99, max(82, match_index - len(tags) * 3))
-                tag_label = term.replace("_", " ").replace("-", " ").title()
-                tags.append(f"{tag_label}: {tag_score}%")
 
             profile_role = (
                 profile.get("headline")
                 or profile.get("professional_headline")
                 or profile.get("role")
+                or profile.get("target_role")
                 or profile.get("title")
                 or profile.get("bio")
                 or "Verified MeliusAI Talent"
@@ -484,9 +691,9 @@ async def match_talent(request: Request):
                 "id": profile.get("id"),
                 "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
                 "username": profile.get("username") or "",
-                "role": str(profile_role)[:120],
+                "role": str(profile_role)[:140],
                 "match_index": match_index,
-                "tags": tags,
+                "tags": build_match_tags(matched_terms, match_index, semantic_score, feedback_boost),
             })
 
         sorted_candidates = sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
@@ -494,6 +701,32 @@ async def match_talent(request: Request):
     except Exception as error:
         print(f"--- TALENT MATCH ERROR: {str(error)} ---")
         return {"success": False, "message": "Failed to compute talent match index criteria profile schemas."}
+
+
+@app.post("/api/match-feedback")
+async def match_feedback(request: Request):
+    try:
+        data = await request.json()
+        organization_id = data.get("organization_id") if isinstance(data, dict) else None
+        candidate_id = data.get("candidate_id") if isinstance(data, dict) else None
+        search_prompt = str(data.get("search_prompt", "") if isinstance(data, dict) else "").strip()
+        action = str(data.get("action", "") if isinstance(data, dict) else "").strip().lower()
+
+        if not organization_id or not candidate_id or not search_prompt or action not in ["clicked", "shortlisted", "skipped"]:
+            return {"success": False, "message": "Invalid matching feedback payload."}
+
+        supabase = get_supabase_backend_client()
+        supabase.table("matching_feedback").insert({
+            "organization_id": organization_id,
+            "candidate_id": candidate_id,
+            "search_prompt": search_prompt,
+            "action": action,
+        }).execute()
+
+        return {"success": True, "message": "Matching feedback captured."}
+    except Exception as error:
+        print(f"--- MATCH FEEDBACK ERROR: {str(error)} ---")
+        return {"success": False, "message": "Failed to persist matching feedback signal."}
 
 
 def parse_supabase_timestamp(value):
