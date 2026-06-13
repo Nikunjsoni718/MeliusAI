@@ -710,10 +710,10 @@ async def match_talent(request: Request):
             supabase.rpc(
                 "match_candidates_v2",
                 {
-                    "query_embedding": query_embedding,
-                    "match_threshold": 0.20,
-                    "min_performance_score": float(min_score),
-                    "match_count": 5,
+                    "query_embedding": [float(x) for x in query_embedding],
+                    "match_threshold": float(0.20),
+                    "min_performance_score": float(min_score if min_score else 0.0),
+                    "match_count": int(5),
                 },
             )
             .execute()
