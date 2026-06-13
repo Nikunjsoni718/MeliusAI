@@ -624,76 +624,93 @@ async def match_talent(request: Request):
                     .select("*")
                     .eq("organization_id", organization_id)
                     .order("created_at", desc=True)
-                    .limit(75)
+                    .limit(150)
                     .execute()
                 )
                 feedback_rows = feedback_result.data or []
             except Exception as feedback_error:
                 print(f"--- TALENT MATCH FEEDBACK WARNING: {str(feedback_error)} ---")
 
-        profiles_result = (
-            supabase.table("profiles")
-            .select("*")
+        organization_context = build_organization_context(organization)
+        hiring_intent = (
+            "MeliusAI semantic hiring intent vector.\n"
+            "Organization industry/domain/workspace context:\n"
+            f"{organization_context or 'No explicit organization context available.'}\n\n"
+            "Operator natural language requirement:\n"
+            f"{prompt}\n\n"
+            "Match implicit capability adjacency, equivalent technologies, architectural domain overlap, seniority, "
+            "portfolio relevance, and skill-transfer patterns."
+        )
+
+        query_embedding = fetch_openai_embeddings([hiring_intent])[0]
+        rpc_result = (
+            supabase.rpc(
+                "match_candidates",
+                {
+                    "query_embedding": query_embedding,
+                    "match_threshold": 0.70,
+                    "match_count": 5,
+                },
+            )
             .execute()
         )
-        profiles = [
-            profile
-            for profile in (profiles_result.data or [])
-            if profile.get("is_active", True) is not False
-            and str(profile.get("status", "active")).lower() not in ["inactive", "deleted", "disabled"]
-        ]
 
-        if not profiles:
-            return {"success": True, "candidates": []}
-
-        organization_context = build_organization_context(organization)
-        semantic_query = (
-            "Organization context:\n"
-            f"{organization_context or 'No explicit organization context available.'}\n\n"
-            "Operator requirement:\n"
-            f"{prompt}"
-        )
-        match_terms = extract_match_terms(f"{prompt} {organization_context}")
-
-        try:
-            candidate_texts = [build_candidate_profile_text(profile) for profile in profiles]
-            embeddings = fetch_openai_embeddings([semantic_query, *candidate_texts])
-            query_embedding = embeddings[0]
-            candidate_embeddings = embeddings[1:]
-        except Exception as embedding_error:
-            print(f"--- TALENT MATCH EMBEDDING WARNING: {str(embedding_error)} ---")
-            fallback_candidates = deterministic_candidate_match(profiles, prompt, organization_context, feedback_rows)
-            return {"success": True, "candidates": fallback_candidates}
-
+        positive_feedback_candidate_ids = {
+            row.get("candidate_id")
+            for row in feedback_rows
+            if str(row.get("action", "")).lower() in ["clicked", "shortlisted"]
+        }
         candidates = []
-        for profile, embedding in zip(profiles, candidate_embeddings):
-            corpus = get_profile_search_corpus(profile)
-            semantic_similarity = cosine_similarity(query_embedding, embedding)
-            semantic_score = int(60 + max(0, min(1, (semantic_similarity - 0.58) / 0.32)) * 28)
-            keyword_score, matched_terms = compute_keyword_signal(match_terms, corpus)
-            feedback_boost = compute_feedback_boost(profile, feedback_rows, match_terms)
-            match_index = max(60, min(99, semantic_score + keyword_score + feedback_boost))
-
-            if match_index < 70:
-                continue
-
-            profile_role = (
-                profile.get("headline")
-                or profile.get("professional_headline")
-                or profile.get("role")
-                or profile.get("target_role")
-                or profile.get("title")
-                or profile.get("bio")
-                or "Verified MeliusAI Talent"
+        for row in rpc_result.data or []:
+            candidate_id = row.get("id") or row.get("candidate_id") or row.get("profile_id")
+            raw_similarity = (
+                row.get("similarity")
+                or row.get("match_score")
+                or row.get("score")
+                or row.get("similarity_score")
+                or 0
             )
 
+            try:
+                similarity = float(raw_similarity)
+            except (TypeError, ValueError):
+                similarity = 0.0
+
+            if similarity > 1:
+                similarity = similarity / 100
+
+            feedback_multiplier = 1.10 if candidate_id in positive_feedback_candidate_ids else 1.0
+            weighted_similarity = min(0.99, max(0.0, similarity * feedback_multiplier))
+            match_index = max(0, min(99, round(weighted_similarity * 100)))
+
+            profile_role = (
+                row.get("headline")
+                or row.get("professional_headline")
+                or row.get("role")
+                or row.get("target_role")
+                or row.get("title")
+                or row.get("bio")
+                or "Verified MeliusAI Talent"
+            )
+            raw_tags = row.get("tags") or row.get("skills") or row.get("matched_tags") or []
+
+            if isinstance(raw_tags, list):
+                tags = [str(tag) for tag in raw_tags[:4]]
+            elif raw_tags:
+                tags = [str(raw_tags)]
+            else:
+                tags = [f"Vector Similarity: {match_index}%"]
+
+            if feedback_multiplier > 1:
+                tags.append("Feedback Boost: +10%")
+
             candidates.append({
-                "id": profile.get("id"),
-                "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
-                "username": profile.get("username") or "",
+                "id": candidate_id,
+                "full_name": row.get("full_name") or row.get("name") or row.get("username") or "MeliusAI Talent",
+                "username": row.get("username") or "",
                 "role": str(profile_role)[:140],
                 "match_index": match_index,
-                "tags": build_match_tags(matched_terms, match_index, semantic_score, feedback_boost),
+                "tags": tags[:5],
             })
 
         sorted_candidates = sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
