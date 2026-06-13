@@ -876,3 +876,35 @@ async def interactive_chat_station(request: ChatHistoryRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/sync-embeddings")
+async def sync_database_embeddings():
+    try:
+        supabase = get_supabase_backend_client()
+        profiles_result = supabase.table("profiles").select("*").execute()
+
+        for profile in profiles_result.data or []:
+            profile_id = profile.get("id")
+            if not profile_id:
+                continue
+
+            profile_text = build_candidate_profile_text(profile)
+            if not profile_text.strip():
+                continue
+
+            generated_embedding = fetch_openai_embeddings([profile_text])[0]
+            (
+                supabase.table("profiles")
+                .update({"profile_embedding": generated_embedding})
+                .eq("id", profile_id)
+                .execute()
+            )
+
+        return {
+            "success": True,
+            "message": "Successfully vectorized existing candidate pool database rows.",
+        }
+    except Exception as error:
+        print(f"--- SYNC EMBEDDINGS ERROR: {str(error)} ---")
+        raise HTTPException(status_code=500, detail=str(error))
