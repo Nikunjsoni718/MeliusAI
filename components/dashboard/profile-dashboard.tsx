@@ -80,6 +80,33 @@ type ProfileDraft = {
   birthDate: string;
 };
 
+const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
+  : '';
+
+async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
+  if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
+    console.warn('Profile vector sync skipped: NEXT_PUBLIC_API_URL is not configured.');
+    return;
+  }
+
+  try {
+    const response = await fetch(PROFILE_EMBEDDING_SYNC_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.warn(`Profile vector sync returned HTTP ${response.status}.`);
+    }
+  } catch (embeddingSyncError) {
+    console.warn('Profile saved, but vector embedding sync failed quietly:', embeddingSyncError);
+  }
+}
+
 type PortfolioLinks = {
   artstation: string;
   behance: string;
@@ -1951,6 +1978,15 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         throw error;
       }
 
+      void syncProfileVectorEmbedding({
+        id: userId,
+        full_name: normalizedDraft.displayName,
+        username: normalizedDraft.username,
+        birth_date: normalizedDraft.birthDate || null,
+        avatar_url: avatarUrl,
+        bio,
+      });
+
       if (profileSaveSequenceRef.current === sequence) {
         lastSavedProfileRef.current = normalizedDraft;
         setProfileFallback((previous) =>
@@ -2062,6 +2098,15 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       if (error) {
         throw error;
       }
+
+      void syncProfileVectorEmbedding({
+        id: user.id,
+        full_name: profileDraft.displayName,
+        username: profileDraft.username,
+        birth_date: profileDraft.birthDate || null,
+        avatar_url: avatarUrl,
+        bio: bioText,
+      });
 
       if (bioSaveSequenceRef.current === sequence) {
         lastSavedBioRef.current = bioText;

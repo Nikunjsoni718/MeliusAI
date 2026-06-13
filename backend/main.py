@@ -557,6 +557,41 @@ def deterministic_candidate_match(
     return sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
 
 
+@app.post("/api/profile/sync-embedding")
+async def sync_single_profile_embedding(request: Request):
+    data = await request.json()
+
+    try:
+        profile_id = data.get("id") or data.get("profile_id")
+        if not profile_id:
+            return {"success": False, "message": "Profile vector sync skipped: missing profile id."}
+
+        supabase = get_supabase_backend_client()
+        profile_text = build_candidate_profile_text(data)
+
+        if not profile_text.strip():
+            existing_profile = (
+                supabase.table("profiles")
+                .select("*")
+                .eq("id", profile_id)
+                .maybe_single()
+                .execute()
+            )
+            profile_text = build_candidate_profile_text(existing_profile.data or {})
+
+        if not profile_text.strip():
+            return {"success": False, "message": "Profile vector sync skipped: no semantic profile text found."}
+
+        new_embedding = fetch_openai_embeddings([profile_text])[0]
+        supabase.table("profiles").update({"profile_embedding": new_embedding}).eq("id", profile_id).execute()
+        print("--- ML SUCCESS: Automatically synchronized profile vector embeddings in background thread ---")
+
+        return {"success": True, "message": "Profile vector embedding synchronized."}
+    except Exception as embedding_sync_error:
+        print(f"--- ML ERROR: Profile saved, but auto-vector generation failed: {embedding_sync_error} ---")
+        return {"success": False, "message": "Profile saved, but vector synchronization failed."}
+
+
 @app.post("/api/search-member")
 async def verify_member(request: Request):
     data = await request.json()
