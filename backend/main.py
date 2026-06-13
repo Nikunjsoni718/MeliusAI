@@ -1,5 +1,6 @@
 import os
 import base64
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
@@ -325,6 +326,76 @@ def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def extract_match_terms(prompt: str) -> List[str]:
+    raw_terms = re.findall(r"[a-zA-Z0-9+#.-]+", prompt.lower())
+    stop_words = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "for",
+        "in",
+        "of",
+        "on",
+        "or",
+        "our",
+        "the",
+        "to",
+        "with",
+        "who",
+        "need",
+        "looking",
+        "find",
+        "candidate",
+        "talent",
+        "profile",
+        "person",
+    }
+
+    terms = []
+    for term in raw_terms:
+        cleaned_term = term.strip(".,:;!?()[]{}").lower()
+        if len(cleaned_term) < 2 or cleaned_term in stop_words:
+            continue
+        if cleaned_term not in terms:
+            terms.append(cleaned_term)
+
+    return terms[:18]
+
+
+def stringify_profile_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, list):
+        return " ".join(stringify_profile_value(item) for item in value)
+
+    if isinstance(value, dict):
+        return " ".join(stringify_profile_value(item) for item in value.values())
+
+    return str(value)
+
+
+def get_profile_search_corpus(profile: Dict[str, Any]) -> str:
+    searchable_fields = [
+        "full_name",
+        "username",
+        "bio",
+        "headline",
+        "professional_headline",
+        "role",
+        "title",
+        "skills",
+        "tags",
+        "tech_stack",
+        "specialties",
+        "experience",
+    ]
+
+    return " ".join(stringify_profile_value(profile.get(field)) for field in searchable_fields).lower()
+
+
 @app.post("/api/search-member")
 async def verify_member(request: Request):
     data = await request.json()
@@ -357,6 +428,72 @@ async def verify_member(request: Request):
         return {"success": False, "message": f"No user found with username '{target_username}'"}
 
     return {"success": True, "user": result.data[0]}
+
+
+@app.post("/api/match-talent")
+async def match_talent(request: Request):
+    try:
+        data = await request.json()
+        prompt = str(data.get("prompt", "") if isinstance(data, dict) else "").strip()
+
+        if not prompt:
+            return {"success": True, "candidates": []}
+
+        match_terms = extract_match_terms(prompt)
+        if not match_terms:
+            return {"success": True, "candidates": []}
+
+        supabase = get_supabase_backend_client()
+        result = (
+            supabase.table("profiles")
+            .select("*")
+            .execute()
+        )
+
+        candidates = []
+        for profile in result.data or []:
+            corpus = get_profile_search_corpus(profile)
+            matched_terms = [term for term in match_terms if term in corpus]
+
+            if not matched_terms:
+                continue
+
+            coverage_ratio = len(matched_terms) / max(len(match_terms), 1)
+            density_bonus = min(sum(corpus.count(term) for term in matched_terms) * 2, 14)
+            match_index = min(99, max(60, int(60 + coverage_ratio * 30 + density_bonus)))
+
+            if match_index < 70:
+                continue
+
+            tags = []
+            for term in matched_terms[:4]:
+                tag_score = min(99, max(82, match_index - len(tags) * 3))
+                tag_label = term.replace("_", " ").replace("-", " ").title()
+                tags.append(f"{tag_label}: {tag_score}%")
+
+            profile_role = (
+                profile.get("headline")
+                or profile.get("professional_headline")
+                or profile.get("role")
+                or profile.get("title")
+                or profile.get("bio")
+                or "Verified MeliusAI Talent"
+            )
+
+            candidates.append({
+                "id": profile.get("id"),
+                "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
+                "username": profile.get("username") or "",
+                "role": str(profile_role)[:120],
+                "match_index": match_index,
+                "tags": tags,
+            })
+
+        sorted_candidates = sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
+        return {"success": True, "candidates": sorted_candidates}
+    except Exception as error:
+        print(f"--- TALENT MATCH ERROR: {str(error)} ---")
+        return {"success": False, "message": "Failed to compute talent match index criteria profile schemas."}
 
 
 def parse_supabase_timestamp(value):

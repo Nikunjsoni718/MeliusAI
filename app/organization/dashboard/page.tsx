@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -33,6 +33,15 @@ type MemberVerificationResponse =
       success: false;
       message: string;
     };
+
+type MatchedCandidate = {
+  id: string;
+  full_name: string;
+  username: string;
+  role: string;
+  match_index: number;
+  tags: string[];
+};
 
 type OrganizationRecord = {
   id: string | null;
@@ -74,6 +83,7 @@ const navItems: Array<{
 ];
 
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
+const TALENT_MATCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-talent`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -142,6 +152,10 @@ export default function OrganizationDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [isAdding, setIsAdding] = useState<boolean>(false);
+  const [matchPrompt, setMatchPrompt] = useState('');
+  const [matchedCandidates, setMatchedCandidates] = useState<MatchedCandidate[]>([]);
+  const [isMatching, setIsMatching] = useState(false);
+  const [matchError, setMatchError] = useState('');
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
 
@@ -277,6 +291,52 @@ export default function OrganizationDashboard() {
       setIsModalOpen(false);
     } finally {
       setIsAdding(false);
+    }
+  }
+
+  async function handleTalentMatchExecution(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const prompt = matchPrompt.trim();
+
+    setIsMatching(true);
+    setMatchError('');
+    setMatchedCandidates([]);
+
+    if (!prompt) {
+      setMatchError('Describe the candidate requirement before running the matcher.');
+      setIsMatching(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(TALENT_MATCH_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        candidates?: MatchedCandidate[];
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || `Talent matching failed with status ${response.status}.`);
+      }
+
+      setMatchedCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+    } catch (error) {
+      console.error('Error running talent match engine:', error);
+      setMatchError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to compute talent match index criteria profile schemas.',
+      );
+    } finally {
+      setIsMatching(false);
     }
   }
 
@@ -581,61 +641,92 @@ export default function OrganizationDashboard() {
               <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-400">
                 Cross-referencing global creator profiles against your active workspace blueprint requirements.
               </p>
-            </div>
 
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <p className="text-base font-semibold text-white">
-                      Ar. Sarah Chen - Senior Spatial Architect - Match Index: 96%
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {['Spatial Logic: 98%', 'BIM Compliance: 94%'].map((metric) => (
-                        <span
-                          key={metric}
-                          className="rounded-full border border-slate-800/80 bg-slate-950/50 px-3 py-1 text-[11px] font-medium text-slate-300"
-                        >
-                          {metric}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+              <form onSubmit={handleTalentMatchExecution} className="mt-6 space-y-4">
+                <textarea
+                  value={matchPrompt}
+                  onChange={(event) => {
+                    setMatchPrompt(event.target.value);
+                    setMatchError('');
+                  }}
+                  placeholder="Describe your ideal candidate requirement specification here... (e.g., 'Looking for a Senior Python backend engineering architect who understands custom database clustering structures')"
+                  className="min-h-36 w-full resize-none rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm leading-7 text-white outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/60 focus:ring-2 focus:ring-purple-500/20"
+                />
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs leading-5 text-slate-500">
+                    The matcher scans profile bios, skill tags, and professional descriptors for semantic alignment.
+                  </p>
                   <button
-                    type="button"
-                    className="shrink-0 rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white"
+                    type="submit"
+                    disabled={isMatching}
+                    className="rounded-xl bg-purple-600 px-5 py-3 text-xs font-bold tracking-wide text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 active:scale-[0.99]"
                   >
-                    Review CAD Blueprint Audit
+                    {isMatching ? 'Running Matcher...' : '⚡ Run AI Matcher Algorithm'}
                   </button>
                 </div>
-              </div>
+              </form>
+            </div>
 
-              <div className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <p className="text-base font-semibold text-white">
-                      Marcus Vance - 3D Environment Asset Designer - Match Index: 92%
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {['Asset Hygiene: 95%', 'Polygon Optimization: 89%'].map((metric) => (
-                        <span
-                          key={metric}
-                          className="rounded-full border border-slate-800/80 bg-slate-950/50 px-3 py-1 text-[11px] font-medium text-slate-300"
-                        >
-                          {metric}
-                        </span>
-                      ))}
+            {isMatching ? (
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/10 p-5 text-sm font-semibold text-cyan-300 shadow-[0_0_35px_rgba(34,211,238,0.08)] animate-pulse">
+                MeliusAI Core Engine processing semantic candidate database vectors... Please stand by...
+              </div>
+            ) : null}
+
+            {matchError ? (
+              <div className="rounded-2xl border border-rose-500/20 bg-rose-950/20 p-4 text-sm font-medium text-rose-300">
+                {matchError}
+              </div>
+            ) : null}
+
+            {matchedCandidates.length > 0 ? (
+              <div className="space-y-4">
+                {matchedCandidates.map((candidate) => (
+                  <div
+                    key={candidate.id}
+                    className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <p className="text-base font-semibold text-white">
+                            {candidate.full_name} - Match Index: {candidate.match_index}%
+                          </p>
+                          <span className="w-fit rounded-full border border-emerald-500/30 bg-emerald-950/30 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300">
+                            {candidate.match_index}% Fit
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-500">
+                          @{candidate.username || 'profile'} · {candidate.role}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {candidate.tags.map((tag) => (
+                            <span
+                              key={`${candidate.id}-${tag}`}
+                              className="rounded-full border border-slate-800/80 bg-slate-950/50 px-3 py-1 text-[11px] font-medium text-slate-300"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <a
+                        href={candidate.username ? `/profile/${candidate.username}` : '#talent-discovery'}
+                        className="shrink-0 rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-2 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white"
+                      >
+                        Review Profile Dossier
+                      </a>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white"
-                  >
-                    Open Layer File Hygiene Report
-                  </button>
-                </div>
+                ))}
               </div>
-            </div>
+            ) : null}
+
+            {!isMatching && !matchError && matchPrompt.trim() && matchedCandidates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-6 text-center text-xs text-slate-500">
+                No matched candidates yet. Run the AI Matcher Algorithm to generate ranked profile results.
+              </div>
+            ) : null}
           </section>
 
           <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
@@ -759,6 +850,7 @@ export default function OrganizationDashboard() {
               ) : null}
             </div>
           </section>
+
         </div>
       </main>
     </div>
