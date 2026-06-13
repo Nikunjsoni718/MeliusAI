@@ -378,6 +378,27 @@ def stringify_profile_value(value: Any) -> str:
     return str(value)
 
 
+def build_profile_embedding_text(profile: Dict[str, Any]) -> str:
+    embedding_fields = [
+        "bio",
+        "biotext",
+        "about",
+        "description",
+        "headline",
+        "skills",
+        "username",
+        "full_name",
+    ]
+
+    raw_text_parts = [
+        stringify_profile_value(profile.get(field)).strip()
+        for field in embedding_fields
+        if stringify_profile_value(profile.get(field)).strip()
+    ]
+
+    return " ".join(raw_text_parts).strip()
+
+
 def get_profile_search_corpus(profile: Dict[str, Any]) -> str:
     searchable_fields = [
         "full_name",
@@ -567,7 +588,7 @@ async def sync_single_profile_embedding(request: Request):
             return {"success": False, "message": "Profile vector sync skipped: missing profile id."}
 
         supabase = get_supabase_backend_client()
-        profile_text = build_candidate_profile_text(data)
+        profile_text = build_profile_embedding_text(data)
 
         if not profile_text.strip():
             existing_profile = (
@@ -577,11 +598,12 @@ async def sync_single_profile_embedding(request: Request):
                 .maybe_single()
                 .execute()
             )
-            profile_text = build_candidate_profile_text(existing_profile.data or {})
+            profile_text = build_profile_embedding_text(existing_profile.data or {})
 
         if not profile_text.strip():
             return {"success": False, "message": "Profile vector sync skipped: no semantic profile text found."}
 
+        print(f"--- SYNC ENGINE DEBUG: Vectorizing User '{data.get('username')}' with text length: {len(profile_text)} ---")
         new_embedding = fetch_openai_embeddings([profile_text])[0]
         supabase.table("profiles").update({"profile_embedding": new_embedding}).eq("id", profile_id).execute()
         print("--- ML SUCCESS: Automatically synchronized profile vector embeddings in background thread ---")
@@ -632,6 +654,12 @@ async def match_talent(request: Request):
         data = await request.json()
         prompt = str(data.get("prompt", "") if isinstance(data, dict) else "").strip()
         organization_id = data.get("organization_id") if isinstance(data, dict) else None
+        raw_min_score = data.get("min_score", 0) if isinstance(data, dict) else 0
+
+        try:
+            min_score = float(raw_min_score or 0)
+        except (TypeError, ValueError):
+            min_score = 0.0
 
         if not prompt:
             return {"success": True, "candidates": []}
@@ -680,10 +708,11 @@ async def match_talent(request: Request):
         query_embedding = fetch_openai_embeddings([hiring_intent])[0]
         rpc_result = (
             supabase.rpc(
-                "match_candidates",
+                "match_candidates_v2",
                 {
                     "query_embedding": query_embedding,
-                    "match_threshold": 0.70,
+                    "match_threshold": 0.20,
+                    "min_performance_score": float(min_score),
                     "match_count": 5,
                 },
             )
@@ -739,13 +768,16 @@ async def match_talent(request: Request):
             if feedback_multiplier > 1:
                 tags.append("Feedback Boost: +10%")
 
+            avg_project_score = row.get("avg_project_score") or 0
+            tags.append(f"Avg Score: {avg_project_score}/100")
+
             candidates.append({
                 "id": candidate_id,
                 "full_name": row.get("full_name") or row.get("name") or row.get("username") or "MeliusAI Talent",
                 "username": row.get("username") or "",
                 "role": str(profile_role)[:140],
                 "match_index": match_index,
-                "tags": tags[:5],
+                "tags": tags[:6],
             })
 
         sorted_candidates = sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
@@ -924,11 +956,15 @@ async def sync_database_embeddings():
             if not profile_id:
                 continue
 
-            profile_text = build_candidate_profile_text(profile)
-            if not profile_text.strip():
+            raw_text_payload = build_profile_embedding_text(profile)
+            if not raw_text_payload.strip():
                 continue
 
-            generated_embedding = fetch_openai_embeddings([profile_text])[0]
+            print(
+                f"--- SYNC ENGINE DEBUG: Vectorizing User '{profile.get('username')}' "
+                f"with text length: {len(raw_text_payload)} ---"
+            )
+            generated_embedding = fetch_openai_embeddings([raw_text_payload])[0]
             (
                 supabase.table("profiles")
                 .update({"profile_embedding": generated_embedding})
