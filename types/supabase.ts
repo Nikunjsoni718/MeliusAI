@@ -27,6 +27,7 @@ export type ProfileRow = {
   username: string | null;
   birth_date: string | null;
   bio: string | null;
+  skills: string[] | null;
   avatar_url: string | null;
   age: number | null;
   current_status: string | null;
@@ -51,6 +52,7 @@ export type ProjectRow = {
   file_url?: string | null;
   file_size?: number | null;
   description?: string | null;
+  score?: number | null;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
   logic_score?: number | null;

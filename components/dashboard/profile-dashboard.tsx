@@ -64,6 +64,7 @@ type JobItem = Pick<JobRow, 'id' | 'company_name' | 'role_title' | 'location' | 
 type UserApplicationItem = Pick<UserApplicationRow, 'id' | 'job_id' | 'status' | 'created_at'>;
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   avg_project_score?: number | null;
+  skills?: string[] | null;
 };
 type SavedUserProfileItem = Pick<UserRow, 'display_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
 type ProjectAuditSummary = {
@@ -1422,7 +1423,8 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
-  const [bio, setBio] = useState('');
+  const [bioText, setBioText] = useState('');
+  const [rawSkillsInput, setRawSkillsInput] = useState('');
   const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
   const [bioToastMessage, setBioToastMessage] = useState<string | null>(null);
   const [portfolioLinks, setPortfolioLinks] = useState<PortfolioLinks>({
@@ -1441,6 +1443,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
   const lastSavedBioRef = useRef('');
+  const lastSavedSkillsInputRef = useRef('');
   const [profileFallback, setProfileFallback] = useState<{
     displayName: string;
     username: string;
@@ -1668,6 +1671,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         let displayName = fallbackName;
         let usernameValue = fallbackUsername;
         let bioValue = isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '';
+        let skillsInputValue = '';
         let avgProjectScoreValue: number | null = null;
         let avatarUrl: string | null =
           isOwnProfile
@@ -1680,7 +1684,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
         const savedProfileResponse = await supabase
           .from('profiles')
-          .select('full_name, username, birth_date, bio, avatar_url, avg_project_score')
+          .select('full_name, username, birth_date, bio, skills, avatar_url, avg_project_score')
           .eq(isUuidIdentifier ? 'id' : 'username', routeIdentifier)
           .maybeSingle();
         const savedProfile = savedProfileResponse.data as SavedProfileItem | null;
@@ -1691,6 +1695,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           usernameValue = savedProfile.username ?? usernameValue;
           birthDate = savedProfile.birth_date ?? null;
           bioValue = savedProfile.bio ?? bioValue;
+          skillsInputValue = Array.isArray(savedProfile.skills) ? savedProfile.skills.join(', ') : '';
           avatarUrl = savedProfile.avatar_url ?? avatarUrl;
           avgProjectScoreValue =
             typeof savedProfile.avg_project_score === 'number' ? savedProfile.avg_project_score : null;
@@ -1734,8 +1739,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           }
           lastSavedProfileRef.current = hydratedDraft;
           lastSavedBioRef.current = bioValue;
+          lastSavedSkillsInputRef.current = skillsInputValue;
           setProfileDraft(hydratedDraft);
-          setBio(bioValue);
+          setBioText(bioValue);
+          setRawSkillsInput(skillsInputValue);
           setProfileHydrated(true);
           setProfileFallback({
             displayName,
@@ -2003,7 +2010,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         username: normalizedDraft.username,
         birth_date: normalizedDraft.birthDate || null,
         avatar_url: avatarUrl,
-        bio,
+        bio: bioText,
       });
 
       if (profileSaveSequenceRef.current === sequence) {
@@ -2071,7 +2078,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     }, 1600);
   }
 
-  async function saveBio(nextBio = bio) {
+  async function saveBio(nextBio = bioText) {
     if (!isOwner) {
       return;
     }
@@ -2082,8 +2089,14 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       return;
     }
 
-    const bioText = nextBio.trim();
-    if (lastSavedBioRef.current === bioText) {
+    const nextBioText = nextBio.trim();
+    const formattedSkills = rawSkillsInput
+      .split(',')
+      .map((skill) => skill.trim().toLowerCase())
+      .filter(Boolean);
+    const formattedSkillsInput = formattedSkills.join(', ');
+
+    if (lastSavedBioRef.current === nextBioText && lastSavedSkillsInputRef.current === formattedSkillsInput) {
       showBioSavedState();
       return;
     }
@@ -2108,15 +2121,22 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         return;
       }
 
-      const { error } = await supabase.from('profiles').upsert({
-        id: user.id,
-        bio: bioText,
-        updated_at: new Date().toISOString(),
-      });
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          bio: nextBioText,
+          skills: formattedSkills,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id)
+        .select('id, bio, skills')
+        .maybeSingle();
 
       if (error) {
         throw error;
       }
+
+      console.log('Profile platform data sync completed:', data);
 
       void syncProfileVectorEmbedding({
         id: user.id,
@@ -2124,11 +2144,14 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         username: profileDraft.username,
         birth_date: profileDraft.birthDate || null,
         avatar_url: avatarUrl,
-        bio: bioText,
+        bio: nextBioText,
+        skills: formattedSkills,
       });
 
       if (bioSaveSequenceRef.current === sequence) {
-        lastSavedBioRef.current = bioText;
+        lastSavedBioRef.current = nextBioText;
+        lastSavedSkillsInputRef.current = formattedSkillsInput;
+        setRawSkillsInput(formattedSkillsInput);
         setProfileFallback((previous) =>
           previous
             ? {
@@ -2139,7 +2162,8 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         );
         showBioSavedState();
       }
-    } catch {
+    } catch (error) {
+      console.error('Profile dynamic platform data sync failed:', error);
       if (bioSaveSequenceRef.current === sequence) {
         setBioSaveState('idle');
         showBioToast('Sync Error: Please check your connection.');
@@ -2152,7 +2176,19 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       return;
     }
 
-    setBio(value);
+    setBioText(value);
+
+    if (bioSaveState === 'saved') {
+      setBioSaveState('idle');
+    }
+  }
+
+  function updateRawSkillsInput(value: string) {
+    if (!isOwner) {
+      return;
+    }
+
+    setRawSkillsInput(value);
 
     if (bioSaveState === 'saved') {
       setBioSaveState('idle');
@@ -3092,28 +3128,63 @@ Return Markdown sections for goods, bads, project description, and a final score
                   {isEditing ? (
                     <>
                       <Textarea
-                        value={bio}
+                        value={bioText}
                         onChange={(event) => updateBio(event.target.value)}
                         placeholder="Tell the creative community or hiring organizations about your design methodology or building focus..."
                         className="mt-5 min-h-40 resize-none border-transparent bg-[#050b1b]/35 text-base leading-7 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/55"
                       />
+                      <div className="mt-4">
+                        <Label htmlFor="profile-skills" className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                          Skills Matrix
+                        </Label>
+                        <Textarea
+                          id="profile-skills"
+                          value={rawSkillsInput}
+                          onChange={(event) => updateRawSkillsInput(event.target.value)}
+                          placeholder="React, TypeScript, Figma"
+                          className="mt-2 min-h-24 resize-none border-transparent bg-[#050b1b]/35 text-sm leading-6 text-slate-200 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/55"
+                        />
+                        <p className="mt-2 text-xs text-slate-500">
+                          Separate skills with commas. MeliusAI stores them as clean lowercase database tags.
+                        </p>
+                      </div>
                       <div className="mt-5 flex justify-end">
                         <button
                           type="button"
-                          onClick={() => void saveBio(bio)}
+                          onClick={() => void saveBio(bioText)}
                           disabled={bioSaveState === 'saving'}
                           className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-5 py-2.5 text-sm font-medium text-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/60 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           {bioSaveState === 'saved' ? <CheckIcon className="h-4 w-4" /> : null}
-                          {bioSaveState === 'saving' ? 'Saving...' : bioSaveState === 'saved' ? 'Saved!' : 'Save Bio'}
+                          {bioSaveState === 'saving'
+                            ? 'Syncing Platform Data...'
+                            : bioSaveState === 'saved'
+                              ? 'Profile Dynamic Live ✅'
+                              : 'Save Profile'}
                         </button>
                       </div>
                     </>
                   ) : (
                     <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5 text-base leading-7 text-slate-300">
-                      {bio.trim()
-                        ? bio
+                      {bioText.trim()
+                        ? bioText
                         : 'This profile is ready for a stronger public story. When the owner adds a bio, their design methodology, technical focus, and creative direction will appear here.'}
+                      {rawSkillsInput.trim() ? (
+                        <div className="mt-5 flex flex-wrap gap-2 border-t border-blue-950/40 pt-4">
+                          {rawSkillsInput
+                            .split(',')
+                            .map((skill) => skill.trim())
+                            .filter(Boolean)
+                            .map((skill) => (
+                              <span
+                                key={skill}
+                                className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </CardContent>
