@@ -927,45 +927,62 @@ async def interactive_chat_station(request: ChatHistoryRequest):
 async def sync_database_embeddings():
     try:
         supabase = get_supabase_backend_client()
-        profiles_result = supabase.table("profiles").select("*").execute()
-
-        for profile in profiles_result.data or []:
-            profile_id = profile.get("id")
-            if not profile_id:
-                continue
-
-            payload_parts = []
-            for field in ["bio", "biotext", "about", "headline", "experience", "hobbies", "skills"]:
-                value = profile.get(field)
-                if isinstance(value, list):
-                    flattened_value = " ".join(str(item) for item in value if item is not None)
-                else:
-                    flattened_value = "" if value is None else str(value)
-
-                if flattened_value.strip():
-                    payload_parts.append(flattened_value.strip())
-
-            raw_text_payload = " ".join(payload_parts).strip()
-            if not raw_text_payload.strip():
-                continue
-
-            print(
-                f"--- SYNC ENGINE DEBUG: Vectorizing User '{profile.get('username')}' "
-                f"with text length: {len(raw_text_payload)} ---"
-            )
-            print(f"--- CRITICAL EMBEDDING PAYLOAD FOR USER {profile.get('username')}: {raw_text_payload[:200]} ---")
-            generated_embedding = fetch_openai_embeddings([raw_text_payload])[0]
-            (
-                supabase.table("profiles")
-                .update({"profile_embedding": generated_embedding})
-                .eq("id", profile_id)
-                .execute()
-            )
-
+        
+        # 1. Pull all records from the profiles table
+        response = supabase.table("profiles").select("*").execute()
+        profiles_list = response.data or []
+        
+        print(f"--- SYNC ROOT: Found {len(profiles_list)} total rows inside profiles table ---")
+        
+        updated_count = 0
+        for profile in profiles_list:
+            user_id = profile.get("id")
+            username = profile.get("username") or "Unknown"
+            
+            # 2. Aggressively extract text fields and flatten array columns (text[])
+            text_chunks = []
+            
+            # Inspect every potential column layout target
+            target_fields = ["bio", "biotext", "about", "headline", "experience", "hobbies", "skills"]
+            for field in target_fields:
+                val = profile.get(field)
+                if val:
+                    if isinstance(val, list):
+                        # Convert postgres array strings ["A", "B"] into plain sentences
+                        flattened = " ".join(str(x) for x in val if x)
+                        text_chunks.append(f"{field}: {flattened}")
+                    else:
+                        text_chunks.append(f"{field}: {str(val)}")
+            
+            # Fallback metadata additions if text slots are bare
+            text_chunks.append(f"username: {username}")
+            text_chunks.append(f"full_name: {profile.get('full_name', '')}")
+            
+            raw_text_payload = " | ".join(text_chunks).strip()
+            
+            print(f"--- SYNC ENGINE DEBUG: Processing user '{username}' (Length: {len(raw_text_payload)} chars) ---")
+            
+            # 3. Request high-dimensional vector coordinates from OpenAI
+            if len(raw_text_payload) > 5:
+                embedding_response = client.embeddings.create(
+                    model="text-embedding-3-small",
+                    input=[raw_text_payload[:7000]]
+                )
+                generated_embedding = embedding_response.data[0].embedding
+                
+                # 4. Inject vector directly back into Supabase targeting this precise profile item
+                supabase.table("profiles").update({
+                    "profile_embedding": generated_embedding
+                }).eq("id", user_id).execute()
+                
+                updated_count += 1
+                print(f"--- SYNC ENGINE SUCCESS: Written embedding coordinate matrix for {username} ---")
+                
         return {
-            "success": True,
-            "message": "Successfully vectorized existing candidate pool database rows.",
+            "success": True, 
+            "message": f"Successfully vectorized existing candidate pool. Updated {updated_count} rows."
         }
+        
     except Exception as error:
-        print(f"--- SYNC EMBEDDINGS ERROR: {str(error)} ---")
+        print(f"--- CRITICAL SYNC EXCEPTION LOG: {str(error)} ---")
         raise HTTPException(status_code=500, detail=str(error))
