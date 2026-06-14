@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEven
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { FileText, FolderLock, House, Menu, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -568,17 +568,20 @@ function SidebarNavButton({
   active,
   href,
   icon,
+  onClick,
 }: {
   label: string;
   active?: boolean;
   href: string;
   icon: ReactNode;
+  onClick?: () => void;
 }) {
   return (
     <Link
       href={href}
       aria-label={label}
       title={label}
+      onClick={onClick}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         label === 'MeliusAI' ? 'text-cyan-400/90 hover:text-cyan-400' : null,
@@ -1402,6 +1405,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
   const [showRefresh, setShowRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1577,6 +1581,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       router.replace('/auth');
     }
   }, [authEnabled, loading, router, user]);
+
+  useEffect(() => {
+    setIsOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!supabase) {
@@ -2758,12 +2766,36 @@ Return Markdown sections for goods, bads, project description, and a final score
               : 'relative z-10 flex h-full w-full overflow-hidden'
           }
         >
+          <header className="fixed left-0 right-0 top-0 z-30 flex items-center justify-between border-b border-blue-950/40 bg-[#020617]/70 px-4 py-3 backdrop-blur-xl md:hidden">
+            <button
+              type="button"
+              onClick={() => setIsOpen((value) => !value)}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-950/60 bg-[#071329]/80 text-slate-200 transition hover:border-cyan-500/40 hover:text-cyan-300"
+              aria-label="Toggle sidebar navigation"
+              aria-expanded={isOpen}
+            >
+              <Menu className="h-5 w-5" strokeWidth={1.9} />
+            </button>
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-950/60 text-xs text-cyan-400">
+                M
+              </span>
+              MeliusAI
+            </div>
+          </header>
+          {isOpen ? (
+            <div
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px] md:hidden"
+              onClick={() => setIsOpen(false)}
+              aria-hidden="true"
+            />
+          ) : null}
           <aside
-            className={
-              isOrganizationWorkspace
-                ? 'w-64 min-w-[16rem] h-screen shrink-0 sticky top-0 overflow-y-auto bg-[#060b1e] border-r border-blue-950/40 p-4 flex flex-col justify-between z-40'
-                : 'w-64 min-w-[16rem] h-full sticky top-0 bg-[#060b1e] border-r border-blue-950/40 p-4 flex flex-col justify-between z-40'
-            }
+            className={cn(
+              'fixed inset-y-0 left-0 z-50 flex w-64 min-w-[16rem] shrink-0 transform flex-col justify-between overflow-y-auto border-r border-blue-950/40 bg-[#0a0f24] p-4 transition-transform duration-300 ease-in-out md:static md:translate-x-0',
+              isOpen ? 'translate-x-0' : '-translate-x-full',
+              isOrganizationWorkspace ? 'h-screen' : 'h-full'
+            )}
           >
             <div>
               <div className="mb-8 flex items-center gap-3 px-3 py-2">
@@ -2783,6 +2815,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                   label={item.label}
                   active={pathname === item.href}
                   icon={item.icon}
+                  onClick={() => setIsOpen(false)}
                 />
               ))}
               </nav>
@@ -2802,15 +2835,15 @@ Return Markdown sections for goods, bads, project description, and a final score
           <section
             className={
               isOrganizationWorkspace
-                ? 'flex-1 h-screen overflow-y-auto p-6 md:p-8'
-                : 'flex h-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto'
+                ? 'h-screen w-full flex-1 overflow-y-auto px-4 pb-6 pt-20 md:p-8'
+                : 'flex h-full w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto pt-16 md:pt-0'
             }
           >
             <div
               className={
                 isOrganizationWorkspace
                   ? 'mx-auto flex w-full max-w-6xl flex-col gap-6'
-                  : 'mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8'
+                  : 'mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8'
               }
             >
             <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md">
