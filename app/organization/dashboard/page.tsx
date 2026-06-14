@@ -160,6 +160,8 @@ export default function OrganizationDashboard() {
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
   const currentOrg = activeWorkspace;
+  const currentOrgId = activeWorkspace.id;
+  const isWorkspaceContextPending = loading || isLoading;
 
   function scrollToSection(targetId: string) {
     document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -376,7 +378,11 @@ export default function OrganizationDashboard() {
       return;
     }
 
-    const currentOrgId = activeWorkspace.id;
+    if (isWorkspaceContextPending) {
+      setProfileSaveState('idle');
+      setProfileSaveError(null);
+      return;
+    }
 
     if (!currentOrgId) {
       setProfileSaveState('error');
@@ -400,6 +406,32 @@ export default function OrganizationDashboard() {
         throw new Error(error.message);
       }
 
+      const { data: refreshedOrganization, error: refreshError } = await getOrganizationClient()
+        .from('organizations')
+        .select('id, company_name, slug, bio, linked_profiles')
+        .eq('id', currentOrgId)
+        .maybeSingle();
+
+      if (refreshError) {
+        console.warn('Organization profile saved, but refresh failed:', refreshError.message);
+      }
+
+      if (refreshedOrganization) {
+        const refreshedTitle = refreshedOrganization.company_name || companyName;
+        const refreshedSlug = refreshedOrganization.slug || workspaceUsername;
+
+        setCompanyName(refreshedTitle);
+        setWorkspaceUsername(refreshedSlug);
+        setActiveWorkspace({
+          id: refreshedOrganization.id,
+          title: refreshedTitle,
+          slug: refreshedSlug,
+        });
+        setBioState(refreshedOrganization.bio ?? '');
+        setLinkedProfilesState(normalizeLinkedProfiles(refreshedOrganization.linked_profiles));
+      }
+
+      setProfileSaveError(null);
       setProfileSaveState('saved');
       window.setTimeout(() => setProfileSaveState('idle'), 1600);
     } catch (error) {
@@ -509,6 +541,7 @@ export default function OrganizationDashboard() {
 
           const organization =
             (await resolveOrganizationBy('id', metadataOrganizationId)) ||
+            (await resolveOrganizationBy('id', activeUser.id)) ||
             (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
@@ -643,17 +676,25 @@ export default function OrganizationDashboard() {
                 className="mt-5 w-full bg-[#040615]/60 border border-slate-800/80 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all resize-none h-28"
               />
 
-              {profileSaveError ? (
+              {isWorkspaceContextPending ? (
+                <div className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <span className="h-3 w-3 animate-spin rounded-full border border-purple-400/20 border-t-purple-300" />
+                  Resolving organization workspace...
+                </div>
+              ) : null}
+              {profileSaveError && !isWorkspaceContextPending ? (
                 <p className="mt-3 text-xs font-medium text-rose-400">{profileSaveError}</p>
               ) : null}
               <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => void handleSaveOrganizationProfile()}
-                  disabled={profileSaveState === 'saving'}
+                  disabled={isWorkspaceContextPending || profileSaveState === 'saving'}
                   className="mt-3 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 text-white text-xs font-semibold rounded-lg px-5 py-2.5 transition-all shadow-lg shadow-purple-900/20 active:scale-[0.98] self-end"
                 >
-                  {profileSaveState === 'saving'
+                  {isWorkspaceContextPending
+                    ? 'Loading Workspace...'
+                    : profileSaveState === 'saving'
                     ? 'Saving...'
                     : profileSaveState === 'saved'
                       ? 'Saved ✓'
