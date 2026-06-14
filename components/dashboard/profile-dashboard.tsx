@@ -62,7 +62,9 @@ type ProjectItem = {
 
 type JobItem = Pick<JobRow, 'id' | 'company_name' | 'role_title' | 'location' | 'status' | 'created_at'>;
 type UserApplicationItem = Pick<UserApplicationRow, 'id' | 'job_id' | 'status' | 'created_at'>;
-type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
+type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
+  avg_project_score?: number | null;
+};
 type SavedUserProfileItem = Pick<UserRow, 'display_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
 type ProjectAuditSummary = {
   score?: number | null;
@@ -1442,6 +1444,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     email: string;
     hasDbProfile: boolean;
     avatarUrl: string | null;
+    avgProjectScore: number | null;
   } | null>(null);
 
   const displayName =
@@ -1467,6 +1470,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     (user?.user_metadata?.avatar_url as string | undefined) ??
     (user?.user_metadata?.picture as string | undefined) ??
     null;
+  const avgProjectScore =
+    typeof profileFallback?.avgProjectScore === 'number'
+      ? Math.round(profileFallback.avgProjectScore)
+      : 0;
   const dashboardNavigation = useMemo(
     () => [
       {
@@ -1653,6 +1660,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         let displayName = fallbackName;
         let usernameValue = fallbackUsername;
         let bioValue = isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '';
+        let avgProjectScoreValue: number | null = null;
         let avatarUrl: string | null =
           isOwnProfile
             ? sessionUserMetadata?.avatar_url ??
@@ -1664,7 +1672,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
         const savedProfileResponse = await supabase
           .from('profiles')
-          .select('full_name, username, birth_date, bio, avatar_url')
+          .select('full_name, username, birth_date, bio, avatar_url, avg_project_score')
           .eq(isUuidIdentifier ? 'id' : 'username', routeIdentifier)
           .maybeSingle();
         const savedProfile = savedProfileResponse.data as SavedProfileItem | null;
@@ -1676,6 +1684,8 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           birthDate = savedProfile.birth_date ?? null;
           bioValue = savedProfile.bio ?? bioValue;
           avatarUrl = savedProfile.avatar_url ?? avatarUrl;
+          avgProjectScoreValue =
+            typeof savedProfile.avg_project_score === 'number' ? savedProfile.avg_project_score : null;
         } else {
           const dbProfileResponse = await supabase
             .from('users')
@@ -1726,6 +1736,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
             email: isOwnProfile ? sessionUser.email ?? 'unknown' : 'unknown',
             hasDbProfile,
             avatarUrl,
+            avgProjectScore: avgProjectScoreValue,
           });
           setProfileSaveError(null);
           setProfileSyncState('idle');
@@ -2604,6 +2615,7 @@ Return Markdown sections for goods, bads, project description, and a final score
               email,
               hasDbProfile: true,
               avatarUrl: publicUrl,
+              avgProjectScore: null,
             }
       );
     } catch (error) {
@@ -2847,6 +2859,20 @@ Return Markdown sections for goods, bads, project description, and a final score
                         <Badge className="border-emerald-400/40 bg-emerald-500/15 text-emerald-100" variant="outline">
                           Confirmed
                         </Badge>
+                        {profileLoading ? (
+                          <span className="h-7 w-32 animate-pulse rounded-full border border-slate-800 bg-white/5" />
+                        ) : (
+                          <span
+                            className={cn(
+                              'rounded-full border px-3 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm',
+                              avgProjectScore >= 80
+                                ? 'border-emerald-400/45 bg-emerald-500/10 text-emerald-100'
+                                : 'border-purple-400/45 bg-purple-500/10 text-purple-100'
+                            )}
+                          >
+                            Avg Score: {avgProjectScore}/100
+                          </span>
+                        )}
                       </div>
                       <p className="mt-2 text-sm text-slate-400">@{username}</p>
                       {profileSaveError ? <p className="mt-2 text-sm text-rose-200">{profileSaveError}</p> : null}
