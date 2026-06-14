@@ -705,87 +705,65 @@ async def match_talent(request: Request):
             "portfolio relevance, and skill-transfer patterns."
         )
 
+        # Generate the unified semantic vector embedding from your hiring intent string
         query_embedding = fetch_openai_embeddings([hiring_intent])[0]
+        
+        # --- EXECUTE MULTI-CRITERIA MATCH ENGINE ---
         rpc_result = (
             supabase.rpc(
                 "match_candidates_v2",
                 {
                     "query_embedding": [float(x) for x in query_embedding],
                     "match_threshold": float(0.20),
-                    "min_performance_score": float(min_score if min_score else 0.0),
+                    "min_performance_score": float(min_score),
                     "match_count": int(5),
                 },
             )
             .execute()
         )
-
+        
+        # --- PROCESS RESULT ROWS ---
         positive_feedback_candidate_ids = {
             row.get("candidate_id")
             for row in feedback_rows
             if str(row.get("action", "")).lower() in ["clicked", "shortlisted"]
         }
+        
         candidates = []
         for row in rpc_result.data or []:
-            candidate_id = row.get("id") or row.get("candidate_id") or row.get("profile_id")
-            raw_similarity = (
-                row.get("similarity")
-                or row.get("match_score")
-                or row.get("score")
-                or row.get("similarity_score")
-                or 0
-            )
-
-            try:
-                similarity = float(raw_similarity)
-            except (TypeError, ValueError):
-                similarity = 0.0
-
-            if similarity > 1:
-                similarity = similarity / 100
-
+            candidate_id = row.get("id")
+            
+            # Extract out the semantic_similarity returned by match_candidates_v2
+            similarity = float(row.get("semantic_similarity", 0.0))
+            
+            # Calculate learning loop bonuses
             feedback_multiplier = 1.10 if candidate_id in positive_feedback_candidate_ids else 1.0
             weighted_similarity = min(0.99, max(0.0, similarity * feedback_multiplier))
             match_index = max(0, min(99, round(weighted_similarity * 100)))
 
-            profile_role = (
-                row.get("headline")
-                or row.get("professional_headline")
-                or row.get("role")
-                or row.get("target_role")
-                or row.get("title")
-                or row.get("bio")
-                or "Verified MeliusAI Talent"
-            )
-            raw_tags = row.get("tags") or row.get("skills") or row.get("matched_tags") or []
-
-            if isinstance(raw_tags, list):
-                tags = [str(tag) for tag in raw_tags[:4]]
-            elif raw_tags:
-                tags = [str(raw_tags)]
-            else:
-                tags = [f"Vector Similarity: {match_index}%"]
-
+            profile_role = row.get("bio") or "Verified MeliusAI Talent"
+            
+            # Compile display tags containing our new live dynamic score metric row values
+            tags = [f"Vector Match: {match_index}%"]
+            tags.append(f"Avg Score: {row.get('avg_project_score', 0.0)}/100")
             if feedback_multiplier > 1:
                 tags.append("Feedback Boost: +10%")
 
-            avg_project_score = row.get("avg_project_score") or 0
-            tags.append(f"Avg Score: {avg_project_score}/100")
-
             candidates.append({
                 "id": candidate_id,
-                "full_name": row.get("full_name") or row.get("name") or row.get("username") or "MeliusAI Talent",
+                "full_name": row.get("full_name") or "MeliusAI Talent",
                 "username": row.get("username") or "",
                 "role": str(profile_role)[:140],
                 "match_index": match_index,
-                "tags": tags[:6],
+                "tags": tags[:5],
             })
 
-        sorted_candidates = sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
+        sorted_candidates = sorted(candidates, key=lambda c: c["match_index"], reverse=True)[:5]
         return {"success": True, "candidates": sorted_candidates}
+
     except Exception as error:
         print(f"--- TALENT MATCH ERROR: {str(error)} ---")
         return {"success": False, "message": "Failed to compute talent match index criteria profile schemas."}
-
 
 @app.post("/api/match-feedback")
 async def match_feedback(request: Request):
