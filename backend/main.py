@@ -934,7 +934,18 @@ async def sync_database_embeddings():
             if not profile_id:
                 continue
 
-            raw_text_payload = build_profile_embedding_text(profile)
+            payload_parts = []
+            for field in ["bio", "biotext", "about", "headline", "experience", "hobbies", "skills"]:
+                value = profile.get(field)
+                if isinstance(value, list):
+                    flattened_value = " ".join(str(item) for item in value if item is not None)
+                else:
+                    flattened_value = "" if value is None else str(value)
+
+                if flattened_value.strip():
+                    payload_parts.append(flattened_value.strip())
+
+            raw_text_payload = " ".join(payload_parts).strip()
             if not raw_text_payload.strip():
                 continue
 
@@ -942,6 +953,7 @@ async def sync_database_embeddings():
                 f"--- SYNC ENGINE DEBUG: Vectorizing User '{profile.get('username')}' "
                 f"with text length: {len(raw_text_payload)} ---"
             )
+            print(f"--- CRITICAL EMBEDDING PAYLOAD FOR USER {profile.get('username')}: {raw_text_payload[:200]} ---")
             generated_embedding = fetch_openai_embeddings([raw_text_payload])[0]
             (
                 supabase.table("profiles")
