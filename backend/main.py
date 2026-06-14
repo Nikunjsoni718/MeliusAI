@@ -399,6 +399,46 @@ def build_profile_embedding_text(profile: Dict[str, Any]) -> str:
     return " ".join(raw_text_parts).strip()
 
 
+def extract_project_assessment_score(project: Dict[str, Any]) -> float | None:
+    for field in ["evaluation_score", "logic_score", "technical_score", "score"]:
+        value = project.get(field)
+        if value is None:
+            continue
+
+        try:
+            numeric_score = float(value)
+        except (TypeError, ValueError):
+            continue
+
+        if 0 <= numeric_score <= 100:
+            return numeric_score
+
+    return None
+
+
+def build_project_search_text(project: Dict[str, Any]) -> str:
+    searchable_fields = [
+        "title",
+        "name",
+        "description",
+        "summary",
+        "ai_summary",
+        "tech_stack",
+        "stack",
+        "tags",
+        "skills",
+        "file_name",
+        "source_kind",
+        "profession",
+    ]
+
+    return " ".join(
+        stringify_profile_value(project.get(field))
+        for field in searchable_fields
+        if stringify_profile_value(project.get(field)).strip()
+    ).lower()
+
+
 def get_profile_search_corpus(profile: Dict[str, Any]) -> str:
     searchable_fields = [
         "full_name",
@@ -664,6 +704,12 @@ async def match_talent(request: Request):
         if not prompt:
             return {"success": True, "candidates": []}
 
+        prompt_lower = prompt.lower()
+        strict_keywords = [
+            keyword
+            for keyword in ["typescript", "figma", "python", "react"]
+            if keyword in prompt_lower
+        ]
         supabase = get_supabase_backend_client()
         organization = None
         feedback_rows = []
@@ -723,6 +769,52 @@ async def match_talent(request: Request):
         )
         
         # --- PROCESS RESULT ROWS ---
+        rpc_rows = rpc_result.data or []
+        candidate_ids = [
+            row.get("id") or row.get("candidate_id") or row.get("profile_id")
+            for row in rpc_rows
+            if row.get("id") or row.get("candidate_id") or row.get("profile_id")
+        ]
+        profiles_by_id = {}
+        projects_by_profile_id = {candidate_id: [] for candidate_id in candidate_ids}
+        seen_project_ids = set()
+
+        if candidate_ids:
+            profiles_result = (
+                supabase.table("profiles")
+                .select("*")
+                .in_("id", candidate_ids)
+                .execute()
+            )
+            profiles_by_id = {
+                profile.get("id"): profile
+                for profile in (profiles_result.data or [])
+                if profile.get("id")
+            }
+
+            for owner_column in ["user_id", "owner_id", "profile_id"]:
+                try:
+                    projects_result = (
+                        supabase.table("projects")
+                        .select("*")
+                        .in_(owner_column, candidate_ids)
+                        .execute()
+                    )
+
+                    for project in projects_result.data or []:
+                        owner_id = project.get(owner_column)
+                        project_key = project.get("id") or f"{owner_column}:{owner_id}:{len(seen_project_ids)}"
+                        if not owner_id or owner_id not in projects_by_profile_id or project_key in seen_project_ids:
+                            continue
+
+                        seen_project_ids.add(project_key)
+                        projects_by_profile_id[owner_id].append(project)
+                except Exception as project_lookup_error:
+                    print(
+                        f"--- TALENT MATCH PROJECT JOIN WARNING: Unable to fetch projects by {owner_column}: "
+                        f"{str(project_lookup_error)} ---"
+                    )
+
         positive_feedback_candidate_ids = {
             row.get("candidate_id")
             for row in feedback_rows
@@ -730,29 +822,119 @@ async def match_talent(request: Request):
         }
         
         candidates = []
-        for row in rpc_result.data or []:
-            candidate_id = row.get("id")
+        for row in rpc_rows:
+            candidate_id = row.get("id") or row.get("candidate_id") or row.get("profile_id")
+            if not candidate_id:
+                continue
+
+            full_profile = profiles_by_id.get(candidate_id, {})
+            candidate_projects = projects_by_profile_id.get(candidate_id, [])
+            project_scores = [
+                score
+                for score in (extract_project_assessment_score(project) for project in candidate_projects)
+                if score is not None
+            ]
+            avg_project_score = (
+                round(sum(project_scores) / len(project_scores), 2)
+                if project_scores
+                else float(row.get("avg_project_score") or full_profile.get("avg_project_score") or 0)
+            )
+
+            try:
+                supabase.table("profiles").update({"avg_project_score": avg_project_score}).eq("id", candidate_id).execute()
+            except Exception as average_sync_error:
+                print(
+                    f"--- TALENT MATCH AVG SCORE WARNING: Unable to persist avg_project_score for "
+                    f"{candidate_id}: {str(average_sync_error)} ---"
+                )
+
+            profile_corpus = " ".join(
+                stringify_profile_value((full_profile or row).get(field))
+                for field in [
+                    "bio",
+                    "biotext",
+                    "about",
+                    "description",
+                    "headline",
+                    "professional_headline",
+                    "role",
+                    "target_role",
+                    "title",
+                    "experience",
+                    "hobbies",
+                    "skills",
+                    "tags",
+                    "tech_stack",
+                    "specialties",
+                ]
+            ).lower()
+            project_corpus = " ".join(build_project_search_text(project) for project in candidate_projects).lower()
+
+            if strict_keywords:
+                missing_keywords = [
+                    keyword
+                    for keyword in strict_keywords
+                    if keyword not in profile_corpus and keyword not in project_corpus
+                ]
+
+                if missing_keywords:
+                    print(
+                        f"--- TALENT MATCH STRICT FILTER: Dropping candidate '{row.get('username')}' "
+                        f"because profile/projects lack required keyword(s): {missing_keywords} ---"
+                    )
+                    continue
             
             # Extract out the semantic_similarity returned by match_candidates_v2
-            similarity = float(row.get("semantic_similarity", 0.0))
+            try:
+                similarity = float(row.get("semantic_similarity") or row.get("similarity") or 0.0)
+            except (TypeError, ValueError):
+                similarity = 0.0
             
             # Calculate learning loop bonuses
             feedback_multiplier = 1.10 if candidate_id in positive_feedback_candidate_ids else 1.0
             weighted_similarity = min(0.99, max(0.0, similarity * feedback_multiplier))
-            match_index = max(0, min(99, round(weighted_similarity * 100)))
+            vector_match_index = max(0, min(99, round(weighted_similarity * 100)))
+            project_keyword_hits = [
+                keyword
+                for keyword in strict_keywords
+                if keyword in project_corpus
+            ]
+            project_keyword_score = (
+                100
+                if strict_keywords and len(project_keyword_hits) == len(strict_keywords)
+                else 65
+                if project_keyword_hits
+                else 100
+                if not strict_keywords
+                else 0
+            )
+            average_score_component = max(0, min(100, avg_project_score))
+            match_index = (
+                round(vector_match_index * 0.55 + project_keyword_score * 0.25 + average_score_component * 0.20)
+                if strict_keywords
+                else round(vector_match_index * 0.75 + average_score_component * 0.25)
+            )
+            match_index = max(0, min(99, match_index))
 
-            profile_role = row.get("bio") or "Verified MeliusAI Talent"
+            profile_role = (
+                full_profile.get("headline")
+                or full_profile.get("professional_headline")
+                or full_profile.get("bio")
+                or row.get("bio")
+                or "Verified MeliusAI Talent"
+            )
             
             # Compile display tags containing our new live dynamic score metric row values
-            tags = [f"Vector Match: {match_index}%"]
-            tags.append(f"Avg Score: {row.get('avg_project_score', 0.0)}/100")
+            tags = [f"Vector Match: {vector_match_index}%"]
+            tags.append(f"Project Keyword Match: {project_keyword_score}%")
+            tags.append(f"Avg Score: {avg_project_score}/100")
             if feedback_multiplier > 1:
                 tags.append("Feedback Boost: +10%")
 
             candidates.append({
                 "id": candidate_id,
-                "full_name": row.get("full_name") or "MeliusAI Talent",
-                "username": row.get("username") or "",
+                "full_name": full_profile.get("full_name") or row.get("full_name") or "MeliusAI Talent",
+                "username": full_profile.get("username") or row.get("username") or "",
                 "role": str(profile_role)[:140],
                 "match_index": match_index,
                 "tags": tags[:5],
