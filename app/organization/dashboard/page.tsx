@@ -376,7 +376,9 @@ export default function OrganizationDashboard() {
       return;
     }
 
-    if (!currentUserId) {
+    const currentOrgId = activeWorkspace.id;
+
+    if (!currentOrgId) {
       setProfileSaveState('error');
       setProfileSaveError('Unable to identify this organization workspace.');
       return;
@@ -392,7 +394,7 @@ export default function OrganizationDashboard() {
           bio: bioState,
           linked_profiles: linkedProfilesState,
         })
-        .eq('id', currentUserId);
+        .eq('id', currentOrgId);
 
       if (error) {
         throw new Error(error.message);
