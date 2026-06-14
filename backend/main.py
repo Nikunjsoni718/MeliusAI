@@ -785,42 +785,6 @@ async def match_talent(request: Request):
         ]
         semantic_expansion = str(parsed_intent.get("semantic_expansion", "")).strip() or prompt
 
-        profiles_result = supabase.table("profiles").select("*").execute()
-        profiles = profiles_result.data or []
-        profile_ids = [profile.get("id") for profile in profiles if profile.get("id")]
-        projects_by_profile_id = {profile_id: [] for profile_id in profile_ids}
-        seen_project_ids = set()
-
-        if profile_ids:
-            for owner_column in ["user_id", "owner_id", "profile_id"]:
-                try:
-                    projects_result = (
-                        supabase.table("projects")
-                        .select("*")
-                        .in_(owner_column, profile_ids)
-                        .execute()
-                    )
-
-                    for project in projects_result.data or []:
-                        owner_id = project.get(owner_column)
-                        project_key = project.get("id") or f"{owner_column}:{owner_id}:{len(seen_project_ids)}"
-                        if not owner_id or owner_id not in projects_by_profile_id or project_key in seen_project_ids:
-                            continue
-
-                        seen_project_ids.add(project_key)
-                        projects_by_profile_id[owner_id].append(project)
-                except Exception as project_lookup_error:
-                    print(
-                        f"--- TALENT MATCH PROJECT JOIN WARNING: Unable to fetch projects by {owner_column}: "
-                        f"{str(project_lookup_error)} ---"
-                    )
-
-        positive_feedback_candidate_ids = {
-            row.get("candidate_id")
-            for row in feedback_rows
-            if str(row.get("action", "")).lower() in ["clicked", "shortlisted"]
-        }
-
         hiring_intent = (
             "MeliusAI semantic hiring intent vector.\n"
             "Organization industry/domain/workspace context:\n"
@@ -832,179 +796,28 @@ async def match_talent(request: Request):
             "Match implicit capability adjacency, equivalent technologies, architectural domain overlap, seniority, "
             "portfolio relevance, and skill-transfer patterns."
         )
-        query_embedding = fetch_openai_embeddings([hiring_intent])[0]
-        fresher_exclusion_pattern = re.compile(
-            r"\b(?:senior|lead|mid[-\s]?level|principal|manager|architect)\b|"
-            r"\b(?:[4-9]|[1-9][0-9])\+?\s*(?:yrs?|years?)\b",
-            re.IGNORECASE,
+        query_vector_embedding_array = [
+            float(value)
+            for value in fetch_openai_embeddings([hiring_intent])[0]
+        ]
+        response = (
+            supabase.rpc(
+                "match_talent_universal_v3",
+                {
+                    "query_embedding": query_vector_embedding_array,
+                    "match_threshold": 0.30,
+                    "required_skills": parsed_intent.get("required_skills", []),
+                    "excluded_skills": parsed_intent.get("excluded_skills", []),
+                    "target_experience_level": parsed_intent.get("experience_requirement", "any"),
+                },
+            )
+            .execute()
         )
-        candidates = []
-        for profile_row in profiles:
-            candidate_id = profile_row.get("id")
-            if not candidate_id:
-                continue
 
-            candidate_projects = projects_by_profile_id.get(candidate_id, [])
-            profile_corpus = " ".join(
-                stringify_profile_value(profile_row.get(field))
-                for field in [
-                    "bio",
-                    "biotext",
-                    "about",
-                    "description",
-                    "headline",
-                    "professional_headline",
-                    "role",
-                    "target_role",
-                    "title",
-                    "experience",
-                    "hobbies",
-                    "skills",
-                    "tags",
-                    "tech_stack",
-                    "specialties",
-                ]
-            ).lower()
-            project_corpus = " ".join(build_project_search_text(project) for project in candidate_projects).lower()
-            combined_corpus = f"{profile_corpus} {project_corpus}".strip()
+        return {"success": True, "candidates": response.data or []}
 
-            if experience_requirement == "fresher" and fresher_exclusion_pattern.search(profile_corpus):
-                print(
-                    f"--- TALENT MATCH ANALYTICAL FILTER: Dropping experienced candidate "
-                    f"'{profile_row.get('username')}' from fresher search. ---"
-                )
-                continue
-
-            if required_skills:
-                missing_required_skills = [
-                    skill for skill in required_skills if skill not in profile_corpus
-                ]
-                if missing_required_skills:
-                    print(
-                        f"--- TALENT MATCH ANALYTICAL FILTER: Dropping candidate '{profile_row.get('username')}' "
-                        f"because profile attributes lack required skill(s): {missing_required_skills} ---"
-                    )
-                    continue
-
-            if excluded_skills and any(skill in combined_corpus for skill in excluded_skills):
-                print(
-                    f"--- TALENT MATCH ANALYTICAL FILTER: Dropping candidate '{profile_row.get('username')}' "
-                    f"because excluded skill was detected. ---"
-                )
-                continue
-
-            if required_skills:
-                missing_profile_and_project_skills = [
-                    skill
-                    for skill in required_skills
-                    if skill not in profile_corpus and skill not in project_corpus
-                ]
-                if missing_profile_and_project_skills:
-                    print(
-                        f"--- TALENT MATCH STRICT FILTER: Dropping candidate '{profile_row.get('username')}' "
-                        f"because profile/projects lack required skill(s): {missing_profile_and_project_skills} ---"
-                    )
-                    continue
-
-            candidate_projects = projects_by_profile_id.get(candidate_id, [])
-            project_scores = [
-                score
-                for score in (extract_project_assessment_score(project) for project in candidate_projects)
-                if score is not None
-            ]
-            avg_project_score = (
-                round(sum(project_scores) / len(project_scores), 2)
-                if project_scores
-                else float(profile_row.get("avg_project_score") or 0)
-            )
-
-            try:
-                supabase.table("profiles").update({"avg_project_score": avg_project_score}).eq("id", candidate_id).execute()
-            except Exception as average_sync_error:
-                print(
-                    f"--- TALENT MATCH AVG SCORE WARNING: Unable to persist avg_project_score for "
-                    f"{candidate_id}: {str(average_sync_error)} ---"
-                )
-
-            profile_embedding = profile_row.get("profile_embedding")
-            if not isinstance(profile_embedding, list) or not profile_embedding:
-                candidate_text = f"{build_profile_embedding_text(profile_row)} {project_corpus}".strip()
-                if not candidate_text:
-                    continue
-
-                try:
-                    profile_embedding = fetch_openai_embeddings([candidate_text])[0]
-                    supabase.table("profiles").update({"profile_embedding": profile_embedding}).eq("id", candidate_id).execute()
-                except Exception as embedding_error:
-                    print(
-                        f"--- TALENT MATCH EMBEDDING WARNING: Unable to create embedding for "
-                        f"{candidate_id}: {str(embedding_error)} ---"
-                    )
-                    continue
-
-            try:
-                similarity = cosine_similarity(
-                    [float(value) for value in query_embedding],
-                    [float(value) for value in profile_embedding],
-                )
-            except (TypeError, ValueError):
-                similarity = 0.0
-            
-            # Calculate learning loop bonuses
-            feedback_multiplier = 1.10 if candidate_id in positive_feedback_candidate_ids else 1.0
-            weighted_similarity = min(0.99, max(0.0, similarity * feedback_multiplier))
-            vector_match_index = max(0, min(99, round(weighted_similarity * 100)))
-            project_keyword_hits = [
-                keyword
-                for keyword in required_skills
-                if keyword in project_corpus
-            ]
-            project_keyword_score = (
-                100
-                if required_skills and len(project_keyword_hits) == len(required_skills)
-                else 65
-                if project_keyword_hits
-                else 100
-                if not required_skills
-                else 0
-            )
-            average_score_component = max(0, min(100, avg_project_score))
-            match_index = (
-                round(vector_match_index * 0.55 + project_keyword_score * 0.25 + average_score_component * 0.20)
-                if required_skills
-                else round(vector_match_index * 0.75 + average_score_component * 0.25)
-            )
-            match_index = max(0, min(99, match_index))
-
-            if match_index < 60 or (min_score and avg_project_score < min_score):
-                continue
-
-            profile_role = (
-                profile_row.get("headline")
-                or profile_row.get("professional_headline")
-                or profile_row.get("bio")
-                or "Verified MeliusAI Talent"
-            )
-            
-            # Compile display tags containing our new live dynamic score metric row values
-            tags = [f"Vector Match: {vector_match_index}%"]
-            tags.append(f"Project Keyword Match: {project_keyword_score}%")
-            tags.append(f"Avg Score: {avg_project_score}/100")
-            if feedback_multiplier > 1:
-                tags.append("Feedback Boost: +10%")
-
-            candidates.append({
-                "id": candidate_id,
-                "full_name": profile_row.get("full_name") or profile_row.get("username") or "MeliusAI Talent",
-                "username": profile_row.get("username") or "",
-                "role": str(profile_role)[:140],
-                "match_index": match_index,
-                "tags": tags[:5],
-            })
-
-        sorted_candidates = sorted(candidates, key=lambda c: c["match_index"], reverse=True)[:5]
-        return {"success": True, "candidates": sorted_candidates}
-
+    except HTTPException as http_error:
+        raise http_error
     except Exception as error:
         print(f"--- TALENT MATCH ERROR: {str(error)} ---")
         return {"success": False, "message": "Failed to compute talent match index criteria profile schemas."}
