@@ -9,14 +9,24 @@ type CandidateApplicationRow = {
   status: string | null;
   created_at: string | null;
   job_id: string;
-  jobs?: {
+  jobs?:
+    | {
     id: string;
     company_name: string | null;
     role_title: string | null;
     location: string | null;
     status: string | null;
     created_at: string | null;
-  } | null;
+  }
+    | Array<{
+        id: string;
+        company_name: string | null;
+        role_title: string | null;
+        location: string | null;
+        status: string | null;
+        created_at: string | null;
+      }>
+    | null;
 };
 
 function extractMatchScore(status: string | null) {
@@ -49,9 +59,9 @@ export async function GET(request: Request) {
       throw error;
     }
 
-    const opportunities = ((data ?? []) as CandidateApplicationRow[])
+    const opportunities = ((data ?? []) as unknown as CandidateApplicationRow[])
       .map((application) => {
-        const job = application.jobs;
+        const job = Array.isArray(application.jobs) ? application.jobs[0] : application.jobs;
 
         if (!job) {
           return null;

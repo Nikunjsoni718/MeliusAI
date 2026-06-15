@@ -19,7 +19,7 @@ import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { JobRow, ProfileRow, ProjectRow, UserApplicationRow, UserRow } from '@/types/supabase';
+import type { ProfileRow, ProjectRow, UserRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
   | 'image'
@@ -60,8 +60,6 @@ type ProjectItem = {
   is_local?: boolean;
 };
 
-type JobItem = Pick<JobRow, 'id' | 'company_name' | 'role_title' | 'location' | 'status' | 'created_at'>;
-type UserApplicationItem = Pick<UserApplicationRow, 'id' | 'job_id' | 'status' | 'created_at'>;
 type OpportunityRoleItem = {
   id: string;
   job_id?: string | null;
@@ -137,8 +135,6 @@ type UploadState = {
   status: 'uploading' | 'done' | 'failed';
   error?: string;
 };
-
-const visibleJobStatuses = ['active', 'Active', 'open', 'Open', 'new', 'New'];
 
 function formatBirthday(value: string | null | undefined) {
   if (!value) {
@@ -1403,12 +1399,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
   const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
-  const [jobs, setJobs] = useState<JobItem[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(false);
-  const [applicationsByJobId, setApplicationsByJobId] = useState<Record<string, UserApplicationItem>>({});
-  const [applicationError, setApplicationError] = useState<string | null>(null);
-  const [pendingApplicationJobId, setPendingApplicationJobId] = useState<string | null>(null);
-  const [retryApplicationJob, setRetryApplicationJob] = useState<JobItem | null>(null);
+  const [rolesLoading, setRolesLoading] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
@@ -1535,7 +1526,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     bioSaveState === 'saving' ||
     verifyingAssetId !== null ||
     deletingProjectId !== null ||
-    pendingApplicationJobId !== null ||
     uploadState?.status === 'uploading';
   const allProjects = projects;
   const needsReviewCount = useMemo(() => {
@@ -1849,7 +1839,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     let active = true;
 
     const loadOpportunities = async () => {
-      setJobsLoading(true);
+      setRolesLoading(true);
 
       try {
         const userId = await getConfirmedUserId();
@@ -1877,58 +1867,12 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         }
       } finally {
         if (active) {
-          setJobsLoading(false);
+          setRolesLoading(false);
         }
       }
     };
 
     void loadOpportunities();
-
-    return () => {
-      active = false;
-    };
-  }, [authEnabled, getConfirmedUserId, supabase, user]);
-
-  useEffect(() => {
-    if (!user || !authEnabled || !supabase) {
-      return;
-    }
-
-    let active = true;
-
-    const loadApplications = async () => {
-      try {
-        const userId = await getConfirmedUserId();
-        if (!userId) {
-          if (active) {
-            setApplicationsByJobId({});
-          }
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('user_applications')
-          .select('id, job_id, status, created_at')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          throw error;
-        }
-
-        if (active) {
-          setApplicationsByJobId(
-            Object.fromEntries((data ?? []).map((application) => [application.job_id, application]))
-          );
-        }
-      } catch {
-        if (active) {
-          setApplicationsByJobId({});
-        }
-      }
-    };
-
-    void loadApplications();
 
     return () => {
       active = false;
@@ -2686,58 +2630,6 @@ Return Markdown sections for goods, bads, project description, and a final score
     }
   }
 
-  async function handleApplyToJob(job: JobItem) {
-    if (!isOwner) {
-      return;
-    }
-
-    if (!supabase) {
-      setApplicationError('Application sync is not ready.');
-      setRetryApplicationJob(job);
-      return;
-    }
-
-    const userId = await getConfirmedUserId();
-    if (!userId) {
-      setApplicationError('Application sync is not ready.');
-      setRetryApplicationJob(job);
-      return;
-    }
-
-    setPendingApplicationJobId(job.id);
-    setApplicationError(null);
-    setRetryApplicationJob(null);
-
-    try {
-      const { data, error } = await supabase
-        .from('user_applications')
-        .upsert(
-          {
-            user_id: userId,
-            job_id: job.id,
-            status: 'applied',
-          },
-          { onConflict: 'user_id,job_id' }
-        )
-        .select('id, job_id, status, created_at')
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      setApplicationsByJobId((current) => ({
-        ...current,
-        [job.id]: data,
-      }));
-    } catch (error) {
-      setApplicationError(error instanceof Error ? error.message : 'We could not save that application.');
-      setRetryApplicationJob(job);
-    } finally {
-      setPendingApplicationJobId(null);
-    }
-  }
-
   async function handleSignOut() {
     if (!supabase) {
       return;
@@ -3397,7 +3289,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                 <p className="mt-1 text-sm text-slate-400">Open roles for your next step.</p>
               </div>
 
-              {jobsLoading ? (
+              {rolesLoading ? (
                 <div className="space-y-4">
                   {[0, 1, 2].map((item) => (
                     <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
@@ -3414,7 +3306,7 @@ Return Markdown sections for goods, bads, project description, and a final score
               ) : roles.length > 0 ? (
                 <div className="space-y-4">
                   {roles.map((role) => {
-                    const isNew = isPostedInLast48Hours(role.created_at ?? null);
+                    const isNew = role.created_at ? isPostedInLast48Hours(role.created_at) : false;
                     const matchScore = typeof role.match_score === 'number' ? role.match_score : null;
 
                     return (
@@ -3465,22 +3357,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                       </Card>
                     );
                   })}
-                  {applicationError ? (
-                    <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 p-4 text-sm text-rose-100">
-                      <p>{applicationError}</p>
-                      {retryApplicationJob ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="mt-3 border-rose-400/30 text-rose-100 hover:border-rose-300/50"
-                          onClick={() => void handleApplyToJob(retryApplicationJob)}
-                        >
-                          Retry
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
