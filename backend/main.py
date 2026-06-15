@@ -1,14 +1,17 @@
 import os
+import asyncio
 import base64
 import json
+import logging
 import math
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
 
 try:
@@ -42,6 +45,8 @@ app.add_middleware(
 
 # Initialize OpenAI Client (Guaranteed to read from root .env.local now)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+logger = logging.getLogger("meliusai.backend")
 supabase_backend_client = None
 
 
@@ -313,6 +318,11 @@ async def review_portfolio_asset(file: UploadFile):
 # =====================================================================
 from pydantic import BaseModel
 from typing import Any, Dict, List
+
+
+class MatchTalentRequest(BaseModel):
+    prompt: str
+    organization_id: str | None = None
 
 
 def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -690,137 +700,146 @@ async def verify_member(request: Request):
 
 
 @app.post("/api/match-talent")
-async def match_talent(request: Request):
+async def match_talent(payload: MatchTalentRequest):
+    prompt = payload.prompt.strip()
+
+    if len(prompt) == 0:
+        raise HTTPException(status_code=400, detail="Please add new information to bring clarity.")
+
+    request_started_at = time.perf_counter()
+    logger.info(
+        "match_talent.request.received",
+        extra={"prompt_length": len(prompt), "organization_id": payload.organization_id},
+    )
+
+    llm_started_at = time.perf_counter()
     try:
-        data = await request.json()
-        prompt = str(data.get("prompt", "") if isinstance(data, dict) else "").strip()
-        organization_id = data.get("organization_id") if isinstance(data, dict) else None
-        raw_min_score = data.get("min_score", 0) if isinstance(data, dict) else 0
-
-        try:
-            min_score = float(raw_min_score or 0)
-        except (TypeError, ValueError):
-            min_score = 0.0
-
-        if not prompt:
-            raise HTTPException(status_code=400, detail="Please add new information to bring clarity.")
-
-        supabase = get_supabase_backend_client()
-        organization = None
-        feedback_rows = []
-
-        if organization_id:
-            try:
-                organization_result = (
-                    supabase.table("organizations")
-                    .select("*")
-                    .eq("id", organization_id)
-                    .limit(1)
-                    .execute()
-                )
-                organization = (organization_result.data or [None])[0]
-            except Exception as organization_error:
-                print(f"--- TALENT MATCH ORG CONTEXT WARNING: {str(organization_error)} ---")
-
-            try:
-                feedback_result = (
-                    supabase.table("matching_feedback")
-                    .select("*")
-                    .eq("organization_id", organization_id)
-                    .order("created_at", desc=True)
-                    .limit(150)
-                    .execute()
-                )
-                feedback_rows = feedback_result.data or []
-            except Exception as feedback_error:
-                print(f"--- TALENT MATCH FEEDBACK WARNING: {str(feedback_error)} ---")
-
-        organization_context = build_organization_context(organization)
-
-        intent_completion = client.chat.completions.create(
-            model="gpt-4o",
+        intent_completion = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are MeliusAI's hiring intent parser. Return strict JSON only with these keys: "
-                        "experience_requirement, required_skills, excluded_skills, semantic_expansion. "
-                        "experience_requirement must be one of fresher, experienced, any. "
-                        "required_skills and excluded_skills must be arrays of concise technology/domain terms. "
-                        "semantic_expansion must be a professional vector-search rewrite of the operator request."
+                        "You are a rigid Talent Ontology Parser for MeliusAI. Parse messy human hiring constraints "
+                        "into strict JSON only. Return exactly this schema and no markdown: "
+                        '{ "experience_requirement": "fresher" | "experienced" | "any", '
+                        '"required_skills": ["string", "tags"], '
+                        '"excluded_skills": ["string", "tags"], '
+                        '"semantic_search_expansion": "string contextually optimized for high-dimensional cosine similarity matching" }. '
+                        "Normalize technology names into concise tags. Preserve explicit negative filters in excluded_skills. "
+                        "If experience level is not clear, use any."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": (
-                        "Parse this talent search request into strict matching intent JSON:\n\n"
-                        f"{prompt}"
-                    ),
+                    "content": prompt,
                 },
             ],
-            temperature=0.1,
+            temperature=0.0,
         )
         intent_content = intent_completion.choices[0].message.content or "{}"
-
-        try:
-            parsed_intent = json.loads(intent_content)
-        except json.JSONDecodeError:
-            print(f"--- TALENT MATCH INTENT PARSE WARNING: Invalid JSON returned: {intent_content} ---")
-            parsed_intent = {}
-
-        experience_requirement = str(parsed_intent.get("experience_requirement", "any")).strip().lower()
-        if experience_requirement not in ["fresher", "experienced", "any"]:
-            experience_requirement = "any"
-
-        required_skills = [
-            str(skill).strip().lower()
-            for skill in parsed_intent.get("required_skills", [])
-            if str(skill).strip()
-        ]
-        excluded_skills = [
-            str(skill).strip().lower()
-            for skill in parsed_intent.get("excluded_skills", [])
-            if str(skill).strip()
-        ]
-        semantic_expansion = str(parsed_intent.get("semantic_expansion", "")).strip() or prompt
-
-        hiring_intent = (
-            "MeliusAI semantic hiring intent vector.\n"
-            "Organization industry/domain/workspace context:\n"
-            f"{organization_context or 'No explicit organization context available.'}\n\n"
-            "LLM-parsed operator semantic expansion:\n"
-            f"{semantic_expansion}\n\n"
-            "Original operator request:\n"
-            f"{prompt}\n\n"
-            "Match implicit capability adjacency, equivalent technologies, architectural domain overlap, seniority, "
-            "portfolio relevance, and skill-transfer patterns."
+        intent_json = json.loads(intent_content)
+        logger.info(
+            "match_talent.intent_parser.completed",
+            extra={"latency_ms": round((time.perf_counter() - llm_started_at) * 1000, 2)},
         )
-        query_vector_embedding_array = [
-            float(value)
-            for value in fetch_openai_embeddings([hiring_intent])[0]
-        ]
-        response = (
-            supabase.rpc(
+    except Exception as llm_error:
+        logger.exception(
+            "match_talent.intent_parser.failed",
+            extra={"latency_ms": round((time.perf_counter() - llm_started_at) * 1000, 2)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "stage": "intent_parser",
+                "message": "Talent ontology parsing failed before database execution.",
+                "error": str(llm_error),
+            },
+        )
+
+    experience_requirement = str(intent_json.get("experience_requirement", "any")).strip().lower()
+    if experience_requirement not in ["fresher", "experienced", "any"]:
+        experience_requirement = "any"
+
+    required_skills = [
+        str(skill).strip().lower()
+        for skill in intent_json.get("required_skills", [])
+        if str(skill).strip()
+    ]
+    excluded_skills = [
+        str(skill).strip().lower()
+        for skill in intent_json.get("excluded_skills", [])
+        if str(skill).strip()
+    ]
+    semantic_search_expansion = str(intent_json.get("semantic_search_expansion", "")).strip() or prompt
+
+    embedding_started_at = time.perf_counter()
+    try:
+        embedding_response = await async_client.embeddings.create(
+            model="text-embedding-3-small",
+            input=semantic_search_expansion,
+        )
+        query_embedding = [float(value) for value in embedding_response.data[0].embedding]
+        logger.info(
+            "match_talent.embedding.completed",
+            extra={
+                "latency_ms": round((time.perf_counter() - embedding_started_at) * 1000, 2),
+                "dimensions": len(query_embedding),
+            },
+        )
+    except Exception as embedding_error:
+        logger.exception(
+            "match_talent.embedding.failed",
+            extra={"latency_ms": round((time.perf_counter() - embedding_started_at) * 1000, 2)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "stage": "vector_generation",
+                "message": "High-dimensional query embedding generation failed.",
+                "error": str(embedding_error),
+            },
+        )
+
+    rpc_started_at = time.perf_counter()
+    try:
+        supabase = get_supabase_backend_client()
+        response = await asyncio.to_thread(
+            lambda: supabase.rpc(
                 "match_talent_universal_v3",
                 {
-                    "query_embedding": query_vector_embedding_array,
-                    "match_threshold": 0.30,
-                    "required_skills": parsed_intent.get("required_skills", []),
-                    "excluded_skills": parsed_intent.get("excluded_skills", []),
-                    "target_experience_level": parsed_intent.get("experience_requirement", "any"),
+                    "query_embedding": query_embedding,
+                    "match_threshold": 0.20,
+                    "required_skills": required_skills,
+                    "excluded_skills": excluded_skills,
+                    "target_experience_level": experience_requirement,
                 },
-            )
-            .execute()
+            ).execute()
         )
-
-        return {"success": True, "candidates": response.data or []}
-
-    except HTTPException as http_error:
-        raise http_error
-    except Exception as error:
-        print(f"--- TALENT MATCH ERROR: {str(error)} ---")
-        return {"success": False, "message": "Failed to compute talent match index criteria profile schemas."}
+        records = response.data if isinstance(response.data, list) else []
+        logger.info(
+            "match_talent.rpc.completed",
+            extra={
+                "latency_ms": round((time.perf_counter() - rpc_started_at) * 1000, 2),
+                "result_count": len(records),
+                "total_latency_ms": round((time.perf_counter() - request_started_at) * 1000, 2),
+            },
+        )
+        return records
+    except Exception as rpc_error:
+        logger.exception(
+            "match_talent.rpc.failed",
+            extra={"latency_ms": round((time.perf_counter() - rpc_started_at) * 1000, 2)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "stage": "supabase_rpc",
+                "message": "Universal talent matching database function failed.",
+                "error": str(rpc_error),
+            },
+        )
 
 @app.post("/api/match-feedback")
 async def match_feedback(request: Request):
