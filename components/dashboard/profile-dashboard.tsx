@@ -1539,15 +1539,13 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         return rightDate - leftDate;
       });
   }, [allProjects]);
-  const normalizedScore = useMemo(() => {
-    if (verifiedProjects.length === 0) {
-      return null;
-    }
-    const average =
-      verifiedProjects.reduce((total, project) => total + (project.logic_score ?? 0), 0) / verifiedProjects.length;
-    const rounded = Math.round(average);
-    return Math.max(0, Math.min(100, rounded));
+  const totalScoreSum = useMemo(() => {
+    return verifiedProjects.reduce((total, project) => total + (project.logic_score ?? 0), 0);
   }, [verifiedProjects]);
+  const scanCount = verifiedProjects.length;
+  const computedAverageScore =
+    scanCount > 0 ? Math.max(0, Math.min(100, Math.round(totalScoreSum / scanCount))) : avgProjectScore;
+  const normalizedScore = scanCount > 0 ? computedAverageScore : null;
   const initialProjects = allProjects;
   const initialReviews = verifiedProjects;
   const visibleProjects = useMemo(() => {
@@ -2932,16 +2930,17 @@ Return Markdown sections for goods, bads, project description, and a final score
                         {profileLoading ? (
                           <span className="h-7 w-32 animate-pulse rounded-full border border-slate-800 bg-white/5" />
                         ) : (
-                          <span
+                          <Link
+                            href="#my-ratings"
                             className={cn(
-                              'rounded-full border px-3 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm',
-                              avgProjectScore >= 80
+                              'rounded-full border px-3 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm transition hover:scale-[1.02] hover:border-cyan-300/60 hover:text-white',
+                              computedAverageScore >= 80
                                 ? 'border-emerald-400/45 bg-emerald-500/10 text-emerald-100'
                                 : 'border-purple-400/45 bg-purple-500/10 text-purple-100'
                             )}
                           >
-                            Avg Score: {avgProjectScore}/100
-                          </span>
+                            {`Avg Score: ${computedAverageScore}/100`}
+                          </Link>
                         )}
                       </div>
                       <p className="mt-2 text-sm text-slate-400">@{username}</p>
@@ -3271,7 +3270,7 @@ Return Markdown sections for goods, bads, project description, and a final score
               )}
             </section>
 
-            <section className="space-y-4">
+            <section id="my-ratings" className="scroll-mt-24 space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">My Ratings</h2>
                 <p className="mt-1 text-sm text-slate-400">Your score and recent scans.</p>
