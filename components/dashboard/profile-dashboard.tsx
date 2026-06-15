@@ -62,6 +62,16 @@ type ProjectItem = {
 
 type JobItem = Pick<JobRow, 'id' | 'company_name' | 'role_title' | 'location' | 'status' | 'created_at'>;
 type UserApplicationItem = Pick<UserApplicationRow, 'id' | 'job_id' | 'status' | 'created_at'>;
+type OpportunityRoleItem = {
+  id: string;
+  job_id?: string | null;
+  recruiter_name: string;
+  role_title: string;
+  location?: string | null;
+  status?: string | null;
+  match_score?: number | null;
+  created_at?: string | null;
+};
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   avg_project_score?: number | null;
   skills?: string[] | null;
@@ -1392,6 +1402,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
+  const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [applicationsByJobId, setApplicationsByJobId] = useState<Record<string, UserApplicationItem>>({});
@@ -1837,26 +1848,32 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
     let active = true;
 
-    const loadJobs = async () => {
+    const loadOpportunities = async () => {
       setJobsLoading(true);
 
       try {
-        const { data, error } = await supabase
-          .from('jobs')
-          .select('id, company_name, role_title, location, status, created_at')
-          .in('status', visibleJobStatuses)
-          .order('created_at', { ascending: false });
+        const userId = await getConfirmedUserId();
 
-        if (error) {
-          throw error;
+        if (!userId) {
+          if (active) {
+            setRoles([]);
+          }
+          return;
+        }
+
+        const response = await fetch(`/api/opportunities?candidateId=${encodeURIComponent(userId)}`);
+        const data = (await response.json()) as { roles?: OpportunityRoleItem[]; error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to load candidate opportunities.');
         }
 
         if (active) {
-          setJobs(data ?? []);
+          setRoles(Array.isArray(data.roles) ? data.roles : []);
         }
       } catch {
         if (active) {
-          setJobs([]);
+          setRoles([]);
         }
       } finally {
         if (active) {
@@ -1865,7 +1882,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       }
     };
 
-    void loadJobs();
+    void loadOpportunities();
 
     return () => {
       active = false;
@@ -3394,50 +3411,55 @@ Return Markdown sections for goods, bads, project description, and a final score
                     </Card>
                   ))}
                 </div>
-              ) : jobs.length > 0 ? (
+              ) : roles.length > 0 ? (
                 <div className="space-y-4">
-                  {jobs.map((job) => {
-                    const isNew = isPostedInLast48Hours(job.created_at);
-                    const application = applicationsByJobId[job.id];
-                    const isApplying = pendingApplicationJobId === job.id;
+                  {roles.map((role) => {
+                    const isNew = isPostedInLast48Hours(role.created_at ?? null);
+                    const matchScore = typeof role.match_score === 'number' ? role.match_score : null;
 
                     return (
-                      <Card key={job.id} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                        <CardContent className="flex items-start justify-between gap-4 p-5">
-                          <div className="flex items-start gap-4">
+                      <Card key={role.id} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                        <CardContent className="flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between">
+                          <div className="flex min-w-0 items-start gap-4">
                             <span className="relative mt-2 flex h-2.5 w-2.5 shrink-0">
                               {isNew ? (
                                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/70 opacity-75" />
                               ) : null}
                               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-300" />
                             </span>
-                            <div>
-                              <p className="text-base font-semibold text-white">{job.company_name}</p>
-                              <p className="mt-1 text-sm text-slate-300">{job.role_title}</p>
-                              {job.location ? <p className="mt-1 text-sm text-slate-500">{job.location}</p> : null}
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium uppercase tracking-[0.18em] text-slate-500">
+                                {role.recruiter_name}
+                              </p>
+                              <p className="mt-2 text-lg font-semibold tracking-tight text-white">{role.role_title}</p>
+                              {role.location ? <p className="mt-1 text-sm text-slate-500">{role.location}</p> : null}
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {matchScore !== null ? (
+                                  <span className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+                                    {matchScore}% Match Matcher Score
+                                  </span>
+                                ) : null}
+                                {isNew ? (
+                                  <Badge variant="outline" className="border-sky-400/30 text-sky-100">
+                                    New
+                                  </Badge>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
-                          <div className="flex shrink-0 flex-col items-end gap-3">
-                            {isNew ? (
-                              <Badge variant="outline" className="border-sky-400/30 text-sky-100">
-                                New
-                              </Badge>
-                            ) : null}
-                            {application ? (
-                              <Badge variant="outline" className="border-emerald-400/30 text-emerald-100">
-                                Applied
-                              </Badge>
-                            ) : isOwner ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isApplying}
-                                onClick={() => void handleApplyToJob(job)}
-                              >
-                                {isApplying ? 'Applying...' : 'Apply'}
-                              </Button>
-                            ) : null}
+                          <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:flex-col md:items-end">
+                            <button
+                              type="button"
+                              className="rounded-full border border-emerald-400/35 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
+                            >
+                              Accept Interest
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-full border border-slate-700/70 bg-slate-950/40 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-rose-400/40 hover:text-rose-100"
+                            >
+                              Decline
+                            </button>
                           </div>
                         </CardContent>
                       </Card>

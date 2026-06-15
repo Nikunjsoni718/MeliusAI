@@ -106,6 +106,7 @@ const mobileNavItems: Array<{
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
 const TALENT_MATCH_ENDPOINT = '/api/match-talent';
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
+const OPPORTUNITY_CREATE_ENDPOINT = '/api/opportunities/create';
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -311,6 +312,7 @@ export default function OrganizationDashboard() {
   const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [uiFeedback, setUiFeedback] = useState<UiFeedback>({ type: null, message: null });
+  const [candidateInviteState, setCandidateInviteState] = useState<Record<string, 'inviting' | 'invited'>>({});
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
   const currentOrg = activeWorkspace;
@@ -466,6 +468,7 @@ export default function OrganizationDashboard() {
     setIsSearching(true);
     setUiFeedback({ type: null, message: null });
     setCandidates([]);
+    setCandidateInviteState({});
 
     try {
       const response = await fetch(TALENT_MATCH_ENDPOINT, {
@@ -537,6 +540,61 @@ export default function OrganizationDashboard() {
       });
     } catch (error) {
       console.warn('Unable to capture talent match feedback signal:', error);
+    }
+  }
+
+  async function handleInviteToApply(candidate: CandidateProfile, matchScore: number) {
+    if (!candidate.id || candidateInviteState[candidate.id] === 'inviting' || candidateInviteState[candidate.id] === 'invited') {
+      return;
+    }
+
+    const roleTitle = matchPrompt.trim();
+    const workspaceName = sidebarCompanyName || companyName || 'MeliusAI Workspace';
+
+    if (!roleTitle) {
+      setUiFeedback({ type: 'error', message: 'Please run the matcher with a role requirement before inviting talent.' });
+      return;
+    }
+
+    setCandidateInviteState((current) => ({
+      ...current,
+      [candidate.id]: 'inviting',
+    }));
+
+    try {
+      const response = await fetch(OPPORTUNITY_CREATE_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          candidate_profile_id: candidate.id,
+          company_name: workspaceName,
+          role_title: roleTitle,
+          match_score: matchScore,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `Opportunity invite failed with HTTP ${response.status}.`);
+      }
+
+      setCandidateInviteState((current) => ({
+        ...current,
+        [candidate.id]: 'invited',
+      }));
+    } catch (error) {
+      console.error('Unable to invite matched candidate to apply:', error);
+      setCandidateInviteState((current) => {
+        const nextState = { ...current };
+        delete nextState[candidate.id];
+        return nextState;
+      });
+      setUiFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Unable to invite this candidate right now.',
+      });
     }
   }
 
@@ -982,6 +1040,8 @@ export default function OrganizationDashboard() {
                   const username = profile?.username ?? 'profile';
                   const displayName = profile?.full_name?.trim() || `@${username}`;
                   const skills = profile?.skills ?? [];
+                  const inviteState = candidateInviteState[profile.id];
+                  const inviteDisabled = inviteState === 'inviting' || inviteState === 'invited';
 
                   return (
                     <div
@@ -1024,13 +1084,27 @@ export default function OrganizationDashboard() {
                             )}
                           </div>
                         </div>
-                        <a
-                          href={username ? `/profile/${username}` : '#talent-discovery'}
-                          onClick={() => void handleMatchFeedback(profile, 'clicked')}
-                          className="w-full shrink-0 rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
-                        >
-                          Review Profile Dossier
-                        </a>
+                        <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
+                          <a
+                            href={username ? `/profile/${username}` : '#talent-discovery'}
+                            onClick={() => void handleMatchFeedback(profile, 'clicked')}
+                            className="w-full rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
+                          >
+                            Review Profile Dossier
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => void handleInviteToApply(profile, compositeMatchPercent)}
+                            disabled={inviteDisabled}
+                            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-emerald-200 transition-all hover:border-emerald-300/50 hover:bg-emerald-500/15 hover:text-white disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/60 disabled:text-slate-500 lg:w-auto lg:py-2"
+                          >
+                            {inviteState === 'invited'
+                              ? 'Invited ✓'
+                              : inviteState === 'inviting'
+                                ? 'Inviting...'
+                                : 'Invite to Apply'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
