@@ -86,6 +86,7 @@ type ProfileDraft = {
 const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
+const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -2106,46 +2107,46 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     setBioSaveState('saving');
 
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) {
-        throw userError;
-      }
-
-      if (!user) {
-        console.log('No user session found');
-        setBioSaveState('idle');
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({
+      const response = await fetch(PROFILE_UPDATE_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           bio: nextBioText,
           skills: formattedSkills,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id)
-        .select('id, bio, skills')
-        .maybeSingle();
+        }),
+      });
+      const updateData = (await response.json()) as {
+        error?: string;
+        profile?: {
+          id?: string;
+          bio?: string | null;
+          skills?: string[] | null;
+          internal_keywords?: string[] | null;
+        } | null;
+      };
 
-      if (error) {
-        throw error;
+      if (!response.ok) {
+        throw new Error(updateData.error || 'Profile update failed.');
       }
 
-      console.log('Profile platform data sync completed:', data);
+      const savedProfile = updateData.profile;
+      if (!savedProfile?.id) {
+        throw new Error('Profile update completed without a returned profile id.');
+      }
+
+      console.log('Profile platform data sync completed:', savedProfile);
 
       void syncProfileVectorEmbedding({
-        id: user.id,
+        id: savedProfile.id,
         full_name: profileDraft.displayName,
         username: profileDraft.username,
         birth_date: profileDraft.birthDate || null,
         avatar_url: avatarUrl,
-        bio: nextBioText,
-        skills: formattedSkills,
+        bio: savedProfile.bio ?? nextBioText,
+        skills: savedProfile.skills ?? formattedSkills,
+        internal_keywords: savedProfile.internal_keywords ?? [],
       });
 
       if (bioSaveSequenceRef.current === sequence) {

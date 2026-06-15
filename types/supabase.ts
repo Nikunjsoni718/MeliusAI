@@ -28,6 +28,7 @@ export type ProfileRow = {
   birth_date: string | null;
   bio: string | null;
   skills: string[] | null;
+  internal_keywords?: string[] | null;
   avatar_url: string | null;
   age: number | null;
   current_status: string | null;

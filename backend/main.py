@@ -420,6 +420,7 @@ def build_profile_embedding_text(profile: Dict[str, Any]) -> str:
         "description",
         "headline",
         "skills",
+        "internal_keywords",
         "username",
         "full_name",
     ]
@@ -486,6 +487,7 @@ def get_profile_search_corpus(profile: Dict[str, Any]) -> str:
         "tags",
         "tech_stack",
         "specialties",
+        "internal_keywords",
         "experience",
     ]
 
@@ -506,6 +508,7 @@ def build_candidate_profile_text(profile: Dict[str, Any]) -> str:
         "tags",
         "tech_stack",
         "specialties",
+        "internal_keywords",
         "experience",
         "experience_summary",
         "search_parameters",
@@ -558,6 +561,74 @@ def fetch_openai_embeddings(texts: List[str]) -> List[List[float]]:
         input=[text[:7000] for text in texts],
     )
     return [item.embedding for item in embedding_response.data]
+
+
+def parse_llm_keyword_array(raw_text: str) -> List[str]:
+    cleaned_text = raw_text.strip()
+    cleaned_text = re.sub(r"^```(?:json)?", "", cleaned_text, flags=re.IGNORECASE).strip()
+    cleaned_text = re.sub(r"```$", "", cleaned_text).strip()
+
+    for candidate_text in [cleaned_text, cleaned_text.replace("'", '"')]:
+        try:
+            parsed_keywords = json.loads(candidate_text)
+        except json.JSONDecodeError:
+            continue
+
+        if not isinstance(parsed_keywords, list):
+            continue
+
+        keywords = []
+        for keyword in parsed_keywords:
+            normalized_keyword = str(keyword).strip().lower()
+            if normalized_keyword and normalized_keyword not in keywords:
+                keywords.append(normalized_keyword)
+
+        return keywords
+
+    return []
+
+
+def extract_profile_internal_keywords(bio: str) -> List[str]:
+    clean_bio = bio.strip()
+
+    if not clean_bio:
+        return []
+
+    try:
+        keyword_completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an advanced HR semantic parsing layer engine for MeliusAI. Analyze the raw text "
+                        "biography of this user. Extract every single industry skill, tool, programming language, "
+                        "and core professional capability mentioned. Return ONLY a valid, raw JSON array of lowercase "
+                        "string keywords. Do not include any introductory sentences, conversational text, or markdown "
+                        "code blocks. Example Output: ['video editing', 'python', 'ui ux design', 'premiere pro']."
+                    ),
+                },
+                {"role": "user", "content": clean_bio},
+            ],
+            temperature=0,
+        )
+        raw_keywords = keyword_completion.choices[0].message.content or "[]"
+        return parse_llm_keyword_array(raw_keywords)
+    except Exception as keyword_error:
+        print(f"--- HR PARSER WARNING: Internal keyword extraction failed quietly: {keyword_error} ---")
+        return []
+
+
+def build_postgres_text_array_literal(values: List[str]) -> str:
+    normalized_values = []
+
+    for value in values:
+        normalized_value = str(value).strip().lower()
+        if normalized_value and normalized_value not in normalized_values:
+            normalized_values.append(normalized_value)
+
+    escaped_values = [f'"{value.replace(chr(34), chr(34) + chr(34))}"' for value in normalized_values]
+    return "{" + ",".join(escaped_values) + "}"
 
 
 def compute_keyword_signal(match_terms: List[str], corpus: str) -> tuple[int, List[str]]:
@@ -678,8 +749,13 @@ async def sync_single_profile_embedding(request: Request):
             return {"success": False, "message": "Profile vector sync skipped: no semantic profile text found."}
 
         print(f"--- SYNC ENGINE DEBUG: Vectorizing User '{data.get('username')}' with text length: {len(profile_text)} ---")
+        internal_keywords = extract_profile_internal_keywords(str(data.get("bio", "")))
         new_embedding = fetch_openai_embeddings([profile_text])[0]
-        supabase.table("profiles").update({"profile_embedding": new_embedding}).eq("id", profile_id).execute()
+        update_payload = {"profile_embedding": new_embedding}
+        if internal_keywords:
+            update_payload["internal_keywords"] = internal_keywords
+
+        supabase.table("profiles").update(update_payload).eq("id", profile_id).execute()
         print("--- ML SUCCESS: Automatically synchronized profile vector embeddings in background thread ---")
 
         return {"success": True, "message": "Profile vector embedding synchronized."}
@@ -828,6 +904,30 @@ async def match_talent(payload: MatchTalentRequest):
     rpc_started_at = time.perf_counter()
     try:
         supabase = get_supabase_backend_client()
+        keyword_filter_terms = required_skills or extract_match_terms(prompt)
+        allowed_profile_ids = None
+
+        if keyword_filter_terms:
+            keyword_array_literal = build_postgres_text_array_literal(keyword_filter_terms)
+            keyword_filter_response = await asyncio.to_thread(
+                lambda: supabase.table("profiles")
+                .select("id")
+                .filter("internal_keywords", "ov", keyword_array_literal)
+                .execute()
+            )
+            allowed_profile_ids = {
+                str(profile.get("id"))
+                for profile in (keyword_filter_response.data or [])
+                if profile.get("id")
+            }
+
+            if not allowed_profile_ids:
+                logger.info(
+                    "match_talent.internal_keyword_filter.empty",
+                    extra={"terms": keyword_filter_terms},
+                )
+                return []
+
         response = await asyncio.to_thread(
             lambda: supabase.rpc(
                 "match_talent_universal_v3",
@@ -841,6 +941,14 @@ async def match_talent(payload: MatchTalentRequest):
             ).execute()
         )
         records = response.data if isinstance(response.data, list) else []
+
+        if allowed_profile_ids is not None:
+            records = [
+                record
+                for record in records
+                if str(record.get("id") or record.get("candidate_id") or record.get("profile_id")) in allowed_profile_ids
+            ]
+
         logger.info(
             "match_talent.rpc.completed",
             extra={
