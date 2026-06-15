@@ -36,12 +36,15 @@ type MemberVerificationResponse =
 
 interface CandidateProfile {
   id: string;
+  full_name?: string;
   username: string;
   bio: string;
   skills: string[];
   avg_project_score: number;
   vector_match: number;
   composite_match_index: number;
+  matchScore?: number;
+  aiReasoning?: string;
 }
 
 type UiFeedback = {
@@ -101,9 +104,7 @@ const mobileNavItems: Array<{
 ];
 
 const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
-const TALENT_MATCH_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
-  ? `${process.env.NEXT_PUBLIC_API_URL}/api/match-talent`
-  : '/api/match-talent';
+const TALENT_MATCH_ENDPOINT = '/api/match-talent';
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
@@ -203,17 +204,26 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
         : 'Verified MeliusAI talent profile.';
   const vectorMatch = normalizeDecimalMatch(row.vector_match ?? row.semantic_similarity ?? row.similarity);
   const compositeMatchIndex = normalizeDecimalMatch(
-    row.composite_match_index ?? row.match_index ?? row.match_score ?? row.score
+    row.composite_match_index ?? row.matchScore ?? row.match_index ?? row.match_score ?? row.score
   );
+  const matchScore = getNumberValue(row.matchScore ?? row.match_index ?? compositeMatchIndex * 100, 0);
 
   return {
     id,
+    full_name: typeof row.full_name === 'string' ? row.full_name : undefined,
     username,
     bio,
     skills: normalizeSkills(row.skills ?? row.tags),
     avg_project_score: getNumberValue(row.avg_project_score, 0),
     vector_match: vectorMatch,
     composite_match_index: compositeMatchIndex,
+    matchScore,
+    aiReasoning:
+      typeof row.aiReasoning === 'string'
+        ? row.aiReasoning
+        : typeof row.reasoning === 'string'
+          ? row.reasoning
+          : undefined,
   };
 }
 
@@ -464,8 +474,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt,
-          organization_id: currentOrg.id,
+          requirement: prompt,
         }),
       });
       const data = await response.json();
@@ -971,6 +980,7 @@ export default function OrganizationDashboard() {
                   const vectorMatchPercent = Math.round((profile?.vector_match ?? 0) * 100);
                   const averageProjectMetric = profile?.avg_project_score ?? 0;
                   const username = profile?.username ?? 'profile';
+                  const displayName = profile?.full_name?.trim() || `@${username}`;
                   const skills = profile?.skills ?? [];
 
                   return (
@@ -982,14 +992,14 @@ export default function OrganizationDashboard() {
                         <div className="min-w-0">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             <p className="text-base font-semibold text-white tracking-tight">
-                              @{username} - Composite Match Index: {compositeMatchPercent}%
+                              {displayName} - Composite Match Index: {compositeMatchPercent}%
                             </p>
                             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                               {compositeMatchPercent}% Fit
                             </span>
                           </div>
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
-                            {profile?.bio ?? 'No profile bio available yet.'}
+                            {profile?.aiReasoning ?? profile?.bio ?? 'No profile bio available yet.'}
                           </p>
                           <div className="flex flex-wrap gap-2 mt-3">
                             <span className="text-[11px] font-medium px-2 py-0.5 bg-slate-900/50 text-slate-300 rounded-md">
