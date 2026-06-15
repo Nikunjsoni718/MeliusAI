@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
 
@@ -34,14 +34,37 @@ load_dotenv(dotenv_path=env_path)
 # 2. APPLICATION INITIALIZATION
 app = FastAPI(title="MeliusAI Omnivorous Multimodal Agent")
 
-# Enable Cross-Origin Resource Sharing (CORS) for Next.js frontend port loop
+# Authorized browser origins for the production frontend, preview app, and local development.
+allowed_origins = [
+    "http://localhost:3000",
+    "https://meliusai.in",
+    "https://www.meliusai.in",
+    "https://melius-ai.vercel.app",
+]
+
+# Enable Cross-Origin Resource Sharing (CORS) for authorized frontend surfaces.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://melius-ai.vercel.app", "http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def enforce_cors_origin_whitelist(request: Request, call_next):
+    origin = request.headers.get("origin")
+
+    if origin and origin not in allowed_origins:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "The CORS security policy for this backend API does not allow access from the specified Origin."
+            },
+        )
+
+    return await call_next(request)
 
 # Initialize OpenAI Client (Guaranteed to read from root .env.local now)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
