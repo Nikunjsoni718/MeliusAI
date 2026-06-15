@@ -51,6 +51,12 @@ type ProjectItem = {
   file_url?: string | null;
   code_language?: string | null;
   description?: string | null;
+  user_description?: string | null;
+  score?: number | null;
+  audit_summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
   logic_score?: number | null;
@@ -380,6 +386,12 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     file_url: fileUrl,
     code_language: getCodeLanguage(fileExtension),
     description: row.description ?? null,
+    user_description: row.user_description ?? null,
+    score: typeof row.score === 'number' ? row.score : null,
+    audit_summary: row.audit_summary ?? null,
+    pros: Array.isArray(row.pros) ? row.pros : null,
+    cons: Array.isArray(row.cons) ? row.cons : null,
+    recommendations: Array.isArray(row.recommendations) ? row.recommendations : null,
     evaluation_score: typeof row.evaluation_score === 'number' ? row.evaluation_score : null,
     has_been_audited: row.has_been_audited ?? null,
     logic_score: typeof row.logic_score === 'number' ? row.logic_score : null,
@@ -1294,8 +1306,11 @@ function ProjectCard({
   deletingProjectId,
   verifiedAssetId,
   contextDescription,
+  projectBioSaveState,
   onVerify,
   onContextDescriptionChange,
+  onSaveProjectBio,
+  onOpen,
   onReadProtocol,
   onDelete,
 }: {
@@ -1305,8 +1320,11 @@ function ProjectCard({
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
   contextDescription: string;
+  projectBioSaveState: 'idle' | 'saving' | 'saved';
   onVerify: (project: ProjectItem) => void;
   onContextDescriptionChange: (projectId: string, textValue: string) => void;
+  onSaveProjectBio: (projectId: string) => void;
+  onOpen: (project: ProjectItem) => void;
   onReadProtocol: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
@@ -1337,18 +1355,38 @@ function ProjectCard({
             </h3>
             <p className="mb-4 truncate text-[11px] text-slate-500">{fileName}</p>
 
-            <div className="relative mb-4 flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40">
+            <button
+              type="button"
+              onClick={() => onOpen(project)}
+              className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
+              aria-label={`Preview ${project.title}`}
+            >
               <ProjectPreviewSurface project={project} />
-            </div>
+            </button>
           </div>
 
           {isOwner ? (
-            <textarea
-              value={contextDescription}
-              onChange={(event) => onContextDescriptionChange(project.id, event.target.value)}
-              className="w-full text-xs p-2 mt-2 mb-3 rounded bg-slate-900/60 border border-slate-800 text-slate-300 focus:border-cyan-500 outline-none transition-colors"
-              placeholder="Provide project criteria or context description for MeliusAI to audit against (e.g., 'This is a Python script designed to handle automation for...')"
-            />
+            <div className="mb-3">
+              <textarea
+                value={contextDescription}
+                rows={1}
+                onChange={(event) => onContextDescriptionChange(project.id, event.target.value)}
+                className="w-full text-xs bg-transparent border-b border-slate-800 focus:border-cyan-500/50 py-1 text-slate-300 outline-none resize-none overflow-hidden placeholder-slate-600 mt-2"
+                placeholder="Add project bio..."
+              />
+              <button
+                type="button"
+                onClick={() => onSaveProjectBio(project.id)}
+                disabled={projectBioSaveState === 'saving'}
+                className="text-[10px] text-slate-500 hover:text-cyan-400 font-medium tracking-wide transition-colors mt-1 block text-left disabled:cursor-not-allowed disabled:text-slate-700"
+              >
+                {projectBioSaveState === 'saving'
+                  ? 'Saving...'
+                  : projectBioSaveState === 'saved'
+                    ? 'Saved ✓'
+                    : 'Save Project Bio'}
+              </button>
+            </div>
           ) : null}
 
           <div className="flex flex-col gap-2 mt-auto pt-2 w-full">
@@ -1421,6 +1459,9 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
+  const [projectBioSaveStates, setProjectBioSaveStates] = useState<
+    Record<string, 'idle' | 'saving' | 'saved'>
+  >({});
   const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
@@ -1463,6 +1504,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [portfolioSaveState, setPortfolioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const uploadClearRef = useRef<number | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
+  const projectBioSavedTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
   const verifiedAssetTimerRef = useRef<number | null>(null);
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
@@ -1577,6 +1619,11 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const visibleProjects = useMemo(() => {
     return showAllWork ? initialProjects : initialProjects.slice(0, 4);
   }, [initialProjects, showAllWork]);
+  const activePreviewProject = useMemo(() => {
+    return activePreviewProjectId
+      ? allProjects.find((project) => project.id === activePreviewProjectId) ?? null
+      : null;
+  }, [activePreviewProjectId, allProjects]);
   const scanHistory = useMemo(() => {
     return showAllRatings ? initialReviews : initialReviews.slice(0, 3);
   }, [initialReviews, showAllRatings]);
@@ -1839,7 +1886,9 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           const loadedProjects = (data ?? []).map(mapProjectRowToProjectItem);
           setProjects(loadedProjects);
           setProjectDescriptions(
-            Object.fromEntries(loadedProjects.map((project) => [project.id, project.description ?? '']))
+            Object.fromEntries(
+              loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
+            )
           );
         }
       } catch {
@@ -1914,6 +1963,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
   useEffect(() => {
     const descriptionSaveTimers = descriptionSaveTimersRef.current;
+    const projectBioSavedTimers = projectBioSavedTimersRef.current;
 
     return () => {
       if (uploadClearRef.current) {
@@ -1932,6 +1982,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         window.clearTimeout(bioToastTimerRef.current);
       }
       Object.values(descriptionSaveTimers).forEach((timerId) => window.clearTimeout(timerId));
+      Object.values(projectBioSavedTimers).forEach((timerId) => window.clearTimeout(timerId));
     };
   }, []);
 
@@ -2354,7 +2405,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       );
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
-        [savedProject.id]: savedProject.description ?? '',
+        [savedProject.id]: savedProject.user_description ?? savedProject.description ?? '',
       }));
       setProjectDescription('');
 
@@ -2395,31 +2446,63 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       [projectId]: textValue,
     }));
     setProjects((currentProjects) =>
-      currentProjects.map((project) => (project.id === projectId ? { ...project, description: textValue } : project))
+      currentProjects.map((project) =>
+        project.id === projectId ? { ...project, user_description: textValue } : project
+      )
     );
+  }
 
-    const previousTimer = descriptionSaveTimersRef.current[projectId];
-    if (previousTimer) {
-      window.clearTimeout(previousTimer);
+  async function handleSaveProjectBio(projectId: string) {
+    if (!isOwner || !supabase) {
+      return;
     }
 
-    descriptionSaveTimersRef.current[projectId] = window.setTimeout(async () => {
-      if (!supabase) {
-        return;
-      }
+    const textValue = projectDescriptions[projectId] ?? '';
 
+    if (projectBioSavedTimersRef.current[projectId]) {
+      window.clearTimeout(projectBioSavedTimersRef.current[projectId]);
+      delete projectBioSavedTimersRef.current[projectId];
+    }
+
+    setProjectBioSaveStates((currentStates) => ({
+      ...currentStates,
+      [projectId]: 'saving',
+    }));
+
+    try {
       const { error } = await supabase
         .from('projects')
-        .update({ description: textValue.trim() || null })
+        .update({ user_description: textValue.trim() || null })
         .eq('id', projectId);
 
       if (error) {
-        console.error('Project description sync failed:', error);
-        showProjectVerifyError('We could not save this project description.');
+        throw error;
       }
 
-      delete descriptionSaveTimersRef.current[projectId];
-    }, 650);
+      setProjects((currentProjects) =>
+        currentProjects.map((project) =>
+          project.id === projectId ? { ...project, user_description: textValue.trim() || null } : project
+        )
+      );
+      setProjectBioSaveStates((currentStates) => ({
+        ...currentStates,
+        [projectId]: 'saved',
+      }));
+      projectBioSavedTimersRef.current[projectId] = window.setTimeout(() => {
+        setProjectBioSaveStates((currentStates) => ({
+          ...currentStates,
+          [projectId]: 'idle',
+        }));
+        delete projectBioSavedTimersRef.current[projectId];
+      }, 1800);
+    } catch (error) {
+      console.error('Project bio sync failed:', error);
+      setProjectBioSaveStates((currentStates) => ({
+        ...currentStates,
+        [projectId]: 'idle',
+      }));
+      showProjectVerifyError('We could not save this project bio.');
+    }
   }
 
   async function handleVerifyWithMeliusAI(project: ProjectItem) {
@@ -2584,6 +2667,15 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
         delete descriptionSaveTimersRef.current[projectId];
       }
+      if (projectBioSavedTimersRef.current[projectId]) {
+        window.clearTimeout(projectBioSavedTimersRef.current[projectId]);
+        delete projectBioSavedTimersRef.current[projectId];
+      }
+      setProjectBioSaveStates((currentStates) => {
+        const nextStates = { ...currentStates };
+        delete nextStates[projectId];
+        return nextStates;
+      });
       setViewingAuditAsset((currentAsset) => (currentAsset?.id === projectId ? null : currentAsset));
       setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
       if (activePreviewProjectId === projectId) {
@@ -3200,9 +3292,12 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
                         verifyingAssetId={verifyingAssetId}
                         deletingProjectId={deletingProjectId}
                         verifiedAssetId={verifiedAssetId}
-                        contextDescription={projectDescriptions[project.id] ?? project.description ?? ''}
+                        contextDescription={projectDescriptions[project.id] ?? project.user_description ?? ''}
+                        projectBioSaveState={projectBioSaveStates[project.id] ?? 'idle'}
                         onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
                         onContextDescriptionChange={handleDescriptionChange}
+                        onSaveProjectBio={(projectId) => void handleSaveProjectBio(projectId)}
+                        onOpen={handleOpenProject}
                         onReadProtocol={handleReadFullAuditProtocol}
                         onDelete={(projectId) => void handleDeleteProject(projectId)}
                       />
@@ -3445,6 +3540,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         <AssetPreviewModal
           activePreviewName={activePreviewName}
           activePreviewUrl={activePreviewUrl}
+          previewProject={activePreviewProject}
           onClose={() => {
             setActivePreviewProjectId(null);
             setActivePreviewName(null);

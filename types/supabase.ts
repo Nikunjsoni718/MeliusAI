@@ -53,7 +53,12 @@ export type ProjectRow = {
   file_url?: string | null;
   file_size?: number | null;
   description?: string | null;
+  user_description?: string | null;
   score?: number | null;
+  audit_summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
   logic_score?: number | null;

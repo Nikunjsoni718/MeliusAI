@@ -1,8 +1,41 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useMemo } from 'react';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
+const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
+const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
+const audioExtensions = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
+
+type PreviewProject = {
+  title?: string | null;
+  file_name?: string | null;
+  file_url?: string | null;
+  source_url?: string | null;
+  preview_url?: string | null;
+  file_extension?: string | null;
+  source_kind?: string | null;
+  mime_type?: string | null;
+  file_type?: string | null;
+  user_description?: string | null;
+  description?: string | null;
+  ai_summary?: string | null;
+  audit_summary?: string | null;
+  score?: number | null;
+  evaluation_score?: number | null;
+  logic_score?: number | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
+};
+
+type AssetPreviewModalProps = {
+  activePreviewName: string | null;
+  activePreviewUrl: string | null;
+  previewProject?: PreviewProject | null;
+  onClose: () => void;
+};
 
 function getFileExtensionFromUrlOrName(previewUrl: string | null, fileName: string | null) {
   const fromName = fileName?.split('.').pop()?.trim().toLowerCase();
@@ -50,22 +83,91 @@ function getFallbackFileName(previewUrl: string | null) {
   }
 }
 
-type AssetPreviewModalProps = {
-  activePreviewName: string | null;
-  activePreviewUrl: string | null;
-  onClose: () => void;
-};
+function getPreviewExtension(previewUrl: string | null, fileName: string | null, project?: PreviewProject | null) {
+  return (
+    project?.file_extension?.trim().toLowerCase() ||
+    getFileExtensionFromUrlOrName(previewUrl, fileName) ||
+    project?.source_kind?.trim().toLowerCase() ||
+    ''
+  );
+}
+
+function getScore(project?: PreviewProject | null) {
+  const score = project?.evaluation_score ?? project?.logic_score ?? project?.score ?? null;
+  return typeof score === 'number' && Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0;
+}
+
+function getStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+    : [];
+}
+
+function getProjectBio(project?: PreviewProject | null) {
+  return project?.user_description?.trim() || 'No project bio has been saved yet.';
+}
+
+function getMetricItems(project: PreviewProject | null | undefined, kind: 'pros' | 'cons' | 'recommendations') {
+  const directItems = getStringArray(project?.[kind]);
+
+  if (directItems.length > 0) {
+    return directItems;
+  }
+
+  return [];
+}
+
+function MetricList({
+  title,
+  tone,
+  items,
+}: {
+  title: string;
+  tone: 'emerald' | 'rose' | 'cyan';
+  items: string[];
+}) {
+  const toneClasses = {
+    emerald: 'border-emerald-500/15 bg-emerald-500/[0.04] text-emerald-300',
+    rose: 'border-rose-500/15 bg-rose-500/[0.04] text-rose-300',
+    cyan: 'border-cyan-500/15 bg-cyan-500/[0.04] text-cyan-300',
+  };
+
+  return (
+    <div className={`rounded-xl border p-4 ${toneClasses[tone]}`}>
+      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em]">{title}</h4>
+      <ul className="mt-3 space-y-2">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <li key={`${title}-${item}-${index}`} className="flex gap-2 text-xs leading-relaxed text-slate-300">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+              <span>{item}</span>
+            </li>
+          ))
+        ) : (
+          <li className="text-xs italic leading-relaxed text-slate-500">No entries generated yet.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
 
 export function AssetPreviewModal({
   activePreviewName,
   activePreviewUrl,
+  previewProject,
   onClose,
 }: AssetPreviewModalProps) {
+  const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
   const viewerSrc = useMemo(
-    () => getViewerSrc(activePreviewUrl, activePreviewName),
-    [activePreviewName, activePreviewUrl]
+    () => getViewerSrc(activePreviewUrl, previewName),
+    [activePreviewUrl, previewName]
   );
-  const previewName = activePreviewName ?? getFallbackFileName(activePreviewUrl);
+  const extension = getPreviewExtension(activePreviewUrl, previewName, previewProject);
+  const score = getScore(previewProject);
+  const pros = getMetricItems(previewProject, 'pros');
+  const cons = getMetricItems(previewProject, 'cons');
+  const recommendations = getMetricItems(previewProject, 'recommendations');
+  const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
 
   useEffect(() => {
     if (!activePreviewUrl) {
@@ -89,26 +191,82 @@ export function AssetPreviewModal({
   }
 
   return (
-    <div className="fixed inset-0 w-screen h-screen bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="w-[90vw] md:w-[70vw] lg:w-[65vw] h-[85vh] max-w-5xl max-h-[55rem] bg-[#060b1e]/95 border border-blue-950/80 rounded-2xl shadow-2xl backdrop-blur-xl flex flex-col overflow-hidden transition-all duration-300 transform scale-100">
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-blue-950/60 px-6 py-4">
-          <p className="truncate font-mono text-xs uppercase tracking-wider text-zinc-400">{previewName}</p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="font-mono text-xs text-zinc-500 hover:text-rose-400 uppercase tracking-wider transition-colors duration-200 cursor-pointer"
-          >
-            Close
-          </button>
-        </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
+      <div className="relative w-full max-w-4xl max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col">
+        <button
+          type="button"
+          onClick={onClose}
+          className="sticky top-3 right-3 z-30 ml-auto mr-3 mt-3 flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
+          aria-label="Close asset preview"
+        >
+          ×
+        </button>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 text-slate-300">
-          <div className="h-full min-h-64 overflow-hidden">
+        <div className="-mt-11 w-full aspect-video bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800">
+          {videoExtensions.has(extension) ? (
+            <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
+          ) : imageExtensions.has(extension) ? (
+            <Image
+              src={activePreviewUrl}
+              alt={previewName}
+              fill
+              unoptimized
+              className="object-contain"
+              sizes="(max-width: 768px) 100vw, 896px"
+            />
+          ) : audioExtensions.has(extension) ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-5 bg-slate-950 px-8 text-center">
+              <div className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">
+                Audio Asset
+              </div>
+              <audio src={activePreviewUrl} controls autoPlay className="w-full max-w-2xl" />
+            </div>
+          ) : (
             <iframe
               title={previewName}
               src={viewerSrc}
-              className="w-full h-full rounded-xl border border-blue-950/60 bg-[#090d1f]/40 shadow-2xl"
+              className="h-full w-full bg-black"
+              allow="autoplay; fullscreen"
             />
+          )}
+        </div>
+
+        <div className="p-6 flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{previewProject?.title ?? previewName}</h2>
+              <p className="mt-1 truncate text-xs text-slate-500">{previewProject?.file_name ?? previewName}</p>
+            </div>
+            <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+              {fileTypeBadge}
+            </span>
+          </div>
+
+          <div className="w-full p-4 rounded-lg bg-slate-900/50 border border-slate-800 text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
+            {getProjectBio(previewProject)}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
+            <div className="flex items-center justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+              <div className="relative flex h-32 w-32 items-center justify-center">
+                <div
+                  className="absolute inset-0 rounded-full border border-slate-800"
+                  style={{
+                    background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
+                  }}
+                />
+                <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
+                  <span className="text-3xl font-bold text-white">{score}</span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricList title="AI Pros" tone="emerald" items={pros} />
+              <MetricList title="AI Cons" tone="rose" items={cons} />
+              <MetricList title="Recommendations" tone="cyan" items={recommendations} />
+            </div>
           </div>
         </div>
       </div>
