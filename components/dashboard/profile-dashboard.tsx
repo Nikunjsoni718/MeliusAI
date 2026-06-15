@@ -16,7 +16,6 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
-import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProfileRow, ProjectRow, UserRow } from '@/types/supabase';
@@ -1293,7 +1292,10 @@ function ProjectCard({
   isOwner,
   verifyingAssetId,
   deletingProjectId,
+  verifiedAssetId,
+  contextDescription,
   onVerify,
+  onContextDescriptionChange,
   onReadProtocol,
   onDelete,
 }: {
@@ -1301,12 +1303,16 @@ function ProjectCard({
   isOwner: boolean;
   verifyingAssetId: string | null;
   deletingProjectId: string | null;
+  verifiedAssetId: string | null;
+  contextDescription: string;
   onVerify: (project: ProjectItem) => void;
+  onContextDescriptionChange: (projectId: string, textValue: string) => void;
   onReadProtocol: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
   const isProjectVerifying = verifyingAssetId === project.id;
   const isProjectDeleting = deletingProjectId === project.id;
+  const isProjectVerified = verifiedAssetId === project.id;
   const fileExtension = getProjectExtension(project).toUpperCase() || project.source_kind || 'Asset';
   const fileName = project.file_name || project.title;
 
@@ -1336,6 +1342,15 @@ function ProjectCard({
             </div>
           </div>
 
+          {isOwner ? (
+            <textarea
+              value={contextDescription}
+              onChange={(event) => onContextDescriptionChange(project.id, event.target.value)}
+              className="w-full text-xs p-2 mt-2 mb-3 rounded bg-slate-900/60 border border-slate-800 text-slate-300 focus:border-cyan-500 outline-none transition-colors"
+              placeholder="Provide project criteria or context description for MeliusAI to audit against (e.g., 'This is a Python script designed to handle automation for...')"
+            />
+          ) : null}
+
           <div className="flex flex-col gap-2 mt-auto pt-2 w-full">
             <button
               type="button"
@@ -1349,11 +1364,19 @@ function ProjectCard({
               <button
                 type="button"
                 onClick={() => onVerify(project)}
-                disabled={verifyingAssetId !== null || isProjectDeleting || !getProjectDownloadHref(project)}
+                disabled={verifyingAssetId !== null || isProjectDeleting}
                 aria-busy={isProjectVerifying}
-                className="w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
+                className={cn(
+                  'w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer',
+                  isProjectVerifying && 'animate-pulse border-cyan-500/40 text-cyan-300',
+                  isProjectVerified && !isProjectVerifying && 'border-emerald-500/30 text-emerald-300'
+                )}
               >
-                {isProjectVerifying ? 'Auditing Asset...' : 'Verify with MeliusAI'}
+                {isProjectVerifying
+                  ? 'Auditing via GPT Engine...'
+                  : isProjectVerified
+                    ? 'Verified ✓'
+                    : 'Verify with MeliusAI'}
               </button>
             ) : null}
           </div>
@@ -1401,6 +1424,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
+  const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
@@ -1440,6 +1464,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const uploadClearRef = useRef<number | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
+  const verifiedAssetTimerRef = useRef<number | null>(null);
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
   const profileSaveSequenceRef = useRef(0);
   const bioSaveSequenceRef = useRef(0);
@@ -1896,6 +1921,9 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       }
       if (verifyErrorTimerRef.current) {
         window.clearTimeout(verifyErrorTimerRef.current);
+      }
+      if (verifiedAssetTimerRef.current) {
+        window.clearTimeout(verifiedAssetTimerRef.current);
       }
       if (bioSavedTimerRef.current) {
         window.clearTimeout(bioSavedTimerRef.current);
@@ -2403,78 +2431,103 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       return;
     }
 
-    const fileUrl = getProjectDownloadHref(project);
-
-    if (!fileUrl) {
-      const missingFileMessage =
-        'Verification Failed: This asset does not contain a valid storage file link (file_url is missing).';
-      showProjectVerifyError(missingFileMessage);
-      window.alert(`❌ ${missingFileMessage}`);
-      return;
-    }
+    const userContextDescription = projectDescriptions[project.id] ?? '';
+    const assetTextContent = [
+      project.text_preview,
+      project.ai_summary,
+      project.description,
+      project.file_name,
+      project.source_kind,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
     setProjectVerifyError(null);
+    setVerifiedAssetId(null);
+
+    if (verifiedAssetTimerRef.current) {
+      window.clearTimeout(verifiedAssetTimerRef.current);
+      verifiedAssetTimerRef.current = null;
+    }
+
     if (descriptionSaveTimersRef.current[project.id]) {
       window.clearTimeout(descriptionSaveTimersRef.current[project.id]);
       delete descriptionSaveTimersRef.current[project.id];
     }
 
     try {
-      const accumulatedReportText = await streamAssetAudit({
-        fileUrl,
-        filename: project.file_name || `asset_${project.id.slice(0, 5)}.pptx`,
-        instruction: `Run a full MeliusAI asset audit for this profile project.
-Project Title: ${project.title}
-Current Notes: ${project.description || 'No existing project notes.'}
-Return Markdown sections for goods, bads, project description, and a final score out of 100.`,
-        onChunk: (incomingTokens) => {
-          setLiveStreamText((previousText) => previousText + incomingTokens);
+      const response = await fetch('/api/verify-asset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          projectId: project.id,
+          assetName: project.file_name || project.title,
+          assetTextContent,
+          userContextDescription,
+        }),
       });
-      const extractedScore = extractEvaluationScore(accumulatedReportText);
-      const updatePayload = {
-        ai_summary: accumulatedReportText,
-        description: accumulatedReportText,
-        evaluation_score: extractedScore,
-        has_been_audited: true,
-        logic_score: extractedScore,
-      };
-      const { error } = await supabase.from('projects').update(updatePayload).eq('id', project.id);
 
-      if (error) {
-        throw new Error(`Supabase Database Sync Failed: ${error.message}`);
+      const payload = (await response.json()) as {
+        error?: string;
+        project?: ProjectItem;
+        reportText?: string;
+        score?: number;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'MeliusAI GPT verification failed.');
       }
 
+      const updatedProject = payload.project;
+      const accumulatedReportText =
+        payload.reportText ?? updatedProject?.description ?? updatedProject?.ai_summary ?? '';
+
+      setLiveStreamText(accumulatedReportText);
       setProjects((currentProjects) =>
         currentProjects.map((currentProject) =>
           currentProject.id === project.id
             ? {
                 ...currentProject,
-                ...updatePayload,
+                ...(updatedProject ?? {}),
+                has_been_audited: updatedProject?.has_been_audited ?? true,
+                evaluation_score: updatedProject?.evaluation_score ?? payload.score ?? currentProject.evaluation_score,
+                logic_score: updatedProject?.logic_score ?? payload.score ?? currentProject.logic_score,
+                ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
+                description: updatedProject?.description ?? accumulatedReportText,
               }
             : currentProject
         )
       );
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
-        [project.id]: accumulatedReportText,
+        [project.id]: userContextDescription,
       }));
       setViewingAuditAsset((currentAsset) =>
         currentAsset?.id === project.id
           ? {
               ...currentAsset,
-              ...updatePayload,
+              ...(updatedProject ?? {}),
+              has_been_audited: updatedProject?.has_been_audited ?? true,
+              evaluation_score: updatedProject?.evaluation_score ?? payload.score ?? currentAsset.evaluation_score,
+              logic_score: updatedProject?.logic_score ?? payload.score ?? currentAsset.logic_score,
+              ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
+              description: updatedProject?.description ?? accumulatedReportText,
             }
           : currentAsset
       );
-      window.alert(`Verification Complete! ${project.title} has been successfully audited.`);
+      setVerifiedAssetId(project.id);
+      verifiedAssetTimerRef.current = window.setTimeout(() => {
+        setVerifiedAssetId(null);
+        verifiedAssetTimerRef.current = null;
+      }, 2400);
     } catch (error) {
       console.error('Detailed Verification Diagnostic Log:', error);
-      const message = error instanceof Error ? error.message : 'FastAPI Agent Reviewer failed.';
+      const message = error instanceof Error ? error.message : 'MeliusAI GPT verification failed.';
       showProjectVerifyError(message);
-      window.alert(`Verification Failed: ${message}`);
     } finally {
       setVerifyingAssetId(null);
     }
@@ -3146,7 +3199,10 @@ Return Markdown sections for goods, bads, project description, and a final score
                         isOwner={isOwner}
                         verifyingAssetId={verifyingAssetId}
                         deletingProjectId={deletingProjectId}
+                        verifiedAssetId={verifiedAssetId}
+                        contextDescription={projectDescriptions[project.id] ?? project.description ?? ''}
                         onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
+                        onContextDescriptionChange={handleDescriptionChange}
                         onReadProtocol={handleReadFullAuditProtocol}
                         onDelete={(projectId) => void handleDeleteProject(projectId)}
                       />

@@ -1,5 +1,3 @@
-const FALLBACK_FASTAPI_REVIEW_ENDPOINT = 'http://localhost:8000/api/review';
-
 export function getFastApiReviewEndpoint() {
   const configuredBaseUrl = process.env.NEXT_PUBLIC_FASTAPI_URL?.trim().replace(/\/$/, '');
 
@@ -9,7 +7,13 @@ export function getFastApiReviewEndpoint() {
       : `${configuredBaseUrl}/api/review`;
   }
 
-  return process.env.NEXT_PUBLIC_MELIUS_AGENT_URL?.trim() || FALLBACK_FASTAPI_REVIEW_ENDPOINT;
+  const configuredAgentUrl = process.env.NEXT_PUBLIC_MELIUS_AGENT_URL?.trim();
+
+  if (!configuredAgentUrl) {
+    throw new Error('MeliusAI verification endpoint is not configured.');
+  }
+
+  return configuredAgentUrl;
 }
 
 async function readFastApiErrorDetail(response: Response) {
@@ -49,7 +53,7 @@ export async function transmitAgentPayload(uploadPayload: FormData) {
     const message = fetchError instanceof Error ? fetchError.message : 'Unknown network transport error.';
 
     throw new Error(
-      `Failed to establish connection with local Python processing agent on port 8000. Ensure uvicorn is active. (${message})`
+      `Failed to establish connection with the configured MeliusAI processing agent. (${message})`
     );
   }
 

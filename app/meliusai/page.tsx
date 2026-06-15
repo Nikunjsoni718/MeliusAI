@@ -48,7 +48,9 @@ type StoredChatRow = {
   messages?: unknown;
 };
 
-const MELIUS_CHAT_ENDPOINT = 'http://localhost:8000/api/chat';
+const MELIUS_CHAT_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api/chat`
+  : '/api/chat';
 const CRITICAL_EVALUATION_MARKER =
   '[CRITICAL EVALUATION SYSTEM NOTICE: THE USER HAS LINKED A CHOSEN VAULT PROJECT]';
 const USER_QUESTION_MARKER = '[USER QUESTION / ACTION INSTRUCTION]:';
