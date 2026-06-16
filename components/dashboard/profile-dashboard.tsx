@@ -3555,6 +3555,12 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
                 ? liveStreamText
                 : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
             }
+            auditData={{
+              audit_summary: viewingAuditAsset.audit_summary,
+              pros: viewingAuditAsset.pros,
+              cons: viewingAuditAsset.cons,
+              recommendations: viewingAuditAsset.recommendations,
+            }}
           />
         ) : null}
 

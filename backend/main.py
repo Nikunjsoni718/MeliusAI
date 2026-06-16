@@ -874,8 +874,12 @@ async def verify_asset(payload: VerifyRequest):
                         "Metric B: Practical Real-World Execution relative to the user's project description intent. "
                         "Metric C: Optimization, Corporate Standards, and Delivery Quality. "
                         "Return a strict structured JSON object matching the provided schema. "
-                        "The executiveSummary must be clean professional Markdown. "
-                        "The pros, cons, and strategicRecommendations arrays must be specific, direct, and actionable. "
+                        "The executiveSummary must be clean professional Markdown and MUST be brief: "
+                        "2 to 3 sentences maximum, written like an elite executive briefing. "
+                        "Example tone: 'A cleanly structured, high-impact narrative asset displaying excellent contextual coverage with minor structural omissions.' "
+                        "Do not repeat pros, cons, recommendation details, or score metrics inside executiveSummary. "
+                        "Keep every section unique, punchy, non-wordy, and short. "
+                        "The pros, cons, and strategicRecommendations arrays must be specific, direct, and actionable, with no repeated phrasing across sections. "
                         "calculatedScore must be an integer from 0 to 100."
                     ),
                 },

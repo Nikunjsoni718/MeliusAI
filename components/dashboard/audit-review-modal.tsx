@@ -183,16 +183,64 @@ function parseAuditReport(rawText: string) {
   };
 }
 
+type StructuredAuditData = {
+  audit_summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
+};
+
+function getStructuredItems(value?: string[] | null) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && Boolean(item.trim())) : [];
+}
+
+function AuditBulletList({
+  items,
+  tone,
+  emptyText,
+}: {
+  items: string[];
+  tone: 'emerald' | 'rose' | 'cyan';
+  emptyText: string;
+}) {
+  const indicatorClass =
+    tone === 'emerald' ? 'bg-emerald-400' : tone === 'rose' ? 'bg-rose-400' : 'bg-cyan-400';
+
+  if (items.length === 0) {
+    return <p className="text-xs italic text-slate-500">{emptyText}</p>;
+  }
+
+  return (
+    <ul className="space-y-2.5">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-slate-300">
+          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${indicatorClass}`} />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function AuditReviewModal({
   assetTitle,
   onClose,
   reportText,
+  auditData,
 }: {
   assetTitle: string;
   onClose: () => void;
   reportText: string;
+  auditData?: StructuredAuditData | null;
 }) {
   const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(reportText);
+  const structuredSummary = auditData?.audit_summary?.trim() ?? '';
+  const structuredPros = getStructuredItems(auditData?.pros);
+  const structuredCons = getStructuredItems(auditData?.cons);
+  const structuredRecommendations = getStructuredItems(auditData?.recommendations);
+  const hasStructuredAudit = Boolean(
+    structuredSummary || structuredPros.length || structuredCons.length || structuredRecommendations.length
+  );
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
@@ -213,48 +261,82 @@ export function AuditReviewModal({
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-6">
-          <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-900">
-            <h4 className="text-xs font-bold text-cyan-500 uppercase tracking-widest mb-2">Asset Description</h4>
-            <p className="text-sm leading-relaxed text-slate-300">{cleanDescriptionText}</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-5 rounded-xl bg-emerald-950/5 border border-emerald-900/20 flex flex-col">
-              <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-emerald-900/10">
-                Goods & Strengths
+          {hasStructuredAudit ? (
+            <>
+              <div className="mb-6">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Executive Summary</h4>
+                <p className="text-sm text-slate-300 leading-relaxed font-normal">
+                  {structuredSummary || 'No executive summary has been generated yet.'}
+                </p>
               </div>
-              <ul className="space-y-2 flex-1">
-                {leftSideGoods.length > 0 ? (
-                  leftSideGoods.map((goodItem, index) => (
-                    <li key={`${goodItem}-${index}`} className="text-xs text-slate-300 flex items-start gap-2 leading-relaxed">
-                      <span className="text-emerald-400 font-bold shrink-0">•</span>
-                      <span>{goodItem}</span>
-                    </li>
-                  ))
-                ) : (
-                  <p className="text-xs text-slate-500 italic">No structural strengths identified yet.</p>
-                )}
-              </ul>
-            </div>
 
-            <div className="p-5 rounded-xl bg-rose-950/5 border border-rose-900/20 flex flex-col">
-              <div className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-rose-900/10">
-                Bads & Flaws
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-5">
+                  <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-emerald-300">
+                    Pros & Strengths
+                  </h4>
+                  <AuditBulletList
+                    items={structuredPros}
+                    tone="emerald"
+                    emptyText="No structural strengths identified yet."
+                  />
+                </div>
+
+                <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-5">
+                  <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-rose-300">
+                    Cons & Improvements
+                  </h4>
+                  <AuditBulletList
+                    items={structuredCons}
+                    tone="rose"
+                    emptyText="No critical weaknesses identified yet."
+                  />
+                </div>
               </div>
-              <ul className="space-y-2 flex-1">
-                {rightSideBads.length > 0 ? (
-                  rightSideBads.map((badItem, index) => (
-                    <li key={`${badItem}-${index}`} className="text-xs text-slate-300 flex items-start gap-2 leading-relaxed">
-                      <span className="text-rose-400 font-bold shrink-0">•</span>
-                      <span>{badItem}</span>
-                    </li>
-                  ))
-                ) : (
-                  <p className="text-xs text-slate-500 italic">No critical vulnerabilities or flaws identified.</p>
-                )}
-              </ul>
-            </div>
-          </div>
+
+              <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] p-5">
+                <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                  Strategic Recommendations
+                </h4>
+                <AuditBulletList
+                  items={structuredRecommendations}
+                  tone="cyan"
+                  emptyText="No strategic recommendations generated yet."
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-900">
+                <h4 className="text-xs font-bold text-cyan-500 uppercase tracking-widest mb-2">Asset Description</h4>
+                <p className="text-sm leading-relaxed text-slate-300">{cleanDescriptionText}</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-5 rounded-xl bg-emerald-950/5 border border-emerald-900/20 flex flex-col">
+                  <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-emerald-900/10">
+                    Goods & Strengths
+                  </div>
+                  <AuditBulletList
+                    items={leftSideGoods}
+                    tone="emerald"
+                    emptyText="No structural strengths identified yet."
+                  />
+                </div>
+
+                <div className="p-5 rounded-xl bg-rose-950/5 border border-rose-900/20 flex flex-col">
+                  <div className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-rose-900/10">
+                    Bads & Flaws
+                  </div>
+                  <AuditBulletList
+                    items={rightSideBads}
+                    tone="rose"
+                    emptyText="No critical vulnerabilities or flaws identified."
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="border-t border-slate-900 pt-4 mt-4 flex justify-end">

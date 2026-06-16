@@ -1407,6 +1407,12 @@ Return Markdown sections for goods, bads, project description, and a final score
               ? liveStreamText
               : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
           }
+          auditData={{
+            audit_summary: viewingAuditAsset.audit_summary,
+            pros: viewingAuditAsset.pros,
+            cons: viewingAuditAsset.cons,
+            recommendations: viewingAuditAsset.recommendations,
+          }}
         />
       ) : null}
 
