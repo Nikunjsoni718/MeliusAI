@@ -71,6 +71,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 supabase_backend_client = None
+supabase_service_role_client = None
 
 
 def get_supabase_backend_client():
@@ -99,6 +100,30 @@ def get_supabase_backend_client():
         supabase_backend_client = create_client(supabase_url, supabase_key)
 
     return supabase_backend_client
+
+
+def get_supabase_service_role_client():
+    global supabase_service_role_client
+
+    if create_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="The supabase-py package is not installed in the Python backend environment.",
+        )
+
+    if supabase_service_role_client is None:
+        supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+        if not supabase_url or not supabase_key:
+            raise HTTPException(
+                status_code=500,
+                detail="NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured for asset verification.",
+            )
+
+        supabase_service_role_client = create_client(supabase_url, supabase_key)
+
+    return supabase_service_role_client
 
 
 # --- FILE PARSING ENGINE UTILITIES ---
@@ -339,13 +364,35 @@ async def review_portfolio_asset(file: UploadFile):
 # =====================================================================
 # ENGINE 2: CONVERSATIONAL INTERACTIVE CHAT STATION (Context-Aware)
 # =====================================================================
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Dict, List
+
+
+class UniversalAuditReport(BaseModel):
+    calculatedScore: int = Field(..., ge=0, le=100)
+    executiveSummary: str
+    pros: List[str]
+    cons: List[str]
+    strategicRecommendations: List[str]
+
+
+class VerifyRequest(BaseModel):
+    projectId: str
+    assetName: str
+    assetTextContent: str
+    userContextDescription: str
 
 
 class MatchTalentRequest(BaseModel):
     prompt: str
     organization_id: str | None = None
+
+
+def serialize_pydantic_model(model: BaseModel) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+
+    return model.dict()
 
 
 def normalize_member_profile(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -796,6 +843,87 @@ async def verify_member(request: Request):
         return {"success": False, "message": f"No user found with username '{target_username}'"}
 
     return {"success": True, "user": result.data[0]}
+
+
+@app.post("/api/verify-asset")
+async def verify_asset(payload: VerifyRequest):
+    try:
+        project_id = payload.projectId.strip()
+        asset_name = payload.assetName.strip() or "Project Asset"
+        asset_text_content = payload.assetTextContent.strip()
+        user_context_description = payload.userContextDescription.strip()
+
+        if not project_id or not asset_text_content:
+            raise HTTPException(
+                status_code=400,
+                detail="projectId and assetTextContent are required.",
+            )
+
+        completion = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            response_format=UniversalAuditReport,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are MeliusAI's Principal Smart Asset Verification Engine. "
+                        "You must evaluate every submitted asset against ONE unified industry-standard benchmark "
+                        "regardless of file format, whether the source is a DOCX document, XLSX spreadsheet, "
+                        "source code file, image, presentation, or MP4/video transcript. "
+                        "Metric A: Structural Completeness & Technical Accuracy. "
+                        "Metric B: Practical Real-World Execution relative to the user's project description intent. "
+                        "Metric C: Optimization, Corporate Standards, and Delivery Quality. "
+                        "Return a strict structured JSON object matching the provided schema. "
+                        "The executiveSummary must be clean professional Markdown. "
+                        "The pros, cons, and strategicRecommendations arrays must be specific, direct, and actionable. "
+                        "calculatedScore must be an integer from 0 to 100."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Asset Name:\n{asset_name}\n\n"
+                        f"User Project Description / Intent:\n"
+                        f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
+                        f"Raw Asset Text Content:\n{asset_text_content[:24000]}"
+                    ),
+                },
+            ],
+            temperature=0.1,
+        )
+
+        audit_report = completion.choices[0].message.parsed
+
+        if audit_report is None:
+            raise RuntimeError("OpenAI structured parser returned an empty audit report.")
+
+        audit_payload = serialize_pydantic_model(audit_report)
+        supabase = get_supabase_service_role_client()
+
+        update_payload = {
+            "score": audit_report.calculatedScore,
+            "audit_summary": audit_report.executiveSummary,
+            "pros": audit_report.pros,
+            "cons": audit_report.cons,
+            "recommendations": audit_report.strategicRecommendations,
+            "user_description": user_context_description,
+            "status": "Verified",
+        }
+
+        await asyncio.to_thread(
+            lambda: supabase.table("projects")
+            .update(update_payload)
+            .eq("id", project_id)
+            .execute()
+        )
+
+        return {"success": True, "report": audit_payload}
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("verify_asset.failed")
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 @app.post("/api/match-talent")
