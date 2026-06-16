@@ -17,23 +17,6 @@ export type OrganizationLinkedProfile = {
   } | null;
 };
 
-type MemberSearchUser = {
-  id: string;
-  full_name?: string | null;
-  username?: string | null;
-  avatar_url?: string | null;
-};
-
-type MemberVerificationResponse =
-  | {
-      success: true;
-      user: MemberSearchUser;
-    }
-  | {
-      success: false;
-      message: string;
-    };
-
 interface CandidateProfile {
   id: string;
   full_name?: string;
@@ -66,6 +49,8 @@ type ActiveWorkspaceContext = {
   slug: string;
 };
 
+type DashboardTab = 'overview' | 'ai-matcher' | 'talent-discovery' | 'members';
+
 type OrganizationTableClient = {
   from: (table: 'organizations') => {
     select: (columns: string) => {
@@ -84,26 +69,26 @@ type OrganizationTableClient = {
 
 const navItems: Array<{
   label: string;
-  targetId: string;
+  targetId: DashboardTab;
 }> = [
   { label: 'Overview', targetId: 'overview' },
   { label: 'AI Matcher', targetId: 'ai-matcher' },
   { label: 'Talent Discovery', targetId: 'talent-discovery' },
+  { label: 'Workspace Members', targetId: 'members' },
 ];
 
 const mobileNavItems: Array<{
   label: string;
-  targetId: string;
+  targetId: DashboardTab;
   icon: 'overview' | 'spark' | 'talent' | 'members' | 'settings';
 }> = [
   { label: 'Home', targetId: 'overview', icon: 'overview' },
   { label: 'Match', targetId: 'ai-matcher', icon: 'spark' },
   { label: 'Talent', targetId: 'talent-discovery', icon: 'talent' },
-  { label: 'Members', targetId: 'talent-discovery', icon: 'members' },
+  { label: 'Members', targetId: 'members', icon: 'members' },
   { label: 'Profile', targetId: 'overview', icon: 'settings' },
 ];
 
-const MEMBER_SEARCH_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/search-member`;
 const TALENT_MATCH_ENDPOINT = '/api/match-talent';
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
 const OPPORTUNITY_CREATE_ENDPOINT = '/api/opportunities/create';
@@ -303,24 +288,20 @@ export default function OrganizationDashboard() {
   const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResult, setSearchResult] = useState<MemberSearchUser | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [searchError, setSearchError] = useState('');
-  const [isAdding, setIsAdding] = useState<boolean>(false);
   const [matchPrompt, setMatchPrompt] = useState('');
   const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [uiFeedback, setUiFeedback] = useState<UiFeedback>({ type: null, message: null });
   const [candidateInviteState, setCandidateInviteState] = useState<Record<string, 'inviting' | 'invited'>>({});
+  const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
   const currentOrg = activeWorkspace;
   const currentOrgId = activeWorkspace.id;
   const isWorkspaceContextPending = loading || isLoading;
 
-  function scrollToSection(targetId: string) {
-    document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  function scrollToSection(targetId: DashboardTab) {
+    setActiveTab(targetId);
   }
 
   function getInitials(name: string) {
@@ -337,121 +318,6 @@ export default function OrganizationDashboard() {
 
   function getOrganizationClient() {
     return supabase as unknown as OrganizationTableClient;
-  }
-
-  function handleDeleteLinkedProfile(targetIndex: number) {
-    setLinkedProfilesState((currentProfiles) => currentProfiles.filter((_, index) => index !== targetIndex));
-    setProfileSaveState('idle');
-    setProfileSaveError(null);
-  }
-
-  function appendVerifiedProfile(profile: OrganizationLinkedProfile) {
-    const alreadyLinked = linkedProfilesState.some((linkedProfile) => {
-      const sameId = linkedProfile.id === profile.id;
-      const sameProfileLink =
-        linkedProfile.profile_link.trim().toLowerCase() === profile.profile_link.trim().toLowerCase();
-
-      return sameId || sameProfileLink;
-    });
-
-    if (alreadyLinked) {
-      setSearchError(`${profile.name} is already linked to this workspace.`);
-      return false;
-    }
-
-    setLinkedProfilesState((currentProfiles) => [...currentProfiles, profile]);
-    setProfileSaveState('idle');
-    return true;
-  }
-
-  function linkVerifiedMember(verifiedData: MemberSearchUser) {
-    if (!verifiedData.id || !verifiedData.username) {
-      setSearchError('Verification failed: This profile record is missing required account fields.');
-      return;
-    }
-
-    const wasAdded = appendVerifiedProfile({
-      id: verifiedData.id,
-      name: verifiedData.full_name || verifiedData.username,
-      role: 'Workspace Member',
-      profile_link: `/profile/${verifiedData.username}`,
-    });
-
-    if (wasAdded) {
-      setSearchError('');
-      setSearchQuery('');
-      setIsModalOpen(false);
-      setSearchResult(null);
-    }
-  }
-
-  async function handleSearchMember() {
-    setSearchError('');
-
-    const targetQuery = searchQuery.trim();
-
-    if (!targetQuery) {
-      setSearchError('Enter a MeliusAI username or profile link to search.');
-      setSearchResult(null);
-      setIsModalOpen(false);
-      return;
-    }
-
-    setIsAdding(true);
-    setSearchResult(null);
-    setIsModalOpen(false);
-
-    try {
-      const response = await fetch(MEMBER_SEARCH_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: targetQuery,
-        }),
-      });
-
-      if (!response.ok) {
-        let errorDetail = `Search failed with status ${response.status}.`;
-        const errorText = await response.text();
-
-        if (errorText) {
-          try {
-            const errorJson = JSON.parse(errorText) as { detail?: string };
-            errorDetail = errorJson.detail || errorText;
-          } catch {
-            errorDetail = errorText;
-          }
-        }
-
-        throw new Error(errorDetail);
-      }
-
-      const verificationData = (await response.json()) as MemberVerificationResponse;
-
-      if (!verificationData.success) {
-        setSearchError(verificationData.message);
-        setSearchResult(null);
-        setIsModalOpen(false);
-        return;
-      }
-
-      setSearchResult(verificationData.user);
-      setIsModalOpen(true);
-      setSearchError('');
-    } catch (error) {
-      console.error('Error searching workspace member profiles:', error);
-      setSearchError(
-        error instanceof Error
-          ? `Verification failed: ${error.message}`
-          : 'Verification failed: Member verification service is unavailable.',
-      );
-      setSearchResult(null);
-      setIsModalOpen(false);
-    } finally {
-      setIsAdding(false);
-    }
   }
 
   async function handleRunMatcher(event: FormEvent<HTMLFormElement>) {
@@ -878,15 +744,21 @@ export default function OrganizationDashboard() {
 
           <nav className="flex flex-col gap-1.5">
             {navItems.map((item, index) => {
+              const isActive = activeTab === item.targetId;
+
               return (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() => scrollToSection(item.targetId)}
-                  className="group flex items-center gap-3 rounded-xl p-3 text-left text-sm text-slate-400 transition-all hover:bg-slate-800/40 hover:text-white"
+                  onClick={() => setActiveTab(item.targetId)}
+                  className={`group flex items-center gap-3 rounded-xl p-3 text-left text-sm transition-all hover:bg-slate-800/40 hover:text-white ${
+                    isActive ? 'bg-slate-800/60 text-white font-medium' : 'text-slate-400'
+                  }`}
                 >
                   <span
-                    className="flex h-5 w-5 items-center justify-center rounded-md border border-slate-800/70 bg-slate-950/50 text-[10px] text-slate-500 transition-colors group-hover:border-purple-400/40 group-hover:text-purple-300"
+                    className={`flex h-5 w-5 items-center justify-center rounded-md border bg-slate-950/50 text-[10px] transition-colors group-hover:border-purple-400/40 group-hover:text-purple-300 ${
+                      isActive ? 'border-purple-400/40 text-purple-300' : 'border-slate-800/70 text-slate-500'
+                    }`}
                   >
                     {index + 1}
                   </span>
@@ -919,6 +791,7 @@ export default function OrganizationDashboard() {
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 md:gap-10">
+          {activeTab === 'overview' ? (
           <section id="overview" className="scroll-mt-20 space-y-6 md:scroll-mt-8 md:space-y-8">
             <header className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:rounded-[2rem] md:border-slate-800/60 md:bg-[#060817]/50 md:p-7 md:backdrop-blur-xl">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -977,9 +850,13 @@ export default function OrganizationDashboard() {
               </div>
             </div>
           </section>
+          ) : null}
 
-          <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
+          {activeTab === 'overview' ? (
+            <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
+          ) : null}
 
+          {activeTab === 'ai-matcher' ? (
           <section id="ai-matcher" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
             <div className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:border-slate-800/60 md:bg-[#060817]/50 md:p-6">
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-purple-300">AI Matching Engine</p>
@@ -1126,132 +1003,105 @@ export default function OrganizationDashboard() {
               </div>
             ) : null}
           </section>
+          ) : null}
 
-          <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
+          {activeTab === 'ai-matcher' ? (
+            <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
+          ) : null}
 
-          <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
-            <div className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:border-slate-800/60 md:bg-[#060817]/50 md:p-6">
-              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Talent Discovery</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Workspace Members</h3>
-              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-                Search verified MeliusAI talent profiles by handle or profile link, then review their public profile card.
-              </p>
+          {activeTab === 'talent-discovery' ? (
+            <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
+              <div className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:border-slate-800/60 md:bg-[#060817]/50 md:p-6">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Talent Discovery</p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Verified Talent Search</h3>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
+                  Discover external verified MeliusAI talent through the AI Matcher console. Internal team hierarchy now lives in the Workspace Members tab.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('ai-matcher')}
+                  className="mt-6 w-fit rounded-xl border border-purple-500/30 bg-purple-950/30 px-5 py-3 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white"
+                >
+                  Open Semantic Matcher
+                </button>
+              </div>
+            </section>
+          ) : null}
 
-              <div className="mt-6 space-y-4 mb-6">
-                {linkedProfilesState.map((member, index) => {
-                  const memberUsername =
-                    member.profiles?.username ||
-                    member.username ||
-                    member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
-                  const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
+          {activeTab === 'members' ? (
+            <section id="members" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
+              <div className="w-full rounded-2xl border border-slate-800/60 bg-[#060817]/50 p-6 shadow-xl">
+                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-purple-300">Workspace Members</p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Workspace Directory & Hierarchy</h3>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
+                  A verified directory of internal team members, functional engineering leads, and operational roles at MeliusAI.
+                </p>
 
-                  return (
-                    <div
-                      key={member.id}
-                      className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:flex-row md:items-center md:gap-3 md:rounded-xl md:bg-[#040615]/60 md:p-4"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center overflow-hidden text-xs font-semibold text-slate-300">
-                          {getInitials(member.name)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-base font-semibold text-white tracking-tight md:text-sm md:font-medium md:text-slate-200">
-                            {member.name}
-                          </p>
-                          <p className="text-xs text-slate-400">{member.role}</p>
+                {linkedProfilesState.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
+                    {linkedProfilesState.map((member) => {
+                      const memberUsername =
+                        member.profiles?.username ||
+                        member.username ||
+                        member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
+                      const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
+                      const skillTags = Array.from(
+                        new Set(
+                          member.role
+                            .split(/[\/,|-]/)
+                            .map((tag) => tag.trim())
+                            .filter(Boolean)
+                        )
+                      ).slice(0, 3);
+                      const renderedSkillTags = skillTags.length > 0 ? skillTags : ['Verified Talent', 'MeliusAI Profile'];
+
+                      return (
+                        <div
+                          key={member.id}
+                          className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5 shadow-xl transition-all hover:border-purple-500/30"
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-purple-500/25 bg-purple-950/30 text-sm font-bold tracking-widest text-purple-200">
+                              {getInitials(member.name)}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="truncate text-base font-semibold tracking-tight text-white">{member.name}</h4>
+                              <p className="mt-1 text-xs leading-5 text-slate-400">{member.role || 'Workspace Member'}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 flex flex-wrap gap-2">
+                            {renderedSkillTags.map((tag) => (
+                              <span
+                                key={`${member.id}-${tag}`}
+                                className="rounded-full border border-slate-800/80 bg-slate-900/60 px-2.5 py-1 text-[11px] font-medium text-slate-300"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+
                           <a
                             href={memberProfileHref}
-                            className="mt-2 inline-block text-xs text-purple-400 hover:text-purple-300 transition-all font-medium underline underline-offset-4"
+                            className="mt-6 inline-flex w-full items-center justify-center rounded-xl border border-slate-800/80 bg-slate-950/50 px-4 py-2.5 text-xs font-semibold text-purple-300 transition-all hover:border-purple-500/40 hover:text-purple-200"
                           >
-                            View MeliusAI Profile
+                            View Platform Profile
                           </a>
                         </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLinkedProfile(index)}
-                        className="mt-4 rounded-xl border border-rose-500/20 bg-rose-950/10 px-4 py-2 text-xs text-rose-400 transition-all hover:text-rose-300 md:mt-0 md:border-transparent md:bg-transparent md:p-2 md:text-rose-500 md:hover:text-rose-400/80"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  );
-                })}
-                {linkedProfilesState.length === 0 ? (
-                  <div className="w-full bg-[#0d1533] border border-dashed border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-center text-xs text-slate-500 md:mb-0 md:border-slate-800/70 md:bg-[#040615]/40">
-                    No linked talent profiles yet. Search for a verified MeliusAI user below.
+                      );
+                    })}
                   </div>
-                ) : null}
-              </div>
-
-              <div className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:rounded-xl md:border-slate-800/50 md:bg-[#040615]/40 md:p-4">
-                <label className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                  Search Members
-                </label>
-                <div className="mt-3 flex flex-col gap-3 md:flex-row">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(event) => {
-                      setSearchQuery(event.target.value);
-                      setSearchError('');
-                      setSearchResult(null);
-                    }}
-                    className="min-w-0 flex-1 rounded-lg border border-slate-800/80 bg-[#030512] px-3 py-2.5 text-xs text-slate-200 outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50"
-                    placeholder="Enter MeliusAI username or link..."
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSearchMember}
-                    disabled={isAdding}
-                    className="rounded-lg bg-purple-600 px-5 py-2.5 text-xs font-medium text-white transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500"
-                  >
-                    {isAdding ? 'Searching...' : 'Search Member'}
-                  </button>
-                </div>
-                {searchError ? <p className="mt-2 text-xs font-medium text-rose-500">{searchError}</p> : null}
-              </div>
-
-              {isModalOpen && searchResult ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-                  <div className="relative w-full max-w-md rounded-3xl border border-slate-800/70 bg-slate-950 p-6 text-center shadow-xl shadow-purple-950/30">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsModalOpen(false);
-                        setSearchResult(null);
-                      }}
-                      className="absolute right-4 top-4 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all hover:border-slate-700 hover:text-white"
-                    >
-                      X
-                    </button>
-                    <div className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-purple-500/30 bg-slate-900 text-lg font-bold text-purple-200">
-                      {searchResult.avatar_url ? (
-                        <img
-                          src={searchResult.avatar_url}
-                          alt={searchResult.username || 'MeliusAI member'}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        getInitials(searchResult.full_name || searchResult.username || 'Member')
-                      )}
-                    </div>
-                    <h4 className="mt-5 text-lg font-semibold tracking-tight text-white">
-                      {searchResult.full_name || searchResult.username || 'Verified Member'}
-                    </h4>
-                    <p className="mt-1 text-sm font-medium text-purple-300">@{searchResult.username || 'unknown'}</p>
-                    <button
-                      type="button"
-                      onClick={() => searchResult && linkVerifiedMember(searchResult)}
-                      className="mt-6 w-full rounded-xl bg-purple-600 px-4 py-3 text-xs font-semibold text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 active:scale-[0.99]"
-                    >
-                      Add to Workspace Members
-                    </button>
+                ) : (
+                  <div className="mt-6 rounded-2xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-8 text-center">
+                    <p className="text-sm font-semibold text-slate-300">No workspace members linked yet.</p>
+                    <p className="mx-auto mt-2 max-w-md text-xs leading-5 text-slate-500">
+                      Verified collaborators will appear here once they are added to your organization roster.
+                    </p>
                   </div>
-                </div>
-              ) : null}
-            </div>
-          </section>
+                )}
+              </div>
+            </section>
+          ) : null}
 
         </div>
       </main>
@@ -1262,9 +1112,11 @@ export default function OrganizationDashboard() {
             key={item.label}
             type="button"
             onClick={() => scrollToSection(item.targetId)}
-            className="flex h-full flex-col items-center justify-center text-slate-500 transition-colors hover:text-white"
+            className={`flex h-full flex-col items-center justify-center transition-colors hover:text-white ${
+              activeTab === item.targetId ? 'text-white' : 'text-slate-500'
+            }`}
           >
-            <span className="text-slate-300">
+            <span className={activeTab === item.targetId ? 'text-purple-300' : 'text-slate-300'}>
               <MobileNavIcon icon={item.icon} />
             </span>
             <span className="text-[10px] font-medium mt-1 tracking-wide">{item.label}</span>
