@@ -263,9 +263,9 @@ export function AuditReviewModal({
         <div className="flex-1 overflow-y-auto pr-2 space-y-6">
           {hasStructuredAudit ? (
             <>
-              <div className="mb-6">
+              <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Executive Summary</h4>
-                <p className="text-sm text-slate-300 leading-relaxed font-normal">
+                <p className="text-sm text-slate-300 mb-6 line-clamp-4 leading-relaxed">
                   {structuredSummary || 'No executive summary has been generated yet.'}
                 </p>
               </div>
@@ -273,7 +273,7 @@ export function AuditReviewModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-5">
                   <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                    Pros & Strengths
+                    Goods & Strengths
                   </h4>
                   <AuditBulletList
                     items={structuredPros}
@@ -284,7 +284,7 @@ export function AuditReviewModal({
 
                 <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-5">
                   <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-rose-300">
-                    Cons & Improvements
+                    Bads & Flaws
                   </h4>
                   <AuditBulletList
                     items={structuredCons}

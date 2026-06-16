@@ -874,12 +874,13 @@ async def verify_asset(payload: VerifyRequest):
                         "Metric B: Practical Real-World Execution relative to the user's project description intent. "
                         "Metric C: Optimization, Corporate Standards, and Delivery Quality. "
                         "Return a strict structured JSON object matching the provided schema. "
-                        "The executiveSummary must be clean professional Markdown and MUST be brief: "
-                        "2 to 3 sentences maximum, written like an elite executive briefing. "
-                        "Example tone: 'A cleanly structured, high-impact narrative asset displaying excellent contextual coverage with minor structural omissions.' "
-                        "Do not repeat pros, cons, recommendation details, or score metrics inside executiveSummary. "
+                        "executiveSummary must be clean professional Markdown and MUST be an elegant high-level overview, "
+                        "strictly limited to 3 to 4 short lines maximum. It must not detail specific bullet points, pros, cons, fixes, or score metrics. "
+                        "pros must ONLY contain absolute positive strengths currently present in the file. Never include missing items, flaws, or suggestions to add/fix/change anything in pros. "
+                        "cons must ONLY contain specific existing flaws, errors, missing information, weak evidence, or structural failures. "
+                        "strategicRecommendations must ONLY contain actionable fixes such as 'Add a clear title' or 'Fix inconsistent formatting'. Never put action verbs or fix instructions in pros. "
+                        "Zero duplication rule: a single insight cannot exist in more than one array. If something is missing, place the gap in cons and the fix in strategicRecommendations; it must never touch pros. "
                         "Keep every section unique, punchy, non-wordy, and short. "
-                        "The pros, cons, and strategicRecommendations arrays must be specific, direct, and actionable, with no repeated phrasing across sections. "
                         "calculatedScore must be an integer from 0 to 100."
                     ),
                 },
