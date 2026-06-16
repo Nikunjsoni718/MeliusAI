@@ -898,14 +898,15 @@ async def verify_asset(payload: VerifyRequest):
             raise RuntimeError("OpenAI structured parser returned an empty audit report.")
 
         audit_payload = serialize_pydantic_model(audit_report)
+        project_id_filter = str(project_id)
         supabase = get_supabase_service_role_client()
 
         update_payload = {
             "score": audit_report.calculatedScore,
             "audit_summary": audit_report.executiveSummary,
-            "pros": audit_report.pros,
-            "cons": audit_report.cons,
-            "recommendations": audit_report.strategicRecommendations,
+            "pros": list(audit_report.pros),
+            "cons": list(audit_report.cons),
+            "recommendations": list(audit_report.strategicRecommendations),
             "user_description": user_context_description,
             "status": "Verified",
         }
@@ -913,7 +914,7 @@ async def verify_asset(payload: VerifyRequest):
         await asyncio.to_thread(
             lambda: supabase.table("projects")
             .update(update_payload)
-            .eq("id", project_id)
+            .eq("id", project_id_filter)
             .execute()
         )
 
