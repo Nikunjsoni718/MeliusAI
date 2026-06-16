@@ -2685,13 +2685,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     router.replace('/');
   }
 
-  if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-300">
-        Loading...
-      </main>
-    );
-  }
 
   if (profileLoading) {
     return (
