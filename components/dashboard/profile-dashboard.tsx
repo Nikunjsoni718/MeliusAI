@@ -1305,11 +1305,7 @@ function ProjectCard({
   verifyingAssetId,
   deletingProjectId,
   verifiedAssetId,
-  contextDescription,
-  projectBioSaveState,
   onVerify,
-  onContextDescriptionChange,
-  onSaveProjectBio,
   onOpen,
   onReadProtocol,
   onDelete,
@@ -1319,11 +1315,7 @@ function ProjectCard({
   verifyingAssetId: string | null;
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
-  contextDescription: string;
-  projectBioSaveState: 'idle' | 'saving' | 'saved';
   onVerify: (project: ProjectItem) => void;
-  onContextDescriptionChange: (projectId: string, textValue: string) => void;
-  onSaveProjectBio: (projectId: string) => void;
   onOpen: (project: ProjectItem) => void;
   onReadProtocol: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
@@ -1365,31 +1357,7 @@ function ProjectCard({
             </button>
           </div>
 
-          {isOwner ? (
-            <div className="mb-3">
-              <textarea
-                value={contextDescription}
-                rows={1}
-                onChange={(event) => onContextDescriptionChange(project.id, event.target.value)}
-                className="w-full text-xs bg-transparent border-b border-slate-800 focus:border-cyan-500/50 py-1 text-slate-300 outline-none resize-none overflow-hidden placeholder-slate-600 mt-2"
-                placeholder="Add project bio..."
-              />
-              <button
-                type="button"
-                onClick={() => onSaveProjectBio(project.id)}
-                disabled={projectBioSaveState === 'saving'}
-                className="text-[10px] text-slate-500 hover:text-cyan-400 font-medium tracking-wide transition-colors mt-1 block text-left disabled:cursor-not-allowed disabled:text-slate-700"
-              >
-                {projectBioSaveState === 'saving'
-                  ? 'Saving...'
-                  : projectBioSaveState === 'saved'
-                    ? 'Saved ✓'
-                    : 'Save Project Bio'}
-              </button>
-            </div>
-          ) : null}
-
-          <div className="flex flex-col gap-2 mt-auto pt-2 w-full">
+          <div className="flex flex-col gap-2 mt-auto pt-4 w-full">
             <button
               type="button"
               onClick={() => onReadProtocol(project)}
@@ -1459,9 +1427,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
-  const [projectBioSaveStates, setProjectBioSaveStates] = useState<
-    Record<string, 'idle' | 'saving' | 'saved'>
-  >({});
   const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
@@ -1504,7 +1469,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [portfolioSaveState, setPortfolioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const uploadClearRef = useRef<number | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
-  const projectBioSavedTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
   const verifiedAssetTimerRef = useRef<number | null>(null);
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
@@ -1963,7 +1927,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
   useEffect(() => {
     const descriptionSaveTimers = descriptionSaveTimersRef.current;
-    const projectBioSavedTimers = projectBioSavedTimersRef.current;
 
     return () => {
       if (uploadClearRef.current) {
@@ -1982,7 +1945,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         window.clearTimeout(bioToastTimerRef.current);
       }
       Object.values(descriptionSaveTimers).forEach((timerId) => window.clearTimeout(timerId));
-      Object.values(projectBioSavedTimers).forEach((timerId) => window.clearTimeout(timerId));
     };
   }, []);
 
@@ -2436,79 +2398,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     }, 3600);
   }
 
-  function handleDescriptionChange(projectId: string, textValue: string) {
-    if (!isOwner) {
-      return;
-    }
-
-    setProjectDescriptions((currentDescriptions) => ({
-      ...currentDescriptions,
-      [projectId]: textValue,
-    }));
-    setProjects((currentProjects) =>
-      currentProjects.map((project) =>
-        project.id === projectId ? { ...project, user_description: textValue } : project
-      )
-    );
-  }
-
-  async function handleSaveProjectBio(projectId: string, nextBioText?: string) {
-    if (!isOwner || !supabase) {
-      return;
-    }
-
-    const textValue = nextBioText ?? projectDescriptions[projectId] ?? '';
-
-    if (projectBioSavedTimersRef.current[projectId]) {
-      window.clearTimeout(projectBioSavedTimersRef.current[projectId]);
-      delete projectBioSavedTimersRef.current[projectId];
-    }
-
-    setProjectBioSaveStates((currentStates) => ({
-      ...currentStates,
-      [projectId]: 'saving',
-    }));
-
-    try {
-      const { error } = await supabase
-        .from('projects')
-        .update({ user_description: textValue.trim() || null })
-        .eq('id', projectId);
-
-      if (error) {
-        throw error;
-      }
-
-      setProjects((currentProjects) =>
-        currentProjects.map((project) =>
-          project.id === projectId ? { ...project, user_description: textValue.trim() || null } : project
-        )
-      );
-      setProjectDescriptions((currentDescriptions) => ({
-        ...currentDescriptions,
-        [projectId]: textValue,
-      }));
-      setProjectBioSaveStates((currentStates) => ({
-        ...currentStates,
-        [projectId]: 'saved',
-      }));
-      projectBioSavedTimersRef.current[projectId] = window.setTimeout(() => {
-        setProjectBioSaveStates((currentStates) => ({
-          ...currentStates,
-          [projectId]: 'idle',
-        }));
-        delete projectBioSavedTimersRef.current[projectId];
-      }, 1800);
-    } catch (error) {
-      console.error('Project bio sync failed:', error);
-      setProjectBioSaveStates((currentStates) => ({
-        ...currentStates,
-        [projectId]: 'idle',
-      }));
-      showProjectVerifyError('We could not save this project bio.');
-    }
-  }
-
   function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
     setProjects((currentProjects) =>
       currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
@@ -2688,15 +2577,6 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
         delete descriptionSaveTimersRef.current[projectId];
       }
-      if (projectBioSavedTimersRef.current[projectId]) {
-        window.clearTimeout(projectBioSavedTimersRef.current[projectId]);
-        delete projectBioSavedTimersRef.current[projectId];
-      }
-      setProjectBioSaveStates((currentStates) => {
-        const nextStates = { ...currentStates };
-        delete nextStates[projectId];
-        return nextStates;
-      });
       setViewingAuditAsset((currentAsset) => (currentAsset?.id === projectId ? null : currentAsset));
       setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
       if (activePreviewProjectId === projectId) {
@@ -3313,11 +3193,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
                         verifyingAssetId={verifyingAssetId}
                         deletingProjectId={deletingProjectId}
                         verifiedAssetId={verifiedAssetId}
-                        contextDescription={projectDescriptions[project.id] ?? project.user_description ?? ''}
-                        projectBioSaveState={projectBioSaveStates[project.id] ?? 'idle'}
                         onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
-                        onContextDescriptionChange={handleDescriptionChange}
-                        onSaveProjectBio={(projectId) => void handleSaveProjectBio(projectId)}
                         onOpen={handleOpenProject}
                         onReadProtocol={handleReadFullAuditProtocol}
                         onDelete={(projectId) => void handleDeleteProject(projectId)}
