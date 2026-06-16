@@ -329,18 +329,18 @@ export function AssetPreviewModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
       <div
-        className={`relative w-full ${
-          isExpandedViewer ? 'max-w-6xl' : 'max-w-5xl'
-        } max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col transition-all duration-300`}
+        className={`relative w-full max-w-5xl bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col transition-all duration-300 ${
+          isExpandedViewer ? 'max-h-[85vh]' : 'max-h-[90vh] overflow-y-auto'
+        }`}
       >
-        <div className="sticky top-3 z-30 mx-3 mt-3 flex justify-end gap-2">
+        <div className="sticky top-0 z-30 flex justify-end gap-2 border-b border-slate-900/70 bg-slate-950/90 p-3 backdrop-blur">
           <button
             type="button"
             onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
             className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-cyan-400 bg-slate-900 border border-slate-800 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
             aria-pressed={isExpandedViewer}
           >
-            {isExpandedViewer ? 'Collapse View' : 'Expand Preview'}
+            {isExpandedViewer ? 'Exit Focus Mode' : 'Full Focus Mode'}
           </button>
           <button
             type="button"
@@ -356,9 +356,11 @@ export function AssetPreviewModal({
         </div>
 
         <div
-          className={`-mt-11 w-full ${
-            isExpandedViewer ? 'h-[70vh] min-h-[420px]' : 'h-[55vh] min-h-[360px]'
-          } bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800 transition-[height] duration-300`}
+          className={`w-full ${
+            isExpandedViewer
+              ? 'h-[75vh] md:h-[80vh] rounded-xl'
+              : 'aspect-video md:h-[45vh] rounded-t-xl border-b border-slate-800'
+          } bg-black relative overflow-hidden transition-all duration-300`}
         >
           {videoExtensions.has(extension) ? (
             <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
@@ -388,7 +390,8 @@ export function AssetPreviewModal({
           )}
         </div>
 
-        <div className="p-6 flex flex-col gap-4">
+        {!isExpandedViewer && (
+        <div className="p-6 flex flex-col gap-4 border-t border-slate-800 animate-fadeIn">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{liveProject?.title ?? previewName}</h2>
@@ -458,6 +461,7 @@ export function AssetPreviewModal({
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
