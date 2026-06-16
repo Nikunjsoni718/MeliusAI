@@ -2452,12 +2452,12 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     );
   }
 
-  async function handleSaveProjectBio(projectId: string) {
+  async function handleSaveProjectBio(projectId: string, nextBioText?: string) {
     if (!isOwner || !supabase) {
       return;
     }
 
-    const textValue = projectDescriptions[projectId] ?? '';
+    const textValue = nextBioText ?? projectDescriptions[projectId] ?? '';
 
     if (projectBioSavedTimersRef.current[projectId]) {
       window.clearTimeout(projectBioSavedTimersRef.current[projectId]);
@@ -2484,6 +2484,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           project.id === projectId ? { ...project, user_description: textValue.trim() || null } : project
         )
       );
+      setProjectDescriptions((currentDescriptions) => ({
+        ...currentDescriptions,
+        [projectId]: textValue,
+      }));
       setProjectBioSaveStates((currentStates) => ({
         ...currentStates,
         [projectId]: 'saved',
@@ -3541,6 +3545,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           activePreviewName={activePreviewName}
           activePreviewUrl={activePreviewUrl}
           previewProject={activePreviewProject}
+          onUpdateProjectBio={handleSaveProjectBio}
           onClose={() => {
             setActivePreviewProjectId(null);
             setActivePreviewName(null);

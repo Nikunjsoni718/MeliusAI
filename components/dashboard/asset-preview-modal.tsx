@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -9,6 +9,7 @@ const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
 const audioExtensions = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
 
 type PreviewProject = {
+  id?: string | null;
   title?: string | null;
   file_name?: string | null;
   file_url?: string | null;
@@ -19,6 +20,7 @@ type PreviewProject = {
   mime_type?: string | null;
   file_type?: string | null;
   user_description?: string | null;
+  bio?: string | null;
   description?: string | null;
   ai_summary?: string | null;
   audit_summary?: string | null;
@@ -34,6 +36,7 @@ type AssetPreviewModalProps = {
   activePreviewName: string | null;
   activePreviewUrl: string | null;
   previewProject?: PreviewProject | null;
+  onUpdateProjectBio?: (projectId: string, bioText: string) => Promise<void> | void;
   onClose: () => void;
 };
 
@@ -104,7 +107,7 @@ function getStringArray(value: unknown) {
 }
 
 function getProjectBio(project?: PreviewProject | null) {
-  return project?.user_description?.trim() || 'No project bio has been saved yet.';
+  return project?.user_description?.trim() || project?.bio?.trim() || '';
 }
 
 function getMetricItems(project: PreviewProject | null | undefined, kind: 'pros' | 'cons' | 'recommendations') {
@@ -155,8 +158,11 @@ export function AssetPreviewModal({
   activePreviewName,
   activePreviewUrl,
   previewProject,
+  onUpdateProjectBio,
   onClose,
 }: AssetPreviewModalProps) {
+  const [localBioText, setLocalBioText] = useState(() => getProjectBio(previewProject));
+  const [bioSaveState, setBioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
   const viewerSrc = useMemo(
     () => getViewerSrc(activePreviewUrl, previewName),
@@ -168,6 +174,11 @@ export function AssetPreviewModal({
   const cons = getMetricItems(previewProject, 'cons');
   const recommendations = getMetricItems(previewProject, 'recommendations');
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
+
+  useEffect(() => {
+    setLocalBioText(getProjectBio(previewProject));
+    setBioSaveState('idle');
+  }, [previewProject?.id, previewProject?.user_description, previewProject?.bio]);
 
   useEffect(() => {
     if (!activePreviewUrl) {
@@ -190,9 +201,26 @@ export function AssetPreviewModal({
     return null;
   }
 
+  async function handleModalBioSave() {
+    if (!previewProject?.id || !onUpdateProjectBio) {
+      return;
+    }
+
+    setBioSaveState('saving');
+
+    try {
+      await onUpdateProjectBio(previewProject.id, localBioText);
+      setBioSaveState('saved');
+      window.setTimeout(() => setBioSaveState('idle'), 1800);
+    } catch (error) {
+      console.error('Preview modal project bio save failed:', error);
+      setBioSaveState('idle');
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
-      <div className="relative w-full max-w-4xl max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col">
+      <div className="relative w-full max-w-6xl max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col">
         <button
           type="button"
           onClick={onClose}
@@ -202,7 +230,7 @@ export function AssetPreviewModal({
           ×
         </button>
 
-        <div className="-mt-11 w-full aspect-video bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800">
+        <div className="-mt-11 w-full h-[55vh] min-h-[360px] bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800">
           {videoExtensions.has(extension) ? (
             <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
           ) : imageExtensions.has(extension) ? (
@@ -242,8 +270,21 @@ export function AssetPreviewModal({
             </span>
           </div>
 
-          <div className="w-full p-4 rounded-lg bg-slate-900/50 border border-slate-800 text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
-            {getProjectBio(previewProject)}
+          <div className="relative">
+            <textarea
+              value={localBioText}
+              onChange={(event) => setLocalBioText(event.target.value)}
+              className="w-full min-h-[80px] p-3 text-sm bg-slate-900/40 border border-slate-800 rounded-lg text-slate-300 placeholder-slate-600 focus:border-cyan-500/50 outline-none resize-none transition-all"
+              placeholder="No project bio has been saved yet. Type a bio for your project here..."
+            />
+            <button
+              type="button"
+              onClick={() => void handleModalBioSave()}
+              disabled={!previewProject?.id || bioSaveState === 'saving'}
+              className="absolute bottom-2 right-2 px-3 py-1 text-xs font-medium text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bioSaveState === 'saving' ? 'Saving...' : bioSaveState === 'saved' ? 'Saved ✓' : 'Save Bio'}
+            </button>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
