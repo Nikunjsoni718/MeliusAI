@@ -196,6 +196,7 @@ export function AssetPreviewModal({
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
   const [localBioText, setLocalBioText] = useState(previewProject?.user_description || previewProject?.bio || '');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [bioSaveState, setBioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [supabase] = useState(() => (hasSupabaseBrowserEnv() ? createSupabaseBrowserClient() : null));
   const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
@@ -214,6 +215,7 @@ export function AssetPreviewModal({
     setLiveProject(previewProject ?? null);
     setLocalBioText(previewProject?.user_description || previewProject?.bio || '');
     setBioSaveState('idle');
+    setIsExpandedViewer(false);
   }, [previewProject?.id, previewProject?.user_description, previewProject?.bio]);
 
   useEffect(() => {
@@ -223,6 +225,7 @@ export function AssetPreviewModal({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        setIsExpandedViewer(false);
         onClose();
       }
     };
@@ -325,17 +328,38 @@ export function AssetPreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
-      <div className="relative w-full max-w-6xl max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col">
-        <button
-          type="button"
-          onClick={onClose}
-          className="sticky top-3 right-3 z-30 ml-auto mr-3 mt-3 flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
-          aria-label="Close asset preview"
-        >
-          ×
-        </button>
+      <div
+        className={`relative w-full ${
+          isExpandedViewer ? 'max-w-6xl' : 'max-w-5xl'
+        } max-h-[90vh] bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto flex flex-col transition-all duration-300`}
+      >
+        <div className="sticky top-3 z-30 mx-3 mt-3 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
+            className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-cyan-400 bg-slate-900 border border-slate-800 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
+            aria-pressed={isExpandedViewer}
+          >
+            {isExpandedViewer ? 'Collapse View' : 'Expand Preview'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsExpandedViewer(false);
+              onClose();
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
+            aria-label="Close asset preview"
+          >
+            ×
+          </button>
+        </div>
 
-        <div className="-mt-11 w-full h-[55vh] min-h-[360px] bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800">
+        <div
+          className={`-mt-11 w-full ${
+            isExpandedViewer ? 'h-[70vh] min-h-[420px]' : 'h-[55vh] min-h-[360px]'
+          } bg-black rounded-t-xl relative overflow-hidden border-b border-slate-800 transition-[height] duration-300`}
+        >
           {videoExtensions.has(extension) ? (
             <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
           ) : imageExtensions.has(extension) ? (
