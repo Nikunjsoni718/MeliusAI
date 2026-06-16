@@ -2509,6 +2509,23 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     }
   }
 
+  function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
+    setProjects((currentProjects) =>
+      currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
+    );
+
+    if ('user_description' in projectPatch) {
+      setProjectDescriptions((currentDescriptions) => ({
+        ...currentDescriptions,
+        [projectId]: projectPatch.user_description ?? '',
+      }));
+    }
+
+    setViewingAuditAsset((currentAsset) =>
+      currentAsset?.id === projectId ? { ...currentAsset, ...projectPatch } : currentAsset
+    );
+  }
+
   async function handleVerifyWithMeliusAI(project: ProjectItem) {
     if (!isOwner) {
       return;
@@ -3545,7 +3562,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           activePreviewName={activePreviewName}
           activePreviewUrl={activePreviewUrl}
           previewProject={activePreviewProject}
-          onUpdateProjectBio={handleSaveProjectBio}
+          onProjectUpdated={handlePreviewProjectUpdated}
           onClose={() => {
             setActivePreviewProjectId(null);
             setActivePreviewName(null);

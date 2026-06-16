@@ -3,14 +3,17 @@
 import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
 
+import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
 const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
 const audioExtensions = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
 
 type PreviewProject = {
-  id?: string | null;
-  title?: string | null;
+  id?: string;
+  name?: string | null;
+  title?: string;
   file_name?: string | null;
   file_url?: string | null;
   source_url?: string | null;
@@ -21,6 +24,8 @@ type PreviewProject = {
   file_type?: string | null;
   user_description?: string | null;
   bio?: string | null;
+  raw_text?: string | null;
+  text_preview?: string | null;
   description?: string | null;
   ai_summary?: string | null;
   audit_summary?: string | null;
@@ -36,8 +41,23 @@ type AssetPreviewModalProps = {
   activePreviewName: string | null;
   activePreviewUrl: string | null;
   previewProject?: PreviewProject | null;
-  onUpdateProjectBio?: (projectId: string, bioText: string) => Promise<void> | void;
+  onProjectUpdated?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onClose: () => void;
+};
+
+type VerifyAssetResponse = {
+  success?: boolean;
+  error?: string;
+  report?: {
+    calculatedScore?: number;
+    executiveSummary?: string;
+    pros?: string[];
+    cons?: string[];
+    strategicRecommendations?: string[];
+  };
+  project?: PreviewProject;
+  reportText?: string;
+  score?: number;
 };
 
 function getFileExtensionFromUrlOrName(previewUrl: string | null, fileName: string | null) {
@@ -110,6 +130,18 @@ function getProjectBio(project?: PreviewProject | null) {
   return project?.user_description?.trim() || project?.bio?.trim() || '';
 }
 
+function getProjectAssetText(project: PreviewProject | null | undefined, previewName: string) {
+  return (
+    project?.raw_text?.trim() ||
+    project?.text_preview?.trim() ||
+    project?.ai_summary?.trim() ||
+    project?.description?.trim() ||
+    project?.audit_summary?.trim() ||
+    project?.file_name?.trim() ||
+    previewName
+  );
+}
+
 function getMetricItems(project: PreviewProject | null | undefined, kind: 'pros' | 'cons' | 'recommendations') {
   const directItems = getStringArray(project?.[kind]);
 
@@ -158,25 +190,29 @@ export function AssetPreviewModal({
   activePreviewName,
   activePreviewUrl,
   previewProject,
-  onUpdateProjectBio,
+  onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
-  const [localBioText, setLocalBioText] = useState(() => getProjectBio(previewProject));
+  const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
+  const [localBioText, setLocalBioText] = useState(previewProject?.user_description || previewProject?.bio || '');
+  const [isVerifying, setIsVerifying] = useState(false);
   const [bioSaveState, setBioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [supabase] = useState(() => (hasSupabaseBrowserEnv() ? createSupabaseBrowserClient() : null));
   const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
   const viewerSrc = useMemo(
     () => getViewerSrc(activePreviewUrl, previewName),
     [activePreviewUrl, previewName]
   );
-  const extension = getPreviewExtension(activePreviewUrl, previewName, previewProject);
-  const score = getScore(previewProject);
-  const pros = getMetricItems(previewProject, 'pros');
-  const cons = getMetricItems(previewProject, 'cons');
-  const recommendations = getMetricItems(previewProject, 'recommendations');
+  const extension = getPreviewExtension(activePreviewUrl, previewName, liveProject);
+  const score = getScore(liveProject);
+  const pros = getMetricItems(liveProject, 'pros');
+  const cons = getMetricItems(liveProject, 'cons');
+  const recommendations = getMetricItems(liveProject, 'recommendations');
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
 
   useEffect(() => {
-    setLocalBioText(getProjectBio(previewProject));
+    setLiveProject(previewProject ?? null);
+    setLocalBioText(previewProject?.user_description || previewProject?.bio || '');
     setBioSaveState('idle');
   }, [previewProject?.id, previewProject?.user_description, previewProject?.bio]);
 
@@ -201,20 +237,89 @@ export function AssetPreviewModal({
     return null;
   }
 
-  async function handleModalBioSave() {
-    if (!previewProject?.id || !onUpdateProjectBio) {
+  async function handleSaveBio(projectId: string, bioText: string) {
+    if (!supabase || bioSaveState === 'saving') {
       return;
     }
 
     setBioSaveState('saving');
 
     try {
-      await onUpdateProjectBio(previewProject.id, localBioText);
+      const { error: updateError } = await supabase
+        .from('projects')
+        .update({ user_description: bioText.trim() || null })
+        .eq('id', projectId);
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
+
+      const projectPatch: Partial<PreviewProject> = {
+        user_description: bioText.trim() || null,
+      };
+
+      setLiveProject((currentProject) => (currentProject ? { ...currentProject, ...projectPatch } : currentProject));
+      onProjectUpdated?.(projectId, projectPatch);
       setBioSaveState('saved');
-      window.setTimeout(() => setBioSaveState('idle'), 1800);
+      window.setTimeout(() => setBioSaveState('idle'), 2000);
     } catch (error) {
       console.error('Preview modal project bio save failed:', error);
       setBioSaveState('idle');
+    }
+  }
+
+  async function handleRunAIVerification(projectId: string) {
+    if (!liveProject || isVerifying) {
+      return;
+    }
+
+    setIsVerifying(true);
+
+    try {
+      const response = await fetch('/api/verify-asset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId,
+          assetName: liveProject.name || liveProject.title || liveProject.file_name || previewName,
+          assetTextContent: getProjectAssetText(liveProject, previewName),
+          userContextDescription: localBioText,
+        }),
+      });
+      const data = (await response.json()) as VerifyAssetResponse;
+
+      if (!response.ok) {
+        throw new Error(data.error || 'MeliusAI verification failed.');
+      }
+
+      const report = data.report;
+      const projectPatch: Partial<PreviewProject> = {
+        ...(data.project ?? {}),
+        user_description: localBioText.trim() || null,
+        score: report?.calculatedScore ?? data.score ?? data.project?.score ?? liveProject.score,
+        evaluation_score:
+          report?.calculatedScore ?? data.score ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
+        logic_score: report?.calculatedScore ?? data.score ?? data.project?.logic_score ?? liveProject.logic_score,
+        audit_summary: report?.executiveSummary ?? data.project?.audit_summary ?? liveProject.audit_summary,
+        pros: report?.pros ?? data.project?.pros ?? liveProject.pros,
+        cons: report?.cons ?? data.project?.cons ?? liveProject.cons,
+        recommendations:
+          report?.strategicRecommendations ?? data.project?.recommendations ?? liveProject.recommendations,
+        ai_summary: data.reportText ?? data.project?.ai_summary ?? liveProject.ai_summary,
+        description: data.reportText ?? data.project?.description ?? liveProject.description,
+      };
+
+      setLiveProject((currentProject) => ({
+        ...(currentProject ?? liveProject),
+        ...projectPatch,
+      }));
+      onProjectUpdated?.(projectId, projectPatch);
+    } catch (error) {
+      console.error('Preview modal AI verification failed:', error);
+    } finally {
+      setIsVerifying(false);
     }
   }
 
@@ -262,8 +367,8 @@ export function AssetPreviewModal({
         <div className="p-6 flex flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{previewProject?.title ?? previewName}</h2>
-              <p className="mt-1 truncate text-xs text-slate-500">{previewProject?.file_name ?? previewName}</p>
+              <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{liveProject?.title ?? previewName}</h2>
+              <p className="mt-1 truncate text-xs text-slate-500">{liveProject?.file_name ?? previewName}</p>
             </div>
             <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
               {fileTypeBadge}
@@ -274,16 +379,35 @@ export function AssetPreviewModal({
             <textarea
               value={localBioText}
               onChange={(event) => setLocalBioText(event.target.value)}
-              className="w-full min-h-[80px] p-3 text-sm bg-slate-900/40 border border-slate-800 rounded-lg text-slate-300 placeholder-slate-600 focus:border-cyan-500/50 outline-none resize-none transition-all"
+              className="w-full min-h-[80px] p-3 pb-9 text-sm bg-slate-900/40 border border-slate-800 rounded-lg text-slate-300 placeholder-slate-600 focus:border-cyan-500/50 outline-none resize-none transition-all"
               placeholder="No project bio has been saved yet. Type a bio for your project here..."
             />
             <button
               type="button"
-              onClick={() => void handleModalBioSave()}
-              disabled={!previewProject?.id || bioSaveState === 'saving'}
+              onClick={() => {
+                if (liveProject?.id) {
+                  void handleSaveBio(liveProject.id, localBioText);
+                }
+              }}
+              disabled={!liveProject?.id || !supabase || bioSaveState === 'saving'}
               className="absolute bottom-2 right-2 px-3 py-1 text-xs font-medium text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {bioSaveState === 'saving' ? 'Saving...' : bioSaveState === 'saved' ? 'Saved ✓' : 'Save Bio'}
+            </button>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (liveProject?.id) {
+                  void handleRunAIVerification(liveProject.id);
+                }
+              }}
+              disabled={!liveProject?.id || isVerifying}
+              className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/50 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
+            >
+              {isVerifying ? 'Auditing via GPT Engine...' : 'Verify with MeliusAI'}
             </button>
           </div>
 
