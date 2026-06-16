@@ -76,10 +76,10 @@ type OpportunityRoleItem = {
   created_at?: string | null;
 };
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
+  id?: string | null;
   avg_project_score?: number | null;
   skills?: string[] | null;
 };
-type SavedUserProfileItem = Pick<UserRow, 'display_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'>;
 type ProjectAuditSummary = {
   score?: number | null;
   summary: string;
@@ -1441,6 +1441,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
   const [showRefresh, setShowRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -1656,8 +1657,9 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           return;
         }
 
-        const routeIdentifier = profileUsername ? decodeURIComponent(profileUsername) : sessionUser.id;
-        const isUuidIdentifier = isUuidProfileIdentifier(routeIdentifier);
+        const routeIdentifier = profileUsername
+          ? decodeURIComponent(profileUsername).replace(/^@+/, '').trim()
+          : (sessionUser.user_metadata?.username as string | undefined) || sessionUser.id;
         const sessionRawMetadata = (sessionUser as {
           raw_user_meta_data?: {
             role?: string;
@@ -1697,10 +1699,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
               sessionUser.email?.split('@')[0] ??
               routeIdentifier
             : routeIdentifier;
-        const fallbackUsername =
-          isUuidIdentifier && isOwnProfile
-            ? loggedInUsername ?? routeIdentifier
-            : routeIdentifier;
+        const fallbackUsername = routeIdentifier;
 
         let hasDbProfile = false;
         let birthDate: string | null = null;
@@ -1709,6 +1708,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         let bioValue = isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '';
         let skillsInputValue = '';
         let avgProjectScoreValue: number | null = null;
+        let resolvedProfileIdValue: string | null = null;
         let avatarUrl: string | null =
           isOwnProfile
             ? sessionUserMetadata?.avatar_url ??
@@ -1720,13 +1720,15 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
         const savedProfileResponse = await supabase
           .from('profiles')
-          .select('full_name, username, birth_date, bio, skills, avatar_url, avg_project_score')
-          .eq(isUuidIdentifier ? 'id' : 'username', routeIdentifier)
-          .maybeSingle();
+          .select('*')
+          .eq('username', routeIdentifier)
+          .single();
         const savedProfile = savedProfileResponse.data as SavedProfileItem | null;
+        const savedProfileError = savedProfileResponse.error;
 
         if (savedProfile) {
           hasDbProfile = true;
+          resolvedProfileIdValue = savedProfile.id ?? null;
           displayName = savedProfile.full_name ?? displayName;
           usernameValue = savedProfile.username ?? usernameValue;
           birthDate = savedProfile.birth_date ?? null;
@@ -1736,20 +1738,10 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           avgProjectScoreValue =
             typeof savedProfile.avg_project_score === 'number' ? savedProfile.avg_project_score : null;
         } else {
-          const dbProfileResponse = await supabase
-            .from('users')
-            .select('display_name, username, birth_date, bio, avatar_url')
-            .eq(isUuidIdentifier ? 'id' : 'username', routeIdentifier)
-            .maybeSingle();
-          const dbProfile = dbProfileResponse.data as SavedUserProfileItem | null;
+          resolvedProfileIdValue = null;
 
-          if (dbProfile) {
-            hasDbProfile = true;
-            displayName = dbProfile.display_name ?? displayName;
-            usernameValue = dbProfile.username ?? usernameValue;
-            birthDate = dbProfile.birth_date ?? null;
-            bioValue = dbProfile.bio ?? bioValue;
-            avatarUrl = dbProfile.avatar_url ?? avatarUrl;
+          if (savedProfileError) {
+            console.warn(`No profile record found for username "${routeIdentifier}":`, savedProfileError.message);
           }
         }
 
@@ -1776,6 +1768,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           lastSavedProfileRef.current = hydratedDraft;
           lastSavedBioRef.current = bioValue;
           lastSavedSkillsInputRef.current = skillsInputValue;
+          setResolvedProfileId(resolvedProfileIdValue);
           setProfileDraft(hydratedDraft);
           setBioText(bioValue);
           setRawSkillsInput(skillsInputValue);
@@ -1827,7 +1820,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
 
     const loadProjects = async () => {
       try {
-        const userId = await getConfirmedUserId();
+        const userId = resolvedProfileId;
         if (!userId) {
           if (active) {
             setProjects([]);
@@ -1867,7 +1860,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     return () => {
       active = false;
     };
-  }, [authEnabled, getConfirmedUserId, supabase, user]);
+  }, [authEnabled, resolvedProfileId, supabase, user]);
 
   useEffect(() => {
     if (!user || !authEnabled || !supabase) {
@@ -1880,7 +1873,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       setRolesLoading(true);
 
       try {
-        const userId = await getConfirmedUserId();
+        const userId = resolvedProfileId;
 
         if (!userId) {
           if (active) {
@@ -1915,7 +1908,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     return () => {
       active = false;
     };
-  }, [authEnabled, getConfirmedUserId, supabase, user]);
+  }, [authEnabled, resolvedProfileId, supabase, user]);
 
   useEffect(() => {
     return () => {
