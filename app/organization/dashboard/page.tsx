@@ -330,7 +330,7 @@ export default function OrganizationDashboard() {
     const prompt = searchQuery.trim();
 
     if (!prompt) {
-      setSearchError('Please enter a valid search requirement query string.');
+      setSearchError('Search input required. Add clearer recruiter intent to continue.');
       return;
     }
 
@@ -340,8 +340,8 @@ export default function OrganizationDashboard() {
     setHasRunMatcher(true);
 
     try {
-      const targetUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
-      const cleanUrl = targetUrl ? targetUrl.replace(/\/$/, '') : '';
+      const targetUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com';
+      const cleanUrl = targetUrl.replace(/\/$/, '');
       console.log('Initiating network payload stream out to:', targetUrl);
 
       const response = await fetch(`${cleanUrl}/api/match-talent`, {
@@ -353,12 +353,12 @@ export default function OrganizationDashboard() {
           requirement: prompt,
         }),
       });
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data?.detail || data?.message || `HTTP network fault code: ${response.status}`);
+        throw new Error(`Server responded with status code ${response.status}`);
       }
 
+      const data = await response.json();
       const rawCandidates = Array.isArray(data) ? data : Array.isArray(data?.candidates) ? data.candidates : [];
       const normalizedCandidates = rawCandidates
         .map((candidate: unknown) => normalizeCandidateProfile(candidate))
@@ -367,10 +367,22 @@ export default function OrganizationDashboard() {
       console.log('Candidates payload pulled successfully:', data);
       setCandidatesPool(normalizedCandidates);
     } catch (err) {
-      console.error('Internal matching transaction exception caught:', err);
-      setSearchError(
-        err instanceof Error ? err.message : 'Failed to successfully connect to our semantic match server.'
-      );
+      console.error('Caught search routine exception:', err);
+      let errorMessage = '';
+
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      } else {
+        try {
+          errorMessage = JSON.stringify(err) || String(err);
+        } catch {
+          errorMessage = String(err);
+        }
+      }
+
+      setSearchError(errorMessage || 'Failed to successfully connect to our semantic match server.');
     } finally {
       setIsSearching(false);
     }
@@ -910,9 +922,9 @@ export default function OrganizationDashboard() {
 
             {searchError ? (
               <div className="w-full bg-[#0d1533] border border-amber-400/30 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:bg-gradient-to-br md:from-amber-950/25 md:via-[#080b1d] md:to-[#030512] md:p-6 md:shadow-[0_0_35px_rgba(245,158,11,0.08)]">
-                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Search Input Required</p>
-                <h4 className="mt-3 text-lg font-semibold text-white">Add clearer recruiter intent to continue.</h4>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-100/80">{searchError}</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Matcher Notice</p>
+                <h4 className="mt-3 text-lg font-semibold text-white">The talent search needs a clean signal.</h4>
+                <div className="mt-2 max-w-3xl text-sm leading-6 text-red-400">{String(searchError)}</div>
                 <p className="mt-4 text-xs leading-5 text-slate-500">
                   Include role seniority, required tools, domain context, and hard filters such as “fresher TypeScript
                   React dashboard builder” or “experienced Python FastAPI architect”.
