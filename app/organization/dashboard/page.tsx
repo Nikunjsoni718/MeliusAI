@@ -900,6 +900,18 @@ export default function OrganizationDashboard() {
           </section>
           ) : null}
 
+          {activeTab !== 'members' && searchError ? (
+            <div className="w-full bg-[#0d1533] border border-amber-400/30 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:bg-gradient-to-br md:from-amber-950/25 md:via-[#080b1d] md:to-[#030512] md:p-6 md:shadow-[0_0_35px_rgba(245,158,11,0.08)]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Matcher Notice</p>
+              <h4 className="mt-3 text-lg font-semibold text-white">The talent search needs a clean signal.</h4>
+              <div className="mt-2 max-w-3xl text-sm leading-6 text-red-400">{String(searchError)}</div>
+              <p className="mt-4 text-xs leading-5 text-slate-500">
+                Include role seniority, required tools, domain context, and hard filters such as “fresher TypeScript
+                React dashboard builder” or “experienced Python FastAPI architect”.
+              </p>
+            </div>
+          ) : null}
+
           {activeTab !== 'members' ? (
             <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
           ) : null}
@@ -917,18 +929,6 @@ export default function OrganizationDashboard() {
             {isSearching ? (
               <div className="w-full bg-[#0d1533] border border-cyan-500/20 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-sm font-semibold text-cyan-300 shadow-[0_0_35px_rgba(34,211,238,0.08)] animate-pulse md:mb-0 md:bg-cyan-950/10">
                 MeliusAI Machine Learning Engine mapping profile semantic vectors and optimizing feedback scores... Processing...
-              </div>
-            ) : null}
-
-            {searchError ? (
-              <div className="w-full bg-[#0d1533] border border-amber-400/30 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:bg-gradient-to-br md:from-amber-950/25 md:via-[#080b1d] md:to-[#030512] md:p-6 md:shadow-[0_0_35px_rgba(245,158,11,0.08)]">
-                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Matcher Notice</p>
-                <h4 className="mt-3 text-lg font-semibold text-white">The talent search needs a clean signal.</h4>
-                <div className="mt-2 max-w-3xl text-sm leading-6 text-red-400">{String(searchError)}</div>
-                <p className="mt-4 text-xs leading-5 text-slate-500">
-                  Include role seniority, required tools, domain context, and hard filters such as “fresher TypeScript
-                  React dashboard builder” or “experienced Python FastAPI architect”.
-                </p>
               </div>
             ) : null}
 
