@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -990,16 +991,15 @@ export default function OrganizationDashboard() {
                           </div>
                         </div>
                         <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleMatchFeedback(profile, 'clicked');
-                              router.push(`/profile/${profile?.username || profile?.id}`);
-                            }}
+                          <Link
+                            href={`/talent/${profile?.username || profile?.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => void handleMatchFeedback(profile, 'clicked')}
                             className="w-full rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
                           >
                             Review Profile Dossier
-                          </button>
+                          </Link>
                           <button
                             type="button"
                             onClick={() => void handleInviteToApply(profile, compositeMatchPercent)}
