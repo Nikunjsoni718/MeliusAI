@@ -340,10 +340,11 @@ export default function OrganizationDashboard() {
     setHasRunMatcher(true);
 
     try {
-      const targetUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://your-render-backend-url-here.onrender.com';
+      const targetUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
+      const cleanUrl = targetUrl ? targetUrl.replace(/\/$/, '') : '';
       console.log('Initiating network payload stream out to:', targetUrl);
 
-      const response = await fetch(`${targetUrl.replace(/\/$/, '')}/api/match-talent`, {
+      const response = await fetch(`${cleanUrl}/api/match-talent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

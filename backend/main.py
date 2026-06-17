@@ -34,18 +34,17 @@ load_dotenv(dotenv_path=env_path)
 # 2. APPLICATION INITIALIZATION
 app = FastAPI(title="MeliusAI Omnivorous Multimodal Agent")
 
-# Authorized browser origins for the production frontend, preview app, and local development.
-allowed_origins = [
-    "http://localhost:3000",
-    "https://meliusai.in",
+# Authorized browser origins for the production frontend and local development.
+origins = [
     "https://www.meliusai.in",
-    "https://melius-ai.vercel.app",
+    "https://meliusai.in",
+    "http://localhost:3000",
 ]
 
 # Enable Cross-Origin Resource Sharing (CORS) for authorized frontend surfaces.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,7 +55,7 @@ app.add_middleware(
 async def enforce_cors_origin_whitelist(request: Request, call_next):
     origin = request.headers.get("origin")
 
-    if origin and origin not in allowed_origins:
+    if origin and origin not in origins:
         return JSONResponse(
             status_code=403,
             content={
