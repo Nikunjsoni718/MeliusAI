@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -29,11 +29,6 @@ interface CandidateProfile {
   matchScore?: number;
   aiReasoning?: string;
 }
-
-type UiFeedback = {
-  type: 'error' | 'info' | null;
-  message: string | null;
-};
 
 type OrganizationRecord = {
   id: string | null;
@@ -89,7 +84,6 @@ const mobileNavItems: Array<{
   { label: 'Profile', targetId: 'overview', icon: 'settings' },
 ];
 
-const TALENT_MATCH_ENDPOINT = '/api/match-talent';
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
 const OPPORTUNITY_CREATE_ENDPOINT = '/api/opportunities/create';
 
@@ -288,10 +282,11 @@ export default function OrganizationDashboard() {
   const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
-  const [matchPrompt, setMatchPrompt] = useState('');
-  const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
+  const [searchQuery, setSearchQuery] = useState('Looking for a ui ux designer who is good at typescript');
+  const [candidatesPool, setCandidatesPool] = useState<CandidateProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [uiFeedback, setUiFeedback] = useState<UiFeedback>({ type: null, message: null });
+  const [searchError, setSearchError] = useState<string>('');
+  const [hasRunMatcher, setHasRunMatcher] = useState(false);
   const [candidateInviteState, setCandidateInviteState] = useState<Record<string, 'inviting' | 'invited'>>({});
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const sidebarCompanyName = activeWorkspace.title || companyName;
@@ -326,24 +321,29 @@ export default function OrganizationDashboard() {
     return supabase as unknown as OrganizationTableClient;
   }
 
-  async function handleRunMatcher(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleSearchTalent(event?: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement>) {
+    if (event) {
+      event.preventDefault();
+    }
 
-    const prompt = matchPrompt.trim();
+    setSearchError('');
+    const prompt = searchQuery.trim();
 
     if (!prompt) {
-      setCandidates([]);
-      setUiFeedback({ type: 'error', message: 'Please add new information to bring clarity.' });
+      setSearchError('Please enter a valid search requirement query string.');
       return;
     }
 
     setIsSearching(true);
-    setUiFeedback({ type: null, message: null });
-    setCandidates([]);
+    setCandidatesPool([]);
     setCandidateInviteState({});
+    setHasRunMatcher(true);
 
     try {
-      const response = await fetch(TALENT_MATCH_ENDPOINT, {
+      const targetUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://your-render-backend-url-here.onrender.com';
+      console.log('Initiating network payload stream out to:', targetUrl);
+
+      const response = await fetch(`${targetUrl.replace(/\/$/, '')}/api/match-talent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -355,11 +355,7 @@ export default function OrganizationDashboard() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            data?.message ||
-            'Enterprise Engine Exception: Network response validation failed.',
-        );
+        throw new Error(data?.detail || data?.message || `HTTP network fault code: ${response.status}`);
       }
 
       const rawCandidates = Array.isArray(data) ? data : Array.isArray(data?.candidates) ? data.candidates : [];
@@ -367,32 +363,20 @@ export default function OrganizationDashboard() {
         .map((candidate: unknown) => normalizeCandidateProfile(candidate))
         .filter((candidate: CandidateProfile | null): candidate is CandidateProfile => Boolean(candidate));
 
-      setCandidates(normalizedCandidates);
-      setUiFeedback(
-        normalizedCandidates.length === 0
-          ? {
-              type: 'info',
-              message:
-                '0 talent vectors inside the platform database matched your rigid relational taxonomy skill parameters.',
-            }
-          : { type: null, message: null }
+      console.log('Candidates payload pulled successfully:', data);
+      setCandidatesPool(normalizedCandidates);
+    } catch (err) {
+      console.error('Internal matching transaction exception caught:', err);
+      setSearchError(
+        err instanceof Error ? err.message : 'Failed to successfully connect to our semantic match server.'
       );
-    } catch (error) {
-      console.error('Error running talent match engine:', error);
-      setUiFeedback({
-        type: 'error',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Enterprise Engine Exception: Network response validation failed.',
-      });
     } finally {
       setIsSearching(false);
     }
   }
 
   async function handleMatchFeedback(candidate: CandidateProfile, action: 'clicked' | 'shortlisted' | 'skipped') {
-    if (!currentOrg.id || !candidate.id || !matchPrompt.trim()) {
+    if (!currentOrg.id || !candidate.id || !searchQuery.trim()) {
       return;
     }
 
@@ -406,7 +390,7 @@ export default function OrganizationDashboard() {
         body: JSON.stringify({
           organization_id: currentOrg.id,
           candidate_id: candidate.id,
-          search_prompt: matchPrompt,
+          search_prompt: searchQuery,
           action,
         }),
       });
@@ -420,11 +404,11 @@ export default function OrganizationDashboard() {
       return;
     }
 
-    const roleTitle = matchPrompt.trim();
+    const roleTitle = searchQuery.trim();
     const workspaceName = sidebarCompanyName || companyName || 'MeliusAI Workspace';
 
     if (!roleTitle) {
-      setUiFeedback({ type: 'error', message: 'Please run the matcher with a role requirement before inviting talent.' });
+      setSearchError('Please run the matcher with a role requirement before inviting talent.');
       return;
     }
 
@@ -463,10 +447,7 @@ export default function OrganizationDashboard() {
         delete nextState[candidate.id];
         return nextState;
       });
-      setUiFeedback({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Unable to invite this candidate right now.',
-      });
+      setSearchError(error instanceof Error ? error.message : 'Unable to invite this candidate right now.');
     }
   }
 
@@ -873,12 +854,12 @@ export default function OrganizationDashboard() {
                 Cross-referencing global creator profiles against your active workspace blueprint requirements.
               </p>
 
-              <form onSubmit={handleRunMatcher} className="mt-6 space-y-4">
+              <form onSubmit={handleSearchTalent} className="mt-6 space-y-4">
                 <textarea
-                  value={matchPrompt}
+                  value={searchQuery}
                   onChange={(event) => {
-                    setMatchPrompt(event.target.value);
-                    setUiFeedback({ type: null, message: null });
+                    setSearchQuery(event.target.value);
+                    setSearchError('');
                   }}
                   placeholder="Describe your ideal candidate requirement specification here... (e.g., 'Looking for a Senior Python backend engineering architect who understands custom database clustering structures')"
                   className="min-h-36 w-full resize-none rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm leading-7 text-white outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/60 focus:ring-2 focus:ring-purple-500/20"
@@ -888,9 +869,15 @@ export default function OrganizationDashboard() {
                     The matcher scans profile bios, skill tags, and professional descriptors for semantic alignment.
                   </p>
                   <button
-                    type="submit"
+                    type="button"
                     disabled={isSearching}
-                    className="w-full rounded-xl bg-purple-600 px-5 py-3 text-xs font-bold tracking-wide text-white shadow-lg shadow-purple-950/30 transition-all hover:bg-purple-500 disabled:bg-purple-950 disabled:text-slate-500 active:scale-[0.99] sm:w-auto"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('DOM Click explicitly registered on Matcher Button');
+                      handleSearchTalent(e);
+                    }}
+                    className="relative z-50 cursor-pointer select-none rounded-lg bg-purple-600 px-6 py-3 font-semibold text-white hover:bg-purple-700 active:scale-95 transition-all"
                   >
                     {isSearching ? 'Searching Talent Graph...' : 'Run AI Matcher Algorithm'}
                   </button>
@@ -920,11 +907,11 @@ export default function OrganizationDashboard() {
               </div>
             ) : null}
 
-            {uiFeedback.type === 'error' && uiFeedback.message ? (
+            {searchError ? (
               <div className="w-full bg-[#0d1533] border border-amber-400/30 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:bg-gradient-to-br md:from-amber-950/25 md:via-[#080b1d] md:to-[#030512] md:p-6 md:shadow-[0_0_35px_rgba(245,158,11,0.08)]">
                 <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Search Input Required</p>
                 <h4 className="mt-3 text-lg font-semibold text-white">Add clearer recruiter intent to continue.</h4>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-100/80">{uiFeedback.message}</p>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-100/80">{searchError}</p>
                 <p className="mt-4 text-xs leading-5 text-slate-500">
                   Include role seniority, required tools, domain context, and hard filters such as “fresher TypeScript
                   React dashboard builder” or “experienced Python FastAPI architect”.
@@ -932,9 +919,9 @@ export default function OrganizationDashboard() {
               </div>
             ) : null}
 
-            {uiFeedback.type !== 'error' && candidates.length > 0 ? (
+            {!searchError && candidatesPool.length > 0 ? (
               <div className="grid grid-cols-1 gap-4">
-                {candidates.map((profile, index) => {
+                {candidatesPool.map((profile, index) => {
                   const compositeMatchPercent = Math.round((profile?.composite_match_index ?? 0) * 100);
                   const vectorMatchPercent = Math.round((profile?.vector_match ?? 0) * 100);
                   const averageProjectMetric = profile?.avg_project_score ?? 0;
@@ -1016,13 +1003,14 @@ export default function OrganizationDashboard() {
               </div>
             ) : null}
 
-            {uiFeedback.type === 'info' && uiFeedback.message && !isSearching && candidates.length === 0 ? (
+            {!searchError && hasRunMatcher && !isSearching && candidatesPool.length === 0 ? (
               <div className="w-full bg-[#0d1533] border border-dashed border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-center md:mb-0 md:border-slate-800/70 md:bg-[#040615]/40 md:p-8">
                 <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">No Recruiter Matches</p>
                 <h4 className="mt-3 text-lg font-semibold text-white">0 talent vectors matched this taxonomy.</h4>
                 <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  {uiFeedback.message} Try relaxing required skills, broadening seniority, or adding adjacent tool
-                  families to widen the enterprise search surface.
+                  0 talent vectors inside the platform database matched your rigid relational taxonomy skill parameters.
+                  Try relaxing required skills, broadening seniority, or adding adjacent tool families to widen the enterprise
+                  search surface.
                 </p>
               </div>
             ) : null}
