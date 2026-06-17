@@ -859,6 +859,34 @@ async def verify_member(request: Request):
     return {"success": True, "user": result.data[0]}
 
 
+@app.get("/api/spectate-profile/{profile_id}")
+async def spectate_profile(profile_id: str):
+    try:
+        target_profile_id = profile_id.strip()
+
+        if not target_profile_id:
+            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+
+        supabase = get_supabase_backend_client()
+        result = (
+            supabase.table("profiles")
+            .select("*")
+            .eq("id", target_profile_id)
+            .single()
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+
+        return {"success": True, "profile": result.data}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"--- SPECTATE PROFILE ERROR: {str(error)} ---")
+        raise HTTPException(status_code=404, detail="Target candidate profile not found")
+
+
 @app.post("/api/verify-asset")
 async def verify_asset(payload: VerifyRequest):
     try:
