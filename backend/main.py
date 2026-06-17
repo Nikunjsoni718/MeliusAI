@@ -387,6 +387,21 @@ class MatchTalentRequest(BaseModel):
     organization_id: str | None = None
 
 
+class CandidateEvaluation(BaseModel):
+    id: str
+    full_name: str
+    username: str
+    bio: str
+    match_score: int = Field(..., ge=0, le=100)
+    ai_rationale: str
+    skills: List[str]
+    average_project_score: float
+
+
+class MatchTalentResponse(BaseModel):
+    ranked_candidates: List[CandidateEvaluation]
+
+
 def serialize_pydantic_model(model: BaseModel) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
@@ -939,170 +954,185 @@ async def match_talent(payload: MatchTalentRequest):
         raise HTTPException(status_code=400, detail="Please add new information to bring clarity.")
 
     request_started_at = time.perf_counter()
-    logger.info(
-        "match_talent.request.received",
-        extra={"prompt_length": len(prompt), "organization_id": payload.organization_id},
-    )
+    print(f"--- MATCH TALENT: Request received. Prompt length={len(prompt)} ---")
 
-    llm_started_at = time.perf_counter()
     try:
-        intent_completion = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a rigid Talent Ontology Parser for MeliusAI. Parse messy human hiring constraints "
-                        "into strict JSON only. Return exactly this schema and no markdown: "
-                        '{ "experience_requirement": "fresher" | "experienced" | "any", '
-                        '"required_skills": ["string", "tags"], '
-                        '"excluded_skills": ["string", "tags"], '
-                        '"semantic_search_expansion": "string contextually optimized for high-dimensional cosine similarity matching" }. '
-                        "Normalize technology names into concise tags. Preserve explicit negative filters in excluded_skills. "
-                        "If experience level is not clear, use any."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            temperature=0.0,
-        )
-        intent_content = intent_completion.choices[0].message.content or "{}"
-        intent_json = json.loads(intent_content)
-        logger.info(
-            "match_talent.intent_parser.completed",
-            extra={"latency_ms": round((time.perf_counter() - llm_started_at) * 1000, 2)},
-        )
-    except Exception as llm_error:
-        logger.exception(
-            "match_talent.intent_parser.failed",
-            extra={"latency_ms": round((time.perf_counter() - llm_started_at) * 1000, 2)},
-        )
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "stage": "intent_parser",
-                "message": "Talent ontology parsing failed before database execution.",
-                "error": str(llm_error),
-            },
-        )
-
-    experience_requirement = str(intent_json.get("experience_requirement", "any")).strip().lower()
-    if experience_requirement not in ["fresher", "experienced", "any"]:
-        experience_requirement = "any"
-
-    required_skills = [
-        str(skill).strip().lower()
-        for skill in intent_json.get("required_skills", [])
-        if str(skill).strip()
-    ]
-    excluded_skills = [
-        str(skill).strip().lower()
-        for skill in intent_json.get("excluded_skills", [])
-        if str(skill).strip()
-    ]
-    semantic_search_expansion = str(intent_json.get("semantic_search_expansion", "")).strip() or prompt
-
-    embedding_started_at = time.perf_counter()
-    try:
-        embedding_response = await async_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=semantic_search_expansion,
-        )
-        query_embedding = [float(value) for value in embedding_response.data[0].embedding]
-        logger.info(
-            "match_talent.embedding.completed",
-            extra={
-                "latency_ms": round((time.perf_counter() - embedding_started_at) * 1000, 2),
-                "dimensions": len(query_embedding),
-            },
-        )
-    except Exception as embedding_error:
-        logger.exception(
-            "match_talent.embedding.failed",
-            extra={"latency_ms": round((time.perf_counter() - embedding_started_at) * 1000, 2)},
-        )
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "stage": "vector_generation",
-                "message": "High-dimensional query embedding generation failed.",
-                "error": str(embedding_error),
-            },
-        )
-
-    rpc_started_at = time.perf_counter()
-    try:
+        openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         supabase = get_supabase_backend_client()
-        keyword_filter_terms = required_skills or extract_match_terms(prompt)
-        allowed_profile_ids = None
 
-        if keyword_filter_terms:
-            keyword_array_literal = build_postgres_text_array_literal(keyword_filter_terms)
-            keyword_filter_response = await asyncio.to_thread(
-                lambda: supabase.table("profiles")
-                .select("id")
-                .filter("internal_keywords", "ov", keyword_array_literal)
-                .execute()
+        def normalize_skill_list(value: Any) -> List[str]:
+            if isinstance(value, list):
+                return [str(skill).strip() for skill in value if str(skill).strip()]
+
+            if isinstance(value, str):
+                return [skill.strip() for skill in value.split(",") if skill.strip()]
+
+            return []
+
+        def get_average_project_score(profile: Dict[str, Any]) -> float:
+            raw_score = profile.get(
+                "average_project_score",
+                profile.get("avg_project_score", profile.get("avg_score", 0)),
             )
-            allowed_profile_ids = {
-                str(profile.get("id"))
-                for profile in (keyword_filter_response.data or [])
-                if profile.get("id")
-            }
 
-            if not allowed_profile_ids:
-                logger.info(
-                    "match_talent.internal_keyword_filter.empty",
-                    extra={"terms": keyword_filter_terms},
-                )
-                return []
+            try:
+                score = float(raw_score or 0)
+            except (TypeError, ValueError):
+                score = 0.0
 
-        response = await asyncio.to_thread(
+            return max(0.0, min(100.0, score))
+
+        embedding_started_at = time.perf_counter()
+        print("--- MATCH TALENT: Generating recruiter requirement embedding. ---")
+        embedding_response = await asyncio.to_thread(
+            lambda: openai_client.embeddings.create(
+                input=prompt,
+                model="text-embedding-3-small",
+            )
+        )
+        query_embedding = embedding_response.data[0].embedding
+        print(
+            "--- MATCH TALENT: Embedding generated. "
+            f"dimensions={len(query_embedding)} latency_ms={round((time.perf_counter() - embedding_started_at) * 1000, 2)} ---"
+        )
+
+        rpc_started_at = time.perf_counter()
+        print("--- MATCH TALENT: Calling Supabase RPC match_profiles for top-20 prefilter. ---")
+        supabase_response = await asyncio.to_thread(
             lambda: supabase.rpc(
-                "match_talent_universal_v3",
+                "match_profiles",
                 {
                     "query_embedding": query_embedding,
-                    "match_threshold": 0.20,
-                    "required_skills": required_skills,
-                    "excluded_skills": excluded_skills,
-                    "target_experience_level": experience_requirement,
+                    "match_threshold": 0.25,
+                    "match_count": 20,
                 },
             ).execute()
         )
-        records = response.data if isinstance(response.data, list) else []
-
-        if allowed_profile_ids is not None:
-            records = [
-                record
-                for record in records
-                if str(record.get("id") or record.get("candidate_id") or record.get("profile_id")) in allowed_profile_ids
-            ]
-
-        logger.info(
-            "match_talent.rpc.completed",
-            extra={
-                "latency_ms": round((time.perf_counter() - rpc_started_at) * 1000, 2),
-                "result_count": len(records),
-                "total_latency_ms": round((time.perf_counter() - request_started_at) * 1000, 2),
-            },
+        top_candidates = supabase_response.data if isinstance(supabase_response.data, list) else []
+        print(
+            "--- MATCH TALENT: RPC prefilter completed. "
+            f"candidate_count={len(top_candidates)} latency_ms={round((time.perf_counter() - rpc_started_at) * 1000, 2)} ---"
         )
-        return records
-    except Exception as rpc_error:
-        logger.exception(
-            "match_talent.rpc.failed",
-            extra={"latency_ms": round((time.perf_counter() - rpc_started_at) * 1000, 2)},
+
+        if not top_candidates:
+            return []
+
+        candidates_by_id = {
+            str(candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id")): candidate
+            for candidate in top_candidates
+            if candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id")
+        }
+        candidate_context = []
+
+        for profile in top_candidates[:20]:
+            candidate_id = str(profile.get("id") or profile.get("candidate_id") or profile.get("profile_id") or "")
+            candidate_context.append({
+                "id": candidate_id,
+                "username": profile.get("username") or "",
+                "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
+                "bio": str(profile.get("bio") or "")[:1600],
+                "skills": normalize_skill_list(profile.get("skills")),
+                "average_project_score": get_average_project_score(profile),
+                "vector_similarity": profile.get("similarity") or profile.get("match_score") or profile.get("vector_match"),
+            })
+
+        completion_started_at = time.perf_counter()
+        print("--- MATCH TALENT: Starting GPT-4o-mini cognitive reranking. ---")
+        completion = await asyncio.to_thread(
+            lambda: openai_client.beta.chat.completions.parse(
+                model="gpt-4o-mini",
+                response_format=MatchTalentResponse,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are MeliusAI's Elite Technical Headhunter executing a deep architectural vetting sweep. "
+                            "Return strict structured JSON matching the response schema. "
+                            "Matrix Constraint A (Bio Synthesis): Analyze the core engineering/design principles, methodology, "
+                            "domain experience, and professional philosophy hidden inside each candidate bio. Move far beyond basic keyword matching. "
+                            "Matrix Constraint B (Project Metrics Vetting): Meticulously cross-check average_project_score. "
+                            "Heavily reward candidates with scores above 85 because they prove verified execution quality. "
+                            "Aggressively dock match_score for weak, missing, or poor project verification metrics, even if keywords align. "
+                            "Matrix Constraint C (Custom Rationale): Craft a concise, high-signal 1-2 sentence ai_rationale showing the recruiter exactly why the candidate was ranked there. "
+                            "Use the recruiter's requirement prompt to evaluate seniority, tech stack, design ethos, and delivery expectations. "
+                            "Return only candidates from the supplied id values. Sort ranked_candidates from strongest to weakest. "
+                            "match_score must be an integer from 0 to 100. skills must contain the specific matched skills or capabilities."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Recruiter Requirement Prompt:\n{prompt}\n\n"
+                            "Candidate Pool JSON:\n"
+                            f"{json.dumps(candidate_context, ensure_ascii=False)}"
+                        ),
+                    },
+                ],
+                temperature=0.1,
+            )
         )
+        parsed_response = completion.choices[0].message.parsed
+
+        if parsed_response is None:
+            raise RuntimeError("OpenAI structured reranker returned an empty payload.")
+
+        evaluations = sorted(
+            parsed_response.ranked_candidates,
+            key=lambda candidate: candidate.match_score,
+            reverse=True,
+        )
+        response_payload = []
+
+        for evaluation in evaluations:
+            source_profile = candidates_by_id.get(str(evaluation.id))
+
+            if not source_profile:
+                continue
+
+            score = max(0, min(100, int(evaluation.match_score)))
+            normalized_score = score / 100
+            skills = [skill for skill in evaluation.skills if str(skill).strip()] or normalize_skill_list(source_profile.get("skills"))
+            average_project_score = get_average_project_score(source_profile)
+
+            response_payload.append({
+                "id": str(source_profile.get("id") or source_profile.get("candidate_id") or source_profile.get("profile_id")),
+                "candidate_id": str(evaluation.id),
+                "full_name": source_profile.get("full_name") or evaluation.full_name,
+                "fullName": evaluation.full_name,
+                "username": source_profile.get("username") or evaluation.username,
+                "bio": source_profile.get("bio") or evaluation.bio,
+                "skills": skills,
+                "skillsMatched": skills,
+                "avg_project_score": average_project_score,
+                "average_project_score": average_project_score,
+                "matchScore": score,
+                "match_score": score,
+                "match_index": score,
+                "vector_match": normalized_score,
+                "composite_match_index": normalized_score,
+                "aiRationale": evaluation.ai_rationale,
+                "aiReasoning": evaluation.ai_rationale,
+                "ai_rationale": evaluation.ai_rationale,
+                "tags": skills[:5] + [f"Avg Score: {round(average_project_score)}/100"],
+            })
+
+        sorted_payload = sorted(response_payload, key=lambda candidate: candidate["match_score"], reverse=True)
+        print(
+            "--- MATCH TALENT: Cognitive reranking completed. "
+            f"candidate_count={len(sorted_payload)} "
+            f"llm_latency_ms={round((time.perf_counter() - completion_started_at) * 1000, 2)} "
+            f"total_latency_ms={round((time.perf_counter() - request_started_at) * 1000, 2)} ---"
+        )
+
+        return sorted_payload
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"--- MATCH TALENT ERROR: {str(error)} ---")
+        logger.exception("match_talent.reranker.failed")
         raise HTTPException(
             status_code=500,
-            detail={
-                "stage": "supabase_rpc",
-                "message": "Universal talent matching database function failed.",
-                "error": str(rpc_error),
-            },
+            detail=f"Failed to compute two-stage hybrid talent ranking payload: {str(error)}",
         )
 
 @app.post("/api/match-feedback")
