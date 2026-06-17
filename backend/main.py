@@ -997,10 +997,10 @@ async def match_talent(payload: MatchTalentRequest):
         )
 
         rpc_started_at = time.perf_counter()
-        print("--- MATCH TALENT: Calling Supabase RPC match_profiles for top-20 prefilter. ---")
+        print("--- MATCH TALENT: Calling Supabase RPC match_candidates for top-20 prefilter. ---")
         supabase_response = await asyncio.to_thread(
             lambda: supabase.rpc(
-                "match_profiles",
+                "match_candidates",
                 {
                     "query_embedding": query_embedding,
                     "match_threshold": 0.25,
