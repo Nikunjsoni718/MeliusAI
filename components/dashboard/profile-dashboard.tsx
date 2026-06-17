@@ -169,10 +169,6 @@ function isPostedInLast48Hours(value: string) {
   return Date.now() - date.getTime() <= 48 * 60 * 60 * 1000;
 }
 
-function isUuidProfileIdentifier(value: string) {
-  return value.includes('-') && value.length === 36;
-}
-
 function toTitleCase(value: string) {
   if (!value) {
     return 'File';
