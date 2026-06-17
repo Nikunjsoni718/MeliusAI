@@ -1056,7 +1056,11 @@ async def match_talent(payload: MatchTalentRequest):
                             "Matrix Constraint C (Custom Rationale): Craft a concise, high-signal 1-2 sentence ai_rationale showing the recruiter exactly why the candidate was ranked there. "
                             "Use the recruiter's requirement prompt to evaluate seniority, tech stack, design ethos, and delivery expectations. "
                             "Return only candidates from the supplied id values. Sort ranked_candidates from strongest to weakest. "
-                            "match_score must be an integer from 0 to 100. skills must contain the specific matched skills or capabilities."
+                            "CRITICAL RATING GRANULARITY: Calculate the 'match_score' as a highly specific, continuous integer from 0 to 100. "
+                            "DO NOT round the final score to the nearest 5 or 10. Avoid lazy uniform outputs like 10, 20, 50, or 80. "
+                            "Instead, compute precise, non-standard integers based on exact micro-alignments (e.g., 72, 73, 86, 91, 94). "
+                            "Every single point difference must represent a real difference in asset quality, skill matching, and bio alignment. "
+                            "skills must contain the specific matched skills or capabilities."
                         ),
                     },
                     {
