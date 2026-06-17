@@ -2,7 +2,8 @@
 
 import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { Compass, Cpu, Info, LayoutDashboard, Search, Users, type LucideIcon } from 'lucide-react';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
@@ -65,12 +66,16 @@ type OrganizationTableClient = {
 
 const navItems: Array<{
   label: string;
-  targetId: DashboardTab;
+  href: string;
+  icon: LucideIcon;
+  targetId?: DashboardTab;
 }> = [
-  { label: 'Overview', targetId: 'overview' },
-  { label: 'AI Matcher', targetId: 'ai-matcher' },
-  { label: 'Talent Discovery', targetId: 'talent-discovery' },
-  { label: 'Workspace Members', targetId: 'members' },
+  { label: 'Overview', href: '/organization/dashboard', icon: LayoutDashboard, targetId: 'overview' },
+  { label: 'AI Matcher', href: '/organization/dashboard?tab=matcher', icon: Cpu, targetId: 'ai-matcher' },
+  { label: 'Talent Discovery', href: '/organization/talent-discovery', icon: Compass, targetId: 'talent-discovery' },
+  { label: 'Workspace Members', href: '/organization/workspace-members', icon: Users, targetId: 'members' },
+  { label: 'Search', href: '/organization/search', icon: Search },
+  { label: 'About Us', href: '/organization/about', icon: Info },
 ];
 
 const mobileNavItems: Array<{
@@ -269,6 +274,7 @@ function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon']
 
 export default function OrganizationDashboard() {
   const router = useRouter();
+  const pathname = usePathname();
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<ActiveWorkspaceContext>({
@@ -744,27 +750,32 @@ export default function OrganizationDashboard() {
           </div>
 
           <nav className="flex flex-col gap-1.5">
-            {navItems.map((item, index) => {
-              const isActive = activeTab === item.targetId;
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isDashboardRoute = pathname === '/organization/dashboard';
+              const isActive =
+                item.href === '/organization/dashboard'
+                  ? isDashboardRoute && activeTab === 'overview'
+                  : item.href === '/organization/dashboard?tab=matcher'
+                    ? isDashboardRoute && activeTab === 'ai-matcher'
+                    : pathname === item.href || (isDashboardRoute && item.targetId ? activeTab === item.targetId : false);
 
               return (
-                <button
+                <Link
                   key={item.label}
-                  type="button"
-                  onClick={() => scrollToSection(item.targetId)}
+                  href={item.href}
+                  onClick={() => {
+                    if (item.targetId) {
+                      setActiveTab(item.targetId);
+                    }
+                  }}
                   className={`group flex items-center gap-3 rounded-xl p-3 text-left text-sm transition-all hover:bg-slate-800/40 hover:text-white ${
                     isActive ? 'bg-slate-800/60 text-white font-medium' : 'text-slate-400'
                   }`}
                 >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-md border bg-slate-950/50 text-[10px] transition-colors group-hover:border-purple-400/40 group-hover:text-purple-300 ${
-                      isActive ? 'border-purple-400/40 text-purple-300' : 'border-slate-800/70 text-slate-500'
-                    }`}
-                  >
-                    {index + 1}
-                  </span>
+                  <Icon className="w-4 h-4 mr-3 text-slate-400 group-hover:text-purple-400 transition-colors" />
                   {item.label}
-                </button>
+                </Link>
               );
             })}
           </nav>
