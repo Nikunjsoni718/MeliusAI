@@ -350,7 +350,7 @@ export default function OrganizationDashboard() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          requirement: prompt,
+          prompt: searchQuery.trim(),
         }),
       });
 
