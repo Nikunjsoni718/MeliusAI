@@ -1407,11 +1407,12 @@ function ProjectCard({
 }
 
 type ProfileDashboardProps = {
+  profileId?: string;
   profileUsername?: string;
   variant?: 'profile' | 'organization';
 };
 
-export function ProfileDashboard({ profileUsername, variant = 'profile' }: ProfileDashboardProps) {
+export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const isOrganizationWorkspace = variant === 'organization';
@@ -1498,7 +1499,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
     profile?.username ||
     user?.user_metadata?.username ||
     'member';
-  const profileHandle = profileUsername || username;
+  const profileHandle = profileId || profileUsername || username;
   const profileHref = `/profile/${encodeURIComponent(profileHandle)}`;
   const email = profileFallback?.email ?? user?.email ?? 'unknown';
   const avatarUrl =
@@ -1653,9 +1654,11 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           return;
         }
 
-        const routeIdentifier = profileUsername
-          ? decodeURIComponent(profileUsername).replace(/^@+/, '').trim()
-          : (sessionUser.user_metadata?.username as string | undefined) || sessionUser.id;
+        const targetProfileId = profileId
+          ? decodeURIComponent(profileId).trim()
+          : profileUsername
+            ? decodeURIComponent(profileUsername).replace(/^@+/, '').trim()
+            : sessionUser.id;
         const sessionRawMetadata = (sessionUser as {
           raw_user_meta_data?: {
             role?: string;
@@ -1679,7 +1682,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         const loggedInRole = sessionRawMetadata?.role ?? sessionUserMetadata?.role;
         const loggedInUsername = sessionRawMetadata?.username ?? sessionUserMetadata?.username ?? null;
         const loggedInId = sessionUser.id;
-        const targetProfileParam = routeIdentifier;
+        const targetProfileParam = targetProfileId;
 
         const matchesUsername =
           loggedInUsername && targetProfileParam
@@ -1693,9 +1696,9 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
             ? sessionUserMetadata?.full_name ??
               sessionUserMetadata?.name ??
               sessionUser.email?.split('@')[0] ??
-              routeIdentifier
-            : routeIdentifier;
-        const fallbackUsername = routeIdentifier;
+              targetProfileId
+            : targetProfileId;
+        const fallbackUsername = targetProfileId;
 
         let hasDbProfile = false;
         let birthDate: string | null = null;
@@ -1717,7 +1720,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
         const savedProfileResponse = await supabase
           .from('profiles')
           .select('*')
-          .eq('username', routeIdentifier)
+          .eq('id', targetProfileId)
           .single();
         const savedProfile = savedProfileResponse.data as SavedProfileItem | null;
         const savedProfileError = savedProfileResponse.error;
@@ -1737,7 +1740,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
           resolvedProfileIdValue = null;
 
           if (savedProfileError) {
-            console.warn(`No profile record found for username "${routeIdentifier}":`, savedProfileError.message);
+            console.warn(`No profile record found for id "${targetProfileId}":`, savedProfileError.message);
           }
         }
 
@@ -1798,7 +1801,7 @@ export function ProfileDashboard({ profileUsername, variant = 'profile' }: Profi
       active = false;
       window.clearTimeout(refreshTimer);
     };
-  }, [profileUsername, router, supabase]);
+  }, [profileId, profileUsername, router, supabase]);
 
   useEffect(() => {
     if (!isOwner) {
