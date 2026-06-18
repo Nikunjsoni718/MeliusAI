@@ -18,7 +18,7 @@ const hiddenChromeRoutes = [
   '/meliusai',
   '/settings',
   '/review-queue',
-  '/organization/dashboard',
+  '/organization',
 ];
 
 function shouldHideChrome(pathname: string) {
