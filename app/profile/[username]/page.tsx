@@ -66,6 +66,18 @@ export default function ProfilePage({ params }: { params: { username: string } }
     let isActive = true;
 
     async function loadSpectatorProfile() {
+      const targetUsername = params.username?.trim();
+
+      if (
+        !targetUsername ||
+        targetUsername === 'undefined' ||
+        targetUsername === 'null' ||
+        targetUsername.trim() === ''
+      ) {
+        console.warn('MeliusAI Hydration Guard: Aborting premature API call. Parameters not settled.');
+        return;
+      }
+
       try {
         setIsLoading(true);
         setErrorMessage(null);
@@ -73,7 +85,7 @@ export default function ProfilePage({ params }: { params: { username: string } }
         const backendUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com';
         const cleanBackendUrl = backendUrl.replace(/\/$/, '');
         const response = await fetch(
-          `${cleanBackendUrl}/api/spectate-profile/${encodeURIComponent(params.username)}`
+          `${cleanBackendUrl}/api/spectate-profile/${encodeURIComponent(targetUsername)}`
         );
         const data = (await response.json()) as SpectateProfileResponse;
 

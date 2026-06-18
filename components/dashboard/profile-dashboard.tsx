@@ -1642,7 +1642,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const isRouteDrivenProfile = profileId !== undefined || profileUsername !== undefined;
       const targetUsername = (profileId ?? profileUsername)?.trim();
 
-      if (isRouteDrivenProfile && (!targetUsername || targetUsername === 'undefined')) {
+      if (
+        isRouteDrivenProfile &&
+        (!targetUsername ||
+          targetUsername === 'undefined' ||
+          targetUsername === 'null' ||
+          targetUsername.trim() === '')
+      ) {
+        console.warn('MeliusAI Hydration Guard: Aborting premature API call. Parameters not settled.');
         return;
       }
 
