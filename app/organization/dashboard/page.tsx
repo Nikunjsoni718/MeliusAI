@@ -955,6 +955,7 @@ export default function OrganizationDashboard() {
                   const vectorMatchPercent = Math.round((candidate?.vector_match ?? 0) * 100);
                   const averageProjectMetric = candidate?.avg_project_score ?? 0;
                   const username = candidate?.username ?? 'profile';
+                  const profileIdentifier = candidate?.id?.trim() || candidate?.username?.trim() || '';
                   const displayName = candidate?.full_name?.trim() || `@${username}`;
                   const skills = candidate?.skills ?? [];
                   const inviteState = candidateInviteState[candidate.id];
@@ -1002,15 +1003,21 @@ export default function OrganizationDashboard() {
                           </div>
                         </div>
                         <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
-                          <Link
-                            href={`/profile/${candidate.id || candidate.username}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={() => void handleMatchFeedback(candidate, 'clicked')}
-                            className="w-full rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
-                          >
-                            Review Profile Dossier
-                          </Link>
+                          {profileIdentifier ? (
+                            <Link
+                              href={`/profile/${encodeURIComponent(profileIdentifier)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => void handleMatchFeedback(candidate, 'clicked')}
+                              className="w-full rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
+                            >
+                              Review Profile Dossier
+                            </Link>
+                          ) : (
+                            <span className="w-full cursor-not-allowed rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-slate-600 lg:w-auto lg:py-2">
+                              Profile unavailable
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => void handleInviteToApply(candidate, compositeMatchPercent)}
