@@ -946,6 +946,7 @@ function OrganizationDashboardContent() {
                   const hasProfileUsername = Boolean(candidate?.username?.trim());
                   const displayName = candidate?.full_name?.trim() || `@${username}`;
                   const candidateEmail = candidate?.email?.trim() ?? '';
+                  const hasValidCandidateEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail);
                   const skills = candidate?.skills ?? [];
 
                   return (
@@ -1005,18 +1006,15 @@ function OrganizationDashboardContent() {
                               Profile unavailable
                             </span>
                           )}
-                          {candidateEmail ? (
-                            <div className="flex w-full flex-col items-stretch gap-1.5 lg:w-auto lg:items-end">
-                              <a
-                                href={`mailto:${candidateEmail}?subject=MeliusAI Match — We saw your verified portfolio!`}
-                                className="w-full rounded-xl border border-cyan-400/35 bg-gradient-to-r from-cyan-500/15 via-blue-500/15 to-purple-500/20 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.12)] transition-all hover:border-cyan-300/70 hover:from-cyan-500/25 hover:via-blue-500/25 hover:to-purple-500/30 hover:text-white hover:shadow-[0_0_30px_rgba(34,211,238,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 lg:w-auto lg:py-2"
-                              >
-                                Contact via Gmail
-                              </a>
-                              <span className="max-w-full select-text break-all px-1 text-[11px] text-slate-500">
-                                {candidateEmail}
-                              </span>
-                            </div>
+                          {hasValidCandidateEmail ? (
+                            <a
+                              href={`https://mail.google.com/mail/?view=cm&fs=1&to=${candidate.email}&su=MeliusAI Match — Let's Connect!`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-full rounded-xl border border-cyan-400/45 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/25 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.16)] transition-all hover:border-cyan-300/80 hover:from-cyan-500/30 hover:via-blue-500/30 hover:to-purple-500/35 hover:text-white hover:shadow-[0_0_32px_rgba(34,211,238,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 lg:w-auto lg:py-2"
+                            >
+                              Direct Email via Gmail
+                            </a>
                           ) : (
                             <div className="flex w-full flex-col items-stretch gap-1.5 lg:w-auto lg:items-end">
                               <span className="w-full cursor-not-allowed rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-slate-500 lg:w-auto lg:py-2">

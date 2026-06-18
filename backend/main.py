@@ -1098,7 +1098,7 @@ async def match_talent(payload: MatchTalentRequest):
         ]
         profile_rows_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
-            .select("*")
+            .select("id, full_name, username, bio, skills, skill_tags, email, avg_project_score")
             .in_("id", candidate_ids)
             .execute()
         )
@@ -1128,7 +1128,7 @@ async def match_talent(payload: MatchTalentRequest):
                 "username": profile.get("username") or "",
                 "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
                 "bio": str(profile.get("bio") or "")[:1600],
-                "skills": normalize_skill_list(profile.get("skills")),
+                "skills": normalize_skill_list(profile.get("skills") or profile.get("skill_tags")),
                 "average_project_score": get_average_project_score(profile),
                 "vector_similarity": profile.get("similarity") or profile.get("match_score") or profile.get("vector_match"),
             })
@@ -1202,7 +1202,7 @@ async def match_talent(payload: MatchTalentRequest):
                 "candidate_id": str(evaluation.id),
                 "full_name": source_profile.get("full_name") or evaluation.full_name,
                 "fullName": evaluation.full_name,
-                "email": database_profile.get("email"),
+                "email": database_profile["email"],
                 "username": str(database_profile.get("username") or ""),
                 "bio": source_profile.get("bio") or evaluation.bio,
                 "skills": skills,
