@@ -1545,10 +1545,19 @@ function MessagesWorkspace({ userId }: { userId: string }) {
     }
 
     let active = true;
+    let requestInFlight = false;
+    setMessages([]);
+    setMessageDraft('');
 
-    const loadMessages = async () => {
-      setMessagesLoading(true);
-      setMessagesError(null);
+    const fetchLatestMessages = async (showLoading = false) => {
+      if (requestInFlight) {
+        return;
+      }
+
+      requestInFlight = true;
+      if (showLoading) {
+        setMessagesLoading(true);
+      }
 
       try {
         const response = await fetch(
@@ -1564,24 +1573,42 @@ function MessagesWorkspace({ userId }: { userId: string }) {
         }
 
         if (active) {
-          setMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+          const incomingMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+          setMessages((currentMessages) => {
+            const currentLatestMessage = currentMessages[currentMessages.length - 1];
+            const incomingLatestMessage = incomingMessages[incomingMessages.length - 1];
+            const hasFreshMessages =
+              incomingMessages.length !== currentMessages.length ||
+              incomingLatestMessage?.id !== currentLatestMessage?.id ||
+              incomingLatestMessage?.created_at !== currentLatestMessage?.created_at;
+
+            return hasFreshMessages ? incomingMessages : currentMessages;
+          });
+          setMessagesError(null);
         }
       } catch (error) {
         if (active) {
-          setMessages([]);
+          if (showLoading) {
+            setMessages([]);
+          }
           setMessagesError(error instanceof Error ? error.message : 'Unable to load this message thread.');
         }
       } finally {
+        requestInFlight = false;
         if (active) {
           setMessagesLoading(false);
         }
       }
     };
 
-    void loadMessages();
+    void fetchLatestMessages(true);
+    const interval = window.setInterval(() => {
+      void fetchLatestMessages();
+    }, 3000);
 
     return () => {
       active = false;
+      window.clearInterval(interval);
     };
   }, [activeRoomId]);
 

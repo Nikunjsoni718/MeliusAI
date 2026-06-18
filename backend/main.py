@@ -1347,6 +1347,8 @@ class MessageSendSchema(BaseModel):
     room_id: str
     sender_id: str
     message_text: str
+    organization_id: str | None = None
+    candidate_id: str | None = None
 
 
 @app.get("/api/chat/rooms/{user_id}")
@@ -1467,19 +1469,68 @@ async def get_chat_messages(room_id: str):
 @app.post("/api/chat/send", status_code=201)
 async def send_chat_message(payload: MessageSendSchema):
     try:
-        message_payload = {
-            "room_id": payload.room_id.strip(),
-            "sender_id": payload.sender_id.strip(),
-            "message_text": payload.message_text.strip(),
-        }
+        requested_room_id = payload.room_id.strip()
+        sender_id = payload.sender_id.strip()
+        message_text = payload.message_text.strip()
+        organization_id = (payload.organization_id or "").strip()
+        candidate_id = (payload.candidate_id or "").strip()
 
-        if not all(message_payload.values()):
+        if not requested_room_id or not sender_id or not message_text:
             raise HTTPException(
                 status_code=400,
                 detail="room_id, sender_id, and message_text are required",
             )
 
         supabase = get_supabase_backend_client()
+        room_lookup = (
+            supabase.table("chat_rooms")
+            .select("*")
+            .eq("id", requested_room_id)
+            .limit(1)
+            .execute()
+        )
+        room_rows = room_lookup.data or []
+        room_record = room_rows[0] if room_rows else None
+
+        if not room_record:
+            candidate_id = candidate_id or requested_room_id
+            organization_id = organization_id or sender_id
+
+            matching_room_query = (
+                supabase.table("chat_rooms")
+                .select("*")
+                .eq("organization_id", organization_id)
+                .eq("candidate_id", candidate_id)
+                .limit(1)
+                .execute()
+            )
+            matching_room_rows = matching_room_query.data or []
+            room_record = matching_room_rows[0] if matching_room_rows else None
+
+        if not room_record:
+            create_room_query = (
+                supabase.table("chat_rooms")
+                .insert(
+                    {
+                        "organization_id": organization_id,
+                        "candidate_id": candidate_id,
+                    }
+                )
+                .select("*")
+                .single()
+                .execute()
+            )
+            room_record = create_room_query.data
+
+        resolved_room_id = str((room_record or {}).get("id") or "").strip()
+        if not resolved_room_id:
+            raise RuntimeError("Chat room resolution returned no room id")
+
+        message_payload = {
+            "room_id": resolved_room_id,
+            "sender_id": sender_id,
+            "message_text": message_text,
+        }
         insert_query = (
             supabase.table("messages")
             .insert(message_payload)
@@ -1488,7 +1539,10 @@ async def send_chat_message(payload: MessageSendSchema):
             .execute()
         )
 
-        return {"message": insert_query.data}
+        return {
+            "message": insert_query.data,
+            "room_id": resolved_room_id,
+        }
     except HTTPException:
         raise
     except Exception as error:
