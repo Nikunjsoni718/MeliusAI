@@ -78,7 +78,14 @@ type OpportunityRoleItem = {
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   id?: string | null;
   avg_project_score?: number | null;
+  average_project_score?: number | null;
   skills?: string[] | null;
+};
+type SpectateProfileResponse = {
+  success?: boolean;
+  profile?: SavedProfileItem | null;
+  detail?: string;
+  message?: string;
 };
 type ProjectAuditSummary = {
   score?: number | null;
@@ -100,6 +107,9 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const PROFILE_SPECTATOR_BASE_URL = (
+  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
+).replace(/\/$/, '');
 
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -1614,17 +1624,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    if (!authEnabled || !user) {
+    const routeTarget = (profileId ?? profileUsername)?.trim();
+    const hasPublicSpectatorTarget = Boolean(
+      routeTarget && routeTarget !== 'undefined' && routeTarget !== 'null'
+    );
+
+    if ((!authEnabled || !user) && !hasPublicSpectatorTarget) {
       router.replace('/auth');
     }
-  }, [authEnabled, loading, router, user]);
+  }, [authEnabled, loading, profileId, profileUsername, router, user]);
 
   useEffect(() => {
     setIsOpen(false);
   }, [pathname]);
 
   useEffect(() => {
-    if (!supabase) {
+    if (loading) {
       return;
     }
 
@@ -1654,25 +1669,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       try {
-        const {
-          data: { user: sessionUser },
-          error: sessionUserError,
-        } = await supabase.auth.getUser();
+        let sessionUser = user;
 
-        if (sessionUserError || !sessionUser) {
-          if (active) {
-            setIsOwner(false);
-            setProfileLoading(false);
-            router.replace('/auth');
+        if (supabase) {
+          const {
+            data: { user: authenticatedUser },
+            error: sessionUserError,
+          } = await supabase.auth.getUser();
+
+          if (sessionUserError) {
+            console.warn('Unable to resolve active profile session:', sessionUserError.message);
           }
-          return;
+
+          sessionUser = authenticatedUser ?? sessionUser;
         }
 
-        const targetProfileId = profileId
+        const targetProfileIdentifier = profileId
           ? decodeURIComponent(profileId).trim()
           : profileUsername
             ? decodeURIComponent(profileUsername).replace(/^@+/, '').trim()
-            : sessionUser.id;
+            : sessionUser?.id ?? '';
         const sessionRawMetadata = (sessionUser as {
           raw_user_meta_data?: {
             role?: string;
@@ -1682,8 +1698,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             picture?: string;
             portfolio_links?: Partial<PortfolioLinks>;
           };
-        }).raw_user_meta_data;
-        const sessionUserMetadata = sessionUser.user_metadata as {
+        } | null)?.raw_user_meta_data;
+        const sessionUserMetadata = (sessionUser?.user_metadata ?? {}) as {
           role?: string;
           username?: string;
           full_name?: string;
@@ -1695,68 +1711,88 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         };
         const loggedInRole = sessionRawMetadata?.role ?? sessionUserMetadata?.role;
         const loggedInUsername = sessionRawMetadata?.username ?? sessionUserMetadata?.username ?? null;
-        const loggedInId = sessionUser.id;
-        const targetProfileParam = targetProfileId;
+        const loggedInId = sessionUser?.id ?? null;
+        const targetProfileParam = targetProfileIdentifier;
 
         const matchesUsername =
           loggedInUsername && targetProfileParam
             ? loggedInUsername.toLowerCase() === targetProfileParam.toLowerCase()
             : false;
-        const matchesUuid = loggedInId === targetProfileParam;
-        const ownsProfile = loggedInRole === 'corporate' || !targetProfileParam ? false : Boolean(matchesUsername || matchesUuid);
+        const matchesUuid = Boolean(loggedInId && loggedInId === targetProfileParam);
+        const ownsProfile = Boolean(
+          sessionUser &&
+          loggedInRole !== 'corporate' &&
+          (!isRouteDrivenProfile || matchesUsername || matchesUuid)
+        );
         const isOwnProfile = ownsProfile;
-        const fallbackName =
-          isOwnProfile
-            ? sessionUserMetadata?.full_name ??
-              sessionUserMetadata?.name ??
-              sessionUser.email?.split('@')[0] ??
-              targetProfileId
-            : targetProfileId;
-        const fallbackUsername = targetProfileId;
+        let savedProfile: SavedProfileItem | null = null;
 
-        let hasDbProfile = false;
-        let birthDate: string | null = null;
-        let displayName = fallbackName;
-        let usernameValue = fallbackUsername;
-        let bioValue = isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '';
-        let skillsInputValue = '';
-        let avgProjectScoreValue: number | null = null;
-        let resolvedProfileIdValue: string | null = null;
-        let avatarUrl: string | null =
-          isOwnProfile
+        if (isOwnProfile || (!isRouteDrivenProfile && sessionUser)) {
+          if (!supabase || !sessionUser) {
+            throw new Error('Authenticated profile storage is unavailable.');
+          }
+
+          const savedProfileResponse = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', sessionUser.id)
+            .single();
+
+          savedProfile = savedProfileResponse.data as SavedProfileItem | null;
+
+          if (savedProfileResponse.error) {
+            console.warn(`No profile record found for id "${sessionUser.id}":`, savedProfileResponse.error.message);
+          }
+        } else if (isRouteDrivenProfile && targetUsername) {
+          const spectatorResponse = await fetch(
+            `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
+            { cache: 'no-store' }
+          );
+          const spectatorPayload = (await spectatorResponse.json()) as SpectateProfileResponse;
+
+          if (!spectatorResponse.ok || !spectatorPayload.profile) {
+            throw new Error(
+              spectatorPayload.detail || spectatorPayload.message || 'Target candidate profile not found.'
+            );
+          }
+
+          savedProfile = spectatorPayload.profile;
+        } else {
+          if (active) {
+            setIsOwner(false);
+            setProfileLoading(false);
+            router.replace('/auth');
+          }
+          return;
+        }
+
+        const fallbackName = isOwnProfile
+          ? sessionUserMetadata?.full_name ??
+            sessionUserMetadata?.name ??
+            sessionUser?.email?.split('@')[0] ??
+            targetProfileIdentifier
+          : targetProfileIdentifier;
+        const fallbackUsername = isOwnProfile
+          ? loggedInUsername ?? targetProfileIdentifier
+          : targetProfileIdentifier;
+        const hasDbProfile = Boolean(savedProfile);
+        const birthDate = savedProfile?.birth_date ?? null;
+        const displayName = savedProfile?.full_name ?? fallbackName;
+        const usernameValue = savedProfile?.username ?? fallbackUsername;
+        const bioValue = savedProfile?.bio ??
+          (isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '');
+        const skillsInputValue = Array.isArray(savedProfile?.skills) ? savedProfile.skills.join(', ') : '';
+        const resolvedProfileIdValue = savedProfile?.id ?? (isOwnProfile ? sessionUser?.id ?? null : null);
+        const avatarUrl = savedProfile?.avatar_url ??
+          (isOwnProfile
             ? sessionUserMetadata?.avatar_url ??
               sessionRawMetadata?.avatar_url ??
               sessionUserMetadata?.picture ??
               sessionRawMetadata?.picture ??
               null
-            : null;
-
-        const savedProfileResponse = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', targetProfileId)
-          .single();
-        const savedProfile = savedProfileResponse.data as SavedProfileItem | null;
-        const savedProfileError = savedProfileResponse.error;
-
-        if (savedProfile) {
-          hasDbProfile = true;
-          resolvedProfileIdValue = savedProfile.id ?? null;
-          displayName = savedProfile.full_name ?? displayName;
-          usernameValue = savedProfile.username ?? usernameValue;
-          birthDate = savedProfile.birth_date ?? null;
-          bioValue = savedProfile.bio ?? bioValue;
-          skillsInputValue = Array.isArray(savedProfile.skills) ? savedProfile.skills.join(', ') : '';
-          avatarUrl = savedProfile.avatar_url ?? avatarUrl;
-          avgProjectScoreValue =
-            typeof savedProfile.avg_project_score === 'number' ? savedProfile.avg_project_score : null;
-        } else {
-          resolvedProfileIdValue = null;
-
-          if (savedProfileError) {
-            console.warn(`No profile record found for id "${targetProfileId}":`, savedProfileError.message);
-          }
-        }
+            : null);
+        const savedAverageScore = savedProfile?.average_project_score ?? savedProfile?.avg_project_score;
+        const avgProjectScoreValue = typeof savedAverageScore === 'number' ? savedAverageScore : null;
 
         const hydratedDraft = {
           displayName,
@@ -1790,7 +1826,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             displayName,
             username: usernameValue,
             birthDate,
-            email: isOwnProfile ? sessionUser.email ?? 'unknown' : 'unknown',
+            email: isOwnProfile ? sessionUser?.email ?? 'unknown' : 'unknown',
             hasDbProfile,
             avatarUrl,
             avgProjectScore: avgProjectScoreValue,
@@ -1815,7 +1851,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       active = false;
       window.clearTimeout(refreshTimer);
     };
-  }, [profileId, profileUsername, router, supabase]);
+  }, [loading, profileId, profileUsername, router, supabase, user]);
 
   useEffect(() => {
     if (!isOwner) {
