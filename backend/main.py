@@ -892,17 +892,22 @@ async def spectate_profile(username: str):
             .execute()
         )
         projects = projects_query.data or []
-        project_ids = [project.get("id") for project in projects if project.get("id")]
 
-        scans = []
-        if project_ids:
-            scans_query = (
-                supabase.table("scores")
-                .select("*")
-                .in_("project_id", project_ids)
-                .execute()
-            )
-            scans = scans_query.data or []
+        scans_query = (
+            supabase.table("projects")
+            .select("*")
+            .eq("user_id", str(profile_id))
+            .execute()
+        )
+        scan_rows = scans_query.data or []
+        scans = [
+            project
+            for project in scan_rows
+            if project.get("has_been_audited")
+            or project.get("logic_score") is not None
+            or project.get("evaluation_score") is not None
+            or project.get("score") is not None
+        ]
 
         return {
             "profile": profile_data,
