@@ -862,18 +862,24 @@ async def verify_member(request: Request):
 @app.get("/api/spectate-profile/{profile_id}")
 async def spectate_profile(profile_id: str):
     try:
-        target_profile_id = profile_id.strip()
+        target_profile_identifier = profile_id.strip()
 
-        if not target_profile_id:
+        if not target_profile_identifier:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
         supabase = get_supabase_backend_client()
+        is_uuid = bool(
+            re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+                target_profile_identifier,
+            )
+        )
+
+        query = supabase.table("profiles").select("*")
         result = (
-            supabase.table("profiles")
-            .select("*")
-            .eq("id", target_profile_id)
-            .single()
-            .execute()
+            query.eq("id", target_profile_identifier).single().execute()
+            if is_uuid
+            else query.eq("username", target_profile_identifier.lower()).single().execute()
         )
 
         if not result.data:
@@ -1045,14 +1051,37 @@ async def match_talent(payload: MatchTalentRequest):
         if not top_candidates:
             return []
 
+        candidate_ids = [
+            str(candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id"))
+            for candidate in top_candidates
+            if candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id")
+        ]
+        profile_rows_response = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select("*")
+            .in_("id", candidate_ids)
+            .execute()
+        )
+        authoritative_profiles = {
+            str(profile.get("id")): profile
+            for profile in (profile_rows_response.data or [])
+            if profile.get("id")
+        }
+        enriched_candidates = []
+
+        for candidate in top_candidates:
+            candidate_id = str(candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id") or "")
+            database_profile = authoritative_profiles.get(candidate_id, {})
+            enriched_candidates.append({**candidate, **database_profile})
+
         candidates_by_id = {
             str(candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id")): candidate
-            for candidate in top_candidates
+            for candidate in enriched_candidates
             if candidate.get("id") or candidate.get("candidate_id") or candidate.get("profile_id")
         }
         candidate_context = []
 
-        for profile in top_candidates[:20]:
+        for profile in enriched_candidates[:20]:
             candidate_id = str(profile.get("id") or profile.get("candidate_id") or profile.get("profile_id") or "")
             candidate_context.append({
                 "id": candidate_id,
@@ -1116,9 +1145,11 @@ async def match_talent(payload: MatchTalentRequest):
         response_payload = []
 
         for evaluation in evaluations:
-            source_profile = candidates_by_id.get(str(evaluation.id))
+            evaluation_id = str(evaluation.id)
+            source_profile = candidates_by_id.get(evaluation_id)
+            database_profile = authoritative_profiles.get(evaluation_id)
 
-            if not source_profile:
+            if not source_profile or not database_profile:
                 continue
 
             score = max(0, min(100, int(evaluation.match_score)))
@@ -1131,7 +1162,7 @@ async def match_talent(payload: MatchTalentRequest):
                 "candidate_id": str(evaluation.id),
                 "full_name": source_profile.get("full_name") or evaluation.full_name,
                 "fullName": evaluation.full_name,
-                "username": source_profile.get("username") or evaluation.username,
+                "username": str(database_profile.get("username") or ""),
                 "bio": source_profile.get("bio") or evaluation.bio,
                 "skills": skills,
                 "skillsMatched": skills,

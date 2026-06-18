@@ -955,7 +955,7 @@ export default function OrganizationDashboard() {
                   const vectorMatchPercent = Math.round((candidate?.vector_match ?? 0) * 100);
                   const averageProjectMetric = candidate?.avg_project_score ?? 0;
                   const username = candidate?.username ?? 'profile';
-                  const profileIdentifier = candidate?.id?.trim() || candidate?.username?.trim() || '';
+                  const hasProfileUsername = Boolean(candidate?.username?.trim());
                   const displayName = candidate?.full_name?.trim() || `@${username}`;
                   const skills = candidate?.skills ?? [];
                   const inviteState = candidateInviteState[candidate.id];
@@ -1003,9 +1003,9 @@ export default function OrganizationDashboard() {
                           </div>
                         </div>
                         <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
-                          {profileIdentifier ? (
+                          {hasProfileUsername ? (
                             <Link
-                              href={`/profile/${encodeURIComponent(profileIdentifier)}`}
+                              href={`/profile/${candidate.username}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={() => void handleMatchFeedback(candidate, 'clicked')}
