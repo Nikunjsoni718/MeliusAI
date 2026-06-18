@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import { Suspense, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { Compass, Cpu, Info, LayoutDashboard, Search, Users, type LucideIcon } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Compass, Cpu, Info, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
@@ -46,7 +46,13 @@ type ActiveWorkspaceContext = {
   slug: string;
 };
 
-type DashboardTab = 'overview' | 'ai-matcher' | 'talent-discovery' | 'members';
+type DashboardTab = 'overview' | 'ai-matcher' | 'talent-discovery' | 'messages';
+
+type OrganizationMessage = {
+  id: string;
+  body: string;
+  sentAt: string;
+};
 
 type OrganizationTableClient = {
   from: (table: 'organizations') => {
@@ -73,7 +79,7 @@ const navItems: Array<{
   { label: 'Overview', href: '/organization/dashboard', icon: LayoutDashboard, targetId: 'overview' },
   { label: 'AI Matcher', href: '/organization/dashboard?tab=matcher', icon: Cpu, targetId: 'ai-matcher' },
   { label: 'Talent Discovery', href: '/organization/talent-discovery', icon: Compass, targetId: 'talent-discovery' },
-  { label: 'Workspace Members', href: '/organization/workspace-members', icon: Users, targetId: 'members' },
+  { label: 'Messages', href: '/organization/dashboard?tab=messages', icon: MessageSquare, targetId: 'messages' },
   { label: 'Search', href: '/organization/search', icon: Search },
   { label: 'About Us', href: '/organization/about', icon: Info },
 ];
@@ -81,17 +87,16 @@ const navItems: Array<{
 const mobileNavItems: Array<{
   label: string;
   targetId: DashboardTab;
-  icon: 'overview' | 'spark' | 'talent' | 'members' | 'settings';
+  icon: 'overview' | 'spark' | 'talent' | 'messages' | 'settings';
 }> = [
   { label: 'Home', targetId: 'overview', icon: 'overview' },
   { label: 'Match', targetId: 'ai-matcher', icon: 'spark' },
   { label: 'Talent', targetId: 'talent-discovery', icon: 'talent' },
-  { label: 'Members', targetId: 'members', icon: 'members' },
+  { label: 'Messages', targetId: 'messages', icon: 'messages' },
   { label: 'Profile', targetId: 'overview', icon: 'settings' },
 ];
 
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
-const OPPORTUNITY_CREATE_ENDPOINT = '/api/opportunities/create';
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -243,13 +248,11 @@ function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon']
     );
   }
 
-  if (icon === 'members') {
+  if (icon === 'messages') {
     return (
       <svg {...commonProps}>
-        <path d="M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-        <path d="M3.5 21a6.5 6.5 0 0 1 13 0" />
-        <path d="M18 8.5a2.5 2.5 0 1 0 0-5" />
-        <path d="M19 17a4.5 4.5 0 0 1 1.5 4" />
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+        <path d="M8 9h8M8 13h5" />
       </svg>
     );
   }
@@ -272,9 +275,12 @@ function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon']
   );
 }
 
-export default function OrganizationDashboard() {
+function OrganizationDashboardContent() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const recipientId = searchParams.get('recipientId')?.trim() ?? '';
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<ActiveWorkspaceContext>({
@@ -294,34 +300,48 @@ export default function OrganizationDashboard() {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>('');
   const [hasRunMatcher, setHasRunMatcher] = useState(false);
-  const [candidateInviteState, setCandidateInviteState] = useState<Record<string, 'inviting' | 'invited'>>({});
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
+  const [messageDraft, setMessageDraft] = useState('');
+  const [messageThreads, setMessageThreads] = useState<Record<string, OrganizationMessage[]>>({});
   const sidebarCompanyName = activeWorkspace.title || companyName;
   const sidebarWorkspaceUsername = activeWorkspace.slug || workspaceUsername;
   const currentOrg = activeWorkspace;
   const currentOrgId = activeWorkspace.id;
   const isWorkspaceContextPending = loading || isLoading;
+  const messageRecipients = Array.from(
+    new Map(
+      [
+        ...candidatesPool.map((candidate) => ({
+          id: candidate.id,
+          name: candidate.full_name?.trim() || `@${candidate.username}`,
+          username: candidate.username,
+        })),
+        ...linkedProfilesState.map((profile) => ({
+          id: profile.id,
+          name: profile.name,
+          username:
+            profile.profiles?.username ||
+            profile.username ||
+            profile.profile_link.replace('/profile/', '').replaceAll('/', '').trim(),
+        })),
+      ].map((recipient) => [recipient.id, recipient])
+    ).values()
+  );
+  const selectedRecipient = messageRecipients.find((recipient) => recipient.id === recipientId) ?? null;
+  const selectedRecipientName = selectedRecipient?.name || (recipientId ? 'Selected Candidate' : 'No candidate selected');
+  const activeMessageThread = recipientId ? messageThreads[recipientId] ?? [] : [];
 
   function scrollToSection(targetId: DashboardTab) {
     setActiveTab(targetId);
 
-    if (targetId !== 'members') {
-      window.setTimeout(() => {
-        document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 0);
+    if (targetId === 'messages') {
+      router.push('/organization/dashboard?tab=messages');
+      return;
     }
-  }
 
-  function getInitials(name: string) {
-    return (
-      name
-        .trim()
-        .split(/\s+/)
-        .slice(0, 2)
-        .map((part) => part[0])
-        .join('')
-        .toUpperCase() || 'TM'
-    );
+    window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   }
 
   function getOrganizationClient() {
@@ -343,7 +363,6 @@ export default function OrganizationDashboard() {
 
     setIsSearching(true);
     setCandidatesPool([]);
-    setCandidateInviteState({});
     setHasRunMatcher(true);
 
     try {
@@ -419,56 +438,26 @@ export default function OrganizationDashboard() {
     }
   }
 
-  async function handleInviteToApply(candidate: CandidateProfile, matchScore: number) {
-    if (!candidate.id || candidateInviteState[candidate.id] === 'inviting' || candidateInviteState[candidate.id] === 'invited') {
+  function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextMessage = messageDraft.trim();
+    if (!recipientId || !nextMessage) {
       return;
     }
 
-    const roleTitle = searchQuery.trim();
-    const workspaceName = sidebarCompanyName || companyName || 'MeliusAI Workspace';
-
-    if (!roleTitle) {
-      setSearchError('Please run the matcher with a role requirement before inviting talent.');
-      return;
-    }
-
-    setCandidateInviteState((current) => ({
-      ...current,
-      [candidate.id]: 'inviting',
-    }));
-
-    try {
-      const response = await fetch(OPPORTUNITY_CREATE_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+    setMessageThreads((currentThreads) => ({
+      ...currentThreads,
+      [recipientId]: [
+        ...(currentThreads[recipientId] ?? []),
+        {
+          id: `${recipientId}-${Date.now()}`,
+          body: nextMessage,
+          sentAt: new Date().toISOString(),
         },
-        body: JSON.stringify({
-          candidate_profile_id: candidate.id,
-          company_name: workspaceName,
-          role_title: roleTitle,
-          match_score: matchScore,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || `Opportunity invite failed with HTTP ${response.status}.`);
-      }
-
-      setCandidateInviteState((current) => ({
-        ...current,
-        [candidate.id]: 'invited',
-      }));
-    } catch (error) {
-      console.error('Unable to invite matched candidate to apply:', error);
-      setCandidateInviteState((current) => {
-        const nextState = { ...current };
-        delete nextState[candidate.id];
-        return nextState;
-      });
-      setSearchError(error instanceof Error ? error.message : 'Unable to invite this candidate right now.');
-    }
+      ],
+    }));
+    setMessageDraft('');
   }
 
   async function handleSaveOrganizationProfile() {
@@ -540,6 +529,16 @@ export default function OrganizationDashboard() {
       setProfileSaveError(error instanceof Error ? error.message : 'Unable to save organization profile data.');
     }
   }
+
+  useEffect(() => {
+    if (requestedTab === 'messages') {
+      setActiveTab('messages');
+    } else if (requestedTab === 'matcher') {
+      setActiveTab('ai-matcher');
+    } else if (!requestedTab) {
+      setActiveTab('overview');
+    }
+  }, [requestedTab]);
 
   useEffect(() => {
     if (loading) {
@@ -803,7 +802,7 @@ export default function OrganizationDashboard() {
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 md:gap-10">
-          {activeTab !== 'members' ? (
+          {activeTab !== 'messages' ? (
           <section id="overview" className="scroll-mt-20 space-y-6 md:scroll-mt-8 md:space-y-8">
             <header className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:rounded-[2rem] md:border-slate-800/60 md:bg-[#060817]/50 md:p-7 md:backdrop-blur-xl">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -864,11 +863,11 @@ export default function OrganizationDashboard() {
           </section>
           ) : null}
 
-          {activeTab !== 'members' ? (
+          {activeTab !== 'messages' ? (
             <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
           ) : null}
 
-          {activeTab !== 'members' ? (
+          {activeTab !== 'messages' ? (
           <section id="ai-matcher" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
             <div className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:border-slate-800/60 md:bg-[#060817]/50 md:p-6">
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-purple-300">AI Matching Engine</p>
@@ -912,7 +911,7 @@ export default function OrganizationDashboard() {
           </section>
           ) : null}
 
-          {activeTab !== 'members' && searchError ? (
+          {activeTab !== 'messages' && searchError ? (
             <div className="w-full bg-[#0d1533] border border-amber-400/30 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:bg-gradient-to-br md:from-amber-950/25 md:via-[#080b1d] md:to-[#030512] md:p-6 md:shadow-[0_0_35px_rgba(245,158,11,0.08)]">
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-amber-300">Matcher Notice</p>
               <h4 className="mt-3 text-lg font-semibold text-white">The talent search needs a clean signal.</h4>
@@ -924,13 +923,13 @@ export default function OrganizationDashboard() {
             </div>
           ) : null}
 
-          {activeTab !== 'members' && isSearching ? (
+          {activeTab !== 'messages' && isSearching ? (
             <div className="w-full bg-[#0d1533] border border-cyan-500/20 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-sm font-semibold text-cyan-300 shadow-[0_0_35px_rgba(34,211,238,0.08)] animate-pulse md:mb-0 md:bg-cyan-950/10">
               MeliusAI Machine Learning Engine mapping profile semantic vectors and optimizing feedback scores... Processing...
             </div>
           ) : null}
 
-          {activeTab !== 'members' && !searchError && hasRunMatcher && !isSearching && candidatesPool.length === 0 ? (
+          {activeTab !== 'messages' && !searchError && hasRunMatcher && !isSearching && candidatesPool.length === 0 ? (
             <div className="w-full bg-[#0d1533] border border-dashed border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-center md:mb-0 md:border-slate-800/70 md:bg-[#040615]/40 md:p-8">
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">No Recruiter Matches</p>
               <h4 className="mt-3 text-lg font-semibold text-white">0 talent vectors matched this taxonomy.</h4>
@@ -942,11 +941,11 @@ export default function OrganizationDashboard() {
             </div>
           ) : null}
 
-          {activeTab !== 'members' ? (
+          {activeTab !== 'messages' ? (
             <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
           ) : null}
 
-          {activeTab !== 'members' ? (
+          {activeTab !== 'messages' ? (
           <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
             {!searchError && candidatesPool.length > 0 ? (
               <div className="grid grid-cols-1 gap-4">
@@ -958,8 +957,6 @@ export default function OrganizationDashboard() {
                   const hasProfileUsername = Boolean(candidate?.username?.trim());
                   const displayName = candidate?.full_name?.trim() || `@${username}`;
                   const skills = candidate?.skills ?? [];
-                  const inviteState = candidateInviteState[candidate.id];
-                  const inviteDisabled = inviteState === 'inviting' || inviteState === 'invited';
 
                   return (
                     <div
@@ -1018,18 +1015,12 @@ export default function OrganizationDashboard() {
                               Profile unavailable
                             </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => void handleInviteToApply(candidate, compositeMatchPercent)}
-                            disabled={inviteDisabled}
+                          <Link
+                            href={`/organization/dashboard?tab=messages&recipientId=${encodeURIComponent(candidate.id)}`}
                             className="w-full rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-emerald-200 transition-all hover:border-emerald-300/50 hover:bg-emerald-500/15 hover:text-white disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/60 disabled:text-slate-500 lg:w-auto lg:py-2"
                           >
-                            {inviteState === 'invited'
-                              ? 'Invited ✓'
-                              : inviteState === 'inviting'
-                                ? 'Inviting...'
-                                : 'Invite to Apply'}
-                          </button>
+                            MESSAGE THEM
+                          </Link>
                         </div>
                       </div>
                     </div>
@@ -1041,77 +1032,95 @@ export default function OrganizationDashboard() {
           </section>
           ) : null}
 
-          {activeTab === 'members' ? (
-            <section id="members" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
+          {activeTab === 'messages' ? (
+            <section id="messages" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
               <div className="w-full rounded-2xl border border-slate-800/60 bg-[#060817]/50 p-6 shadow-xl">
-                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-purple-300">Workspace Members</p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Workspace Directory & Hierarchy</h3>
+                <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-purple-300">Messages</p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">Candidate Communication Center</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-                  A verified directory of internal team members, functional engineering leads, and operational roles at MeliusAI.
+                  Continue directly from talent matching into a focused conversation with the selected candidate.
                 </p>
 
-                {linkedProfilesState.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-                    {linkedProfilesState.map((member) => {
-                      const memberUsername =
-                        member.profiles?.username ||
-                        member.username ||
-                        member.profile_link.replace('/profile/', '').replaceAll('/', '').trim();
-                      const memberProfileHref = memberUsername ? `/profile/${memberUsername}` : member.profile_link;
-                      const skillTags = Array.from(
-                        new Set(
-                          member.role
-                            .split(/[\/,|-]/)
-                            .map((tag) => tag.trim())
-                            .filter(Boolean)
-                        )
-                      ).slice(0, 3);
-                      const renderedSkillTags = skillTags.length > 0 ? skillTags : ['Verified Talent', 'MeliusAI Profile'];
-
-                      return (
-                        <div
-                          key={member.id}
-                          className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5 shadow-xl transition-all hover:border-purple-500/30"
-                        >
-                          <div className="flex items-start gap-4">
-                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-purple-500/25 bg-purple-950/30 text-sm font-bold tracking-widest text-purple-200">
-                              {getInitials(member.name)}
-                            </div>
-                            <div className="min-w-0">
-                              <h4 className="truncate text-base font-semibold tracking-tight text-white">{member.name}</h4>
-                              <p className="mt-1 text-xs leading-5 text-slate-400">{member.role || 'Workspace Member'}</p>
-                            </div>
-                          </div>
-
-                          <div className="mt-5 flex flex-wrap gap-2">
-                            {renderedSkillTags.map((tag) => (
-                              <span
-                                key={`${member.id}-${tag}`}
-                                className="rounded-full border border-slate-800/80 bg-slate-900/60 px-2.5 py-1 text-[11px] font-medium text-slate-300"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-
-                          <a
-                            href={memberProfileHref}
-                            className="mt-6 inline-flex w-full items-center justify-center rounded-xl border border-slate-800/80 bg-slate-950/50 px-4 py-2.5 text-xs font-semibold text-purple-300 transition-all hover:border-purple-500/40 hover:text-purple-200"
+                <div className="mt-6 grid min-h-[520px] overflow-hidden rounded-2xl border border-slate-800/70 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] lg:grid-cols-[280px_minmax(0,1fr)]">
+                  <aside className="border-b border-slate-800/70 p-4 lg:border-b-0 lg:border-r">
+                    <p className="px-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Candidate Channels</p>
+                    <div className="mt-3 space-y-2">
+                      {messageRecipients.length > 0 ? (
+                        messageRecipients.map((recipient) => (
+                          <Link
+                            key={recipient.id}
+                            href={`/organization/dashboard?tab=messages&recipientId=${encodeURIComponent(recipient.id)}`}
+                            className={`block rounded-xl border px-3 py-3 transition-all ${
+                              recipient.id === recipientId
+                                ? 'border-purple-500/40 bg-purple-950/30 text-white'
+                                : 'border-slate-800/70 bg-slate-950/30 text-slate-400 hover:border-purple-500/25 hover:text-white'
+                            }`}
                           >
-                            View Platform Profile
-                          </a>
+                            <p className="truncate text-sm font-semibold">{recipient.name}</p>
+                            {recipient.username ? (
+                              <p className="mt-1 truncate text-[11px] text-slate-500">@{recipient.username}</p>
+                            ) : null}
+                          </Link>
+                        ))
+                      ) : (
+                        <p className="rounded-xl border border-dashed border-slate-800/70 p-4 text-xs leading-5 text-slate-500">
+                          Run the AI Matcher and choose “MESSAGE THEM” to open a candidate channel.
+                        </p>
+                      )}
+                    </div>
+                  </aside>
+
+                  <div className="flex min-h-[520px] flex-col">
+                    <header className="border-b border-slate-800/70 px-5 py-4">
+                      <p className="text-sm font-semibold text-white">{selectedRecipientName}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {recipientId ? 'Direct candidate conversation' : 'Select a candidate channel to begin'}
+                      </p>
+                    </header>
+
+                    <div className="flex-1 space-y-3 overflow-y-auto p-5">
+                      {activeMessageThread.length > 0 ? (
+                        activeMessageThread.map((message) => (
+                          <div key={message.id} className="flex justify-end">
+                            <div className="max-w-[80%] rounded-2xl rounded-br-md border border-purple-500/30 bg-purple-950/30 px-4 py-3">
+                              <p className="text-sm leading-6 text-slate-100">{message.body}</p>
+                              <p className="mt-2 text-right text-[10px] text-slate-500">
+                                {new Date(message.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex h-full min-h-64 items-center justify-center text-center">
+                          <div>
+                            <MessageSquare className="mx-auto h-8 w-8 text-purple-300" strokeWidth={1.5} />
+                            <p className="mt-4 text-sm font-semibold text-slate-300">No messages in this channel yet.</p>
+                            <p className="mt-2 text-xs text-slate-500">Send a concise introduction to start the conversation.</p>
+                          </div>
                         </div>
-                      );
-                    })}
+                      )}
+                    </div>
+
+                    <form onSubmit={handleSendMessage} className="border-t border-slate-800/70 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <textarea
+                          value={messageDraft}
+                          onChange={(event) => setMessageDraft(event.target.value)}
+                          disabled={!recipientId}
+                          placeholder={recipientId ? 'Write a message to this candidate...' : 'Select a candidate first'}
+                          className="min-h-24 flex-1 resize-none rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-slate-600 focus:border-purple-500/50 disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!recipientId || !messageDraft.trim()}
+                          className="rounded-xl border border-purple-500/30 bg-purple-950/30 px-5 py-3 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/60 disabled:text-slate-600"
+                        >
+                          Send Message
+                        </button>
+                      </div>
+                    </form>
                   </div>
-                ) : (
-                  <div className="mt-6 rounded-2xl border border-dashed border-slate-800/70 bg-[#040615]/40 p-8 text-center">
-                    <p className="text-sm font-semibold text-slate-300">No workspace members linked yet.</p>
-                    <p className="mx-auto mt-2 max-w-md text-xs leading-5 text-slate-500">
-                      Verified collaborators will appear here once they are added to your organization roster.
-                    </p>
-                  </div>
-                )}
+                </div>
               </div>
             </section>
           ) : null}
@@ -1137,5 +1146,19 @@ export default function OrganizationDashboard() {
         ))}
       </nav>
     </div>
+  );
+}
+
+export default function OrganizationDashboard() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#060b26] text-slate-400">
+          <p className="text-sm">Loading organization workspace...</p>
+        </main>
+      }
+    >
+      <OrganizationDashboardContent />
+    </Suspense>
   );
 }
