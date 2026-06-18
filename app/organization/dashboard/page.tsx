@@ -289,6 +289,7 @@ export default function OrganizationDashboard() {
   const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('Looking for a ui ux designer who is good at typescript');
   const [candidatesPool, setCandidatesPool] = useState<CandidateProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>('');
