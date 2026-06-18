@@ -1,8 +1,8 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -26,6 +26,16 @@ type VaultToastState = {
   id: number;
   message: string;
 };
+
+type SpectatorVaultResponse = {
+  projects?: ProjectRow[] | null;
+  detail?: string;
+  message?: string;
+};
+
+const PROFILE_SPECTATOR_BASE_URL = (
+  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
+).replace(/\/$/, '');
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -717,6 +727,7 @@ function AuditReportModal({
 
 function VaultProjectCard({
   project,
+  isSpectator,
   deletingAssetId,
   isVisibilityUpdating,
   verifyingAssetId,
@@ -726,6 +737,7 @@ function VaultProjectCard({
   onDelete,
 }: {
   project: ProjectRow;
+  isSpectator: boolean;
   deletingAssetId: string | null;
   isVisibilityUpdating: boolean;
   verifyingAssetId: string | null;
@@ -766,23 +778,25 @@ function VaultProjectCard({
                 </h3>
                 <p className="truncate text-[11px] text-slate-500">{fileName}</p>
               </div>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleVisibility(project.id, isPublic);
-                }}
-                disabled={isVisibilityUpdating}
-                className={cn(
-                  'shrink-0 rounded px-2 py-0.5 text-[10px] font-mono tracking-wider cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-60',
-                  isPublic
-                    ? 'border border-cyan-800/80 bg-cyan-950/40 text-cyan-400'
-                    : 'border border-blue-950/60 bg-[#071329]/70 text-slate-400'
-                )}
-                aria-label={`Set ${assetName} visibility to ${isPublic ? 'private' : 'public'}`}
-              >
-                {isPublic ? 'PUBLIC' : 'PRIVATE'}
-              </button>
+              {!isSpectator && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleVisibility(project.id, isPublic);
+                  }}
+                  disabled={isVisibilityUpdating}
+                  className={cn(
+                    'shrink-0 rounded px-2 py-0.5 text-[10px] font-mono tracking-wider cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-60',
+                    isPublic
+                      ? 'border border-cyan-800/80 bg-cyan-950/40 text-cyan-400'
+                      : 'border border-blue-950/60 bg-[#071329]/70 text-slate-400'
+                  )}
+                  aria-label={`Set ${assetName} visibility to ${isPublic ? 'private' : 'public'}`}
+                >
+                  {isPublic ? 'PUBLIC' : 'PRIVATE'}
+                </button>
+              )}
             </div>
 
             <div className="relative mb-4 flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40">
@@ -802,20 +816,23 @@ function VaultProjectCard({
               Read Full Audit Protocol
             </button>
 
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onVerify(project);
-              }}
-              disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
-              aria-busy={isVerifying}
-              className="w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
-            >
-              {isVerifying ? 'Auditing Asset...' : 'Verify with MeliusAI'}
-            </button>
+            {!isSpectator && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onVerify(project);
+                }}
+                disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
+                aria-busy={isVerifying}
+                className="w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
+              >
+                {isVerifying ? 'Auditing Asset...' : 'Verify with MeliusAI'}
+              </button>
+            )}
           </div>
 
+          {!isSpectator && (
           <div className="mt-2 flex w-full justify-end">
             <button
               type="button"
@@ -830,14 +847,18 @@ function VaultProjectCard({
               {isDeleting ? <span className="font-mono text-[10px]">...</span> : <TrashIcon className="h-4 w-4" />}
             </button>
           </div>
+          )}
         </div>
       </CardContent>
     </Card>
   );
 }
 
-export default function VaultPage() {
+function VaultPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
+  const isSpectator = Boolean(targetUsername);
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState(() => {
     if (!authEnabled) {
@@ -868,6 +889,12 @@ export default function VaultPage() {
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
+    if (isSpectator) {
+      setViewerId(null);
+      setVaultError(null);
+      return;
+    }
+
     if (!authEnabled || !supabase) {
       setLoading(false);
       setViewerId(null);
@@ -937,10 +964,64 @@ export default function VaultPage() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [authEnabled, router, supabase]);
+  }, [authEnabled, isSpectator, router, supabase]);
 
   useEffect(() => {
-    if (!supabase || !viewerId) {
+    if (!isSpectator || !targetUsername) {
+      return;
+    }
+
+    let active = true;
+
+    const fetchSpectatorVaultAssets = async () => {
+      setLoading(true);
+      setVaultError(null);
+
+      try {
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
+          { cache: 'no-store' }
+        );
+        const payload = (await response.json().catch(() => null)) as SpectatorVaultResponse | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.detail || payload?.message || 'Unable to load this public vault.');
+        }
+
+        if (active) {
+          const spectatorAssets = Array.isArray(payload?.projects)
+            ? payload.projects.filter((project) => project.is_public !== false)
+            : [];
+
+          setVaultAssets(spectatorAssets);
+          setDescriptionDrafts(
+            Object.fromEntries(
+              spectatorAssets.map((asset) => [asset.id, asset.description ?? ''])
+            )
+          );
+        }
+      } catch (error) {
+        console.error('Failed to load spectator vault assets', error);
+        if (active) {
+          setVaultAssets([]);
+          setVaultError(error instanceof Error ? error.message : 'Unable to load this public vault.');
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchSpectatorVaultAssets();
+
+    return () => {
+      active = false;
+    };
+  }, [isSpectator, targetUsername]);
+
+  useEffect(() => {
+    if (isSpectator || !supabase || !viewerId) {
       if (!viewerId) {
         setLoading(false);
       }
@@ -1013,10 +1094,10 @@ export default function VaultPage() {
     return () => {
       active = false;
     };
-  }, [router, supabase, syncToken, viewerId]);
+  }, [isSpectator, router, supabase, syncToken, viewerId]);
 
   useEffect(() => {
-    if (!supabase || !viewerId) {
+    if (isSpectator || !supabase || !viewerId) {
       return;
     }
 
@@ -1030,7 +1111,7 @@ export default function VaultPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [supabase, viewerId]);
+  }, [isSpectator, supabase, viewerId]);
 
   useEffect(() => {
     if (!visibilityToast) {
@@ -1055,6 +1136,10 @@ export default function VaultPage() {
   }, []);
 
   function handleDescriptionChange(projectId: string, textValue: string) {
+    if (isSpectator) {
+      return;
+    }
+
     setDescriptionDrafts((currentDrafts) => ({
       ...currentDrafts,
       [projectId]: textValue,
@@ -1091,7 +1176,7 @@ export default function VaultPage() {
   }
 
   async function handleToggleVisibility(projectId: string, currentVisibilityStatus: boolean) {
-    if (!supabase || visibilityUpdatingIds.includes(projectId)) {
+    if (isSpectator || !supabase || visibilityUpdatingIds.includes(projectId)) {
       return;
     }
 
@@ -1163,7 +1248,7 @@ export default function VaultPage() {
   }
 
   async function handleVerifyWithMeliusAI(project: ProjectRow) {
-    if (!supabase || verifyingAssetId || deletingAssetId) {
+    if (isSpectator || !supabase || verifyingAssetId || deletingAssetId) {
       return;
     }
 
@@ -1256,6 +1341,10 @@ Return Markdown sections for goods, bads, project description, and a final score
   }
 
   async function handleDeleteVaultAsset(id: string) {
+    if (isSpectator) {
+      return;
+    }
+
     if (deletingAssetId) {
       return;
     }
@@ -1367,6 +1456,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                   <VaultProjectCard
                     key={project.id}
                     project={project}
+                    isSpectator={isSpectator}
                     deletingAssetId={deletingAssetId}
                     isVisibilityUpdating={visibilityUpdatingIds.includes(project.id)}
                     verifyingAssetId={verifyingAssetId}
@@ -1426,5 +1516,19 @@ Return Markdown sections for goods, bads, project description, and a final score
         }}
       />
     </>
+  );
+}
+
+export default function VaultPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-400">
+          <p className="text-sm">Loading vault workspace...</p>
+        </main>
+      }
+    >
+      <VaultPageContent />
+    </Suspense>
   );
 }

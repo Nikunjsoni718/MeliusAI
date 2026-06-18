@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  Suspense,
   type ChangeEvent,
   type Dispatch,
   type KeyboardEvent,
@@ -11,7 +12,7 @@ import {
   type SetStateAction,
 } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FileText, FolderLock, House, Search, Settings, Sparkles, UserRound } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -21,7 +22,7 @@ import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProfileRow } from '@/types/supabase';
 
-type ResumeStatus = '' | 'Studying' | 'Working' | 'Looking for an Opportunity';
+type ResumeStatus = string;
 type SaveState = 'idle' | 'saving' | 'saved';
 type ResumeDraft = {
   name: string;
@@ -34,9 +35,20 @@ type ResumeDraft = {
 type ResumeFields = Pick<
   ProfileRow,
   'full_name' | 'avatar_url' | 'age' | 'current_status' | 'qualifications' | 'experience' | 'hobbies'
->;
+> & {
+  name?: string | null;
+  status?: string | null;
+};
+type SpectatorResumeResponse = {
+  profile?: ResumeFields | null;
+  detail?: string;
+  message?: string;
+};
 
-const statusOptions: Exclude<ResumeStatus, ''>[] = ['Studying', 'Working', 'Looking for an Opportunity'];
+const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
+const PROFILE_SPECTATOR_BASE_URL = (
+  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
+).replace(/\/$/, '');
 const sectionActionClass =
   'w-full text-center py-2 bg-[#071329]/60 hover:bg-[#0b1d38]/80 text-slate-400 hover:text-cyan-400 font-sans text-xs border border-blue-950/60 hover:border-cyan-500/30 rounded-full transition-all duration-200 cursor-pointer';
 const navigationItems = [
@@ -151,9 +163,12 @@ function BulletInput({
   );
 }
 
-export default function DashboardResumePage() {
+function DashboardResumePageContent() {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
+  const isSpectator = Boolean(targetUsername);
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const editSnapshotRef = useRef<ResumeDraft | null>(null);
@@ -172,15 +187,21 @@ export default function DashboardResumePage() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const canEdit = !isSpectator && isEditingGlobal;
 
   useEffect(() => {
-    if (!loading && authEnabled && !user) {
+    if (!isSpectator && !loading && authEnabled && !user) {
       router.replace('/auth');
     }
-  }, [authEnabled, loading, router, user]);
+  }, [authEnabled, isSpectator, loading, router, user]);
 
   useEffect(() => {
-    if (!supabase || !user) {
+    if (!isSpectator && (!supabase || !user)) {
+      setFormLoading(false);
+      return;
+    }
+
+    if (isSpectator && !targetUsername) {
       setFormLoading(false);
       return;
     }
@@ -192,39 +213,53 @@ export default function DashboardResumePage() {
       setFormError(null);
 
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('full_name, avatar_url, age, current_status, qualifications, experience, hobbies')
-          .eq('id', user.id)
-          .maybeSingle();
+        let resume: ResumeFields | null = null;
 
-        if (error) {
-          throw error;
+        if (isSpectator && targetUsername) {
+          const response = await fetch(
+            `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
+            { cache: 'no-store' }
+          );
+          const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
+
+          if (!response.ok || !payload?.profile) {
+            throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
+          }
+
+          resume = payload.profile;
+        } else if (supabase && user) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('full_name, avatar_url, age, current_status, qualifications, experience, hobbies')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (error) {
+            throw error;
+          }
+
+          resume = data as ResumeFields | null;
         }
 
         if (!active) {
           return;
         }
 
-        const resume = data as ResumeFields | null;
         setName(
           resume?.full_name ??
-            (user.user_metadata?.full_name as string | undefined) ??
-            (user.user_metadata?.name as string | undefined) ??
+            resume?.name ??
+            (user?.user_metadata?.full_name as string | undefined) ??
+            (user?.user_metadata?.name as string | undefined) ??
             ''
         );
         setAvatarUrl(
           resume?.avatar_url ??
-            (user.user_metadata?.avatar_url as string | undefined) ??
-            (user.user_metadata?.picture as string | undefined) ??
+            (user?.user_metadata?.avatar_url as string | undefined) ??
+            (user?.user_metadata?.picture as string | undefined) ??
             null
         );
         setAge(typeof resume?.age === 'number' ? String(resume.age) : '');
-        setCurrentStatus(
-          statusOptions.includes(resume?.current_status as Exclude<ResumeStatus, ''>)
-            ? (resume?.current_status as Exclude<ResumeStatus, ''>)
-            : ''
-        );
+        setCurrentStatus(resume?.current_status ?? resume?.status ?? '');
         setQualificationsList(normalizeList(resume?.qualifications));
         setExperienceList(normalizeList(resume?.experience));
         setHobbiesList(normalizeList(resume?.hobbies));
@@ -245,7 +280,13 @@ export default function DashboardResumePage() {
     return () => {
       active = false;
     };
-  }, [supabase, user]);
+  }, [isSpectator, supabase, targetUsername, user]);
+
+  useEffect(() => {
+    if (isSpectator) {
+      setIsEditingGlobal(false);
+    }
+  }, [isSpectator]);
 
   function handleKeyDown(
     event: KeyboardEvent<HTMLInputElement>,
@@ -265,7 +306,7 @@ export default function DashboardResumePage() {
   }
 
   async function handleSaveProfile() {
-    if (!supabase || !user || saveState === 'saving') {
+    if (isSpectator || !supabase || !user || saveState === 'saving') {
       return;
     }
 
@@ -304,7 +345,7 @@ export default function DashboardResumePage() {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = '';
 
-    if (!file || !supabase || !user) {
+    if (isSpectator || !file || !supabase || !user) {
       return;
     }
 
@@ -374,11 +415,23 @@ export default function DashboardResumePage() {
             </div>
             <nav className="flex flex-col gap-1">
             {navigationItems.map((item) => {
+              if (isSpectator && (item.label === 'MeliusAI' || item.label === 'Settings')) {
+                return null;
+              }
+
               const Icon = item.icon;
+              const href =
+                isSpectator && targetUsername
+                  ? item.label === 'Home'
+                    ? `/profile/${encodeURIComponent(targetUsername)}`
+                    : item.label === 'Vault' || item.label === 'Resume'
+                      ? `${item.href}?profile=${encodeURIComponent(targetUsername)}`
+                      : item.href
+                  : item.href;
               return (
                 <SidebarLink
                   key={item.href}
-                  href={item.href}
+                  href={href}
                   label={item.label}
                   active={pathname === item.href}
                   icon={<Icon className="h-5 w-5" strokeWidth={1.8} />}
@@ -415,26 +468,30 @@ export default function DashboardResumePage() {
                         <UserRound className="h-9 w-9" strokeWidth={1.4} />
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => avatarInputRef.current?.click()}
-                      disabled={avatarUploading}
-                      className="mt-3 rounded-full border border-blue-950/60 bg-[#050b1b]/70 px-3 py-2 text-[11px] text-slate-400 transition-colors hover:border-cyan-500/30 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {avatarUploading ? 'Uploading...' : 'Add Profile Photo'}
-                    </button>
-                    <input
-                      ref={avatarInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      onChange={(event) => void handleAvatarUpload(event)}
-                    />
+                    {!isSpectator && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => avatarInputRef.current?.click()}
+                          disabled={avatarUploading}
+                          className="mt-3 rounded-full border border-blue-950/60 bg-[#050b1b]/70 px-3 py-2 text-[11px] text-slate-400 transition-colors hover:border-cyan-500/30 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {avatarUploading ? 'Uploading...' : 'Add Profile Photo'}
+                        </button>
+                        <input
+                          ref={avatarInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={(event) => void handleAvatarUpload(event)}
+                        />
+                      </>
+                    )}
                   </div>
                   <div className="grid w-full gap-5 sm:grid-cols-2">
                     <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor={isEditingGlobal ? 'resume-name' : undefined}>Name</Label>
-                      {isEditingGlobal ? (
+                      <Label htmlFor={canEdit ? 'resume-name' : undefined}>Name</Label>
+                      {canEdit ? (
                         <Input
                           id="resume-name"
                           name="full_name"
@@ -451,8 +508,8 @@ export default function DashboardResumePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={isEditingGlobal ? 'resume-age' : undefined}>Age</Label>
-                      {isEditingGlobal ? (
+                      <Label htmlFor={canEdit ? 'resume-age' : undefined}>Age</Label>
+                      {canEdit ? (
                         <Input
                           id="resume-age"
                           name="age"
@@ -470,8 +527,8 @@ export default function DashboardResumePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={isEditingGlobal ? 'resume-current-status' : undefined}>Current Status</Label>
-                      {isEditingGlobal ? (
+                      <Label htmlFor={canEdit ? 'resume-current-status' : undefined}>Current Status</Label>
+                      {canEdit ? (
                         <Select
                           id="resume-current-status"
                           name="current_status"
@@ -500,7 +557,7 @@ export default function DashboardResumePage() {
                 placeholder="Type a milestone (e.g., Passed 10th from...) and press Enter..."
                 value={qualificationText}
                 items={qualificationsList}
-                isEditing={isEditingGlobal}
+                isEditing={canEdit}
                 onChange={setQualificationText}
                 onKeyDown={(event) =>
                   handleKeyDown(event, qualificationText, setQualificationsList, () => setQualificationText(''))
@@ -514,7 +571,7 @@ export default function DashboardResumePage() {
                 placeholder="Type a position (e.g., Software Engineer at...) and press Enter..."
                 value={experienceText}
                 items={experienceList}
-                isEditing={isEditingGlobal}
+                isEditing={canEdit}
                 onChange={setExperienceText}
                 onKeyDown={(event) =>
                   handleKeyDown(event, experienceText, setExperienceList, () => setExperienceText(''))
@@ -528,7 +585,7 @@ export default function DashboardResumePage() {
                 placeholder="Type an interest (e.g., Photography) and press Enter..."
                 value={hobbyText}
                 items={hobbiesList}
-                isEditing={isEditingGlobal}
+                isEditing={canEdit}
                 onChange={setHobbyText}
                 onKeyDown={(event) => handleKeyDown(event, hobbyText, setHobbiesList, () => setHobbyText(''))}
                 onRemove={(index) => removeListItem(setHobbiesList, index)}
@@ -540,6 +597,7 @@ export default function DashboardResumePage() {
                 </p>
               ) : null}
 
+              {!isSpectator && (
               <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md">
                 <p className="mb-4 text-xs uppercase tracking-[0.2em] text-slate-500">Profile Controls</p>
                 <div className="flex flex-col gap-3 sm:flex-row">
@@ -592,10 +650,25 @@ export default function DashboardResumePage() {
                   </button>
                 </div>
               </div>
+              )}
             </div>
           </div>
         </section>
       </div>
     </main>
+  );
+}
+
+export default function DashboardResumePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-400">
+          <p className="text-sm">Loading resume workspace...</p>
+        </main>
+      }
+    >
+      <DashboardResumePageContent />
+    </Suspense>
   );
 }

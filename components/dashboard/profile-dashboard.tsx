@@ -1595,12 +1595,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         icon: <Sparkles className="h-5 w-5" strokeWidth={1.8} />,
       },
       {
-        href: '/vault',
+        href:
+          isSpectator && targetUsername
+            ? `/vault?profile=${encodeURIComponent(targetUsername)}`
+            : '/vault',
         label: 'Vault',
         icon: <FolderLock className="h-5 w-5" strokeWidth={1.8} />,
       },
       {
-        href: '/resume',
+        href:
+          isSpectator && targetUsername
+            ? `/resume?profile=${encodeURIComponent(targetUsername)}`
+            : '/resume',
         label: 'Resume',
         icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
       },
@@ -1610,7 +1616,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         icon: <SettingsIcon className="h-5 w-5" strokeWidth={1.8} />,
       },
     ],
-    [profileHref]
+    [isSpectator, profileHref, targetUsername]
   );
 
   const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
