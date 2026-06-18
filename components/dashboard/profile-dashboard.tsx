@@ -81,9 +81,22 @@ type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date'
   average_project_score?: number | null;
   skills?: string[] | null;
 };
+type SpectatorScanItem = {
+  id: string;
+  project_id?: string | null;
+  title?: string | null;
+  score?: number | null;
+  evaluation_score?: number | null;
+  logic_score?: number | null;
+  summary?: string | null;
+  ai_summary?: string | null;
+  created_at?: string | null;
+};
 type SpectateProfileResponse = {
   success?: boolean;
   profile?: SavedProfileItem | null;
+  projects?: ProjectRow[] | null;
+  scans?: SpectatorScanItem[] | null;
   detail?: string;
   message?: string;
 };
@@ -1392,7 +1405,7 @@ function ProjectCard({
               Read Full Audit Protocol
             </button>
 
-            {!isSpectator ? (
+            {!isSpectator && (
               <button
                 type="button"
                 onClick={() => onVerify(project)}
@@ -1410,10 +1423,10 @@ function ProjectCard({
                     ? 'Verified ✓'
                     : 'Verify with MeliusAI'}
               </button>
-            ) : null}
+            )}
           </div>
 
-          {!isSpectator ? (
+          {!isSpectator && (
             <div className="mt-2 flex w-full justify-end">
               <button
                 type="button"
@@ -1429,7 +1442,7 @@ function ProjectCard({
                 )}
               </button>
             </div>
-          ) : null}
+          )}
         </div>
       </CardContent>
     </Card>
@@ -1449,7 +1462,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const isOrganizationWorkspace = variant === 'organization';
   const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
   const currentUser = user;
+  const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
@@ -1534,6 +1549,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const displayName =
     profileDraft.displayName ||
     profileFallback?.displayName ||
+    profileData?.full_name ||
     (isOwner ? profile?.display_name : null) ||
     (isOwner ? user?.user_metadata?.full_name : null) ||
     (isOwner ? user?.user_metadata?.name : null) ||
@@ -1541,6 +1557,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const username =
     profileDraft.username ||
     profileFallback?.username ||
+    profileData?.username ||
     (isOwner ? profile?.username : null) ||
     (isOwner ? user?.user_metadata?.username : null) ||
     targetUsername ||
@@ -1551,6 +1568,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const avatarUrl =
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
+    profileData?.avatar_url ??
     (isOwner ? profile?.avatar_url : null) ??
     (isOwner ? (user?.user_metadata?.avatar_url as string | undefined) : null) ??
     (isOwner ? (user?.user_metadata?.picture as string | undefined) : null) ??
@@ -1615,6 +1633,30 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         return rightDate - leftDate;
       });
   }, [allProjects]);
+  const spectatorScanProjects = useMemo(() => {
+    return scans
+      .map((scan) => {
+        const relatedProject = scan.project_id
+          ? allProjects.find((project) => project.id === scan.project_id) ?? null
+          : null;
+        const scanScore = scan.logic_score ?? scan.evaluation_score ?? scan.score ?? relatedProject?.logic_score ?? null;
+
+        return {
+          id: scan.id,
+          title: scan.title ?? relatedProject?.title ?? 'Portfolio asset',
+          source_kind: relatedProject?.source_kind ?? null,
+          status: relatedProject?.status ?? null,
+          logic_score: typeof scanScore === 'number' ? scanScore : null,
+          ai_summary: scan.ai_summary ?? scan.summary ?? relatedProject?.ai_summary ?? null,
+          created_at: scan.created_at ?? relatedProject?.created_at ?? null,
+        } satisfies ProjectItem;
+      })
+      .sort((left, right) => {
+        const leftDate = left.created_at ? new Date(left.created_at).getTime() : 0;
+        const rightDate = right.created_at ? new Date(right.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      });
+  }, [allProjects, scans]);
   const totalScoreSum = useMemo(() => {
     return verifiedProjects.reduce((total, project) => total + (project.logic_score ?? 0), 0);
   }, [verifiedProjects]);
@@ -1623,7 +1665,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     scanCount > 0 ? Math.max(0, Math.min(100, Math.round(totalScoreSum / scanCount))) : avgProjectScore;
   const normalizedScore = scanCount > 0 ? computedAverageScore : null;
   const initialProjects = allProjects;
-  const initialReviews = verifiedProjects;
+  const initialReviews = spectatorScanProjects.length > 0 ? spectatorScanProjects : verifiedProjects;
   const visibleProjects = useMemo(() => {
     return showAllWork ? initialProjects : initialProjects.slice(0, 4);
   }, [initialProjects, showAllWork]);
@@ -1683,7 +1725,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setIsEditing(false);
     setSettingsOpen(false);
     setResolvedProfileId(null);
+    setProfileData(null);
     setProjects([]);
+    setScans([]);
     setProjectDescriptions({});
     setProjectDescription('');
     setRoles([]);
@@ -1776,6 +1820,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         if (isOwnProfile) {
           savedProfile = authenticatedProfile;
+          if (active) {
+            setProfileData(authenticatedProfile);
+            setScans([]);
+          }
         } else {
           const spectatorResponse = await fetch(
             `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
@@ -1790,6 +1838,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           }
 
           savedProfile = spectatorPayload.profile;
+          if (active) {
+            const spectatorProjects = (spectatorPayload.projects ?? []).map(mapProjectRowToProjectItem);
+
+            setProfileData(spectatorPayload.profile);
+            setProjects(spectatorProjects);
+            setScans(spectatorPayload.scans ?? []);
+            setProjectDescriptions(
+              Object.fromEntries(
+                spectatorProjects.map((project) => [
+                  project.id,
+                  project.user_description ?? project.description ?? '',
+                ])
+              )
+            );
+          }
         }
 
         const fallbackName = isOwnProfile
@@ -1887,7 +1950,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [isOwner]);
 
   useEffect(() => {
-    if (!authEnabled || !supabase) {
+    if (isSpectator || !authEnabled || !supabase) {
       return;
     }
 
@@ -1935,7 +1998,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       active = false;
     };
-  }, [authEnabled, resolvedProfileId, supabase]);
+  }, [authEnabled, isSpectator, resolvedProfileId, supabase]);
 
   useEffect(() => {
     if (isSpectator || !user || !authEnabled || !supabase) {
@@ -2861,8 +2924,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
               <nav className="flex flex-col gap-1">
-              {dashboardNavigation.map((item) =>
-                isSpectator && (item.label === 'MeliusAI' || item.label === 'Opportunities') ? null : (
+              {dashboardNavigation.map((item) => {
+                const isSpectatorRestrictedItem = item.label === 'MeliusAI' || item.label === 'Opportunities';
+
+                return !isSpectator || !isSpectatorRestrictedItem ? (
                   <SidebarNavButton
                     key={item.href}
                     href={item.href}
@@ -2871,8 +2936,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     icon={item.icon}
                     onClick={() => setIsOpen(false)}
                   />
-                )
-              )}
+                ) : null;
+              })}
               </nav>
             </div>
             <div className="space-y-2">
@@ -2970,7 +3035,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   </div>
 
                   <div className="flex items-start justify-end">
-                    {!isSpectator ? (
+                    {!isSpectator && (
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
@@ -2994,7 +3059,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           </button>
                         ) : null}
                       </div>
-                    ) : null}
+                    )}
                   </div>
                 </div>
 
@@ -3265,7 +3330,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       />
                     ))}
 
-                    {!isSpectator ? (
+                    {!isSpectator && (
                       <ProjectDropzone
                         upload={uploadState}
                         onFileSelect={(file) => void handleProjectFile(file)}
@@ -3276,7 +3341,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         }}
                         compact
                       />
-                    ) : null}
+                    )}
                   </div>
 
                   {allProjects.length > 0 ? (
@@ -3396,8 +3461,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </Card>
             </section>
 
-            {!isSpectator ? (
-            <section className="space-y-4">
+            {!isSpectator && (
+              <section className="space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">Opportunities</h2>
                 <p className="mt-1 text-sm text-slate-400">Open roles for your next step.</p>
@@ -3481,8 +3546,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   </CardContent>
                 </Card>
               )}
-            </section>
-            ) : null}
+              </section>
+            )}
 
             </div>
             </div>

@@ -859,38 +859,61 @@ async def verify_member(request: Request):
     return {"success": True, "user": result.data[0]}
 
 
-@app.get("/api/spectate-profile/{profile_id}")
-async def spectate_profile(profile_id: str):
+@app.get("/api/spectate-profile/{username}")
+async def spectate_profile(username: str):
     try:
-        target_profile_identifier = profile_id.strip()
+        target_username = username.strip().lower()
 
-        if not target_profile_identifier:
+        if not target_username:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
         supabase = get_supabase_backend_client()
-        is_uuid = bool(
-            re.fullmatch(
-                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
-                target_profile_identifier,
-            )
+        profile_query = (
+            supabase.table("profiles")
+            .select("*")
+            .eq("username", target_username)
+            .limit(1)
+            .execute()
         )
 
-        query = supabase.table("profiles").select("*")
-        result = (
-            query.eq("id", target_profile_identifier).single().execute()
-            if is_uuid
-            else query.eq("username", target_profile_identifier.lower()).single().execute()
-        )
-
-        if not result.data:
+        profile_rows = profile_query.data or []
+        profile_data = profile_rows[0] if profile_rows else None
+        if not profile_data:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
-        return {"success": True, "profile": result.data}
+        profile_id = profile_data.get("id")
+        if not profile_id:
+            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+
+        projects_query = (
+            supabase.table("projects")
+            .select("*")
+            .eq("user_id", str(profile_id))
+            .execute()
+        )
+        projects = projects_query.data or []
+        project_ids = [project.get("id") for project in projects if project.get("id")]
+
+        scans = []
+        if project_ids:
+            scans_query = (
+                supabase.table("scores")
+                .select("*")
+                .in_("project_id", project_ids)
+                .execute()
+            )
+            scans = scans_query.data or []
+
+        return {
+            "profile": profile_data,
+            "projects": projects,
+            "scans": scans,
+        }
     except HTTPException:
         raise
     except Exception as error:
         print(f"--- SPECTATE PROFILE ERROR: {str(error)} ---")
-        raise HTTPException(status_code=404, detail="Target candidate profile not found")
+        raise HTTPException(status_code=500, detail="Unable to load the spectator profile")
 
 
 @app.post("/api/verify-asset")
