@@ -1003,7 +1003,7 @@ export default function OrganizationDashboard() {
                         </div>
                         <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
                           <Link
-                            href={`/profile/${profile.id}`}
+                            href={`/profile/${profile.id || profile.username}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={() => void handleMatchFeedback(profile, 'clicked')}
