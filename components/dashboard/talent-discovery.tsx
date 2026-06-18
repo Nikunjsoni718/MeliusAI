@@ -1,287 +1,254 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ArrowUpRight, BriefcaseBusiness, Filter, ShieldCheck, Sparkles } from 'lucide-react';
+import {
+  ArrowLeft,
+  BriefcaseBusiness,
+  Building2,
+  CheckCircle2,
+  FileText,
+  Send,
+  Sparkles,
+} from 'lucide-react';
 
-type TalentCandidate = {
-  id: string;
-  full_name: string;
-  bio: string;
-  role: string;
-  experience_level: string;
-  avg_project_score: number;
-  skills: string[];
-};
+import { useViewerProfile } from '@/lib/viewer-client';
 
-const TALENT_DISCOVERY_API_BASE = (
+const OPPORTUNITY_API_BASE = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
 
-function normalizeTalentCandidate(value: unknown): TalentCandidate | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
+const TARGET_ROLES = ['UI/UX Designer', 'Frontend Developer', 'Fullstack Engineer'] as const;
 
-  const candidate = value as Record<string, unknown>;
-  const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
-  if (!id) {
-    return null;
-  }
+type OpportunityForm = {
+  job_title: string;
+  target_role: (typeof TARGET_ROLES)[number];
+  job_description: string;
+};
 
-  const rawScore = Number(candidate.avg_project_score ?? 0);
-  const skills = Array.isArray(candidate.skill_tags)
-    ? candidate.skill_tags.map((skill) => String(skill).trim()).filter(Boolean)
-    : [];
-
-  return {
-    id,
-    full_name:
-      typeof candidate.full_name === 'string' && candidate.full_name.trim()
-        ? candidate.full_name.trim()
-        : 'MeliusAI Talent',
-    bio: typeof candidate.bio === 'string' ? candidate.bio : '',
-    role:
-      typeof candidate.role === 'string' && candidate.role.trim()
-        ? candidate.role.trim()
-        : 'Verified Talent',
-    experience_level:
-      typeof candidate.experience_level === 'string' && candidate.experience_level.trim()
-        ? candidate.experience_level.trim()
-        : 'Verified Professional',
-    avg_project_score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : 0,
-    skills,
-  };
-}
-
-export function TalentDiscoveryCenter() {
-  const [talentList, setTalentList] = useState<TalentCandidate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export function OrganizationJobPostingHub() {
+  const { loading, profile, user } = useViewerProfile();
+  const [formData, setFormData] = useState<OpportunityForm>({
+    job_title: '',
+    target_role: 'UI/UX Designer',
+    job_description: '',
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [selectedRole, setSelectedRole] = useState('All');
-  const [selectedMinScore, setSelectedMinScore] = useState(0);
 
-  useEffect(() => {
-    const controller = new AbortController();
+  const userMetadata = (user?.user_metadata ?? {}) as {
+    organization_id?: string;
+    org_id?: string;
+    workspace_id?: string;
+    company_name?: string;
+  };
+  const organizationId =
+    userMetadata.organization_id || userMetadata.org_id || userMetadata.workspace_id || profile?.id || user?.id || '';
+  const organizationName =
+    userMetadata.company_name || profile?.company_name || profile?.display_name || 'Verified Organisation';
 
-    async function loadTalent() {
-      let responseStatus: number | null = null;
-      setIsLoading(true);
-      setErrorMessage(null);
+  function updateField<Field extends keyof OpportunityForm>(field: Field, value: OpportunityForm[Field]) {
+    setFormData((current) => ({ ...current, [field]: value }));
+    setSuccessMessage(null);
+    setErrorMessage(null);
+  }
 
-      try {
-        const response = await fetch(`${TALENT_DISCOVERY_API_BASE}/api/talent-discovery`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        responseStatus = response.status;
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-        if (!response.ok) {
-          throw new Error('Talent discovery request failed.');
-        }
-
-        const payload = (await response.json()) as unknown;
-        if (!Array.isArray(payload)) {
-          throw new Error('Talent discovery returned an invalid payload.');
-        }
-
-        const candidates = payload
-          .map(normalizeTalentCandidate)
-          .filter((candidate): candidate is TalentCandidate => candidate !== null);
-
-        setTalentList(candidates);
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setTalentList([]);
-        setErrorMessage(
-          responseStatus
-            ? `Talent Discovery is temporarily unavailable (HTTP ${responseStatus}).`
-            : error instanceof Error
-              ? `Talent Discovery is temporarily unavailable: ${error.message}`
-              : 'Talent Discovery is temporarily unavailable. Please try again shortly.'
-        );
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
-      }
+    if (!organizationId) {
+      setErrorMessage('Unable to identify the active organization workspace. Please sign in again.');
+      return;
     }
 
-    void loadTalent();
+    if (!formData.job_title.trim() || !formData.job_description.trim()) {
+      setErrorMessage('Add a job title and core requirement description before broadcasting.');
+      return;
+    }
 
-    return () => controller.abort();
-  }, []);
+    setIsSubmitting(true);
+    setSuccessMessage(null);
+    setErrorMessage(null);
 
-  const roleOptions = [
-    'All',
-    ...Array.from(new Set(talentList.map((candidate) => candidate.role))).sort((a, b) => a.localeCompare(b)),
-  ];
+    try {
+      const response = await fetch(`${OPPORTUNITY_API_BASE}/api/create-opportunity`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...formData,
+          job_title: formData.job_title.trim(),
+          job_description: formData.job_description.trim(),
+          organization_id: organizationId,
+          organization_name: organizationName,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { success?: boolean; detail?: string }
+        | null;
 
-  const filteredTalent = talentList.filter((candidate) => {
-    const matchesRole = selectedRole === 'All' || candidate.role === selectedRole;
-    const matchesScore = candidate.avg_project_score >= selectedMinScore;
-    return matchesRole && matchesScore;
-  });
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.detail || `Opportunity broadcast failed (HTTP ${response.status}).`);
+      }
+
+      setFormData({
+        job_title: '',
+        target_role: 'UI/UX Designer',
+        job_description: '',
+      });
+      setSuccessMessage('Opportunity successfully broadcasted to the candidate network!');
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'The opportunity could not be broadcasted. Please try again.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,rgba(88,28,135,0.2),transparent_34%),linear-gradient(135deg,#080a18_0%,#030512_55%,#071124_100%)] px-4 py-6 text-white sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-7xl">
-        <header className="flex flex-col gap-6 border-b border-[#1F223D] pb-7 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <Link
-              href="/organization/dashboard"
-              className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 transition hover:text-cyan-200"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Organization Dashboard
-            </Link>
-            <div className="mt-5 flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-purple-400/30 bg-purple-500/10 text-purple-200 shadow-[0_0_28px_rgba(168,85,247,0.15)]">
+    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(88,28,135,0.24),transparent_34%),linear-gradient(135deg,#080a18_0%,#030512_55%,#071124_100%)] px-4 py-6 text-white sm:px-6 lg:px-8">
+      <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-500/5 blur-3xl" />
+
+      {successMessage ? (
+        <div
+          className="fixed right-5 top-5 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-emerald-400/30 bg-[#071a18]/95 px-5 py-4 text-sm text-emerald-100 shadow-[0_0_38px_rgba(52,211,153,0.16)] backdrop-blur-xl"
+          role="status"
+        >
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
+          {successMessage}
+        </div>
+      ) : null}
+
+      <div className="relative mx-auto w-full max-w-5xl">
+        <header className="border-b border-[#1F223D] pb-7">
+          <Link
+            href="/organization/dashboard"
+            className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 transition hover:text-cyan-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Organization Dashboard
+          </Link>
+
+          <div className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-400/30 bg-purple-500/10 text-purple-200 shadow-[0_0_28px_rgba(168,85,247,0.15)]">
                 <Sparkles className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-purple-300">Live Talent Index</p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">Talent Discovery Center</h1>
+                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-purple-300">Recruiter Broadcast Console</p>
+                <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">Organization Job Posting Hub</h1>
               </div>
             </div>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-400">
-              Explore verified candidate profiles directly from the MeliusAI talent graph.
-            </p>
+
+            <div className="rounded-2xl border border-[#1F223D] bg-[#121424]/80 px-4 py-3 text-right">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Active workspace</p>
+              <p className="mt-1 max-w-56 truncate text-sm font-semibold text-cyan-100">
+                {loading ? 'Resolving organization...' : organizationName}
+              </p>
+            </div>
           </div>
 
-          {!isLoading && !errorMessage ? (
-            <div className="flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200">
-              <ShieldCheck className="h-4 w-4" />
-              {talentList.length} verified profiles live
-            </div>
-          ) : null}
+          <p className="mt-5 max-w-3xl text-sm leading-7 text-slate-400">
+            Publish a clear role brief to the verified MeliusAI candidate network. Strong requirements make stronger matches.
+          </p>
         </header>
 
-        <section className="mt-7 rounded-3xl border border-[#1F223D] bg-[#121424] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.24)] sm:p-5">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
-            <Filter className="h-4 w-4 text-cyan-300" />
-            Discovery Filters
+        <section className="mt-8 overflow-hidden rounded-[2rem] border border-[#1F223D] bg-[#121424]/95 shadow-[0_30px_90px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+          <div className="border-b border-[#1F223D] bg-gradient-to-r from-purple-500/[0.08] via-transparent to-cyan-500/[0.08] px-6 py-5 sm:px-8">
+            <div className="flex items-center gap-3">
+              <BriefcaseBusiness className="h-5 w-5 text-cyan-300" />
+              <div>
+                <h2 className="text-lg font-semibold text-white">Create a new opportunity</h2>
+                <p className="mt-1 text-xs text-slate-500">All fields are shared with matching candidates.</p>
+              </div>
+            </div>
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <label className="space-y-2 text-xs font-medium text-slate-400">
-              <span>Specialization</span>
-              <select
-                value={selectedRole}
-                onChange={(event) => setSelectedRole(event.target.value)}
-                className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15"
-              >
-                {roleOptions.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-            </label>
 
-            <label className="space-y-2 text-xs font-medium text-slate-400">
-              <span>Score benchmark</span>
-              <select
-                value={selectedMinScore}
-                onChange={(event) => setSelectedMinScore(Number(event.target.value))}
-                className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-slate-100 outline-none transition focus:border-purple-400/60 focus:ring-2 focus:ring-purple-400/15"
-              >
-                <option value={0}>All verified scores</option>
-                <option value={70}>70+ score</option>
-                <option value={80}>80+ score</option>
-                <option value={85}>85+ score</option>
-                <option value={90}>90+ score</option>
-              </select>
-            </label>
-          </div>
-        </section>
+          <form onSubmit={handleSubmit} className="space-y-6 p-6 sm:p-8">
+            <div className="grid gap-6 md:grid-cols-2">
+              <label className="space-y-2 text-sm font-medium text-slate-300">
+                <span className="flex items-center gap-2">
+                  <BriefcaseBusiness className="h-4 w-4 text-purple-300" />
+                  Job title
+                </span>
+                <input
+                  name="job_title"
+                  type="text"
+                  required
+                  value={formData.job_title}
+                  onChange={(event) => updateField('job_title', event.target.value)}
+                  placeholder="Frontend Developer - React specialist"
+                  className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15"
+                />
+              </label>
 
-        {isLoading ? (
-          <div className="grid gap-5 py-10 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading verified talent">
-            {[0, 1, 2, 3, 4, 5].map((item) => (
-              <div
-                key={item}
-                className="h-72 animate-pulse rounded-3xl border border-[#1F223D] bg-gradient-to-br from-[#121424] to-[#090b19] shadow-[0_0_32px_rgba(34,211,238,0.04)]"
-              />
-            ))}
-          </div>
-        ) : errorMessage ? (
-          <div className="mt-8 rounded-3xl border border-rose-400/25 bg-rose-500/10 p-8 text-center text-sm text-rose-100">
-            {errorMessage}
-          </div>
-        ) : filteredTalent.length === 0 ? (
-          <div className="mt-8 rounded-3xl border border-dashed border-[#1F223D] bg-[#121424]/70 p-12 text-center text-sm text-slate-400">
-            No verified talent matches the selected filters.
-          </div>
-        ) : (
-          <section className="grid gap-5 py-8 md:grid-cols-2 xl:grid-cols-3">
-            {filteredTalent.map((candidate) => {
-              const scoreIsElite = candidate.avg_project_score >= 85;
-
-              return (
-                <article
-                  key={candidate.id}
-                  className="group flex min-h-[310px] flex-col rounded-3xl border border-[#1F223D] bg-gradient-to-br from-[#121424] via-[#0d1021] to-[#080a17] p-6 shadow-[0_24px_70px_rgba(0,0,0,0.2)] transition duration-300 hover:-translate-y-1 hover:border-cyan-400/30 hover:shadow-[0_26px_80px_rgba(8,145,178,0.1)]"
+              <label className="space-y-2 text-sm font-medium text-slate-300">
+                <span className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-cyan-300" />
+                  Target role
+                </span>
+                <select
+                  name="target_role"
+                  value={formData.target_role}
+                  onChange={(event) =>
+                    updateField('target_role', event.target.value as OpportunityForm['target_role'])
+                  }
+                  className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-purple-400/25 bg-purple-500/10 text-sm font-bold text-purple-100">
-                        {candidate.full_name.slice(0, 2).toUpperCase()}
-                      </span>
-                      <div className="min-w-0">
-                        <h2 className="truncate text-lg font-semibold text-white">{candidate.full_name}</h2>
-                        <p className="mt-1 truncate text-sm text-slate-400">{candidate.role}</p>
-                      </div>
-                    </div>
-                    <div className="shrink-0 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-right">
-                      <p className={scoreIsElite ? 'text-lg font-bold text-cyan-300' : 'text-lg font-bold text-purple-300'}>
-                        {candidate.avg_project_score.toFixed(1)}
-                      </p>
-                      <p className="text-[9px] uppercase tracking-[0.18em] text-slate-600">Avg score</p>
-                    </div>
-                  </div>
+                  {TARGET_ROLES.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
 
-                  <div className="mt-5 flex items-center gap-2 text-xs text-slate-400">
-                    <BriefcaseBusiness className="h-4 w-4 text-slate-500" />
-                    {candidate.experience_level}
-                  </div>
+            <label className="block space-y-2 text-sm font-medium text-slate-300">
+              <span className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-cyan-300" />
+                Core requirements
+              </span>
+              <textarea
+                name="job_description"
+                required
+                rows={9}
+                value={formData.job_description}
+                onChange={(event) => updateField('job_description', event.target.value)}
+                placeholder="Describe the role, expected outcomes, essential skills, seniority, and the kind of verified portfolio evidence you want to see..."
+                className="w-full resize-y rounded-2xl border border-[#1F223D] bg-[#090b19] px-4 py-4 text-sm leading-7 text-white outline-none transition placeholder:text-slate-600 focus:border-purple-400/60 focus:ring-2 focus:ring-purple-400/15"
+              />
+            </label>
 
-                  {candidate.bio ? <p className="mt-4 line-clamp-2 text-sm leading-6 text-slate-500">{candidate.bio}</p> : null}
+            {errorMessage ? (
+              <div className="rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" role="alert">
+                {errorMessage}
+              </div>
+            ) : null}
 
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    {candidate.skills.length > 0 ? (
-                      candidate.skills.slice(0, 6).map((skill) => (
-                        <code
-                          key={`${candidate.id}-${skill}`}
-                          className="rounded-md border border-cyan-400/15 bg-cyan-500/[0.06] px-2 py-1 text-[11px] text-cyan-100"
-                        >
-                          {skill}
-                        </code>
-                      ))
-                    ) : (
-                      <code className="rounded-md border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-600">
-                        Skills pending
-                      </code>
-                    )}
-                  </div>
-
-                  <Link
-                    href={`/profile/${encodeURIComponent(candidate.id)}`}
-                    className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl border border-purple-400/35 bg-purple-500/10 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition hover:border-cyan-300/55 hover:bg-cyan-500/10 hover:text-white"
-                  >
-                    Review Profile Dossier
-                    <ArrowUpRight className="h-4 w-4" />
-                  </Link>
-                </article>
-              );
-            })}
-          </section>
-        )}
+            <div className="flex flex-col gap-4 border-t border-[#1F223D] pt-6 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs leading-5 text-slate-500">
+                Posting as <span className="font-semibold text-slate-300">{organizationName}</span>
+              </p>
+              <button
+                type="submit"
+                disabled={isSubmitting || loading || !organizationId}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/25 px-6 py-3 text-xs font-bold uppercase tracking-[0.16em] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.14)] transition hover:border-cyan-200/70 hover:shadow-[0_0_34px_rgba(34,211,238,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+                {isSubmitting ? 'Broadcasting...' : 'Broadcast Opportunity'}
+              </button>
+            </div>
+          </form>
+        </section>
       </div>
     </main>
   );
 }
 
-export default TalentDiscoveryCenter;
+export default OrganizationJobPostingHub;

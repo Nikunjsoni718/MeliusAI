@@ -388,6 +388,14 @@ class MatchTalentRequest(BaseModel):
     organization_id: str | None = None
 
 
+class CreateOpportunityRequest(BaseModel):
+    job_title: str
+    target_role: str
+    job_description: str
+    organization_id: str
+    organization_name: str
+
+
 class CandidateEvaluation(BaseModel):
     id: str
     full_name: str
@@ -1019,6 +1027,84 @@ async def talent_discovery():
         raise HTTPException(
             status_code=503,
             detail="Talent discovery data source is temporarily unavailable",
+        ) from error
+
+
+@app.post("/api/create-opportunity", status_code=201)
+async def create_opportunity(payload: CreateOpportunityRequest):
+    job_title = payload.job_title.strip()
+    target_role = payload.target_role.strip()
+    job_description = payload.job_description.strip()
+    organization_id = payload.organization_id.strip()
+    organization_name = payload.organization_name.strip()
+
+    if not all([job_title, target_role, job_description, organization_id, organization_name]):
+        raise HTTPException(status_code=400, detail="All opportunity fields are required")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        opportunity_response = await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .insert(
+                {
+                    "organization_id": organization_id,
+                    "organization_name": organization_name,
+                    "job_title": job_title,
+                    "target_role": target_role,
+                    "job_description": job_description,
+                    "status": "open",
+                }
+            )
+            .select(
+                "id, organization_id, organization_name, job_title, target_role, "
+                "job_description, status, created_at"
+            )
+            .single()
+            .execute()
+        )
+
+        if not opportunity_response.data:
+            raise RuntimeError("Opportunity creation returned no database record")
+
+        return JSONResponse(
+            status_code=201,
+            content={"success": True, "opportunity": opportunity_response.data},
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("create_opportunity.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to broadcast this opportunity right now",
+        ) from error
+
+
+@app.get("/api/get-opportunities")
+async def get_opportunities(role: str):
+    candidate_role = role.strip()
+    if not candidate_role:
+        raise HTTPException(status_code=400, detail="Candidate role is required")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        opportunities_response = await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .select("*")
+            .eq("target_role", candidate_role)
+            .eq("status", "open")
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        return JSONResponse(content=opportunities_response.data or [])
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("get_opportunities.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to load matching opportunities right now",
         ) from error
 
 
