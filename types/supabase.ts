@@ -23,6 +23,7 @@ export type UserRow = {
 
 export type ProfileRow = {
   id: string;
+  email?: string | null;
   full_name: string | null;
   username: string | null;
   birth_date: string | null;

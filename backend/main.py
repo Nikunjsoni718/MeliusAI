@@ -885,6 +885,18 @@ async def spectate_profile(username: str):
         if not profile_id:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
+        profile_email = profile_data.get("email")
+        if not profile_email:
+            try:
+                service_role_client = get_supabase_service_role_client()
+                auth_response = service_role_client.auth.admin.get_user_by_id(str(profile_id))
+                auth_user = getattr(auth_response, "user", None)
+                profile_email = getattr(auth_user, "email", None)
+            except Exception as email_lookup_error:
+                print(f"--- SPECTATE PROFILE EMAIL LOOKUP ERROR: {str(email_lookup_error)} ---")
+
+        profile_data = {**profile_data, "email": profile_email}
+
         projects_query = (
             supabase.table("projects")
             .select("*")
