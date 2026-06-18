@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -878,6 +879,23 @@ async def spectate_profile(username: str):
 
         profile_rows = profile_query.data or []
         profile_data = profile_rows[0] if profile_rows else None
+
+        if not profile_data:
+            try:
+                UUID(target_username)
+            except ValueError:
+                pass
+            else:
+                profile_by_id_query = (
+                    supabase.table("profiles")
+                    .select("*")
+                    .eq("id", target_username)
+                    .limit(1)
+                    .execute()
+                )
+                profile_by_id_rows = profile_by_id_query.data or []
+                profile_data = profile_by_id_rows[0] if profile_by_id_rows else None
+
         if not profile_data:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
@@ -931,6 +949,77 @@ async def spectate_profile(username: str):
     except Exception as error:
         print(f"--- SPECTATE PROFILE ERROR: {str(error)} ---")
         raise HTTPException(status_code=500, detail="Unable to load the spectator profile")
+
+
+@app.get("/api/talent-discovery")
+async def talent_discovery():
+    try:
+        supabase = get_supabase_backend_client()
+        profile_response = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select(
+                "id, full_name, bio, skills, avg_project_score, "
+                "current_status, experience"
+            )
+            .order("avg_project_score", desc=True)
+            .execute()
+        )
+        profile_rows = profile_response.data or []
+        talent_payload = []
+
+        for profile in profile_rows:
+            profile_id = str(profile.get("id") or "").strip()
+            if not profile_id:
+                continue
+
+            raw_skills = profile.get("skills")
+            if isinstance(raw_skills, list):
+                skills = [str(skill).strip() for skill in raw_skills if str(skill).strip()]
+            elif isinstance(raw_skills, str):
+                skills = [skill.strip() for skill in raw_skills.split(",") if skill.strip()]
+            else:
+                skills = []
+
+            role = (f"{skills[0]} Specialist" if skills else None) or "Verified Talent"
+
+            raw_experience = profile.get("experience")
+            if isinstance(raw_experience, list) and len(raw_experience) >= 3:
+                experience_level = "Senior"
+            elif isinstance(raw_experience, list) and raw_experience:
+                experience_level = "Experienced"
+            elif profile.get("current_status") == "Studying":
+                experience_level = "Emerging Talent"
+            elif profile.get("current_status") == "Working":
+                experience_level = "Professional"
+            else:
+                experience_level = "Verified Professional"
+
+            try:
+                average_score = float(profile.get("avg_project_score") or 0)
+            except (TypeError, ValueError):
+                average_score = 0.0
+
+            talent_payload.append(
+                {
+                    "id": profile_id,
+                    "full_name": profile.get("full_name") or "MeliusAI Talent",
+                    "bio": str(profile.get("bio") or ""),
+                    "role": str(role),
+                    "experience_level": experience_level,
+                    "skill_tags": skills,
+                    "avg_project_score": round(max(0.0, min(100.0, average_score)), 1),
+                }
+            )
+
+        return JSONResponse(content=talent_payload)
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("talent_discovery.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Talent discovery data source is temporarily unavailable",
+        ) from error
 
 
 @app.post("/api/verify-asset")
