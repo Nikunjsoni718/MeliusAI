@@ -1639,6 +1639,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }, 3000);
 
     const loadProfile = async () => {
+      const isRouteDrivenProfile = profileId !== undefined || profileUsername !== undefined;
+      const targetUsername = (profileId ?? profileUsername)?.trim();
+
+      if (isRouteDrivenProfile && (!targetUsername || targetUsername === 'undefined')) {
+        return;
+      }
+
       try {
         const {
           data: { user: sessionUser },
