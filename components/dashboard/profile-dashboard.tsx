@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import { FileText, FolderLock, House, Menu, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
@@ -160,6 +160,26 @@ function formatBirthday(value: string | null | undefined) {
     return value;
   }
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function normalizeProfileUsername(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const normalizedValue = decodeURIComponent(value).replace(/^@+/, '').trim();
+    return normalizedValue && normalizedValue !== 'undefined' && normalizedValue !== 'null'
+      ? normalizedValue
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getProfileUsernameFromPathname(pathname: string) {
+  const profilePathMatch = pathname.match(/^\/profile\/([^/?#]+)/);
+  return normalizeProfileUsername(profilePathMatch?.[1]);
 }
 
 function formatScanDate(value: string) {
@@ -1307,7 +1327,7 @@ function ProjectDropzone({
 
 function ProjectCard({
   project,
-  isOwner,
+  isSpectator,
   verifyingAssetId,
   deletingProjectId,
   verifiedAssetId,
@@ -1317,7 +1337,7 @@ function ProjectCard({
   onDelete,
 }: {
   project: ProjectItem;
-  isOwner: boolean;
+  isSpectator: boolean;
   verifyingAssetId: string | null;
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
@@ -1372,7 +1392,7 @@ function ProjectCard({
               Read Full Audit Protocol
             </button>
 
-            {isOwner ? (
+            {!isSpectator ? (
               <button
                 type="button"
                 onClick={() => onVerify(project)}
@@ -1393,7 +1413,7 @@ function ProjectCard({
             ) : null}
           </div>
 
-          {isOwner ? (
+          {!isSpectator ? (
             <div className="mt-2 flex w-full justify-end">
               <button
                 type="button"
@@ -1425,6 +1445,7 @@ type ProfileDashboardProps = {
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const routeParams = useParams<{ username?: string | string[] }>();
   const isOrganizationWorkspace = variant === 'organization';
   const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
   const currentUser = user;
@@ -1463,6 +1484,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSyncState, setProfileSyncState] = useState<SyncState>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
+  const isSpectator = !isOwner;
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [bioText, setBioText] = useState('');
   const [rawSkillsInput, setRawSkillsInput] = useState('');
@@ -1496,28 +1518,42 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avgProjectScore: number | null;
   } | null>(null);
 
+  const targetUsername = useMemo(() => {
+    const routeUsername = Array.isArray(routeParams?.username)
+      ? routeParams.username[0]
+      : routeParams?.username;
+
+    return (
+      normalizeProfileUsername(routeUsername) ??
+      getProfileUsernameFromPathname(pathname) ??
+      normalizeProfileUsername(profileUsername) ??
+      normalizeProfileUsername(profileId)
+    );
+  }, [pathname, profileId, profileUsername, routeParams]);
+
   const displayName =
     profileDraft.displayName ||
     profileFallback?.displayName ||
-    profile?.display_name ||
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
+    (isOwner ? profile?.display_name : null) ||
+    (isOwner ? user?.user_metadata?.full_name : null) ||
+    (isOwner ? user?.user_metadata?.name : null) ||
     'Member';
   const username =
     profileDraft.username ||
     profileFallback?.username ||
-    profile?.username ||
-    user?.user_metadata?.username ||
+    (isOwner ? profile?.username : null) ||
+    (isOwner ? user?.user_metadata?.username : null) ||
+    targetUsername ||
     'member';
-  const profileHandle = profileId || profileUsername || username;
+  const profileHandle = targetUsername || username;
   const profileHref = `/profile/${encodeURIComponent(profileHandle)}`;
   const email = profileFallback?.email ?? user?.email ?? 'unknown';
   const avatarUrl =
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
-    profile?.avatar_url ??
-    (user?.user_metadata?.avatar_url as string | undefined) ??
-    (user?.user_metadata?.picture as string | undefined) ??
+    (isOwner ? profile?.avatar_url : null) ??
+    (isOwner ? (user?.user_metadata?.avatar_url as string | undefined) : null) ??
+    (isOwner ? (user?.user_metadata?.picture as string | undefined) : null) ??
     null;
   const avgProjectScore =
     typeof profileFallback?.avgProjectScore === 'number'
@@ -1624,15 +1660,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const routeTarget = (profileId ?? profileUsername)?.trim();
-    const hasPublicSpectatorTarget = Boolean(
-      routeTarget && routeTarget !== 'undefined' && routeTarget !== 'null'
-    );
+    const hasPublicSpectatorTarget = Boolean(targetUsername);
 
     if ((!authEnabled || !user) && !hasPublicSpectatorTarget) {
       router.replace('/auth');
     }
-  }, [authEnabled, loading, profileId, profileUsername, router, user]);
+  }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
     setIsOpen(false);
@@ -1646,6 +1679,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     let active = true;
     setProfileLoading(true);
     setShowRefresh(false);
+    setIsOwner(false);
+    setIsEditing(false);
+    setSettingsOpen(false);
+    setResolvedProfileId(null);
+    setProjects([]);
+    setProjectDescriptions({});
+    setProjectDescription('');
+    setRoles([]);
+    setRolesLoading(false);
+    setViewingAuditAsset(null);
+    setActivePreviewProjectId(null);
+    setActivePreviewName(null);
+    setActivePreviewUrl(null);
+    setShowAllWork(false);
+    setShowAllRatings(false);
+    setProfileDraft({ displayName: '', username: '', birthDate: '' });
+    setProfileFallback(null);
+    setBioText('');
+    setRawSkillsInput('');
+    setAvatarPreviewUrl(null);
 
     const refreshTimer = window.setTimeout(() => {
       if (active) {
@@ -1654,22 +1707,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }, 3000);
 
     const loadProfile = async () => {
-      const isRouteDrivenProfile = profileId !== undefined || profileUsername !== undefined;
-      const targetUsername = (profileId ?? profileUsername)?.trim();
-
-      if (
-        isRouteDrivenProfile &&
-        (!targetUsername ||
-          targetUsername === 'undefined' ||
-          targetUsername === 'null' ||
-          targetUsername.trim() === '')
-      ) {
+      if (!targetUsername) {
         console.warn('MeliusAI Hydration Guard: Aborting premature API call. Parameters not settled.');
+        if (active) {
+          setProfileLoading(false);
+        }
         return;
       }
 
       try {
-        let sessionUser = user;
+        let sessionUser: typeof user = null;
+        let authenticatedProfile: SavedProfileItem | null = null;
 
         if (supabase) {
           const {
@@ -1681,17 +1729,28 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             console.warn('Unable to resolve active profile session:', sessionUserError.message);
           }
 
-          sessionUser = authenticatedUser ?? sessionUser;
+          sessionUser = authenticatedUser ?? null;
+
+          if (sessionUser) {
+            const authenticatedProfileResponse = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', sessionUser.id)
+              .maybeSingle();
+
+            authenticatedProfile = authenticatedProfileResponse.data as SavedProfileItem | null;
+
+            if (authenticatedProfileResponse.error) {
+              console.warn(
+                `Unable to resolve the authenticated profile row for "${sessionUser.id}":`,
+                authenticatedProfileResponse.error.message
+              );
+            }
+          }
         }
 
-        const targetProfileIdentifier = profileId
-          ? decodeURIComponent(profileId).trim()
-          : profileUsername
-            ? decodeURIComponent(profileUsername).replace(/^@+/, '').trim()
-            : sessionUser?.id ?? '';
         const sessionRawMetadata = (sessionUser as {
           raw_user_meta_data?: {
-            role?: string;
             username?: string;
             bio?: string;
             avatar_url?: string;
@@ -1700,7 +1759,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           };
         } | null)?.raw_user_meta_data;
         const sessionUserMetadata = (sessionUser?.user_metadata ?? {}) as {
-          role?: string;
           username?: string;
           full_name?: string;
           name?: string;
@@ -1709,41 +1767,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           picture?: string;
           portfolio_links?: Partial<PortfolioLinks>;
         };
-        const loggedInRole = sessionRawMetadata?.role ?? sessionUserMetadata?.role;
-        const loggedInUsername = sessionRawMetadata?.username ?? sessionUserMetadata?.username ?? null;
-        const loggedInId = sessionUser?.id ?? null;
-        const targetProfileParam = targetProfileIdentifier;
-
-        const matchesUsername =
-          loggedInUsername && targetProfileParam
-            ? loggedInUsername.toLowerCase() === targetProfileParam.toLowerCase()
-            : false;
-        const matchesUuid = Boolean(loggedInId && loggedInId === targetProfileParam);
+        const authenticatedUsername = authenticatedProfile?.username?.trim() ?? null;
         const ownsProfile = Boolean(
-          sessionUser &&
-          loggedInRole !== 'corporate' &&
-          (!isRouteDrivenProfile || matchesUsername || matchesUuid)
+          sessionUser && authenticatedUsername && authenticatedUsername === targetUsername
         );
         const isOwnProfile = ownsProfile;
         let savedProfile: SavedProfileItem | null = null;
 
-        if (isOwnProfile || (!isRouteDrivenProfile && sessionUser)) {
-          if (!supabase || !sessionUser) {
-            throw new Error('Authenticated profile storage is unavailable.');
-          }
-
-          const savedProfileResponse = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', sessionUser.id)
-            .single();
-
-          savedProfile = savedProfileResponse.data as SavedProfileItem | null;
-
-          if (savedProfileResponse.error) {
-            console.warn(`No profile record found for id "${sessionUser.id}":`, savedProfileResponse.error.message);
-          }
-        } else if (isRouteDrivenProfile && targetUsername) {
+        if (isOwnProfile) {
+          savedProfile = authenticatedProfile;
+        } else {
           const spectatorResponse = await fetch(
             `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
             { cache: 'no-store' }
@@ -1757,24 +1790,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           }
 
           savedProfile = spectatorPayload.profile;
-        } else {
-          if (active) {
-            setIsOwner(false);
-            setProfileLoading(false);
-            router.replace('/auth');
-          }
-          return;
         }
 
         const fallbackName = isOwnProfile
           ? sessionUserMetadata?.full_name ??
             sessionUserMetadata?.name ??
             sessionUser?.email?.split('@')[0] ??
-            targetProfileIdentifier
-          : targetProfileIdentifier;
+            targetUsername
+          : targetUsername;
         const fallbackUsername = isOwnProfile
-          ? loggedInUsername ?? targetProfileIdentifier
-          : targetProfileIdentifier;
+          ? authenticatedUsername ?? targetUsername
+          : targetUsername;
         const hasDbProfile = Boolean(savedProfile);
         const birthDate = savedProfile?.birth_date ?? null;
         const displayName = savedProfile?.full_name ?? fallbackName;
@@ -1851,7 +1877,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       active = false;
       window.clearTimeout(refreshTimer);
     };
-  }, [loading, profileId, profileUsername, router, supabase, user]);
+  }, [loading, supabase, targetUsername]);
 
   useEffect(() => {
     if (!isOwner) {
@@ -1861,7 +1887,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [isOwner]);
 
   useEffect(() => {
-    if (!user || !authEnabled || !supabase) {
+    if (!authEnabled || !supabase) {
       return;
     }
 
@@ -1909,10 +1935,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       active = false;
     };
-  }, [authEnabled, resolvedProfileId, supabase, user]);
+  }, [authEnabled, resolvedProfileId, supabase]);
 
   useEffect(() => {
-    if (!user || !authEnabled || !supabase) {
+    if (isSpectator || !user || !authEnabled || !supabase) {
+      setRoles([]);
+      setRolesLoading(false);
       return;
     }
 
@@ -1957,7 +1985,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       active = false;
     };
-  }, [authEnabled, resolvedProfileId, supabase, user]);
+  }, [authEnabled, isSpectator, resolvedProfileId, supabase, user]);
 
   useEffect(() => {
     return () => {
@@ -2833,16 +2861,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
               <nav className="flex flex-col gap-1">
-              {dashboardNavigation.map((item) => (
-                <SidebarNavButton
-                  key={item.href}
-                  href={item.href}
-                  label={item.label}
-                  active={pathname === item.href}
-                  icon={item.icon}
-                  onClick={() => setIsOpen(false)}
-                />
-              ))}
+              {dashboardNavigation.map((item) =>
+                isSpectator && (item.label === 'MeliusAI' || item.label === 'Opportunities') ? null : (
+                  <SidebarNavButton
+                    key={item.href}
+                    href={item.href}
+                    label={item.label}
+                    active={pathname === item.href}
+                    icon={item.icon}
+                    onClick={() => setIsOpen(false)}
+                  />
+                )
+              )}
               </nav>
             </div>
             <div className="space-y-2">
@@ -2879,11 +2909,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       sizeClass="h-16 w-16"
                       src={avatarUrl}
                       uploading={avatarUploading}
-                      onSelect={isOwner && isEditing ? handleAvatarSelect : undefined}
+                      onSelect={!isSpectator && isEditing ? handleAvatarSelect : undefined}
                     />
                     <div>
                       <p className="text-sm text-slate-400">
-                        {isOwner ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
+                        {!isSpectator ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
                       </p>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Individual</span>
@@ -2940,7 +2970,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   </div>
 
                   <div className="flex items-start justify-end">
-                    {isOwner ? (
+                    {!isSpectator ? (
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
@@ -2969,7 +2999,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
 
               <AnimatePresence>
-                {settingsOpen && isOwner && isEditing ? (
+                {settingsOpen && !isSpectator && isEditing ? (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.98, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -3197,7 +3227,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               {allProjects.length === 0 ? (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                   <CardContent className="p-8">
-                    {isOwner ? (
+                    {!isSpectator ? (
                       <ProjectDropzone
                         upload={uploadState}
                         onFileSelect={(file) => void handleProjectFile(file)}
@@ -3224,7 +3254,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       <ProjectCard
                         key={project.id}
                         project={project}
-                        isOwner={isOwner}
+                        isSpectator={isSpectator}
                         verifyingAssetId={verifyingAssetId}
                         deletingProjectId={deletingProjectId}
                         verifiedAssetId={verifiedAssetId}
@@ -3235,7 +3265,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       />
                     ))}
 
-                    {isOwner ? (
+                    {!isSpectator ? (
                       <ProjectDropzone
                         upload={uploadState}
                         onFileSelect={(file) => void handleProjectFile(file)}
@@ -3366,6 +3396,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </Card>
             </section>
 
+            {!isSpectator ? (
             <section className="space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">Opportunities</h2>
@@ -3451,6 +3482,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               )}
             </section>
+            ) : null}
 
             </div>
             </div>
