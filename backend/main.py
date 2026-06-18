@@ -1343,6 +1343,159 @@ class ChatHistoryRequest(BaseModel):
     messages: List[Dict[str, str]]
 
 
+class MessageSendSchema(BaseModel):
+    room_id: str
+    sender_id: str
+    message_text: str
+
+
+@app.get("/api/chat/rooms/{user_id}")
+async def get_chat_rooms(user_id: str):
+    try:
+        candidate_id = user_id.strip()
+        if not candidate_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+
+        supabase = get_supabase_backend_client()
+        rooms_query = (
+            supabase.table("chat_rooms")
+            .select("*")
+            .eq("candidate_id", candidate_id)
+            .execute()
+        )
+        rooms = rooms_query.data or []
+        enriched_rooms = []
+
+        for room in rooms:
+            room_id = room.get("id")
+            organization_id = room.get("organization_id") or room.get("company_id")
+            recruiter_id = room.get("recruiter_id") or room.get("sender_id")
+            company_record = None
+            latest_message = None
+
+            if room_id:
+                latest_message_query = (
+                    supabase.table("messages")
+                    .select("*")
+                    .eq("room_id", str(room_id))
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                latest_message_rows = latest_message_query.data or []
+                latest_message = latest_message_rows[0] if latest_message_rows else None
+
+            if organization_id:
+                organization_query = (
+                    supabase.table("organizations")
+                    .select("*")
+                    .eq("id", str(organization_id))
+                    .limit(1)
+                    .execute()
+                )
+                organization_rows = organization_query.data or []
+                company_record = organization_rows[0] if organization_rows else None
+
+            if not company_record and (recruiter_id or organization_id):
+                profile_id = recruiter_id or organization_id
+                profile_query = (
+                    supabase.table("profiles")
+                    .select("*")
+                    .eq("id", str(profile_id))
+                    .limit(1)
+                    .execute()
+                )
+                profile_rows = profile_query.data or []
+                company_record = profile_rows[0] if profile_rows else None
+
+            company_record = company_record or {}
+            company_name = company_record.get("company_name") or company_record.get("full_name")
+            company_avatar = (
+                company_record.get("avatar_url")
+                or company_record.get("logo_url")
+                or company_record.get("company_logo_url")
+            )
+            enriched_rooms.append(
+                {
+                    **room,
+                    "last_message_text": (
+                        room.get("last_message_text")
+                        or room.get("last_message")
+                        or (latest_message or {}).get("message_text")
+                    ),
+                    "company": {
+                        "id": company_record.get("id") or organization_id or recruiter_id,
+                        "company_name": company_name,
+                        "full_name": company_record.get("full_name"),
+                        "avatar_url": company_avatar,
+                    },
+                }
+            )
+
+        return {"rooms": enriched_rooms}
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("chat_rooms.fetch_failed")
+        raise HTTPException(status_code=500, detail="Unable to load active chat rooms") from error
+
+
+@app.get("/api/chat/messages/{room_id}")
+async def get_chat_messages(room_id: str):
+    try:
+        target_room_id = room_id.strip()
+        if not target_room_id:
+            raise HTTPException(status_code=400, detail="room_id is required")
+
+        supabase = get_supabase_backend_client()
+        messages_query = (
+            supabase.table("messages")
+            .select("*")
+            .eq("room_id", target_room_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+
+        return {"messages": messages_query.data or []}
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("chat_messages.fetch_failed")
+        raise HTTPException(status_code=500, detail="Unable to load chat messages") from error
+
+
+@app.post("/api/chat/send", status_code=201)
+async def send_chat_message(payload: MessageSendSchema):
+    try:
+        message_payload = {
+            "room_id": payload.room_id.strip(),
+            "sender_id": payload.sender_id.strip(),
+            "message_text": payload.message_text.strip(),
+        }
+
+        if not all(message_payload.values()):
+            raise HTTPException(
+                status_code=400,
+                detail="room_id, sender_id, and message_text are required",
+            )
+
+        supabase = get_supabase_backend_client()
+        insert_query = (
+            supabase.table("messages")
+            .insert(message_payload)
+            .select("*")
+            .single()
+            .execute()
+        )
+
+        return {"message": insert_query.data}
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("chat_messages.send_failed")
+        raise HTTPException(status_code=500, detail="Unable to send chat message") from error
+
+
 @app.post("/api/chat")
 async def interactive_chat_station(request: ChatHistoryRequest):
     try:

@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Menu, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { FileText, FolderLock, House, Menu, MessageSquare, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -99,6 +99,35 @@ type SpectateProfileResponse = {
   scans?: SpectatorScanItem[] | null;
   detail?: string;
   message?: string;
+};
+type ChatCompany = {
+  id?: string | null;
+  company_name?: string | null;
+  full_name?: string | null;
+  avatar_url?: string | null;
+};
+type ChatRoomItem = {
+  id: string;
+  candidate_id?: string | null;
+  organization_id?: string | null;
+  last_message_text?: string | null;
+  last_message?: string | null;
+  updated_at?: string | null;
+  company?: ChatCompany | null;
+};
+type ChatMessageItem = {
+  id: string;
+  room_id: string;
+  sender_id: string;
+  message_text: string;
+  created_at?: string | null;
+};
+type ProfileWorkspaceTab = 'profile' | 'messages';
+type DashboardNavigationItem = {
+  href: string;
+  label: string;
+  icon: ReactNode;
+  targetTab?: ProfileWorkspaceTab;
 };
 type ProjectAuditSummary = {
   score?: number | null;
@@ -658,16 +687,19 @@ function SidebarProfileLink({
   active,
   avatarUrl,
   href,
+  onClick,
 }: {
   active?: boolean;
   avatarUrl: string | null;
   href: string;
+  onClick?: () => void;
 }) {
   return (
     <Link
       href={href}
       aria-label="Profile"
       title="Profile"
+      onClick={onClick}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-slate-300 transition-all duration-200 hover:bg-blue-950/30 hover:text-white',
         active ? 'bg-blue-950/35 text-white' : null
@@ -1449,6 +1481,285 @@ function ProjectCard({
   );
 }
 
+function MessagesWorkspace({ userId }: { userId: string }) {
+  const [chatRooms, setChatRooms] = useState<ChatRoomItem[]>([]);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
+  const [messageDraft, setMessageDraft] = useState('');
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadChatRooms = async () => {
+      setRoomsLoading(true);
+      setMessagesError(null);
+
+      try {
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/chat/rooms/${encodeURIComponent(userId)}`,
+          { cache: 'no-store' }
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { rooms?: ChatRoomItem[]; detail?: string }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.detail || 'Unable to load message rooms.');
+        }
+
+        if (active) {
+          const loadedRooms = Array.isArray(payload?.rooms) ? payload.rooms : [];
+          setChatRooms(loadedRooms);
+          setActiveRoomId((currentRoomId) =>
+            currentRoomId && loadedRooms.some((room) => room.id === currentRoomId) ? currentRoomId : null
+          );
+        }
+      } catch (error) {
+        if (active) {
+          setChatRooms([]);
+          setMessagesError(error instanceof Error ? error.message : 'Unable to load message rooms.');
+        }
+      } finally {
+        if (active) {
+          setRoomsLoading(false);
+        }
+      }
+    };
+
+    void loadChatRooms();
+
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!activeRoomId) {
+      setMessages([]);
+      setMessageDraft('');
+      return;
+    }
+
+    let active = true;
+
+    const loadMessages = async () => {
+      setMessagesLoading(true);
+      setMessagesError(null);
+
+      try {
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/chat/messages/${encodeURIComponent(activeRoomId)}`,
+          { cache: 'no-store' }
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { messages?: ChatMessageItem[]; detail?: string }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.detail || 'Unable to load this message thread.');
+        }
+
+        if (active) {
+          setMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+        }
+      } catch (error) {
+        if (active) {
+          setMessages([]);
+          setMessagesError(error instanceof Error ? error.message : 'Unable to load this message thread.');
+        }
+      } finally {
+        if (active) {
+          setMessagesLoading(false);
+        }
+      }
+    };
+
+    void loadMessages();
+
+    return () => {
+      active = false;
+    };
+  }, [activeRoomId]);
+
+  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const messageText = messageDraft.trim();
+    if (!activeRoomId || !messageText || sendingMessage) {
+      return;
+    }
+
+    setSendingMessage(true);
+    setMessagesError(null);
+
+    try {
+      const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/chat/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          room_id: activeRoomId,
+          sender_id: userId,
+          message_text: messageText,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { message?: ChatMessageItem; detail?: string }
+        | null;
+
+      if (response.status !== 201 || !payload?.message) {
+        throw new Error(payload?.detail || 'Unable to send this message.');
+      }
+
+      setMessages((currentMessages) => [...currentMessages, payload.message as ChatMessageItem]);
+      setChatRooms((currentRooms) =>
+        currentRooms.map((room) =>
+          room.id === activeRoomId ? { ...room, last_message_text: payload.message?.message_text ?? messageText } : room
+        )
+      );
+      setMessageDraft('');
+    } catch (error) {
+      setMessagesError(error instanceof Error ? error.message : 'Unable to send this message.');
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
+  const activeRoom = chatRooms.find((room) => room.id === activeRoomId) ?? null;
+
+  return (
+    <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-purple-300">Private Inbox</p>
+        <h1 className="mt-3 text-3xl font-semibold text-white">Messages</h1>
+        <p className="mt-2 text-sm text-slate-400">Read and respond to verified organization communications.</p>
+      </div>
+
+      <div className="grid min-h-[620px] flex-1 overflow-hidden rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <aside className="border-b border-blue-950/50 bg-[#050b1b]/35 p-4 lg:border-b-0 lg:border-r">
+          <p className="px-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Organization Threads</p>
+          <div className="mt-3 space-y-2">
+            {roomsLoading ? (
+              [0, 1, 2].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-white/5" />)
+            ) : chatRooms.length > 0 ? (
+              chatRooms.map((room) => {
+                const companyName = room.company?.company_name || room.company?.full_name || 'Verified Organization';
+                const snippet = room.last_message_text || room.last_message || 'Open this thread to read communications.';
+
+                return (
+                  <button
+                    key={room.id}
+                    type="button"
+                    onClick={() => setActiveRoomId(room.id)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all',
+                      room.id === activeRoomId
+                        ? 'border-purple-500/40 bg-purple-950/30'
+                        : 'border-blue-950/40 bg-[#071329]/50 hover:border-purple-500/25 hover:bg-[#0b1d38]/70'
+                    )}
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-purple-500/25 bg-purple-950/30 text-xs font-bold text-purple-200">
+                      {room.company?.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={room.company.avatar_url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        companyName.slice(0, 2).toUpperCase()
+                      )}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-white">{companyName}</span>
+                      <span className="mt-1 block truncate text-xs text-slate-500">{snippet}</span>
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <p className="rounded-xl border border-dashed border-blue-950/50 p-4 text-xs leading-5 text-slate-500">
+                No organization conversations are active yet.
+              </p>
+            )}
+          </div>
+        </aside>
+
+        <div className="flex min-h-[620px] flex-col">
+          {!activeRoom ? (
+            <div className="flex flex-1 items-center justify-center p-6 text-center font-mono text-xs text-slate-500">
+              [ Select an organization thread to read communications protocol ]
+            </div>
+          ) : (
+            <>
+              <header className="border-b border-blue-950/50 px-5 py-4">
+                <p className="text-sm font-semibold text-white">
+                  {activeRoom.company?.company_name || activeRoom.company?.full_name || 'Verified Organization'}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">Secure candidate communication channel</p>
+              </header>
+
+              <div className="flex-1 space-y-3 overflow-y-auto p-5">
+                {messagesLoading ? (
+                  <p className="text-sm text-slate-500">Loading communications protocol...</p>
+                ) : messages.length > 0 ? (
+                  messages.map((message) => {
+                    const isOwnMessage = message.sender_id === userId;
+                    return (
+                      <div key={message.id} className={cn('flex', isOwnMessage ? 'justify-end' : 'justify-start')}>
+                        <div
+                          className={cn(
+                            'max-w-[82%] rounded-2xl border px-4 py-3 text-sm leading-6',
+                            isOwnMessage
+                              ? 'rounded-br-md border-purple-500/30 bg-purple-950/30 text-purple-50'
+                              : 'rounded-bl-md border-blue-950/50 bg-[#071329]/70 text-slate-200'
+                          )}
+                        >
+                          <p>{message.message_text}</p>
+                          {message.created_at ? (
+                            <p className="mt-2 text-right text-[10px] text-slate-500">
+                              {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-center text-sm text-slate-500">No messages have been recorded in this thread.</p>
+                )}
+              </div>
+
+              <form onSubmit={handleSendMessage} className="border-t border-blue-950/50 p-4">
+                <div className="flex items-center gap-3 rounded-xl border border-blue-950/60 bg-[#050b1b]/70 p-2 focus-within:border-purple-500/40">
+                  <input
+                    value={messageDraft}
+                    onChange={(event) => setMessageDraft(event.target.value)}
+                    placeholder="Write a secure response..."
+                    className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-slate-600"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!messageDraft.trim() || sendingMessage}
+                    className="rounded-lg border border-purple-500/30 bg-purple-950/40 px-5 py-2 text-xs font-bold tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    SEND
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+
+          {messagesError ? (
+            <p className="border-t border-rose-900/40 bg-rose-950/20 px-5 py-3 text-xs text-rose-200">{messagesError}</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ProfileDashboardProps = {
   profileId?: string;
   profileUsername?: string;
@@ -1500,6 +1811,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const isSpectator = !isOwner;
+  const [activeTab, setActiveTab] = useState<ProfileWorkspaceTab>('profile');
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [bioText, setBioText] = useState('');
   const [rawSkillsInput, setRawSkillsInput] = useState('');
@@ -1577,17 +1889,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     typeof profileFallback?.avgProjectScore === 'number'
       ? Math.round(profileFallback.avgProjectScore)
       : 0;
-  const dashboardNavigation = useMemo(
+  const dashboardNavigation = useMemo<DashboardNavigationItem[]>(
     () => [
       {
         href: profileHref,
         label: 'Home',
         icon: <House className="h-5 w-5" strokeWidth={1.8} />,
+        targetTab: 'profile',
       },
       {
         href: '/search',
         label: 'Search',
         icon: <Search className="h-5 w-5" strokeWidth={1.8} />,
+      },
+      {
+        href: profileHref,
+        label: 'Messages',
+        icon: <MessageSquare className="h-5 w-5" strokeWidth={1.8} />,
+        targetTab: 'messages',
       },
       {
         href: '/meliusai',
@@ -1952,6 +2271,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     if (!isOwner) {
       setIsEditing(false);
       setSettingsOpen(false);
+      setActiveTab('profile');
     }
   }, [isOwner]);
 
@@ -2931,23 +3251,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
               <nav className="flex flex-col gap-1">
               {dashboardNavigation.map((item) => {
-                const isSpectatorRestrictedItem = item.label === 'MeliusAI' || item.label === 'Opportunities';
+                const isSpectatorRestrictedItem =
+                  item.label === 'MeliusAI' || item.label === 'Messages' || item.label === 'Opportunities';
 
                 return !isSpectator || !isSpectatorRestrictedItem ? (
                   <SidebarNavButton
-                    key={item.href}
+                    key={item.label}
                     href={item.href}
                     label={item.label}
-                    active={pathname === item.href}
+                    active={item.targetTab ? activeTab === item.targetTab : pathname === item.href}
                     icon={item.icon}
-                    onClick={() => setIsOpen(false)}
+                    onClick={() => {
+                      if (item.targetTab) {
+                        setActiveTab(item.targetTab);
+                      }
+                      setIsOpen(false);
+                    }}
                   />
                 ) : null;
               })}
               </nav>
             </div>
             <div className="space-y-2">
-              <SidebarProfileLink active={pathname === profileHref || pathname.startsWith('/profile/')} avatarUrl={avatarUrl} href={profileHref} />
+              <SidebarProfileLink
+                active={activeTab === 'profile' && (pathname === profileHref || pathname.startsWith('/profile/'))}
+                avatarUrl={avatarUrl}
+                href={profileHref}
+                onClick={() => setActiveTab('profile')}
+              />
               <Button
                 variant="ghost"
                 onClick={handleSignOut}
@@ -2965,6 +3296,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 : 'flex h-full w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto pt-16 md:pt-0'
             }
           >
+            {activeTab === 'messages' && !isSpectator && currentUser?.id ? (
+              <MessagesWorkspace userId={currentUser.id} />
+            ) : (
             <div
               className={
                 isOrganizationWorkspace
@@ -3557,6 +3891,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
             </div>
             </div>
+            )}
           </section>
         </motion.div>
 
