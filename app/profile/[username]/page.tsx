@@ -136,12 +136,19 @@ export default function ProfilePage({ params }: { params: { username: string } }
           <p className="mt-3 text-sm leading-6 text-slate-400">
             {errorMessage || 'We could not locate a public profile for this candidate identifier.'}
           </p>
-          <Link
-            href="/organization/dashboard"
+          <button
+            type="button"
+            onClick={() => {
+              if (window.opener) {
+                window.close();
+              } else {
+                window.location.href = '/organization/dashboard';
+              }
+            }}
             className="mt-6 inline-flex rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition hover:border-purple-300/60 hover:text-white"
           >
             Return to dashboard
-          </Link>
+          </button>
         </section>
       </main>
     );

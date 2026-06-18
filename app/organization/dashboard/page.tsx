@@ -950,19 +950,19 @@ export default function OrganizationDashboard() {
           <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
             {!searchError && candidatesPool.length > 0 ? (
               <div className="grid grid-cols-1 gap-4">
-                {candidatesPool.map((profile, index) => {
-                  const compositeMatchPercent = Math.round((profile?.composite_match_index ?? 0) * 100);
-                  const vectorMatchPercent = Math.round((profile?.vector_match ?? 0) * 100);
-                  const averageProjectMetric = profile?.avg_project_score ?? 0;
-                  const username = profile?.username ?? 'profile';
-                  const displayName = profile?.full_name?.trim() || `@${username}`;
-                  const skills = profile?.skills ?? [];
-                  const inviteState = candidateInviteState[profile.id];
+                {candidatesPool.map((candidate, index) => {
+                  const compositeMatchPercent = Math.round((candidate?.composite_match_index ?? 0) * 100);
+                  const vectorMatchPercent = Math.round((candidate?.vector_match ?? 0) * 100);
+                  const averageProjectMetric = candidate?.avg_project_score ?? 0;
+                  const username = candidate?.username ?? 'profile';
+                  const displayName = candidate?.full_name?.trim() || `@${username}`;
+                  const skills = candidate?.skills ?? [];
+                  const inviteState = candidateInviteState[candidate.id];
                   const inviteDisabled = inviteState === 'inviting' || inviteState === 'invited';
 
                   return (
                     <div
-                      key={profile?.id ?? `candidate-${index}`}
+                      key={candidate?.id ?? `candidate-${index}`}
                       className="w-full bg-[#0d1533] border border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl md:mb-0 md:border-slate-800/60 md:bg-gradient-to-br md:from-[#0c0e2b] md:via-[#05071a] md:to-[#030512]"
                     >
                       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -976,7 +976,7 @@ export default function OrganizationDashboard() {
                             </span>
                           </div>
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
-                            {profile?.aiReasoning ?? profile?.bio ?? 'No profile bio available yet.'}
+                            {candidate?.aiReasoning ?? candidate?.bio ?? 'No profile bio available yet.'}
                           </p>
                           <div className="flex flex-wrap gap-2 mt-3">
                             <span className="text-[11px] font-medium px-2 py-0.5 bg-slate-900/50 text-slate-300 rounded-md">
@@ -988,7 +988,7 @@ export default function OrganizationDashboard() {
                             {skills.length > 0 ? (
                               skills.slice(0, 5).map((skill) => (
                                 <span
-                                  key={`${profile?.id ?? index}-${skill}`}
+                                  key={`${candidate?.id ?? index}-${skill}`}
                                   className="text-[11px] font-medium px-2 py-0.5 bg-slate-900/50 text-slate-300 rounded-md"
                                 >
                                   {skill}
@@ -1003,17 +1003,17 @@ export default function OrganizationDashboard() {
                         </div>
                         <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
                           <Link
-                            href={`/profile/${profile.id || profile.username}`}
+                            href={`/profile/${candidate.id || candidate.username}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => void handleMatchFeedback(profile, 'clicked')}
+                            onClick={() => void handleMatchFeedback(candidate, 'clicked')}
                             className="w-full rounded-xl border border-purple-500/30 bg-purple-950/30 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-purple-100 transition-all hover:border-purple-300/60 hover:text-white lg:w-auto lg:py-2"
                           >
                             Review Profile Dossier
                           </Link>
                           <button
                             type="button"
-                            onClick={() => void handleInviteToApply(profile, compositeMatchPercent)}
+                            onClick={() => void handleInviteToApply(candidate, compositeMatchPercent)}
                             disabled={inviteDisabled}
                             className="w-full rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.16em] text-emerald-200 transition-all hover:border-emerald-300/50 hover:bg-emerald-500/15 hover:text-white disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/60 disabled:text-slate-500 lg:w-auto lg:py-2"
                           >
