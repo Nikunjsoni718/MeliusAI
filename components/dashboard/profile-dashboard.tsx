@@ -66,10 +66,10 @@ type ProjectItem = {
 };
 
 type LiveOpportunityItem = {
-  title: string;
-  description: string;
-  company_name: string;
-  company_email: string;
+  recruiter_name: string;
+  role_title: string;
+  match_score: number;
+  status: string;
 };
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   id?: string | null;
@@ -205,43 +205,27 @@ function formatScanDate(value: string) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function inferOpportunityRole(value: string) {
-  const normalizedValue = value.toLowerCase();
-  const containsKeyword = (keyword: string) => {
-    if (keyword.includes(' ')) {
-      return normalizedValue.includes(keyword);
-    }
-    return new RegExp(`\\b${keyword}\\b`, 'i').test(normalizedValue);
-  };
-
-  if (['ui', 'ux', 'design', 'figma', 'product designer'].some(containsKeyword)) {
-    return 'UI/UX Designer';
-  }
-  if (['typescript', 'react', 'frontend', 'tailwind', 'nextjs'].some(containsKeyword)) {
-    return 'Frontend Developer';
-  }
-  return 'Fullstack Engineer';
-}
-
 function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
 
   const opportunity = value as Record<string, unknown>;
-  const title = typeof opportunity.title === 'string' ? opportunity.title.trim() : '';
-  if (!title) {
+  const roleTitle = typeof opportunity.role_title === 'string' ? opportunity.role_title.trim() : '';
+  if (!roleTitle) {
     return null;
   }
 
+  const rawMatchScore = Number(opportunity.match_score ?? 0);
+
   return {
-    title,
-    description: typeof opportunity.description === 'string' ? opportunity.description.trim() : '',
-    company_name:
-      typeof opportunity.company_name === 'string' && opportunity.company_name.trim()
-        ? opportunity.company_name.trim()
+    recruiter_name:
+      typeof opportunity.recruiter_name === 'string' && opportunity.recruiter_name.trim()
+        ? opportunity.recruiter_name.trim()
         : 'Verified Organisation',
-    company_email: typeof opportunity.company_email === 'string' ? opportunity.company_email.trim() : '',
+    role_title: roleTitle,
+    match_score: Number.isFinite(rawMatchScore) ? Math.max(0, Math.min(100, rawMatchScore)) : 0,
+    status: typeof opportunity.status === 'string' && opportunity.status.trim() ? opportunity.status.trim() : 'active',
   };
 }
 
@@ -1497,6 +1481,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const routeParams = useParams<{ username?: string | string[] }>();
   const isOrganizationWorkspace = variant === 'organization';
   const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
+  const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
@@ -1605,13 +1590,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     profileFallback?.email?.trim() ||
     (isOwner ? user?.email?.trim() : '') ||
     '';
-  const loggedInCandidate = useMemo(
-    () => ({
-      role: inferOpportunityRole(`${rawSkillsInput} ${bioText}`),
-      full_name: displayName,
-    }),
-    [bioText, displayName, rawSkillsInput]
-  );
   const avatarUrl =
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
@@ -2055,7 +2033,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, isSpectator, resolvedProfileId, supabase]);
 
   useEffect(() => {
-    if (isSpectator || !profileHydrated) {
+    if (isSpectator || !profileHydrated || !currentUser?.id) {
       setLiveJobs([]);
       setLoadingState(false);
       setFetchError(null);
@@ -2070,7 +2048,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       try {
         const response = await fetch(
-          `${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities?role=${encodeURIComponent(loggedInCandidate.role)}`,
+          `${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities?candidate_id=${encodeURIComponent(currentUser.id)}`,
           { cache: 'no-store', signal: controller.signal }
         );
         const data = (await response.json().catch(() => null)) as unknown;
@@ -2111,7 +2089,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       controller.abort();
     };
-  }, [isSpectator, loggedInCandidate.role, profileHydrated]);
+  }, [currentUser?.id, isSpectator, profileHydrated]);
 
   useEffect(() => {
     return () => {
@@ -3581,27 +3559,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <div className="space-y-4">
                   {liveJobs.map((job, index) => (
                     <Card
-                      key={`${job.company_name}-${job.title}-${index}`}
+                      key={`${job.recruiter_name}-${job.role_title}-${index}`}
                       className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
                     >
                       <CardContent className="flex flex-col gap-6 p-6 md:flex-row md:items-start md:justify-between">
                         <div className="min-w-0 flex-1">
                           <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
-                            {job.company_name}
+                            {job.recruiter_name}
                           </span>
-                          <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.title}</h3>
-                          <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-400">
-                            {job.description}
-                          </p>
+                          <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.role_title}</h3>
+                          <span className="mt-4 inline-flex rounded-xl border border-purple-400/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-100 shadow-[0_0_24px_rgba(168,85,247,0.12)]">
+                            You match this role by {Math.round(job.match_score)}%
+                          </span>
                         </div>
-                        <a
-                          href={`https://mail.google.com/mail/?view=cm&fs=1&to=${job.company_email}&su=MeliusAI Opportunity Application — ${loggedInCandidate.full_name}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex shrink-0 items-center justify-center rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/25 px-5 py-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-cyan-50 shadow-[0_0_26px_rgba(34,211,238,0.13)] transition hover:border-cyan-200/70 hover:text-white hover:shadow-[0_0_32px_rgba(34,211,238,0.22)]"
-                        >
-                          Apply Directly via Gmail
-                        </a>
+                        <span className="inline-flex shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
+                          {job.status}
+                        </span>
                       </CardContent>
                     </Card>
                   ))}

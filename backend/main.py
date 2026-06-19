@@ -1032,14 +1032,13 @@ async def talent_discovery():
 async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
-    organization_id = request.headers.get("x-organization-id", "").strip() or None
-    company_name = unquote(request.headers.get("x-company-name", "").strip()) or "Verified Organisation"
-    company_email = request.headers.get("x-company-email", "").strip() or None
+    recruiter_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
 
     if not job_title or not core_requirements:
         raise HTTPException(status_code=400, detail="Job title and core requirements are required")
 
     combined_opportunity_text = f"{job_title} {core_requirements}".lower()
+    opportunity_terms = extract_match_terms(combined_opportunity_text)
 
     def contains_role_keyword(keyword: str) -> bool:
         if " " in keyword:
@@ -1061,22 +1060,59 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
 
     try:
         supabase = get_supabase_service_role_client()
-        opportunity_response = await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
-            .insert(
+        profiles_response = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select("id, full_name, bio, role, avg_project_score")
+            .execute()
+        )
+        candidate_profiles = profiles_response.data or []
+        opportunity_rows = []
+
+        for candidate in candidate_profiles:
+            candidate_id = candidate.get("id")
+            candidate_role = str(candidate.get("role") or "").strip()
+            candidate_bio = str(candidate.get("bio") or "").strip()
+            candidate_corpus = f"{candidate_role} {candidate_bio}".lower()
+            keyword_signal, matched_terms = compute_keyword_signal(opportunity_terms, candidate_corpus)
+            role_matches = target_role.lower() in candidate_role.lower()
+
+            if not candidate_id or (not matched_terms and not role_matches):
+                continue
+
+            try:
+                average_project_score = float(candidate.get("avg_project_score") or 0)
+            except (TypeError, ValueError):
+                average_project_score = 0.0
+
+            coverage_ratio = len(matched_terms) / max(len(opportunity_terms), 1)
+            calculated_match_score = round(
+                52
+                + min(18, keyword_signal)
+                + coverage_ratio * 20
+                + (15 if role_matches else 0)
+                + max(0.0, min(100.0, average_project_score)) * 0.1
+            )
+            calculated_match_score = max(1, min(99, calculated_match_score))
+
+            opportunity_rows.append(
                 {
-                    "organization_id": organization_id,
-                    "organization_name": company_name,
-                    "company_name": company_name,
-                    "company_email": company_email,
-                    "title": job_title,
-                    "description": core_requirements,
-                    "job_title": job_title,
-                    "target_role": target_role,
-                    "job_description": core_requirements,
-                    "status": "open",
+                    "candidate_id": candidate_id,
+                    "recruiter_name": recruiter_name,
+                    "role_title": job_title,
+                    "match_score": calculated_match_score,
+                    "status": "active",
                 }
             )
+
+        if not opportunity_rows:
+            return JSONResponse(
+                status_code=201,
+                content={"success": True, "matched_candidates": 0, "opportunities": []},
+            )
+
+        opportunity_response = await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .insert(opportunity_rows)
             .execute()
         )
 
@@ -1086,11 +1122,15 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
             else [opportunity_response.data] if opportunity_response.data else []
         )
         if not created_opportunities:
-            raise RuntimeError("Opportunity creation returned no database record")
+            created_opportunities = opportunity_rows
 
         return JSONResponse(
             status_code=201,
-            content={"success": True, "opportunity": created_opportunities[0]},
+            content={
+                "success": True,
+                "matched_candidates": len(created_opportunities),
+                "opportunities": created_opportunities,
+            },
         )
     except HTTPException:
         raise
@@ -1103,17 +1143,17 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
 
 
 @app.get("/api/get-opportunities")
-async def get_opportunities(role: str):
-    candidate_role = role.strip()
-    if not candidate_role:
-        raise HTTPException(status_code=400, detail="Candidate role is required")
+async def get_opportunities(candidate_id: str):
+    resolved_candidate_id = candidate_id.strip()
+    if not resolved_candidate_id:
+        raise HTTPException(status_code=400, detail="Candidate profile id is required")
 
     try:
         supabase = get_supabase_service_role_client()
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select("title, description, company_name, company_email")
-            .eq("target_role", candidate_role)
+            .select("recruiter_name, role_title, match_score, status")
+            .eq("candidate_id", resolved_candidate_id)
             .order("created_at", desc=True)
             .execute()
         )
