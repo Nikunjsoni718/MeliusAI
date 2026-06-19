@@ -1207,108 +1207,28 @@ async def delete_opportunity(request: Request):
 
 
 @app.post("/api/update-organization-profile")
-async def update_organization_profile(payload: UpdateOrganizationProfileRequest, request: Request):
-    company_name = payload.company_name.strip()
-    company_description = (
-        payload.company_description
-        or payload.company_profile_mission
-        or payload.description
-        or ""
-    ).strip()
-    org_email = (payload.org_email or payload.hiring_contact_email or "").strip().lower()
-
-    if not company_name:
-        raise HTTPException(status_code=400, detail="Company name is required")
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", org_email):
-        raise HTTPException(status_code=400, detail="Enter a valid hiring contact email")
-
+async def update_organization_profile(request: Request):
     try:
-        supabase = get_supabase_service_role_client()
-        authorization = request.headers.get("authorization", "").strip()
-        if not authorization.lower().startswith("bearer "):
-            raise HTTPException(status_code=401, detail="A valid organization session is required")
-
-        access_token = authorization.split(" ", 1)[1].strip()
-        if not access_token:
-            raise HTTPException(status_code=401, detail="A valid organization session is required")
-
-        try:
-            auth_response = await asyncio.to_thread(lambda: supabase.auth.get_user(access_token))
-        except Exception as auth_error:
-            raise HTTPException(
-                status_code=401,
-                detail="Organization session is invalid or expired",
-            ) from auth_error
-        auth_user = getattr(auth_response, "user", None)
-        if auth_user is None:
-            raise HTTPException(status_code=401, detail="Organization session is invalid or expired")
-
-        authenticated_user_id = str(getattr(auth_user, "id", None) or "").strip()
-        requested_user_id = str(payload.user_id or "").strip()
-        if requested_user_id and requested_user_id != authenticated_user_id:
-            raise HTTPException(status_code=403, detail="The supplied user does not match this session")
-        incoming_user_id = requested_user_id or authenticated_user_id
-
-        user_metadata = getattr(auth_user, "user_metadata", None) or {}
-        app_metadata = getattr(auth_user, "app_metadata", None) or {}
-        requested_org_id = str(payload.org_id or "").strip()
-        workspace_id = next(
-            (
-                str(value).strip()
-                for value in (
-                    requested_org_id,
-                    user_metadata.get("organization_id"),
-                    user_metadata.get("org_id"),
-                    user_metadata.get("workspace_id"),
-                    app_metadata.get("organization_id"),
-                    app_metadata.get("org_id"),
-                    app_metadata.get("workspace_id"),
-                    authenticated_user_id,
-                )
-                if value and str(value).strip()
-            ),
-            "",
-        )
-        if not workspace_id:
-            raise HTTPException(status_code=403, detail="No organization workspace is linked to this session")
-
-        organization_response = await asyncio.to_thread(
-            lambda: supabase.table("organizations")
-            .update(
-                {
-                    "company_name": company_name,
-                    "mission_text": company_description,
-                    "company_email": org_email,
-                }
-            )
-            .eq("user_id", incoming_user_id)
-            .execute()
-        )
-        updated_rows = organization_response.data or []
-        if not updated_rows:
-            raise HTTPException(status_code=404, detail="Organization workspace not found")
-
-        updated_organization = updated_rows[0]
-        return JSONResponse(
-            content={
-                "success": True,
-                "organization": {
-                    "id": updated_organization.get("id", workspace_id),
-                    "company_name": updated_organization.get("company_name", company_name),
-                    "company_description": updated_organization.get("mission_text", company_description),
-                    "org_email": updated_organization.get("company_email", org_email),
-                },
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as error:
-        logger.exception("update_organization_profile.failed")
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to update the organization profile right now",
-        ) from error
-
+        # 1. Read the raw JSON payload straight from the network request stream
+        data = await request.json()
+        user_id = data.get("user_id")
+        company_name = data.get("company_name")
+        mission_text = data.get("mission_text")
+        
+        if not user_id:
+            return {"error": "Missing user identification token"}, 400
+            
+        # 2. Execute the synchronized database update using our verified column layouts
+        response = supabase.table("organizations").update({
+            "company_name": company_name,
+            "mission_text": mission_text
+        }).eq("user_id", user_id).execute()
+        
+        return {"status": "success", "data": response.data}
+        
+    except Exception as e:
+        print(f"Profile update crashed: {str(e)}")
+        return {"error": str(e)}, 500
 
 @app.get("/api/get-opportunities")
 async def get_opportunities(candidate_id: str):
