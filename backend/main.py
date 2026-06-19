@@ -392,6 +392,7 @@ class MatchTalentRequest(BaseModel):
 class CreateOpportunityRequest(BaseModel):
     job_title: str
     core_requirements: str
+    company_email: str
 
 
 class UpdateOpportunityRequest(BaseModel):
@@ -1044,10 +1045,13 @@ async def talent_discovery():
 async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
+    company_email = payload.company_email.strip().lower()
     organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
 
     if not job_title or not core_requirements:
         raise HTTPException(status_code=400, detail="Job title and core requirements are required")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", company_email):
+        raise HTTPException(status_code=400, detail="A valid company email is required")
 
     try:
         supabase = get_supabase_service_role_client()
@@ -1055,6 +1059,7 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements,
+            "company_email": company_email,
             "status": "active",
         }
         opportunity_response = await asyncio.to_thread(
@@ -1319,13 +1324,11 @@ async def get_opportunities(candidate_id: str):
             lambda: supabase.table("opportunities")
             .select("*")
             .eq("status", "active")
-            .is_("candidate_id", "null")
             .order("created_at", desc=True)
             .execute()
         )
 
         matched_alerts = []
-        organization_email_by_name: Dict[str, str | None] = {}
         for opportunity in opportunities_response.data or []:
             role_title = str(opportunity.get("role_title") or "").lower()
 
@@ -1345,33 +1348,10 @@ async def get_opportunities(candidate_id: str):
             if not matched_skills:
                 continue
 
-            recruiter_name = str(opportunity.get("recruiter_name") or "").strip()
-            company_email = None
-            if recruiter_name:
-                recruiter_cache_key = recruiter_name.casefold()
-                if recruiter_cache_key not in organization_email_by_name:
-                    organization_response = await asyncio.to_thread(
-                        lambda: supabase.table("organizations")
-                        .select("contact_email")
-                        .eq("name", recruiter_name)
-                        .limit(1)
-                        .execute()
-                    )
-                    organization_rows = organization_response.data or []
-                    stored_email = (
-                        str(organization_rows[0].get("contact_email") or "").strip().lower()
-                        if organization_rows
-                        else ""
-                    )
-                    organization_email_by_name[recruiter_cache_key] = stored_email or None
-
-                company_email = organization_email_by_name[recruiter_cache_key]
-
             match_score = round((len(matched_skills) / max(len(unique_skills), 1)) * 100)
             matched_alerts.append(
                 {
                     **opportunity,
-                    "company_email": company_email,
                     "match_score": match_score,
                     "matched_skills": matched_skills,
                     "triggered_skills": matched_skills,

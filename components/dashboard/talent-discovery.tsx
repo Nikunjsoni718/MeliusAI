@@ -206,6 +206,7 @@ export function OrganizationJobPostingHub() {
             ...(editingId ? { id: editingId } : {}),
             job_title: formData.job_title.trim(),
             core_requirements: formData.core_requirements.trim(),
+            company_email: user?.email?.trim() || '',
           }),
         }
       );
