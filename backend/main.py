@@ -1207,7 +1207,6 @@ async def delete_opportunity(request: Request):
         ) from error
 
 
-# 1. Use the EXACT same decorator prefix as your working create-opportunity route
 @app.post("/api/update-organization-profile")
 async def update_organization_profile(request: Request):
     try:
@@ -1216,31 +1215,50 @@ async def update_organization_profile(request: Request):
         bio_text = data.get("mission_text")
         company_name = data.get("company_name") or "MeliusAI"
         
-        global supabase
-        if 'supabase' not in globals() or supabase is None:
+        # 1. LOOK FOR THE CLIENT ANYWHERE IT COULD BE HIDING
+        client = None
+        if 'supabase' in globals() and globals()['supabase'] is not None:
+            client = globals()['supabase']
+        elif hasattr(request, "app") and hasattr(request.app, "state") and hasattr(request.app.state, "supabase"):
+            client = request.app.state.supabase
+            
+        # 2. SCAN EVERY POSSIBLE ENV VARIABLE VARIATION TO FORCE REBUILD
+        if client is None:
             import os
             from supabase import create_client
-            supabase = create_client(
-                os.environ.get("SUPABASE_URL"), 
-                os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
-            )
             
-        # Strategy 1: Try updating by user_id
-        response = supabase.table("organizations").update({
+            # Checks standard, frontend copy-paste, and project-level keys
+            url = (os.environ.get("SUPABASE_URL") or 
+                   os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or 
+                   os.environ.get("SUPABASE_PROJECT_URL"))
+                   
+            key = (os.environ.get("SUPABASE_KEY") or 
+                   os.environ.get("SUPABASE_ANON_KEY") or 
+                   os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or 
+                   os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+            
+            if not url or not key:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=500, content={"error": "Supabase environment configuration missing on Render variables tab."})
+                
+            client = create_client(url, key)
+            
+        # 3. PUSH THE TEXT DIRECTLY TO THE TABLE
+        response = client.table("organizations").update({
             "mission_text": bio_text,
             "company_name": company_name
         }).eq("user_id", user_id).execute()
         
-        # Strategy 2 Fallback: If user_id column is NULL in DB, match by company name text instead
+        # Fallback Strategy A: If user_id matching returns empty, match by name text
         if not response.data:
-            response = supabase.table("organizations").update({
+            response = client.table("organizations").update({
                 "mission_text": bio_text,
-                "user_id": user_id  # Link the user_id permanently right now
+                "user_id": user_id  
             }).ilike("company_name", company_name).execute()
             
-        # Strategy 3 Fallback: If no row exists at all, insert it fresh
+        # Fallback Strategy B: If no row exists whatsoever, force a fresh insert
         if not response.data:
-            response = supabase.table("organizations").insert({
+            response = client.table("organizations").insert({
                 "company_name": company_name,
                 "mission_text": bio_text,
                 "user_id": user_id
@@ -1251,7 +1269,10 @@ async def update_organization_profile(request: Request):
     except Exception as e:
         print(f"Bio save failed: {str(e)}")
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": str(e)})  
+    
+
+    
 @app.get("/api/get-opportunities")
 async def get_opportunities(candidate_id: str):
     resolved_candidate_id = candidate_id.strip()
