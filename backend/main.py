@@ -394,6 +394,12 @@ class CreateOpportunityRequest(BaseModel):
     core_requirements: str
 
 
+class UpdateOrganizationProfileRequest(BaseModel):
+    company_name: str
+    company_description: str
+    org_email: str
+
+
 class CandidateEvaluation(BaseModel):
     id: str
     full_name: str
@@ -1074,6 +1080,97 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
         ) from error
 
 
+@app.post("/api/update-organization-profile")
+async def update_organization_profile(payload: UpdateOrganizationProfileRequest, request: Request):
+    company_name = payload.company_name.strip()
+    company_description = payload.company_description.strip()
+    org_email = payload.org_email.strip().lower()
+
+    if not company_name:
+        raise HTTPException(status_code=400, detail="Company name is required")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", org_email):
+        raise HTTPException(status_code=400, detail="Enter a valid hiring contact email")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        authorization = request.headers.get("authorization", "").strip()
+        if not authorization.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="A valid organization session is required")
+
+        access_token = authorization.split(" ", 1)[1].strip()
+        if not access_token:
+            raise HTTPException(status_code=401, detail="A valid organization session is required")
+
+        try:
+            auth_response = await asyncio.to_thread(lambda: supabase.auth.get_user(access_token))
+        except Exception as auth_error:
+            raise HTTPException(
+                status_code=401,
+                detail="Organization session is invalid or expired",
+            ) from auth_error
+        auth_user = getattr(auth_response, "user", None)
+        if auth_user is None:
+            raise HTTPException(status_code=401, detail="Organization session is invalid or expired")
+
+        user_metadata = getattr(auth_user, "user_metadata", None) or {}
+        app_metadata = getattr(auth_user, "app_metadata", None) or {}
+        workspace_id = next(
+            (
+                str(value).strip()
+                for value in (
+                    user_metadata.get("organization_id"),
+                    user_metadata.get("org_id"),
+                    user_metadata.get("workspace_id"),
+                    app_metadata.get("organization_id"),
+                    app_metadata.get("org_id"),
+                    app_metadata.get("workspace_id"),
+                    getattr(auth_user, "id", None),
+                )
+                if value and str(value).strip()
+            ),
+            "",
+        )
+        if not workspace_id:
+            raise HTTPException(status_code=403, detail="No organization workspace is linked to this session")
+
+        organization_response = await asyncio.to_thread(
+            lambda: supabase.table("organizations")
+            .update(
+                {
+                    "name": company_name,
+                    "description": company_description,
+                    "contact_email": org_email,
+                }
+            )
+            .eq("id", workspace_id)
+            .execute()
+        )
+        updated_rows = organization_response.data or []
+        if not updated_rows:
+            raise HTTPException(status_code=404, detail="Organization workspace not found")
+
+        updated_organization = updated_rows[0]
+        return JSONResponse(
+            content={
+                "success": True,
+                "organization": {
+                    "id": updated_organization.get("id", workspace_id),
+                    "company_name": updated_organization.get("name", company_name),
+                    "company_description": updated_organization.get("description", company_description),
+                    "org_email": updated_organization.get("contact_email", org_email),
+                },
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("update_organization_profile.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to update the organization profile right now",
+        ) from error
+
+
 @app.get("/api/get-opportunities")
 async def get_opportunities(candidate_id: str):
     resolved_candidate_id = candidate_id.strip()
@@ -1113,6 +1210,7 @@ async def get_opportunities(candidate_id: str):
         )
 
         matched_alerts = []
+        organization_email_by_name: Dict[str, str | None] = {}
         for opportunity in opportunities_response.data or []:
             role_title = str(opportunity.get("role_title") or "").lower()
 
@@ -1132,10 +1230,33 @@ async def get_opportunities(candidate_id: str):
             if not matched_skills:
                 continue
 
+            recruiter_name = str(opportunity.get("recruiter_name") or "").strip()
+            company_email = None
+            if recruiter_name:
+                recruiter_cache_key = recruiter_name.casefold()
+                if recruiter_cache_key not in organization_email_by_name:
+                    organization_response = await asyncio.to_thread(
+                        lambda: supabase.table("organizations")
+                        .select("contact_email")
+                        .eq("name", recruiter_name)
+                        .limit(1)
+                        .execute()
+                    )
+                    organization_rows = organization_response.data or []
+                    stored_email = (
+                        str(organization_rows[0].get("contact_email") or "").strip().lower()
+                        if organization_rows
+                        else ""
+                    )
+                    organization_email_by_name[recruiter_cache_key] = stored_email or None
+
+                company_email = organization_email_by_name[recruiter_cache_key]
+
             match_score = round((len(matched_skills) / max(len(unique_skills), 1)) * 100)
             matched_alerts.append(
                 {
                     **opportunity,
+                    "company_email": company_email,
                     "match_score": match_score,
                     "matched_skills": matched_skills,
                     "triggered_skills": matched_skills,

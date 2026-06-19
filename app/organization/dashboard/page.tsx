@@ -34,9 +34,13 @@ interface CandidateProfile {
 
 type OrganizationRecord = {
   id: string | null;
+  name?: string | null;
+  description?: string | null;
+  contact_email?: string | null;
   company_name?: string | null;
   slug?: string | null;
   bio: string | null;
+  org_email?: string | null;
   linked_profiles: unknown;
 };
 
@@ -95,6 +99,9 @@ const mobileNavItems: Array<{
 ];
 
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
+const ORGANIZATION_PROFILE_ENDPOINT = `${(
+  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
+).replace(/\/$/, '')}/api/update-organization-profile`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -281,6 +288,7 @@ function OrganizationDashboardContent() {
   const [workspaceUsername, setWorkspaceUsername] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [bioState, setBioState] = useState<string>('');
+  const [orgEmail, setOrgEmail] = useState<string>('');
   const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
@@ -463,46 +471,63 @@ function OrganizationDashboardContent() {
       return;
     }
 
+    const normalizedOrgEmail = orgEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedOrgEmail)) {
+      setProfileSaveState('error');
+      setProfileSaveError('Enter a valid hiring contact email.');
+      return;
+    }
+
     setProfileSaveState('saving');
     setProfileSaveError(null);
 
     try {
-      const { error } = await getOrganizationClient()
-        .from('organizations')
-        .update({
-          bio: bioState,
-          linked_profiles: linkedProfilesState,
-        })
-        .eq('id', currentOrgId);
-
-      if (error) {
-        throw new Error(error.message);
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+      if (sessionError || !session?.access_token) {
+        throw new Error('Your organization session has expired. Please sign in again.');
       }
 
-      const { data: refreshedOrganization, error: refreshError } = await getOrganizationClient()
-        .from('organizations')
-        .select('id, company_name, slug, bio, linked_profiles')
-        .eq('id', currentOrgId)
-        .maybeSingle();
+      const response = await fetch(ORGANIZATION_PROFILE_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          company_name: companyName.trim(),
+          company_description: bioState.trim(),
+          org_email: normalizedOrgEmail,
+        }),
+      });
+      const responsePayload = (await response.json().catch(() => null)) as
+        | {
+            success?: boolean;
+            detail?: string;
+            organization?: {
+              id?: string;
+              company_name?: string;
+              company_description?: string;
+              org_email?: string;
+            };
+          }
+        | null;
 
-      if (refreshError) {
-        console.warn('Organization profile saved, but refresh failed:', refreshError.message);
+      if (!response.ok || !responsePayload?.success) {
+        throw new Error(responsePayload?.detail || `Profile update failed (HTTP ${response.status}).`);
       }
 
-      if (refreshedOrganization) {
-        const refreshedTitle = refreshedOrganization.company_name || companyName;
-        const refreshedSlug = refreshedOrganization.slug || workspaceUsername;
-
-        setCompanyName(refreshedTitle);
-        setWorkspaceUsername(refreshedSlug);
-        setActiveWorkspace({
-          id: refreshedOrganization.id,
-          title: refreshedTitle,
-          slug: refreshedSlug,
-        });
-        setBioState(refreshedOrganization.bio ?? '');
-        setLinkedProfilesState(normalizeLinkedProfiles(refreshedOrganization.linked_profiles));
-      }
+      const updatedOrganization = responsePayload.organization;
+      const updatedCompanyName = updatedOrganization?.company_name?.trim() || companyName;
+      setCompanyName(updatedCompanyName);
+      setBioState(updatedOrganization?.company_description ?? bioState);
+      setOrgEmail(updatedOrganization?.org_email ?? normalizedOrgEmail);
+      setActiveWorkspace((currentWorkspace) => ({
+        ...currentWorkspace,
+        title: updatedCompanyName,
+      }));
 
       setProfileSaveError(null);
       setProfileSaveState('saved');
@@ -574,6 +599,7 @@ function OrganizationDashboardContent() {
               slug?: string;
               org_username?: string;
               bio?: string;
+              org_email?: string;
               linked_profiles?: unknown;
             };
           };
@@ -588,6 +614,7 @@ function OrganizationDashboardContent() {
                   slug?: string;
                   org_username?: string;
                   bio?: string;
+                  org_email?: string;
                   linked_profiles?: unknown;
                 }
               | undefined);
@@ -604,6 +631,7 @@ function OrganizationDashboardContent() {
             slug: metadataWorkspaceUsername,
           });
           setBioState(meta?.bio ?? '');
+          setOrgEmail(meta?.org_email ?? activeUser.email ?? '');
           setLinkedProfilesState(normalizeLinkedProfiles(meta?.linked_profiles));
 
           async function resolveOrganizationBy(column: string, value?: string | null) {
@@ -613,7 +641,9 @@ function OrganizationDashboardContent() {
 
             const { data, error } = await getOrganizationClient()
               .from('organizations')
-              .select('id, company_name, slug, bio, linked_profiles')
+              .select(
+                'id, name, description, contact_email, company_name, slug, bio, org_email, linked_profiles'
+              )
               .eq(column, value)
               .maybeSingle();
 
@@ -632,7 +662,7 @@ function OrganizationDashboardContent() {
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
           if (organization && active) {
-            const resolvedWorkspaceTitle = organization.company_name || metadataCompanyName;
+            const resolvedWorkspaceTitle = organization.name || organization.company_name || metadataCompanyName;
             const resolvedWorkspaceSlug = organization.slug || metadataWorkspaceUsername;
 
             setCompanyName(resolvedWorkspaceTitle);
@@ -642,7 +672,10 @@ function OrganizationDashboardContent() {
               title: resolvedWorkspaceTitle,
               slug: resolvedWorkspaceSlug,
             });
-            setBioState(organization.bio ?? '');
+            setBioState(organization.description ?? organization.bio ?? '');
+            setOrgEmail(
+              organization.contact_email ?? organization.org_email ?? meta?.org_email ?? activeUser.email ?? ''
+            );
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
         }
@@ -821,6 +854,24 @@ function OrganizationDashboardContent() {
                 className="mt-5 w-full bg-[#040615]/60 border border-slate-800/80 rounded-xl p-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all resize-none h-28"
               />
 
+              <label className="mt-5 block">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">
+                  Hiring Contact Email
+                </span>
+                <input
+                  type="email"
+                  value={orgEmail}
+                  onChange={(event) => {
+                    setOrgEmail(event.target.value);
+                    setProfileSaveState('idle');
+                    setProfileSaveError(null);
+                  }}
+                  placeholder="e.g., careers@meliusai.in"
+                  autoComplete="email"
+                  className="mt-2 w-full rounded-xl border border-slate-800/80 bg-[#040615]/60 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10"
+                />
+              </label>
+
               {isWorkspaceContextPending ? (
                 <div className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-500">
                   <span className="h-3 w-3 animate-spin rounded-full border border-purple-400/20 border-t-purple-300" />
@@ -829,6 +880,14 @@ function OrganizationDashboardContent() {
               ) : null}
               {profileSaveError && !isWorkspaceContextPending ? (
                 <p className="mt-3 text-xs font-medium text-rose-400">{profileSaveError}</p>
+              ) : null}
+              {profileSaveState === 'saved' ? (
+                <p
+                  className="mt-3 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-100"
+                  role="status"
+                >
+                  Organization profile and hiring contact updated successfully.
+                </p>
               ) : null}
               <div className="flex justify-end">
                 <button
@@ -843,7 +902,7 @@ function OrganizationDashboardContent() {
                     ? 'Saving...'
                     : profileSaveState === 'saved'
                       ? 'Saved ✓'
-                      : 'Save Profile'}
+                      : 'Save Profile Details'}
                 </button>
               </div>
             </div>
