@@ -1208,19 +1208,20 @@ async def delete_opportunity(request: Request):
 
 
 # 1. Use the EXACT same decorator prefix as your working create-opportunity route
-@app.post("/api/update-organization-profile") 
+@app.post("/api/update-organization-profile")
 async def update_organization_profile(request: Request):
     try:
-        # Pull the incoming data package straight from the network stream
+        # 1. Extract the raw text inputs straight from the network stream
         data = await request.json()
         user_id = data.get("user_id")
         bio_text = data.get("mission_text")
         company_name = data.get("company_name")
         
-        # Fallback query runner to ensure the database client is accessible locally
-        from main import supabase 
-        
-        # Push the text directly into the company's verified column
+        if not user_id:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=400, content={"error": "Missing user identification token"})
+            
+        # 2. Use the global supabase client that your other working routes use
         response = supabase.table("organizations").update({
             "company_name": company_name,
             "mission_text": bio_text
