@@ -1077,20 +1077,20 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
                     "status": "open",
                 }
             )
-            .select(
-                "id, title, description, company_name, company_email, "
-                "target_role, status, created_at"
-            )
-            .single()
             .execute()
         )
 
-        if not opportunity_response.data:
+        created_opportunities = (
+            opportunity_response.data
+            if isinstance(opportunity_response.data, list)
+            else [opportunity_response.data] if opportunity_response.data else []
+        )
+        if not created_opportunities:
             raise RuntimeError("Opportunity creation returned no database record")
 
         return JSONResponse(
             status_code=201,
-            content={"success": True, "opportunity": opportunity_response.data},
+            content={"success": True, "opportunity": created_opportunities[0]},
         )
     except HTTPException:
         raise
