@@ -35,7 +35,7 @@ interface CandidateProfile {
 type OrganizationRecord = {
   id: string | null;
   name?: string | null;
-  description?: string | null;
+  mission_text?: string | null;
   company_email?: string | null;
   contact_email?: string | null;
   company_name?: string | null;
@@ -646,7 +646,7 @@ function OrganizationDashboardContent() {
             const { data, error } = await getOrganizationClient()
               .from('organizations')
               .select(
-                'id, name, description, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
+                'id, name, mission_text, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
               )
               .eq(column, value)
               .maybeSingle();
@@ -676,7 +676,7 @@ function OrganizationDashboardContent() {
               title: resolvedWorkspaceTitle,
               slug: resolvedWorkspaceSlug,
             });
-            setBioState(organization.description ?? organization.bio ?? '');
+            setBioState(organization.mission_text ?? organization.bio ?? '');
             setOrgEmail(
               organization.company_email ??
                 organization.contact_email ??

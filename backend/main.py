@@ -1276,7 +1276,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
             .update(
                 {
                     "name": company_name,
-                    "description": company_description,
+                    "mission_text": company_description,
                     "company_email": org_email,
                 }
             )
@@ -1294,7 +1294,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
                 "organization": {
                     "id": updated_organization.get("id", workspace_id),
                     "company_name": updated_organization.get("name", company_name),
-                    "company_description": updated_organization.get("description", company_description),
+                    "company_description": updated_organization.get("mission_text", company_description),
                     "org_email": updated_organization.get("company_email", org_email),
                 },
             }
