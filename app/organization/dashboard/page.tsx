@@ -492,30 +492,63 @@ function OrganizationDashboardContent() {
         company_name: normalizedCompanyName,
         company_email: normalizedOrgEmail,
       };
-      const { data: primaryRows, error: primaryError } = await supabase
-        .from('organizations')
-        .update(profileUpdate)
-        .eq('user_id', loggedInUserId)
-        .select('id, company_name, mission_text, company_email');
 
-      let updatedOrganization = primaryRows?.[0] ?? null;
-      if (primaryError || !primaryRows || primaryRows.length === 0) {
-        const { data: retryRows, error: retryError } = await supabase
+      const { data: userOrganization, error: userLookupError } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('user_id', loggedInUserId)
+        .maybeSingle();
+
+      if (userLookupError) {
+        throw userLookupError;
+      }
+
+      let existingOrganization = userOrganization;
+      if (!existingOrganization) {
+        const { data: companyOrganization, error: companyLookupError } = await supabase
+          .from('organizations')
+          .select('id')
+          .ilike('company_name', normalizedCompanyName)
+          .maybeSingle();
+
+        if (companyLookupError) {
+          throw companyLookupError;
+        }
+        existingOrganization = companyOrganization;
+      }
+
+      let updatedOrganization;
+      if (existingOrganization?.id) {
+        const { data: updatedRow, error: updateError } = await supabase
           .from('organizations')
           .update({
             ...profileUpdate,
             user_id: loggedInUserId,
           })
-          .ilike('company_name', normalizedCompanyName)
-          .select('id, company_name, mission_text, company_email');
+          .eq('id', existingOrganization.id)
+          .select('id, company_name, mission_text, company_email')
+          .single();
 
-        if (retryError) {
-          throw retryError;
+        if (updateError) {
+          throw updateError;
         }
-        if (!retryRows || retryRows.length === 0) {
-          throw new Error('No organization profile matched this account or company name.');
+        updatedOrganization = updatedRow;
+      } else {
+        const { data: insertedRow, error: insertError } = await supabase
+          .from('organizations')
+          .insert([
+            {
+              ...profileUpdate,
+              user_id: loggedInUserId,
+            },
+          ])
+          .select('id, company_name, mission_text, company_email')
+          .single();
+
+        if (insertError) {
+          throw insertError;
         }
-        updatedOrganization = retryRows[0];
+        updatedOrganization = insertedRow;
       }
 
       const updatedCompanyName = updatedOrganization?.company_name?.trim() || normalizedCompanyName;
@@ -524,6 +557,7 @@ function OrganizationDashboardContent() {
       setOrgEmail(updatedOrganization?.company_email ?? normalizedOrgEmail);
       setActiveWorkspace((currentWorkspace) => ({
         ...currentWorkspace,
+        id: updatedOrganization?.id ?? currentWorkspace.id,
         title: updatedCompanyName,
       }));
 
