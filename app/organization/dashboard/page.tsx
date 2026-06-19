@@ -493,33 +493,33 @@ function OrganizationDashboardContent() {
         company_email: normalizedOrgEmail,
       };
 
-      const { data: userOrganization, error: userLookupError } = await supabase
+      const { data: userRows, error: userLookupError } = await supabase
         .from('organizations')
         .select('id')
         .eq('user_id', loggedInUserId)
-        .maybeSingle();
+        .limit(1);
 
       if (userLookupError) {
         throw userLookupError;
       }
 
-      let existingOrganization = userOrganization;
+      let existingOrganization = userRows && userRows.length > 0 ? userRows[0] : null;
       if (!existingOrganization) {
-        const { data: companyOrganization, error: companyLookupError } = await supabase
+        const { data: companyRows, error: companyLookupError } = await supabase
           .from('organizations')
           .select('id')
           .ilike('company_name', normalizedCompanyName)
-          .maybeSingle();
+          .limit(1);
 
         if (companyLookupError) {
           throw companyLookupError;
         }
-        existingOrganization = companyOrganization;
+        existingOrganization = companyRows && companyRows.length > 0 ? companyRows[0] : null;
       }
 
       let updatedOrganization;
       if (existingOrganization?.id) {
-        const { data: updatedRow, error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
           .from('organizations')
           .update({
             ...profileUpdate,
@@ -527,14 +527,17 @@ function OrganizationDashboardContent() {
           })
           .eq('id', existingOrganization.id)
           .select('id, company_name, mission_text, company_email')
-          .single();
+          .limit(1);
 
         if (updateError) {
           throw updateError;
         }
-        updatedOrganization = updatedRow;
+        if (!updatedRows || updatedRows.length === 0) {
+          throw new Error('The organization row could not be returned after updating.');
+        }
+        updatedOrganization = updatedRows[0];
       } else {
-        const { data: insertedRow, error: insertError } = await supabase
+        const { data: insertedRows, error: insertError } = await supabase
           .from('organizations')
           .insert([
             {
@@ -543,12 +546,15 @@ function OrganizationDashboardContent() {
             },
           ])
           .select('id, company_name, mission_text, company_email')
-          .single();
+          .limit(1);
 
         if (insertError) {
           throw insertError;
         }
-        updatedOrganization = insertedRow;
+        if (!insertedRows || insertedRows.length === 0) {
+          throw new Error('The organization row could not be returned after inserting.');
+        }
+        updatedOrganization = insertedRows[0];
       }
 
       const updatedCompanyName = updatedOrganization?.company_name?.trim() || normalizedCompanyName;
