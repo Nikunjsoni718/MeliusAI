@@ -394,6 +394,12 @@ class CreateOpportunityRequest(BaseModel):
     core_requirements: str
 
 
+class UpdateOpportunityRequest(BaseModel):
+    id: str
+    job_title: str
+    core_requirements: str
+
+
 class UpdateOrganizationProfileRequest(BaseModel):
     company_name: str
     company_description: str
@@ -1048,6 +1054,7 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
         insert_data = {
             "recruiter_name": organization_name,
             "role_title": job_title,
+            "description": core_requirements,
             "status": "active",
         }
         opportunity_response = await asyncio.to_thread(
@@ -1077,6 +1084,114 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
         raise HTTPException(
             status_code=503,
             detail="Unable to broadcast this opportunity right now",
+        ) from error
+
+
+@app.get("/api/organization-opportunities")
+async def organization_opportunities(recruiter_name: str):
+    resolved_recruiter_name = recruiter_name.strip()
+    if not resolved_recruiter_name:
+        raise HTTPException(status_code=400, detail="Recruiter name is required")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        opportunities_response = await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .select("*")
+            .eq("recruiter_name", resolved_recruiter_name)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return JSONResponse(content=opportunities_response.data or [])
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("organization_opportunities.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to load organization opportunities right now",
+        ) from error
+
+
+@app.put("/api/update-opportunity")
+async def update_opportunity(payload: UpdateOpportunityRequest):
+    opportunity_id = payload.id.strip()
+    job_title = payload.job_title.strip()
+    core_requirements = payload.core_requirements.strip()
+
+    if not opportunity_id:
+        raise HTTPException(status_code=400, detail="Opportunity id is required")
+    if not job_title or not core_requirements:
+        raise HTTPException(status_code=400, detail="Job title and core requirements are required")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        opportunity_response = await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .update(
+                {
+                    "role_title": job_title,
+                    "description": core_requirements,
+                }
+            )
+            .eq("id", opportunity_id)
+            .execute()
+        )
+        updated_rows = opportunity_response.data or []
+        if not updated_rows:
+            raise HTTPException(status_code=404, detail="Opportunity not found")
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "opportunity": updated_rows[0],
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("update_opportunity.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to update this opportunity right now",
+        ) from error
+
+
+@app.delete("/api/delete-opportunity")
+async def delete_opportunity(request: Request):
+    opportunity_id = str(request.query_params.get("id") or "").strip()
+    if not opportunity_id:
+        try:
+            request_data = await request.json()
+        except Exception:
+            request_data = {}
+        if isinstance(request_data, dict):
+            opportunity_id = str(request_data.get("id") or "").strip()
+
+    if not opportunity_id:
+        raise HTTPException(status_code=400, detail="Opportunity id is required")
+
+    try:
+        supabase = get_supabase_service_role_client()
+        await asyncio.to_thread(
+            lambda: supabase.table("opportunities")
+            .delete()
+            .eq("id", opportunity_id)
+            .execute()
+        )
+        return JSONResponse(
+            content={
+                "success": True,
+                "deleted_opportunity_id": opportunity_id,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("delete_opportunity.failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to delete this opportunity right now",
         ) from error
 
 
