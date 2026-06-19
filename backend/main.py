@@ -73,6 +73,7 @@ async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 supabase_backend_client = None
 supabase_service_role_client = None
+supabase = None
 
 
 def get_supabase_backend_client():
@@ -1209,26 +1210,75 @@ async def delete_opportunity(request: Request):
 @app.post("/api/update-organization-profile")
 async def update_organization_profile(request: Request):
     try:
-        # 1. Read the raw JSON payload straight from the network request stream
+        global supabase
+        if supabase is None:
+            supabase = get_supabase_service_role_client()
+
         data = await request.json()
-        user_id = data.get("user_id")
-        company_name = data.get("company_name")
-        mission_text = data.get("mission_text")
-        
-        if not user_id:
-            return {"error": "Missing user identification token"}, 400
-            
-        # 2. Execute the synchronized database update using our verified column layouts
-        response = supabase.table("organizations").update({
-            "company_name": company_name,
-            "mission_text": mission_text
-        }).eq("user_id", user_id).execute()
-        
-        return {"status": "success", "data": response.data}
-        
-    except Exception as e:
-        print(f"Profile update crashed: {str(e)}")
-        return {"error": str(e)}, 500
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid organization profile payload")
+
+        user_id = str(data.get("user_id") or "").strip()
+        org_id = str(data.get("org_id") or "").strip()
+        company_name = str(data.get("company_name") or "").strip()
+        mission_text = str(
+            data.get("mission_text")
+            or data.get("company_profile_mission")
+            or data.get("description")
+            or ""
+        ).strip()
+        company_email = str(
+            data.get("company_email")
+            or data.get("hiring_contact_email")
+            or data.get("org_email")
+            or ""
+        ).strip().lower()
+
+        if not user_id and not org_id:
+            raise HTTPException(status_code=400, detail="Missing user or organization identifier")
+        if not company_name:
+            raise HTTPException(status_code=400, detail="Company name is required")
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", company_email):
+            raise HTTPException(status_code=400, detail="Enter a valid hiring contact email")
+
+        update_query = supabase.table("organizations").update(
+            {
+                "company_name": company_name,
+                "mission_text": mission_text,
+                "company_email": company_email,
+            }
+        )
+        if user_id:
+            update_query = update_query.eq("user_id", user_id)
+        else:
+            update_query = update_query.eq("id", org_id)
+
+        response = await asyncio.to_thread(update_query.execute)
+        updated_rows = response.data or []
+        if not updated_rows:
+            raise HTTPException(status_code=404, detail="Organization workspace not found")
+
+        updated_organization = updated_rows[0]
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "organization": {
+                    "id": updated_organization.get("id", org_id or user_id),
+                    "company_name": updated_organization.get("company_name", company_name),
+                    "company_description": updated_organization.get("mission_text", mission_text),
+                    "org_email": updated_organization.get("company_email", company_email),
+                },
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("update_organization_profile.failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update the organization profile",
+        ) from error
 
 @app.get("/api/get-opportunities")
 async def get_opportunities(candidate_id: str):
