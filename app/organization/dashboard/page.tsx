@@ -56,7 +56,7 @@ const navItems: Array<{
   { label: 'AI Matcher', href: '/organization/dashboard?tab=matcher', icon: Cpu, targetId: 'ai-matcher' },
   { label: 'Talent Discovery', href: '/organization/talent-discovery', icon: Compass, targetId: 'talent-discovery' },
   { label: 'Search', href: '/organization/search', icon: Search },
-  { label: 'About Us', href: '/organization/about', icon: Info },
+  { label: 'Manifesto', href: '/organization/about', icon: Info },
 ];
 
 const mobileNavItems: Array<{
