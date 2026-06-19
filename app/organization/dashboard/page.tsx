@@ -32,18 +32,6 @@ interface CandidateProfile {
   aiReasoning?: string;
 }
 
-type OrganizationRecord = {
-  id: string | null;
-  mission_text?: string | null;
-  company_email?: string | null;
-  contact_email?: string | null;
-  company_name?: string | null;
-  slug?: string | null;
-  bio: string | null;
-  org_email?: string | null;
-  linked_profiles: unknown;
-};
-
 type ActiveWorkspaceContext = {
   id: string | null;
   title: string;
@@ -56,22 +44,6 @@ type OrganizationMessage = {
   id: string;
   body: string;
   sentAt: string;
-};
-
-type OrganizationTableClient = {
-  from: (table: 'organizations') => {
-    select: (columns: string) => {
-      eq: (column: string, value: string) => {
-        maybeSingle: () => Promise<{ data: OrganizationRecord | null; error: { message: string } | null }>;
-      };
-    };
-    update: (values: {
-      bio: string;
-      linked_profiles: OrganizationLinkedProfile[];
-    }) => {
-      eq: (column: string, value: string) => Promise<{ error: { message: string } | null }>;
-    };
-  };
 };
 
 const navItems: Array<{
@@ -331,10 +303,6 @@ function OrganizationDashboardContent() {
     window.setTimeout(() => {
       document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 0);
-  }
-
-  function getOrganizationClient() {
-    return supabase as unknown as OrganizationTableClient;
   }
 
   async function handleSearchTalent(event?: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement>) {
@@ -676,33 +644,35 @@ function OrganizationDashboardContent() {
           setOrgEmail(meta?.org_email ?? activeUser.email ?? '');
           setLinkedProfilesState(normalizeLinkedProfiles(meta?.linked_profiles));
 
-          async function resolveOrganizationBy(column: string, value?: string | null) {
-            if (!value) {
-              return null;
-            }
+          const { data: userOrganizationRows, error: userOrganizationError } = await supabase
+            .from('organizations')
+            .select('*')
+            .eq('user_id', activeUser.id)
+            .limit(1);
 
-            const { data, error } = await getOrganizationClient()
-              .from('organizations')
-              .select(
-                'id, mission_text, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
-              )
-              .eq(column, value)
-              .maybeSingle();
-
-            if (error) {
-              console.warn(`Unable to resolve organization by ${column}:`, error.message);
-              return null;
-            }
-
-            return data;
+          if (userOrganizationError) {
+            throw userOrganizationError;
           }
 
-          const organization =
-            (await resolveOrganizationBy('user_id', activeUser.id)) ||
-            (await resolveOrganizationBy('id', metadataOrganizationId)) ||
-            (await resolveOrganizationBy('id', activeUser.id)) ||
-            (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
-            (await resolveOrganizationBy('company_name', metadataCompanyName));
+          let organization =
+            userOrganizationRows && userOrganizationRows.length > 0 ? userOrganizationRows[0] : null;
+
+          if (!organization) {
+            const { data: companyOrganizationRows, error: companyOrganizationError } = await supabase
+              .from('organizations')
+              .select('*')
+              .ilike('company_name', metadataCompanyName)
+              .limit(1);
+
+            if (companyOrganizationError) {
+              throw companyOrganizationError;
+            }
+
+            organization =
+              companyOrganizationRows && companyOrganizationRows.length > 0
+                ? companyOrganizationRows[0]
+                : null;
+          }
 
           if (organization && active) {
             const resolvedWorkspaceTitle = organization.company_name || metadataCompanyName;
