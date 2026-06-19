@@ -34,7 +34,6 @@ interface CandidateProfile {
 
 type OrganizationRecord = {
   id: string | null;
-  name?: string | null;
   mission_text?: string | null;
   company_email?: string | null;
   contact_email?: string | null;
@@ -646,7 +645,7 @@ function OrganizationDashboardContent() {
             const { data, error } = await getOrganizationClient()
               .from('organizations')
               .select(
-                'id, name, mission_text, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
+                'id, mission_text, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
               )
               .eq(column, value)
               .maybeSingle();
@@ -660,13 +659,14 @@ function OrganizationDashboardContent() {
           }
 
           const organization =
+            (await resolveOrganizationBy('user_id', activeUser.id)) ||
             (await resolveOrganizationBy('id', metadataOrganizationId)) ||
             (await resolveOrganizationBy('id', activeUser.id)) ||
             (await resolveOrganizationBy('slug', metadataWorkspaceUsername)) ||
             (await resolveOrganizationBy('company_name', metadataCompanyName));
 
           if (organization && active) {
-            const resolvedWorkspaceTitle = organization.name || organization.company_name || metadataCompanyName;
+            const resolvedWorkspaceTitle = organization.company_name || metadataCompanyName;
             const resolvedWorkspaceSlug = organization.slug || metadataWorkspaceUsername;
 
             setCompanyName(resolvedWorkspaceTitle);

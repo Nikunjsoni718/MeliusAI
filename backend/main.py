@@ -1247,6 +1247,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
         requested_user_id = str(payload.user_id or "").strip()
         if requested_user_id and requested_user_id != authenticated_user_id:
             raise HTTPException(status_code=403, detail="The supplied user does not match this session")
+        incoming_user_id = requested_user_id or authenticated_user_id
 
         user_metadata = getattr(auth_user, "user_metadata", None) or {}
         app_metadata = getattr(auth_user, "app_metadata", None) or {}
@@ -1275,12 +1276,12 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
             lambda: supabase.table("organizations")
             .update(
                 {
-                    "name": company_name,
+                    "company_name": company_name,
                     "mission_text": company_description,
                     "company_email": org_email,
                 }
             )
-            .eq("id", workspace_id)
+            .eq("user_id", incoming_user_id)
             .execute()
         )
         updated_rows = organization_response.data or []
@@ -1293,7 +1294,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
                 "success": True,
                 "organization": {
                     "id": updated_organization.get("id", workspace_id),
-                    "company_name": updated_organization.get("name", company_name),
+                    "company_name": updated_organization.get("company_name", company_name),
                     "company_description": updated_organization.get("mission_text", company_description),
                     "org_email": updated_organization.get("company_email", org_email),
                 },
