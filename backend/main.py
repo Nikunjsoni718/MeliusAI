@@ -391,7 +391,8 @@ class MatchTalentRequest(BaseModel):
 
 class CreateOpportunityRequest(BaseModel):
     job_title: str
-    core_requirements: str
+    core_requirements: str | None = None
+    description: str | None = None
     company_email: str
 
 
@@ -1044,11 +1045,11 @@ async def talent_discovery():
 @app.post("/api/create-opportunity", status_code=201)
 async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
-    core_requirements = payload.core_requirements.strip()
+    core_requirements_text = (payload.core_requirements or payload.description or "").strip()
     company_email = payload.company_email.strip().lower()
     organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
 
-    if not job_title or not core_requirements:
+    if not job_title or not core_requirements_text:
         raise HTTPException(status_code=400, detail="Job title and core requirements are required")
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", company_email):
         raise HTTPException(status_code=400, detail="A valid company email is required")
@@ -1058,7 +1059,7 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
         insert_data = {
             "recruiter_name": organization_name,
             "role_title": job_title,
-            "description": core_requirements,
+            "description": core_requirements_text,
             "company_email": company_email,
             "status": "active",
         }
