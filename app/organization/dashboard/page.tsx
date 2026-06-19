@@ -99,9 +99,6 @@ const mobileNavItems: Array<{
 ];
 
 const TALENT_MATCH_FEEDBACK_ENDPOINT = `${process.env.NEXT_PUBLIC_API_URL}/api/match-feedback`;
-const ORGANIZATION_PROFILE_ENDPOINT = `${(
-  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
-).replace(/\/$/, '')}/api/update-organization-profile`;
 
 function normalizeLinkedProfiles(value: unknown): OrganizationLinkedProfile[] {
   if (!Array.isArray(value)) {
@@ -480,7 +477,7 @@ function OrganizationDashboardContent() {
         data: { session },
         error: sessionError,
       } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
+      if (sessionError || !session?.user) {
         throw new Error('Your organization session has expired. Please sign in again.');
       }
 
@@ -488,45 +485,43 @@ function OrganizationDashboardContent() {
       if (!loggedInUserId) {
         throw new Error('Unable to resolve the authenticated organization account. Please sign in again.');
       }
-      const workspaceIdentifier = currentOrgId || loggedInUserId;
 
-      const response = await fetch(ORGANIZATION_PROFILE_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          company_name: companyName.trim(),
-          company_profile_mission: bioState.trim(),
-          description: bioState.trim(),
-          hiring_contact_email: normalizedOrgEmail,
-          user_id: loggedInUserId,
-          org_id: workspaceIdentifier,
-        }),
-      });
-      const responsePayload = (await response.json().catch(() => null)) as
-        | {
-            success?: boolean;
-            detail?: string;
-            organization?: {
-              id?: string;
-              company_name?: string;
-              company_description?: string;
-              org_email?: string;
-            };
-          }
-        | null;
+      const normalizedCompanyName = companyName.trim();
+      const profileUpdate = {
+        mission_text: bioState.trim(),
+        company_name: normalizedCompanyName,
+        company_email: normalizedOrgEmail,
+      };
+      const { data: primaryRows, error: primaryError } = await supabase
+        .from('organizations')
+        .update(profileUpdate)
+        .eq('user_id', loggedInUserId)
+        .select('id, company_name, mission_text, company_email');
 
-      if (!response.ok || !responsePayload?.success) {
-        throw new Error(responsePayload?.detail || `Profile update failed (HTTP ${response.status}).`);
+      let updatedOrganization = primaryRows?.[0] ?? null;
+      if (primaryError || !primaryRows || primaryRows.length === 0) {
+        const { data: retryRows, error: retryError } = await supabase
+          .from('organizations')
+          .update({
+            ...profileUpdate,
+            user_id: loggedInUserId,
+          })
+          .ilike('company_name', normalizedCompanyName)
+          .select('id, company_name, mission_text, company_email');
+
+        if (retryError) {
+          throw retryError;
+        }
+        if (!retryRows || retryRows.length === 0) {
+          throw new Error('No organization profile matched this account or company name.');
+        }
+        updatedOrganization = retryRows[0];
       }
 
-      const updatedOrganization = responsePayload.organization;
-      const updatedCompanyName = updatedOrganization?.company_name?.trim() || companyName;
+      const updatedCompanyName = updatedOrganization?.company_name?.trim() || normalizedCompanyName;
       setCompanyName(updatedCompanyName);
-      setBioState(updatedOrganization?.company_description ?? bioState);
-      setOrgEmail(updatedOrganization?.org_email ?? normalizedOrgEmail);
+      setBioState(updatedOrganization?.mission_text ?? bioState);
+      setOrgEmail(updatedOrganization?.company_email ?? normalizedOrgEmail);
       setActiveWorkspace((currentWorkspace) => ({
         ...currentWorkspace,
         title: updatedCompanyName,
