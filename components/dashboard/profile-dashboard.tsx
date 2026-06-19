@@ -69,6 +69,9 @@ type LiveOpportunityItem = {
   recruiter_name: string;
   role_title: string;
   match_score: number;
+  matched_skills: string[];
+  match_explanation: string;
+  company_email: string | null;
   status: string;
 };
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
@@ -217,6 +220,12 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
   }
 
   const rawMatchScore = Number(opportunity.match_score ?? 0);
+  const matchedSkills = Array.isArray(opportunity.matched_skills)
+    ? opportunity.matched_skills
+        .filter((skill): skill is string => typeof skill === 'string')
+        .map((skill) => skill.trim())
+        .filter(Boolean)
+    : [];
 
   return {
     recruiter_name:
@@ -225,6 +234,15 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
         : 'Verified Organisation',
     role_title: roleTitle,
     match_score: Number.isFinite(rawMatchScore) ? Math.max(0, Math.min(100, rawMatchScore)) : 0,
+    matched_skills: matchedSkills,
+    match_explanation:
+      typeof opportunity.match_explanation === 'string' && opportunity.match_explanation.trim()
+        ? opportunity.match_explanation.trim()
+        : `Matches your skills: ${matchedSkills.join(', ')}`,
+    company_email:
+      typeof opportunity.company_email === 'string' && opportunity.company_email.trim()
+        ? opportunity.company_email.trim()
+        : null,
     status: typeof opportunity.status === 'string' && opportunity.status.trim() ? opportunity.status.trim() : 'active',
   };
 }
@@ -3557,27 +3575,61 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : liveJobs.length > 0 ? (
                 <div className="space-y-4">
-                  {liveJobs.map((job, index) => (
-                    <Card
-                      key={`${job.recruiter_name}-${job.role_title}-${index}`}
-                      className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
-                    >
-                      <CardContent className="flex flex-col gap-6 p-6 md:flex-row md:items-start md:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
-                            {job.recruiter_name}
-                          </span>
-                          <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.role_title}</h3>
-                          <span className="mt-4 inline-flex rounded-xl border border-purple-400/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-100 shadow-[0_0_24px_rgba(168,85,247,0.12)]">
-                            You match this role by {Math.round(job.match_score)}%
-                          </span>
-                        </div>
-                        <span className="inline-flex shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
-                          {job.status}
-                        </span>
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {liveJobs.map((job, index) => {
+                    const matchedKeywords = job.matched_skills.join(', ');
+                    const matchDescription = matchedKeywords
+                      ? `You match this role because your profile contains verified expertise in: ${matchedKeywords}`
+                      : job.match_explanation;
+                    const gmailComposeUrl = job.company_email
+                      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(job.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
+                      : null;
+
+                    return (
+                      <Card
+                        key={`${job.recruiter_name}-${job.role_title}-${index}`}
+                        className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
+                      >
+                        <CardContent className="flex flex-col gap-6 p-6">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
+                                {job.recruiter_name}
+                              </span>
+                              <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.role_title}</h3>
+                            </div>
+                            <span className="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
+                              {job.status}
+                            </span>
+                          </div>
+
+                          <p className="rounded-2xl border border-cyan-400/15 bg-cyan-500/[0.06] px-4 py-3 text-sm font-medium leading-6 text-slate-200">
+                            {matchDescription}
+                          </p>
+
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                            <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/15 px-4 py-2 text-sm font-bold text-purple-100 shadow-[0_0_26px_rgba(168,85,247,0.18)]">
+                              {Math.round(job.match_score)}% MATCH
+                            </span>
+                            {gmailComposeUrl ? (
+                              <a
+                                href={gmailComposeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.15)] transition hover:border-cyan-200 hover:from-cyan-500/30 hover:to-blue-500/30"
+                              >
+                                <Mail className="h-4 w-4" aria-hidden="true" />
+                                Apply directly via Gmail
+                              </a>
+                            ) : (
+                              <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/60 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                                Application email unavailable
+                              </span>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">

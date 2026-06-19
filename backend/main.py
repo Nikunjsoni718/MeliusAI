@@ -1032,104 +1032,36 @@ async def talent_discovery():
 async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
-    recruiter_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
+    organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
 
     if not job_title or not core_requirements:
         raise HTTPException(status_code=400, detail="Job title and core requirements are required")
 
-    combined_opportunity_text = f"{job_title} {core_requirements}".lower()
-    opportunity_terms = extract_match_terms(combined_opportunity_text)
-
-    def contains_role_keyword(keyword: str) -> bool:
-        if " " in keyword:
-            return keyword in combined_opportunity_text
-        return re.search(rf"\b{re.escape(keyword)}\b", combined_opportunity_text) is not None
-
-    if any(
-        contains_role_keyword(keyword)
-        for keyword in ["ui", "ux", "design", "figma", "product designer"]
-    ):
-        target_role = "UI/UX Designer"
-    elif any(
-        contains_role_keyword(keyword)
-        for keyword in ["typescript", "react", "frontend", "tailwind", "nextjs"]
-    ):
-        target_role = "Frontend Developer"
-    else:
-        target_role = "Fullstack Engineer"
-
     try:
         supabase = get_supabase_service_role_client()
-        profiles_response = await asyncio.to_thread(
-            lambda: supabase.table("profiles")
-            .select("id, full_name, bio, role, avg_project_score")
-            .execute()
-        )
-        candidate_profiles = profiles_response.data or []
-        opportunity_rows = []
-
-        for candidate in candidate_profiles:
-            candidate_id = candidate.get("id")
-            candidate_role = str(candidate.get("role") or "").strip()
-            candidate_bio = str(candidate.get("bio") or "").strip()
-            candidate_corpus = f"{candidate_role} {candidate_bio}".lower()
-            keyword_signal, matched_terms = compute_keyword_signal(opportunity_terms, candidate_corpus)
-            role_matches = target_role.lower() in candidate_role.lower()
-
-            if not candidate_id or (not matched_terms and not role_matches):
-                continue
-
-            try:
-                average_project_score = float(candidate.get("avg_project_score") or 0)
-            except (TypeError, ValueError):
-                average_project_score = 0.0
-
-            coverage_ratio = len(matched_terms) / max(len(opportunity_terms), 1)
-            calculated_match_score = round(
-                52
-                + min(18, keyword_signal)
-                + coverage_ratio * 20
-                + (15 if role_matches else 0)
-                + max(0.0, min(100.0, average_project_score)) * 0.1
-            )
-            calculated_match_score = max(1, min(99, calculated_match_score))
-
-            opportunity_rows.append(
-                {
-                    "candidate_id": candidate_id,
-                    "recruiter_name": recruiter_name,
-                    "role_title": job_title,
-                    "match_score": calculated_match_score,
-                    "status": "active",
-                }
-            )
-
-        if not opportunity_rows:
-            return JSONResponse(
-                status_code=201,
-                content={"success": True, "matched_candidates": 0, "opportunities": []},
-            )
-
+        insert_data = {
+            "recruiter_name": organization_name,
+            "role_title": job_title,
+            "status": "active",
+        }
         opportunity_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .insert(opportunity_rows)
+            .insert(insert_data)
             .execute()
         )
 
-        created_opportunities = (
+        created_rows = (
             opportunity_response.data
             if isinstance(opportunity_response.data, list)
             else [opportunity_response.data] if opportunity_response.data else []
         )
-        if not created_opportunities:
-            created_opportunities = opportunity_rows
+        created_opportunity = created_rows[0] if created_rows else insert_data
 
         return JSONResponse(
             status_code=201,
             content={
                 "success": True,
-                "matched_candidates": len(created_opportunities),
-                "opportunities": created_opportunities,
+                "opportunity": created_opportunity,
             },
         )
     except HTTPException:
@@ -1150,15 +1082,77 @@ async def get_opportunities(candidate_id: str):
 
     try:
         supabase = get_supabase_service_role_client()
+
+        profile_response = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select("skills, bio")
+            .eq("id", resolved_candidate_id)
+            .limit(1)
+            .execute()
+        )
+        profile_rows = profile_response.data or []
+        if not profile_rows:
+            raise HTTPException(status_code=404, detail="Candidate profile not found")
+
+        raw_skills = profile_rows[0].get("skills")
+        if isinstance(raw_skills, list):
+            candidate_skills = [str(skill).strip() for skill in raw_skills if str(skill).strip()]
+        elif isinstance(raw_skills, str):
+            candidate_skills = [skill.strip() for skill in raw_skills.split(",") if skill.strip()]
+        else:
+            candidate_skills = []
+
+        unique_skills = list(dict.fromkeys(candidate_skills))
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select("recruiter_name, role_title, match_score, status")
-            .eq("candidate_id", resolved_candidate_id)
+            .select(
+                "id, recruiter_name, role_title, job_description, description, "
+                "company_email, status, created_at"
+            )
+            .eq("status", "active")
             .order("created_at", desc=True)
             .execute()
         )
 
-        return JSONResponse(content=opportunities_response.data or [])
+        matched_opportunities = []
+        for opportunity in opportunities_response.data or []:
+            opportunity_text = " ".join(
+                str(opportunity.get(field) or "")
+                for field in ("role_title", "job_description", "description")
+            ).lower()
+
+            matched_skills = []
+            for skill in unique_skills:
+                normalized_skill = skill.lower()
+                if re.fullmatch(r"[a-z0-9]+", normalized_skill):
+                    is_match = re.search(
+                        rf"\b{re.escape(normalized_skill)}\b",
+                        opportunity_text,
+                    ) is not None
+                else:
+                    is_match = normalized_skill in opportunity_text
+
+                if is_match:
+                    matched_skills.append(skill)
+
+            if not matched_skills:
+                continue
+
+            match_score = round((len(matched_skills) / max(len(unique_skills), 1)) * 100)
+            matched_opportunities.append(
+                {
+                    **opportunity,
+                    "match_score": match_score,
+                    "matched_skills": matched_skills,
+                    "match_explanation": f"Matches your skills: {', '.join(matched_skills)}",
+                }
+            )
+
+        matched_opportunities.sort(
+            key=lambda opportunity: opportunity["match_score"],
+            reverse=True,
+        )
+        return JSONResponse(content=matched_opportunities)
     except HTTPException:
         raise
     except Exception as error:
