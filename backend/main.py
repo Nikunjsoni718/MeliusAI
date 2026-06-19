@@ -404,8 +404,13 @@ class UpdateOpportunityRequest(BaseModel):
 
 class UpdateOrganizationProfileRequest(BaseModel):
     company_name: str
-    company_description: str
-    org_email: str
+    company_description: str | None = None
+    company_profile_mission: str | None = None
+    description: str | None = None
+    org_email: str | None = None
+    hiring_contact_email: str | None = None
+    user_id: str | None = None
+    org_id: str | None = None
 
 
 class CandidateEvaluation(BaseModel):
@@ -1204,8 +1209,13 @@ async def delete_opportunity(request: Request):
 @app.post("/api/update-organization-profile")
 async def update_organization_profile(payload: UpdateOrganizationProfileRequest, request: Request):
     company_name = payload.company_name.strip()
-    company_description = payload.company_description.strip()
-    org_email = payload.org_email.strip().lower()
+    company_description = (
+        payload.company_description
+        or payload.company_profile_mission
+        or payload.description
+        or ""
+    ).strip()
+    org_email = (payload.org_email or payload.hiring_contact_email or "").strip().lower()
 
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name is required")
@@ -1233,19 +1243,26 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
         if auth_user is None:
             raise HTTPException(status_code=401, detail="Organization session is invalid or expired")
 
+        authenticated_user_id = str(getattr(auth_user, "id", None) or "").strip()
+        requested_user_id = str(payload.user_id or "").strip()
+        if requested_user_id and requested_user_id != authenticated_user_id:
+            raise HTTPException(status_code=403, detail="The supplied user does not match this session")
+
         user_metadata = getattr(auth_user, "user_metadata", None) or {}
         app_metadata = getattr(auth_user, "app_metadata", None) or {}
+        requested_org_id = str(payload.org_id or "").strip()
         workspace_id = next(
             (
                 str(value).strip()
                 for value in (
+                    requested_org_id,
                     user_metadata.get("organization_id"),
                     user_metadata.get("org_id"),
                     user_metadata.get("workspace_id"),
                     app_metadata.get("organization_id"),
                     app_metadata.get("org_id"),
                     app_metadata.get("workspace_id"),
-                    getattr(auth_user, "id", None),
+                    authenticated_user_id,
                 )
                 if value and str(value).strip()
             ),
@@ -1260,7 +1277,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
                 {
                     "name": company_name,
                     "description": company_description,
-                    "contact_email": org_email,
+                    "company_email": org_email,
                 }
             )
             .eq("id", workspace_id)
@@ -1278,7 +1295,7 @@ async def update_organization_profile(payload: UpdateOrganizationProfileRequest,
                     "id": updated_organization.get("id", workspace_id),
                     "company_name": updated_organization.get("name", company_name),
                     "company_description": updated_organization.get("description", company_description),
-                    "org_email": updated_organization.get("contact_email", org_email),
+                    "org_email": updated_organization.get("company_email", org_email),
                 },
             }
         )

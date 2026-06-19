@@ -36,6 +36,7 @@ type OrganizationRecord = {
   id: string | null;
   name?: string | null;
   description?: string | null;
+  company_email?: string | null;
   contact_email?: string | null;
   company_name?: string | null;
   slug?: string | null;
@@ -465,12 +466,6 @@ function OrganizationDashboardContent() {
       return;
     }
 
-    if (!currentOrgId) {
-      setProfileSaveState('error');
-      setProfileSaveError('Unable to identify this organization workspace.');
-      return;
-    }
-
     const normalizedOrgEmail = orgEmail.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedOrgEmail)) {
       setProfileSaveState('error');
@@ -490,6 +485,12 @@ function OrganizationDashboardContent() {
         throw new Error('Your organization session has expired. Please sign in again.');
       }
 
+      const loggedInUserId = session.user.id || user?.id || currentUserId;
+      if (!loggedInUserId) {
+        throw new Error('Unable to resolve the authenticated organization account. Please sign in again.');
+      }
+      const workspaceIdentifier = currentOrgId || loggedInUserId;
+
       const response = await fetch(ORGANIZATION_PROFILE_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -498,8 +499,11 @@ function OrganizationDashboardContent() {
         },
         body: JSON.stringify({
           company_name: companyName.trim(),
-          company_description: bioState.trim(),
-          org_email: normalizedOrgEmail,
+          company_profile_mission: bioState.trim(),
+          description: bioState.trim(),
+          hiring_contact_email: normalizedOrgEmail,
+          user_id: loggedInUserId,
+          org_id: workspaceIdentifier,
         }),
       });
       const responsePayload = (await response.json().catch(() => null)) as
@@ -642,7 +646,7 @@ function OrganizationDashboardContent() {
             const { data, error } = await getOrganizationClient()
               .from('organizations')
               .select(
-                'id, name, description, contact_email, company_name, slug, bio, org_email, linked_profiles'
+                'id, name, description, company_email, contact_email, company_name, slug, bio, org_email, linked_profiles'
               )
               .eq(column, value)
               .maybeSingle();
@@ -674,7 +678,12 @@ function OrganizationDashboardContent() {
             });
             setBioState(organization.description ?? organization.bio ?? '');
             setOrgEmail(
-              organization.contact_email ?? organization.org_email ?? meta?.org_email ?? activeUser.email ?? ''
+              organization.company_email ??
+                organization.contact_email ??
+                organization.org_email ??
+                meta?.org_email ??
+                activeUser.email ??
+                ''
             );
             setLinkedProfilesState(normalizeLinkedProfiles(organization.linked_profiles));
           }
