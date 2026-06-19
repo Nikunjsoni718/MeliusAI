@@ -564,10 +564,14 @@ function OrganizationDashboardContent() {
       setProfileSaveError(null);
       setProfileSaveState('saved');
       window.setTimeout(() => setProfileSaveState('idle'), 1600);
-    } catch (error) {
-      console.error('Error saving organization profile data:', error);
+    } catch (err: any) {
+      console.error('Direct save failed:', err);
+      const rawMessage =
+        err?.message ||
+        err?.error_description ||
+        (typeof err === 'object' ? JSON.stringify(err) : String(err));
       setProfileSaveState('error');
-      setProfileSaveError(error instanceof Error ? error.message : 'Unable to save organization profile data.');
+      setProfileSaveError(rawMessage);
     }
   }
 
