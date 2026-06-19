@@ -390,10 +390,7 @@ class MatchTalentRequest(BaseModel):
 
 class CreateOpportunityRequest(BaseModel):
     job_title: str
-    target_role: str
-    job_description: str
-    organization_id: str
-    organization_name: str
+    core_requirements: str
 
 
 class CandidateEvaluation(BaseModel):
@@ -1033,13 +1030,30 @@ async def talent_discovery():
 @app.post("/api/create-opportunity", status_code=201)
 async def create_opportunity(payload: CreateOpportunityRequest):
     job_title = payload.job_title.strip()
-    target_role = payload.target_role.strip()
-    job_description = payload.job_description.strip()
-    organization_id = payload.organization_id.strip()
-    organization_name = payload.organization_name.strip()
+    core_requirements = payload.core_requirements.strip()
 
-    if not all([job_title, target_role, job_description, organization_id, organization_name]):
-        raise HTTPException(status_code=400, detail="All opportunity fields are required")
+    if not job_title or not core_requirements:
+        raise HTTPException(status_code=400, detail="Job title and core requirements are required")
+
+    combined_opportunity_text = f"{job_title} {core_requirements}".lower()
+
+    def contains_role_keyword(keyword: str) -> bool:
+        if " " in keyword:
+            return keyword in combined_opportunity_text
+        return re.search(rf"\b{re.escape(keyword)}\b", combined_opportunity_text) is not None
+
+    if any(
+        contains_role_keyword(keyword)
+        for keyword in ["ui", "ux", "design", "figma", "product designer"]
+    ):
+        target_role = "UI/UX Designer"
+    elif any(
+        contains_role_keyword(keyword)
+        for keyword in ["typescript", "react", "frontend", "tailwind", "nextjs"]
+    ):
+        target_role = "Frontend Developer"
+    else:
+        target_role = "Fullstack Engineer"
 
     try:
         supabase = get_supabase_service_role_client()
@@ -1047,17 +1061,14 @@ async def create_opportunity(payload: CreateOpportunityRequest):
             lambda: supabase.table("opportunities")
             .insert(
                 {
-                    "organization_id": organization_id,
-                    "organization_name": organization_name,
                     "job_title": job_title,
                     "target_role": target_role,
-                    "job_description": job_description,
+                    "job_description": core_requirements,
                     "status": "open",
                 }
             )
             .select(
-                "id, organization_id, organization_name, job_title, target_role, "
-                "job_description, status, created_at"
+                "id, job_title, target_role, job_description, status, created_at"
             )
             .single()
             .execute()

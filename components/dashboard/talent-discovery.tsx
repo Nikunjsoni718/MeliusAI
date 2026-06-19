@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   BriefcaseBusiness,
-  Building2,
   CheckCircle2,
   FileText,
   Send,
@@ -18,20 +17,16 @@ const OPPORTUNITY_API_BASE = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
 
-const TARGET_ROLES = ['UI/UX Designer', 'Frontend Developer', 'Fullstack Engineer'] as const;
-
 type OpportunityForm = {
   job_title: string;
-  target_role: (typeof TARGET_ROLES)[number];
-  job_description: string;
+  core_requirements: string;
 };
 
 export function OrganizationJobPostingHub() {
   const { loading, profile, user } = useViewerProfile();
   const [formData, setFormData] = useState<OpportunityForm>({
     job_title: '',
-    target_role: 'UI/UX Designer',
-    job_description: '',
+    core_requirements: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -62,7 +57,7 @@ export function OrganizationJobPostingHub() {
       return;
     }
 
-    if (!formData.job_title.trim() || !formData.job_description.trim()) {
+    if (!formData.job_title.trim() || !formData.core_requirements.trim()) {
       setErrorMessage('Add a job title and core requirement description before broadcasting.');
       return;
     }
@@ -78,11 +73,8 @@ export function OrganizationJobPostingHub() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ...formData,
           job_title: formData.job_title.trim(),
-          job_description: formData.job_description.trim(),
-          organization_id: organizationId,
-          organization_name: organizationName,
+          core_requirements: formData.core_requirements.trim(),
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -95,8 +87,7 @@ export function OrganizationJobPostingHub() {
 
       setFormData({
         job_title: '',
-        target_role: 'UI/UX Designer',
-        job_description: '',
+        core_requirements: '',
       });
       setSuccessMessage('Opportunity successfully broadcasted to the candidate network!');
     } catch (error) {
@@ -170,8 +161,8 @@ export function OrganizationJobPostingHub() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6 p-6 sm:p-8">
-            <div className="grid gap-6 md:grid-cols-2">
-              <label className="space-y-2 text-sm font-medium text-slate-300">
+            <div className="w-full">
+              <label className="block w-full space-y-2 text-sm font-medium text-slate-300">
                 <span className="flex items-center gap-2">
                   <BriefcaseBusiness className="h-4 w-4 text-purple-300" />
                   Job title
@@ -186,27 +177,6 @@ export function OrganizationJobPostingHub() {
                   className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15"
                 />
               </label>
-
-              <label className="space-y-2 text-sm font-medium text-slate-300">
-                <span className="flex items-center gap-2">
-                  <Building2 className="h-4 w-4 text-cyan-300" />
-                  Target role
-                </span>
-                <select
-                  name="target_role"
-                  value={formData.target_role}
-                  onChange={(event) =>
-                    updateField('target_role', event.target.value as OpportunityForm['target_role'])
-                  }
-                  className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15"
-                >
-                  {TARGET_ROLES.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
 
             <label className="block space-y-2 text-sm font-medium text-slate-300">
@@ -215,11 +185,11 @@ export function OrganizationJobPostingHub() {
                 Core requirements
               </span>
               <textarea
-                name="job_description"
+                name="core_requirements"
                 required
                 rows={9}
-                value={formData.job_description}
-                onChange={(event) => updateField('job_description', event.target.value)}
+                value={formData.core_requirements}
+                onChange={(event) => updateField('core_requirements', event.target.value)}
                 placeholder="Describe the role, expected outcomes, essential skills, seniority, and the kind of verified portfolio evidence you want to see..."
                 className="w-full resize-y rounded-2xl border border-[#1F223D] bg-[#090b19] px-4 py-4 text-sm leading-7 text-white outline-none transition placeholder:text-slate-600 focus:border-purple-400/60 focus:ring-2 focus:ring-purple-400/15"
               />
