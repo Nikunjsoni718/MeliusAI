@@ -10,7 +10,9 @@ import {
   Cpu,
   Gauge,
   Laptop,
+  Pencil,
   Rocket,
+  Save,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -77,6 +79,11 @@ export default function OrganizationAboutPage() {
   const [companyName, setCompanyName] = useState(FALLBACK_COMPANY_NAME);
   const [missionText, setMissionText] = useState(FALLBACK_MISSION);
   const [isProfileLoading, setIsProfileLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftCompanyName, setDraftCompanyName] = useState(FALLBACK_COMPANY_NAME);
+  const [draftMissionText, setDraftMissionText] = useState(FALLBACK_MISSION);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const userMetadata = (user?.user_metadata ?? {}) as { company_name?: string };
   const contextCompanyName =
@@ -125,9 +132,13 @@ export default function OrganizationAboutPage() {
 
           setCompanyName(savedCompanyName || contextCompanyName || FALLBACK_COMPANY_NAME);
           setMissionText(savedMission || FALLBACK_MISSION);
+          setDraftCompanyName(savedCompanyName || contextCompanyName || FALLBACK_COMPANY_NAME);
+          setDraftMissionText(savedMission || FALLBACK_MISSION);
         } else if (active) {
           setCompanyName(contextCompanyName || FALLBACK_COMPANY_NAME);
           setMissionText(FALLBACK_MISSION);
+          setDraftCompanyName(contextCompanyName || FALLBACK_COMPANY_NAME);
+          setDraftMissionText(FALLBACK_MISSION);
         }
       } catch (error) {
         console.error('Unable to load the public organization profile:', error);
@@ -145,6 +156,96 @@ export default function OrganizationAboutPage() {
       active = false;
     };
   }, [authLoading, contextCompanyName, supabase, user?.id]);
+
+  function enterEditMode() {
+    setDraftCompanyName(companyName);
+    setDraftMissionText(missionText);
+    setSaveError(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditMode() {
+    setDraftCompanyName(companyName);
+    setDraftMissionText(missionText);
+    setSaveError(null);
+    setIsEditing(false);
+  }
+
+  async function handleSaveProfile() {
+    if (!supabase || !user?.id) {
+      setSaveError('Sign in to edit this organization profile.');
+      return;
+    }
+
+    const nextCompanyName = draftCompanyName.trim();
+    const nextMissionText = draftMissionText.trim();
+    if (!nextCompanyName || !nextMissionText) {
+      setSaveError('Company name and mission statement are required.');
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      const { data: userRows, error: userLookupError } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1);
+
+      if (userLookupError) throw userLookupError;
+      let existingOrganization = userRows && userRows.length > 0 ? userRows[0] : null;
+
+      if (!existingOrganization) {
+        const { data: companyRows, error: companyLookupError } = await supabase
+          .from('organizations')
+          .select('id')
+          .ilike('company_name', companyName)
+          .limit(1);
+
+        if (companyLookupError) throw companyLookupError;
+        existingOrganization = companyRows && companyRows.length > 0 ? companyRows[0] : null;
+      }
+
+      if (existingOrganization?.id) {
+        const { error: updateError } = await supabase
+          .from('organizations')
+          .update({
+            company_name: nextCompanyName,
+            mission_text: nextMissionText,
+            user_id: user.id,
+          })
+          .eq('id', existingOrganization.id);
+
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase.from('organizations').insert([
+          {
+            company_name: nextCompanyName,
+            mission_text: nextMissionText,
+            user_id: user.id,
+          },
+        ]);
+
+        if (insertError) throw insertError;
+      }
+
+      setCompanyName(nextCompanyName);
+      setMissionText(nextMissionText);
+      setSaveError(null);
+      setIsEditing(false);
+    } catch (error: any) {
+      console.error('Manifesto save failed:', error);
+      setSaveError(
+        error?.message ||
+          error?.error_description ||
+          (typeof error === 'object' ? JSON.stringify(error) : String(error))
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#030512] text-white">
@@ -170,18 +271,82 @@ export default function OrganizationAboutPage() {
 
         <section className="relative py-20 sm:py-28 lg:py-32">
           <div className="max-w-5xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-200 shadow-[0_0_30px_rgba(52,211,153,0.1)]">
-              <BadgeCheck className="h-4 w-4" />
-              Verified Workspace
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-200 shadow-[0_0_30px_rgba(52,211,153,0.1)]">
+                <BadgeCheck className="h-4 w-4" />
+                Verified Workspace
+              </div>
+              {user?.id && !isEditing ? (
+                <button
+                  type="button"
+                  onClick={enterEditMode}
+                  className="inline-flex items-center gap-2 rounded-full border border-purple-300/25 bg-purple-500/10 px-4 py-2 text-xs font-bold text-purple-100 transition hover:border-purple-200/50 hover:bg-purple-500/15"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit Profile
+                </button>
+              ) : null}
             </div>
 
             <p className="mt-8 text-xs font-bold uppercase tracking-[0.28em] text-slate-500">Meet the organization</p>
-            <h1 className="mt-5 bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-5xl font-black leading-[0.95] tracking-[-0.05em] text-transparent sm:text-7xl lg:text-[7.4rem]">
-              {companyName}
-            </h1>
-            <p className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10">
-              {missionText}
-            </p>
+            {isEditing ? (
+              <div className="mt-5 rounded-[1.75rem] border border-purple-300/20 bg-[#090c1c]/90 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.3)] sm:p-7">
+                <label className="block">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Company name</span>
+                  <input
+                    type="text"
+                    value={draftCompanyName}
+                    onChange={(event) => setDraftCompanyName(event.target.value)}
+                    className="mt-3 w-full rounded-2xl border border-white/10 bg-black/25 px-5 py-4 text-2xl font-bold text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/10 sm:text-4xl"
+                  />
+                </label>
+
+                <label className="mt-6 block">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Mission statement</span>
+                  <textarea
+                    value={draftMissionText}
+                    onChange={(event) => setDraftMissionText(event.target.value)}
+                    rows={6}
+                    className="mt-3 w-full resize-y rounded-2xl border border-white/10 bg-black/25 px-5 py-4 text-base leading-8 text-slate-200 outline-none transition focus:border-purple-300/50 focus:ring-2 focus:ring-purple-300/10"
+                  />
+                </label>
+
+                {saveError ? (
+                  <p className="mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" role="alert">
+                    {saveError}
+                  </p>
+                ) : null}
+
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={cancelEditMode}
+                    disabled={isSaving}
+                    className="rounded-xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveProfile()}
+                    disabled={isSaving}
+                    className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 px-5 py-3 text-sm font-bold text-white shadow-[0_0_30px_rgba(34,211,238,0.12)] transition hover:border-cyan-200/70 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4" />
+                    {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h1 className="mt-5 bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-5xl font-black leading-[0.95] tracking-[-0.05em] text-transparent sm:text-7xl lg:text-[7.4rem]">
+                  {companyName}
+                </h1>
+                <p className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10">
+                  {missionText}
+                </p>
+              </>
+            )}
 
             <div className="mt-10 flex flex-wrap items-center gap-4">
               <Link
