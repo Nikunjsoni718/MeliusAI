@@ -34,7 +34,7 @@ type OpportunityHistoryItem = {
 };
 
 export function OrganizationJobPostingHub() {
-  const { loading, profile, user } = useViewerProfile();
+  const { loading, profile, supabase, user } = useViewerProfile();
   const [formData, setFormData] = useState<OpportunityForm>({
     job_title: '',
     core_requirements: '',
@@ -192,6 +192,16 @@ export function OrganizationJobPostingHub() {
 
     try {
       const isEditing = Boolean(editingId);
+      const sessionResult = supabase ? await supabase.auth.getSession() : null;
+      const loggedInUserEmail =
+        sessionResult?.data.session?.user.email?.trim().toLowerCase() ||
+        user?.email?.trim().toLowerCase() ||
+        '';
+
+      if (!isEditing && !loggedInUserEmail) {
+        throw new Error('Unable to resolve the authenticated organization email. Please sign in again.');
+      }
+
       const response = await fetch(
         `${OPPORTUNITY_API_BASE}${isEditing ? '/api/update-opportunity' : '/api/create-opportunity'}`,
         {
@@ -200,13 +210,13 @@ export function OrganizationJobPostingHub() {
             'Content-Type': 'application/json',
             'X-Organization-Id': organizationId,
             'X-Company-Name': encodeURIComponent(organizationName),
-            'X-Company-Email': user?.email?.trim() || '',
+            'X-Company-Email': loggedInUserEmail,
           },
           body: JSON.stringify({
             ...(editingId ? { id: editingId } : {}),
             job_title: formData.job_title.trim(),
             core_requirements: formData.core_requirements.trim(),
-            company_email: user?.email?.trim() || '',
+            company_email: loggedInUserEmail,
           }),
         }
       );
