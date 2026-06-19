@@ -71,6 +71,9 @@ export function OrganizationJobPostingHub() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Organization-Id': organizationId,
+          'X-Company-Name': encodeURIComponent(organizationName),
+          'X-Company-Email': user?.email?.trim() || '',
         },
         body: JSON.stringify({
           job_title: formData.job_title.trim(),

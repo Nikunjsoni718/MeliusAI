@@ -65,15 +65,11 @@ type ProjectItem = {
   is_local?: boolean;
 };
 
-type OpportunityRoleItem = {
-  id: string;
-  job_id?: string | null;
-  recruiter_name: string;
-  role_title: string;
-  location?: string | null;
-  status?: string | null;
-  match_score?: number | null;
-  created_at?: string | null;
+type LiveOpportunityItem = {
+  title: string;
+  description: string;
+  company_name: string;
+  company_email: string;
 };
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   id?: string | null;
@@ -209,13 +205,44 @@ function formatScanDate(value: string) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function isPostedInLast48Hours(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return false;
+function inferOpportunityRole(value: string) {
+  const normalizedValue = value.toLowerCase();
+  const containsKeyword = (keyword: string) => {
+    if (keyword.includes(' ')) {
+      return normalizedValue.includes(keyword);
+    }
+    return new RegExp(`\\b${keyword}\\b`, 'i').test(normalizedValue);
+  };
+
+  if (['ui', 'ux', 'design', 'figma', 'product designer'].some(containsKeyword)) {
+    return 'UI/UX Designer';
+  }
+  if (['typescript', 'react', 'frontend', 'tailwind', 'nextjs'].some(containsKeyword)) {
+    return 'Frontend Developer';
+  }
+  return 'Fullstack Engineer';
+}
+
+function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
+  if (!value || typeof value !== 'object') {
+    return null;
   }
 
-  return Date.now() - date.getTime() <= 48 * 60 * 60 * 1000;
+  const opportunity = value as Record<string, unknown>;
+  const title = typeof opportunity.title === 'string' ? opportunity.title.trim() : '';
+  if (!title) {
+    return null;
+  }
+
+  return {
+    title,
+    description: typeof opportunity.description === 'string' ? opportunity.description.trim() : '',
+    company_name:
+      typeof opportunity.company_name === 'string' && opportunity.company_name.trim()
+        ? opportunity.company_name.trim()
+        : 'Verified Organisation',
+    company_email: typeof opportunity.company_email === 'string' ? opportunity.company_email.trim() : '',
+  };
 }
 
 function toTitleCase(value: string) {
@@ -1478,8 +1505,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
-  const [roles, setRoles] = useState<OpportunityRoleItem[]>([]);
-  const [rolesLoading, setRolesLoading] = useState(false);
+  const [liveJobs, setLiveJobs] = useState<LiveOpportunityItem[]>([]);
+  const [loadingState, setLoadingState] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
@@ -1577,6 +1605,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     profileFallback?.email?.trim() ||
     (isOwner ? user?.email?.trim() : '') ||
     '';
+  const loggedInCandidate = useMemo(
+    () => ({
+      role: inferOpportunityRole(`${rawSkillsInput} ${bioText}`),
+      full_name: displayName,
+    }),
+    [bioText, displayName, rawSkillsInput]
+  );
   const avatarUrl =
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
@@ -1748,8 +1783,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setScans([]);
     setProjectDescriptions({});
     setProjectDescription('');
-    setRoles([]);
-    setRolesLoading(false);
+    setLiveJobs([]);
+    setLoadingState(true);
+    setFetchError(null);
     setViewingAuditAsset(null);
     setActivePreviewProjectId(null);
     setActivePreviewName(null);
@@ -2019,44 +2055,53 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, isSpectator, resolvedProfileId, supabase]);
 
   useEffect(() => {
-    if (isSpectator || !user || !authEnabled || !supabase) {
-      setRoles([]);
-      setRolesLoading(false);
+    if (isSpectator || !profileHydrated) {
+      setLiveJobs([]);
+      setLoadingState(false);
+      setFetchError(null);
       return;
     }
 
-    let active = true;
+    const controller = new AbortController();
 
     const loadOpportunities = async () => {
-      setRolesLoading(true);
+      setLoadingState(true);
+      setFetchError(null);
 
       try {
-        const userId = resolvedProfileId;
-
-        if (!userId) {
-          if (active) {
-            setRoles([]);
-          }
-          return;
-        }
-
-        const response = await fetch(`/api/opportunities?candidateId=${encodeURIComponent(userId)}`);
-        const data = (await response.json()) as { roles?: OpportunityRoleItem[]; error?: string };
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities?role=${encodeURIComponent(loggedInCandidate.role)}`,
+          { cache: 'no-store', signal: controller.signal }
+        );
+        const data = (await response.json().catch(() => null)) as unknown;
 
         if (!response.ok) {
-          throw new Error(data.error || 'Unable to load candidate opportunities.');
+          const detail =
+            data && typeof data === 'object' && 'detail' in data
+              ? String((data as { detail?: unknown }).detail || '')
+              : '';
+          throw new Error(detail || `Opportunity service returned HTTP ${response.status}.`);
         }
 
-        if (active) {
-          setRoles(Array.isArray(data.roles) ? data.roles : []);
+        if (!Array.isArray(data)) {
+          throw new Error('Opportunity service returned an invalid response.');
         }
-      } catch {
-        if (active) {
-          setRoles([]);
+
+        if (!controller.signal.aborted) {
+          setLiveJobs(
+            data
+              .map(normalizeLiveOpportunity)
+              .filter((job): job is LiveOpportunityItem => job !== null)
+          );
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLiveJobs([]);
+          setFetchError(error instanceof Error ? error.message : 'Unable to load matching opportunities.');
         }
       } finally {
-        if (active) {
-          setRolesLoading(false);
+        if (!controller.signal.aborted) {
+          setLoadingState(false);
         }
       }
     };
@@ -2064,9 +2109,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     void loadOpportunities();
 
     return () => {
-      active = false;
+      controller.abort();
     };
-  }, [authEnabled, isSpectator, resolvedProfileId, supabase, user]);
+  }, [isSpectator, loggedInCandidate.role, profileHydrated]);
 
   useEffect(() => {
     return () => {
@@ -3509,80 +3554,63 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <p className="mt-1 text-sm text-slate-400">Open roles for your next step.</p>
               </div>
 
-              {rolesLoading ? (
+              {loadingState ? (
                 <div className="space-y-4">
                   {[0, 1, 2].map((item) => (
                     <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                       <CardContent className="p-5">
-                        <div className="animate-pulse space-y-3">
-                          <div className="h-4 w-32 rounded-full bg-white/10" />
-                          <div className="h-5 w-52 rounded-full bg-white/10" />
-                          <div className="h-4 w-40 rounded-full bg-white/5" />
+                        <div className="animate-pulse space-y-4">
+                          <div className="h-3 w-28 rounded-full bg-cyan-400/10" />
+                          <div className="h-6 w-2/3 rounded-full bg-white/10" />
+                          <div className="space-y-2">
+                            <div className="h-3 w-full rounded-full bg-white/5" />
+                            <div className="h-3 w-5/6 rounded-full bg-white/5" />
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
                   ))}
                 </div>
-              ) : roles.length > 0 ? (
+              ) : fetchError ? (
+                <Card className="border-rose-400/20 bg-rose-500/[0.07] backdrop-blur-md">
+                  <CardContent className="p-6">
+                    <p className="text-sm text-rose-100">{fetchError}</p>
+                  </CardContent>
+                </Card>
+              ) : liveJobs.length > 0 ? (
                 <div className="space-y-4">
-                  {roles.map((role) => {
-                    const isNew = role.created_at ? isPostedInLast48Hours(role.created_at) : false;
-                    const matchScore = typeof role.match_score === 'number' ? role.match_score : null;
-
-                    return (
-                      <Card key={role.id} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                        <CardContent className="flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between">
-                          <div className="flex min-w-0 items-start gap-4">
-                            <span className="relative mt-2 flex h-2.5 w-2.5 shrink-0">
-                              {isNew ? (
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/70 opacity-75" />
-                              ) : null}
-                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-300" />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium uppercase tracking-[0.18em] text-slate-500">
-                                {role.recruiter_name}
-                              </p>
-                              <p className="mt-2 text-lg font-semibold tracking-tight text-white">{role.role_title}</p>
-                              {role.location ? <p className="mt-1 text-sm text-slate-500">{role.location}</p> : null}
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {matchScore !== null ? (
-                                  <span className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-100">
-                                    {matchScore}% Match Matcher Score
-                                  </span>
-                                ) : null}
-                                {isNew ? (
-                                  <Badge variant="outline" className="border-sky-400/30 text-sky-100">
-                                    New
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:flex-col md:items-end">
-                            <button
-                              type="button"
-                              className="rounded-full border border-emerald-400/35 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-300/60 hover:bg-emerald-500/15"
-                            >
-                              Accept Interest
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-full border border-slate-700/70 bg-slate-950/40 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-rose-400/40 hover:text-rose-100"
-                            >
-                              Decline
-                            </button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
+                  {liveJobs.map((job, index) => (
+                    <Card
+                      key={`${job.company_name}-${job.title}-${index}`}
+                      className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
+                    >
+                      <CardContent className="flex flex-col gap-6 p-6 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
+                            {job.company_name}
+                          </span>
+                          <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.title}</h3>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-400">
+                            {job.description}
+                          </p>
+                        </div>
+                        <a
+                          href={`https://mail.google.com/mail/?view=cm&fs=1&to=${job.company_email}&su=MeliusAI Opportunity Application — ${loggedInCandidate.full_name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex shrink-0 items-center justify-center rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/25 px-5 py-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-cyan-50 shadow-[0_0_26px_rgba(34,211,238,0.13)] transition hover:border-cyan-200/70 hover:text-white hover:shadow-[0_0_32px_rgba(34,211,238,0.22)]"
+                        >
+                          Apply Directly via Gmail
+                        </a>
+                      </CardContent>
+                    </Card>
+                  ))}
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                   <CardContent className="p-6">
                     <p className="text-sm text-slate-300">
-                      No new opportunities right now. We’ll notify you when a role matches your Logic Score.
+                      No active opportunities are seeking your specific specialization right now. Keep optimizing your profile score!
                     </p>
                   </CardContent>
                 </Card>

@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 from uuid import UUID
 from fastapi import FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1028,9 +1029,12 @@ async def talent_discovery():
 
 
 @app.post("/api/create-opportunity", status_code=201)
-async def create_opportunity(payload: CreateOpportunityRequest):
+async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
+    organization_id = request.headers.get("x-organization-id", "").strip() or None
+    company_name = unquote(request.headers.get("x-company-name", "").strip()) or "Verified Organisation"
+    company_email = request.headers.get("x-company-email", "").strip() or None
 
     if not job_title or not core_requirements:
         raise HTTPException(status_code=400, detail="Job title and core requirements are required")
@@ -1061,6 +1065,12 @@ async def create_opportunity(payload: CreateOpportunityRequest):
             lambda: supabase.table("opportunities")
             .insert(
                 {
+                    "organization_id": organization_id,
+                    "organization_name": company_name,
+                    "company_name": company_name,
+                    "company_email": company_email,
+                    "title": job_title,
+                    "description": core_requirements,
                     "job_title": job_title,
                     "target_role": target_role,
                     "job_description": core_requirements,
@@ -1068,7 +1078,8 @@ async def create_opportunity(payload: CreateOpportunityRequest):
                 }
             )
             .select(
-                "id, job_title, target_role, job_description, status, created_at"
+                "id, title, description, company_name, company_email, "
+                "target_role, status, created_at"
             )
             .single()
             .execute()
@@ -1101,9 +1112,8 @@ async def get_opportunities(role: str):
         supabase = get_supabase_service_role_client()
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select("*")
+            .select("title, description, company_name, company_email")
             .eq("target_role", candidate_role)
-            .eq("status", "open")
             .order("created_at", desc=True)
             .execute()
         )
