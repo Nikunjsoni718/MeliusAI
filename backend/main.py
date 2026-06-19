@@ -1085,52 +1085,46 @@ async def get_opportunities(candidate_id: str):
 
         profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
-            .select("skills, bio")
+            .select("skills")
             .eq("id", resolved_candidate_id)
-            .limit(1)
+            .single()
             .execute()
         )
-        profile_rows = profile_response.data or []
-        if not profile_rows:
+        candidate_profile = profile_response.data or {}
+        if not isinstance(candidate_profile, dict) or not candidate_profile:
             raise HTTPException(status_code=404, detail="Candidate profile not found")
 
-        raw_skills = profile_rows[0].get("skills")
+        raw_skills = candidate_profile.get("skills")
         if isinstance(raw_skills, list):
-            candidate_skills = [str(skill).strip() for skill in raw_skills if str(skill).strip()]
+            candidate_skills = [str(skill).strip().lower() for skill in raw_skills if str(skill).strip()]
         elif isinstance(raw_skills, str):
-            candidate_skills = [skill.strip() for skill in raw_skills.split(",") if skill.strip()]
+            candidate_skills = [skill.strip().lower() for skill in raw_skills.split(",") if skill.strip()]
         else:
             candidate_skills = []
 
         unique_skills = list(dict.fromkeys(candidate_skills))
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select(
-                "id, recruiter_name, role_title, job_description, description, "
-                "company_email, status, created_at"
-            )
+            .select("*")
             .eq("status", "active")
+            .is_("candidate_id", "null")
             .order("created_at", desc=True)
             .execute()
         )
 
-        matched_opportunities = []
+        matched_alerts = []
         for opportunity in opportunities_response.data or []:
-            opportunity_text = " ".join(
-                str(opportunity.get(field) or "")
-                for field in ("role_title", "job_description", "description")
-            ).lower()
+            role_title = str(opportunity.get("role_title") or "").lower()
 
             matched_skills = []
             for skill in unique_skills:
-                normalized_skill = skill.lower()
-                if re.fullmatch(r"[a-z0-9]+", normalized_skill):
+                if re.fullmatch(r"[a-z0-9]+", skill):
                     is_match = re.search(
-                        rf"\b{re.escape(normalized_skill)}\b",
-                        opportunity_text,
+                        rf"\b{re.escape(skill)}\b",
+                        role_title,
                     ) is not None
                 else:
-                    is_match = normalized_skill in opportunity_text
+                    is_match = skill in role_title
 
                 if is_match:
                     matched_skills.append(skill)
@@ -1139,20 +1133,21 @@ async def get_opportunities(candidate_id: str):
                 continue
 
             match_score = round((len(matched_skills) / max(len(unique_skills), 1)) * 100)
-            matched_opportunities.append(
+            matched_alerts.append(
                 {
                     **opportunity,
                     "match_score": match_score,
                     "matched_skills": matched_skills,
+                    "triggered_skills": matched_skills,
                     "match_explanation": f"Matches your skills: {', '.join(matched_skills)}",
                 }
             )
 
-        matched_opportunities.sort(
+        matched_alerts.sort(
             key=lambda opportunity: opportunity["match_score"],
             reverse=True,
         )
-        return JSONResponse(content=matched_opportunities)
+        return JSONResponse(content=matched_alerts)
     except HTTPException:
         raise
     except Exception as error:

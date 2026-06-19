@@ -3575,40 +3575,43 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : liveJobs.length > 0 ? (
                 <div className="space-y-4">
-                  {liveJobs.map((job, index) => {
-                    const matchedKeywords = job.matched_skills.join(', ');
+                  {liveJobs.map((item, index) => {
+                    const matchedKeywords = item.matched_skills.join(', ');
                     const matchDescription = matchedKeywords
                       ? `You match this role because your profile contains verified expertise in: ${matchedKeywords}`
-                      : job.match_explanation;
-                    const gmailComposeUrl = job.company_email
-                      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(job.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
+                      : item.match_explanation;
+                    const gmailComposeUrl = item.company_email
+                      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(item.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
                       : null;
 
                     return (
                       <Card
-                        key={`${job.recruiter_name}-${job.role_title}-${index}`}
+                        key={`${item.recruiter_name}-${item.role_title}-${index}`}
                         className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
                       >
                         <CardContent className="flex flex-col gap-6 p-6">
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0 flex-1">
                               <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
-                                {job.recruiter_name}
+                                {item.recruiter_name}
                               </span>
-                              <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{job.role_title}</h3>
+                              <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{item.role_title}</h3>
                             </div>
                             <span className="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
-                              {job.status}
+                              {item.status}
                             </span>
                           </div>
 
-                          <p className="rounded-2xl border border-cyan-400/15 bg-cyan-500/[0.06] px-4 py-3 text-sm font-medium leading-6 text-slate-200">
-                            {matchDescription}
-                          </p>
+                          <div className="rounded-2xl border border-cyan-400/15 bg-cyan-500/[0.06] px-4 py-3">
+                            <span className="block text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
+                              Verified skill match: {matchedKeywords}
+                            </span>
+                            <p className="mt-1 text-sm font-medium leading-6 text-slate-200">{matchDescription}</p>
+                          </div>
 
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                             <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/15 px-4 py-2 text-sm font-bold text-purple-100 shadow-[0_0_26px_rgba(168,85,247,0.18)]">
-                              {Math.round(job.match_score)}% MATCH
+                              {Math.round(item.match_score)}% MATCH
                             </span>
                             {gmailComposeUrl ? (
                               <a
