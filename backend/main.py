@@ -1319,10 +1319,7 @@ async def get_opportunities(candidate_id: str):
         unique_skills = list(dict.fromkeys(candidate_skills))
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select(
-                "id, organization_id, recruiter_name, role_title, core_skills, "
-                "company_email, status, created_at, description"
-            )
+            .select("*, organization_id")
             .eq("status", "active")
             .order("created_at", desc=True)
             .execute()
