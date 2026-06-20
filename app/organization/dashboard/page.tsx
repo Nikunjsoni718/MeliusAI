@@ -1218,7 +1218,9 @@ function OrganizationDashboardContent() {
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-800 bg-[#040615]/50 px-6 py-12 text-center">
                 <Search className="mx-auto h-6 w-6 text-slate-600" aria-hidden="true" />
-                <p className="mt-4 text-sm font-medium text-slate-400">No candidates match your search.</p>
+                <p className="mt-4 text-sm font-medium text-slate-400">
+                  No candidates match your search criteria.
+                </p>
               </div>
             )}
 
