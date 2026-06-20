@@ -3584,6 +3584,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <div className="space-y-4">
                   {liveJobs.map((item, index) => {
                     const matchedKeywords = item.matched_skills.join(', ');
+                    const organicMatchScore = Math.round(item.match_score);
                     const matchDescription = matchedKeywords
                       ? `You match this role because your profile contains verified expertise in: ${matchedKeywords}`
                       : item.match_explanation;
@@ -3634,7 +3635,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                             <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/15 px-4 py-2 text-sm font-bold text-purple-100 shadow-[0_0_26px_rgba(168,85,247,0.18)]">
-                              {Math.round(item.match_score)}% MATCH
+                              {organicMatchScore}% MATCH
                             </span>
                             {gmailComposeUrl ? (
                               <a

@@ -1318,37 +1318,64 @@ async def get_opportunities(candidate_id: str):
 
         matched_alerts = []
         for opportunity in opportunities_response.data or []:
-            opportunity_match_text = " ".join(
-                [
-                    str(opportunity.get("role_title") or ""),
-                    str(opportunity.get("core_skills") or ""),
-                ]
-            ).lower()
+            role_title = str(opportunity.get("role_title") or "").lower()
+            required_skills = list(
+                dict.fromkeys(
+                    skill.strip().lower()
+                    for skill in str(opportunity.get("core_skills") or "").split(",")
+                    if skill.strip()
+                )
+            )
 
             matched_skills = []
-            for skill in unique_skills:
-                if re.fullmatch(r"[a-z0-9]+", skill):
-                    is_match = re.search(
-                        rf"\b{re.escape(skill)}\b",
-                        opportunity_match_text,
-                    ) is not None
-                else:
-                    is_match = skill in opportunity_match_text
+            matched_requirement_count = 0
+            for required_skill in required_skills:
+                matching_user_skill = next(
+                    (
+                        user_skill
+                        for user_skill in unique_skills
+                        if user_skill == required_skill
+                        or user_skill in required_skill
+                        or required_skill in user_skill
+                    ),
+                    None,
+                )
+                if matching_user_skill:
+                    matched_requirement_count += 1
+                    if matching_user_skill not in matched_skills:
+                        matched_skills.append(matching_user_skill)
 
-                if is_match:
-                    matched_skills.append(skill)
-
-            if not matched_skills:
+            if required_skills and not matched_skills:
                 continue
 
-            match_score = round((len(matched_skills) / max(len(unique_skills), 1)) * 100)
+            if not required_skills:
+                matched_skills = [skill for skill in unique_skills if skill and skill in role_title]
+
+            organic_match_score = 0
+            if required_skills:
+                base_compatibility = 38
+                skill_weight = 62
+                skill_score = (matched_requirement_count / len(required_skills)) * skill_weight
+                experience_modifier = min(len(unique_skills) * 0.8, 5)
+                organic_match_score = int(
+                    math.floor(base_compatibility + skill_score + experience_modifier + 0.5)
+                )
+                organic_match_score = max(0, min(99, organic_match_score))
+            else:
+                organic_match_score = 82
+
+            match_explanation = (
+                f"Matches your skills: {', '.join(matched_skills)}"
+                if matched_skills
+                else "Broad role alignment based on your verified profile."
+            )
             matched_alerts.append(
                 {
                     **opportunity,
-                    "match_score": match_score,
+                    "match_score": organic_match_score,
                     "matched_skills": matched_skills,
                     "triggered_skills": matched_skills,
-                    "match_explanation": f"Matches your skills: {', '.join(matched_skills)}",
+                    "match_explanation": match_explanation,
                 }
             )
 
