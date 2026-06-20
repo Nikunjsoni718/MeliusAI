@@ -173,6 +173,8 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
       ? row.role_title.trim()
       : typeof row.role === 'string'
         ? row.role.trim()
+        : typeof row.current_status === 'string'
+          ? row.current_status.trim()
         : '';
   const vectorMatch = normalizeDecimalMatch(row.vector_match ?? row.semantic_similarity ?? row.similarity);
   const compositeMatchIndex = normalizeDecimalMatch(
@@ -200,11 +202,36 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
   };
 }
 
-function calculateWeightedCandidateMatch(candidate: CandidateProfile) {
-  const requirementMatchScore = Math.max(
+function getRequirementTerms(requirement: string) {
+  const ignoredTerms = new Set([
+    'a', 'an', 'and', 'are', 'for', 'good', 'in', 'is', 'of', 'or', 'the', 'to', 'who', 'with',
+  ]);
+
+  return Array.from(
+    new Set(
+      (requirement.toLowerCase().match(/[a-z0-9+#.]+/g) ?? []).filter(
+        (term) => term.length > 1 && !ignoredTerms.has(term)
+      )
+    )
+  );
+}
+
+function calculateWeightedCandidateMatch(candidate: CandidateProfile, requirementTerms: string[]) {
+  const storedRequirementScore = Math.max(
     0,
     Math.min(100, candidate.matchScore ?? candidate.composite_match_index * 100)
   );
+  const candidateSearchText = [candidate.role_title, candidate.bio, ...candidate.skills]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const matchedRequirementCount = requirementTerms.filter((term) =>
+    candidateSearchText.includes(term)
+  ).length;
+  const liveRequirementScore = requirementTerms.length
+    ? (matchedRequirementCount / requirementTerms.length) * 100
+    : 0;
+  const requirementMatchScore = Math.max(storedRequirementScore, liveRequirementScore);
   const verifiedExecutionScore = Math.max(0, Math.min(100, candidate.avg_project_score));
 
   return requirementMatchScore * 0.62 + verifiedExecutionScore * 0.38;
@@ -281,7 +308,9 @@ function OrganizationDashboardContent() {
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [matcherQuery, setMatcherQuery] = useState('Looking for a ui ux designer who is good at typescript');
   const [searchQuery, setSearchQuery] = useState('');
-  const [candidatesPool, setCandidatesPool] = useState<CandidateProfile[]>([]);
+  const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
+  const [isCandidatePoolLoading, setIsCandidatePoolLoading] = useState(true);
+  const [candidatePoolError, setCandidatePoolError] = useState('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>('');
   const [hasRunMatcher, setHasRunMatcher] = useState(false);
@@ -295,8 +324,9 @@ function OrganizationDashboardContent() {
   const isWorkspaceContextPending = loading || isLoading;
   const filteredCandidates = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
+    const requirementTerms = getRequirementTerms(matcherQuery);
 
-    return candidatesPool
+    return candidates
       .filter((candidate) => {
         if (!normalizedQuery) {
           return true;
@@ -306,15 +336,15 @@ function OrganizationDashboardContent() {
         return searchableValues.some((value) => value?.toLowerCase().includes(normalizedQuery));
       })
       .sort((candidateA, candidateB) => {
-        const candidateAScore = calculateWeightedCandidateMatch(candidateA);
-        const candidateBScore = calculateWeightedCandidateMatch(candidateB);
+        const candidateAScore = calculateWeightedCandidateMatch(candidateA, requirementTerms);
+        const candidateBScore = calculateWeightedCandidateMatch(candidateB, requirementTerms);
         return candidateBScore - candidateAScore;
       });
-  }, [candidatesPool, searchQuery]);
+  }, [candidates, matcherQuery, searchQuery]);
   const messageRecipients = Array.from(
     new Map(
       [
-        ...candidatesPool.map((candidate) => ({
+        ...candidates.map((candidate) => ({
           id: candidate.id,
           name: candidate.full_name?.trim() || `@${candidate.username}`,
           username: candidate.username,
@@ -356,7 +386,8 @@ function OrganizationDashboardContent() {
     }
 
     setIsSearching(true);
-    setCandidatesPool([]);
+    setIsCandidatePoolLoading(false);
+    setCandidatePoolError('');
     setHasRunMatcher(true);
 
     try {
@@ -385,7 +416,7 @@ function OrganizationDashboardContent() {
         .filter((candidate: CandidateProfile | null): candidate is CandidateProfile => Boolean(candidate));
 
       console.log('Candidates payload pulled successfully:', data);
-      setCandidatesPool(normalizedCandidates);
+      setCandidates(normalizedCandidates);
     } catch (err) {
       console.error('Caught search routine exception:', err);
       let errorMessage = '';
@@ -598,6 +629,58 @@ function OrganizationDashboardContent() {
       router.replace('/organization/dashboard', { scroll: false });
     }
   }, [requestedTab, router]);
+
+  useEffect(() => {
+    if (loading || hasRunMatcher) {
+      return;
+    }
+
+    let active = true;
+
+    async function loadCandidatePool() {
+      setIsCandidatePoolLoading(true);
+      setCandidatePoolError('');
+
+      try {
+        if (!supabase) {
+          throw new Error('Candidate search is unavailable because Supabase is not configured.');
+        }
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name, username, bio, skills, avg_project_score, current_status')
+          .order('avg_project_score', { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        const normalizedCandidates = (data ?? [])
+          .map((candidate: unknown) => normalizeCandidateProfile(candidate))
+          .filter((candidate): candidate is CandidateProfile => candidate !== null);
+
+        if (active) {
+          setCandidates(normalizedCandidates);
+        }
+      } catch (error) {
+        if (active) {
+          setCandidatePoolError(
+            error instanceof Error ? error.message : 'Unable to load candidate profiles.'
+          );
+        }
+      } finally {
+        if (active) {
+          setIsCandidatePoolLoading(false);
+        }
+      }
+    }
+
+    void loadCandidatePool();
+
+    return () => {
+      active = false;
+    };
+  }, [hasRunMatcher, loading, supabase]);
 
   useEffect(() => {
     if (loading) {
@@ -1030,41 +1113,35 @@ function OrganizationDashboardContent() {
             </div>
           ) : null}
 
-          {activeTab !== 'messages' && !searchError && hasRunMatcher && !isSearching && candidatesPool.length === 0 ? (
-            <div className="w-full bg-[#0d1533] border border-dashed border-slate-900 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-center md:mb-0 md:border-slate-800/70 md:bg-[#040615]/40 md:p-8">
-              <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">No Recruiter Matches</p>
-              <h4 className="mt-3 text-lg font-semibold text-white">0 talent vectors matched this taxonomy.</h4>
-              <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                0 talent vectors inside the platform database matched your rigid relational taxonomy skill parameters.
-                Try relaxing required skills, broadening seniority, or adding adjacent tool families to widen the enterprise
-                search surface.
-              </p>
-            </div>
-          ) : null}
-
           {activeTab !== 'messages' ? (
             <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-800/80 to-transparent" />
           ) : null}
 
           {activeTab !== 'messages' ? (
           <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
-            {!searchError && candidatesPool.length > 0 ? (
-              <>
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
-                    aria-hidden="true"
-                  />
-                  <input
-                    type="search"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search by skill, role, or keyword..."
-                    className="w-full rounded-xl border border-slate-800 bg-[#080b1d]/90 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-purple-500/60 focus:ring-2 focus:ring-purple-500/20"
-                  />
-                </div>
+            <div className="relative overflow-hidden rounded-2xl border border-slate-800/80 bg-gradient-to-r from-[#0d1533] via-[#090d24] to-[#10091f] p-2 shadow-[0_18px_60px_rgba(0,0,0,0.25)]">
+              <Search
+                className="pointer-events-none absolute left-6 top-1/2 h-5 w-5 -translate-y-1/2 text-purple-300"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search by skill, role, or keyword..."
+                className="w-full rounded-xl border border-white/5 bg-black/20 py-4 pl-14 pr-5 text-base text-white outline-none transition placeholder:text-slate-600 focus:border-purple-400/50 focus:bg-black/30 focus:ring-2 focus:ring-purple-500/20"
+              />
+            </div>
 
-                {filteredCandidates.length > 0 ? (
+            {candidatePoolError ? (
+              <div className="rounded-2xl border border-rose-400/20 bg-rose-500/[0.07] px-6 py-5 text-sm text-rose-100">
+                {candidatePoolError}
+              </div>
+            ) : isCandidatePoolLoading ? (
+              <div className="rounded-2xl border border-slate-800 bg-[#080b1d]/70 px-6 py-10 text-center text-sm text-slate-400">
+                Loading candidate profiles...
+              </div>
+            ) : filteredCandidates.length > 0 ? (
                   <div className="grid grid-cols-1 gap-4">
                   {filteredCandidates.map((candidate, index) => {
                   const compositeMatchPercent = Math.round((candidate?.composite_match_index ?? 0) * 100);
@@ -1138,13 +1215,12 @@ function OrganizationDashboardContent() {
                   );
                   })}
                   </div>
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-slate-800 bg-[#040615]/50 px-6 py-10 text-center">
-                    <p className="text-sm font-medium text-slate-400">No candidates match this search criteria.</p>
-                  </div>
-                )}
-              </>
-            ) : null}
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-800 bg-[#040615]/50 px-6 py-12 text-center">
+                <Search className="mx-auto h-6 w-6 text-slate-600" aria-hidden="true" />
+                <p className="mt-4 text-sm font-medium text-slate-400">No candidates match your search.</p>
+              </div>
+            )}
 
           </section>
           ) : null}
