@@ -41,7 +41,7 @@ export function OrganizationJobPostingHub() {
     core_requirements: '',
   });
   const [coreSkills, setCoreSkills] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyList, setHistoryList] = useState<OpportunityHistoryItem[]>([]);
@@ -186,17 +186,35 @@ export function OrganizationJobPostingHub() {
       return;
     }
 
-    if (!formData.job_title.trim() || !formData.core_requirements.trim() || !coreSkills.trim()) {
-      setErrorMessage('Add a job title, core requirements, and technical skills before broadcasting.');
+    if (!formData.job_title.trim() || !formData.core_requirements.trim()) {
+      setErrorMessage('Add a job title and core requirements before broadcasting.');
       return;
     }
 
-    setIsSubmitting(true);
+    setIsPublishing(true);
     setSuccessMessage(null);
     setErrorMessage(null);
 
     try {
       const isEditing = Boolean(editingId);
+      const keywordResponse = await fetch('/api/extract-keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: formData.core_requirements.trim() }),
+      });
+      const keywordPayload = (await keywordResponse.json().catch(() => null)) as
+        | { tags?: string; error?: string }
+        | null;
+
+      if (!keywordResponse.ok || !keywordPayload?.tags?.trim()) {
+        throw new Error(
+          keywordPayload?.error || `Keyword extraction failed (HTTP ${keywordResponse.status}).`
+        );
+      }
+
+      const extractedCoreSkills = keywordPayload.tags.trim();
+      setCoreSkills(extractedCoreSkills);
+
       const sessionResult = supabase ? await supabase.auth.getSession() : null;
       const loggedInUserEmail =
         sessionResult?.data.session?.user.email?.trim().toLowerCase() ||
@@ -221,7 +239,7 @@ export function OrganizationJobPostingHub() {
             ...(editingId ? { id: editingId } : {}),
             job_title: formData.job_title.trim(),
             core_requirements: formData.core_requirements.trim(),
-            core_skills: coreSkills.trim(),
+            core_skills: extractedCoreSkills,
             company_email: loggedInUserEmail,
           }),
         }
@@ -253,7 +271,7 @@ export function OrganizationJobPostingHub() {
           : 'The opportunity could not be broadcasted. Please try again.'
       );
     } finally {
-      setIsSubmitting(false);
+      setIsPublishing(false);
     }
   }
 
@@ -356,42 +374,6 @@ export function OrganizationJobPostingHub() {
               />
             </label>
 
-            <label className="block space-y-2 text-sm font-medium text-slate-300">
-              <span className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-emerald-300" />
-                Core Technical Skills (Comma-separated for AI Matching)
-              </span>
-              <input
-                name="core_skills"
-                type="text"
-                required
-                value={coreSkills}
-                onChange={(event) => {
-                  setCoreSkills(event.target.value);
-                  setSuccessMessage(null);
-                  setErrorMessage(null);
-                }}
-                placeholder="React, TypeScript, Next.js, Tailwind CSS"
-                className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-400/15"
-              />
-              {coreSkills.trim() ? (
-                <span className="flex flex-wrap gap-2 pt-1">
-                  {coreSkills
-                    .split(',')
-                    .map((skill) => skill.trim())
-                    .filter(Boolean)
-                    .map((skill) => (
-                      <span
-                        key={skill}
-                        className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-200"
-                      >
-                        {skill}
-                      </span>
-                    ))}
-                </span>
-              ) : null}
-            </label>
-
             {errorMessage ? (
               <div className="rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" role="alert">
                 {errorMessage}
@@ -404,14 +386,12 @@ export function OrganizationJobPostingHub() {
               </p>
               <button
                 type="submit"
-                disabled={isSubmitting || loading || !organizationId}
+                disabled={isPublishing || loading || !organizationId}
                 className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-purple-500/25 px-6 py-3 text-xs font-bold uppercase tracking-[0.16em] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.14)] transition hover:border-cyan-200/70 hover:shadow-[0_0_34px_rgba(34,211,238,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {editingId ? <Pencil className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-                {isSubmitting
-                  ? editingId
-                    ? 'Updating...'
-                    : 'Broadcasting...'
+                {isPublishing ? <Sparkles className="h-4 w-4 animate-pulse" /> : editingId ? <Pencil className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                {isPublishing
+                  ? 'Analyzing & Posting...'
                   : editingId
                     ? '⚠️ UPDATE BROADCAST'
                     : 'Broadcast Opportunity'}
