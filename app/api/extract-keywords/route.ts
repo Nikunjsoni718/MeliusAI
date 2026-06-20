@@ -4,8 +4,11 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const EXTRACTION_SYSTEM_PROMPT =
-  'You are an expert technical recruiter AI. Extract the core technical skills, required experience levels, and key outcomes from the provided job description. Return ONLY a single comma-separated string of short, punchy tags. Do not use quotes, bullet points, or extra text. Example output: TypeScript, UI/UX Design, 3+ Years Experience, Wireframing, Figma';
+const EXTRACTION_SYSTEM_PROMPT = `You are an ultra-precise extraction AI. Extract the core technical skills, explicit experience requirements, and key outcomes from the provided text.
+CRITICAL RULES:
+1. You must ONLY extract information explicitly written in the provided text.
+2. DO NOT invent, assume, or hallucinate requirements (especially 'Years of Experience') if they are not specifically mentioned by the user.
+3. Return ONLY a single comma-separated string of short tags. No quotes, no bullets.`;
 
 export async function POST(request: Request) {
   try {
