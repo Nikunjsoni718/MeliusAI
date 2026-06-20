@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import {
   ArrowRight,
   BadgeCheck,
@@ -54,9 +54,10 @@ function parseCommaList(value: string, fallback: string) {
 }
 
 function OrganizationManifestoPageContent() {
-  const searchParams = useSearchParams();
-  const publicOrganizationId = searchParams.get('organization_id')?.trim() || null;
+  const params = useParams<{ organizationId?: string }>();
+  const publicOrgId = params?.organizationId?.trim() || null;
   const { loading: authLoading, profile, supabase, user } = useViewerProfile();
+  const userId = user?.id;
   const [companyName, setCompanyName] = useState('');
   const [bioText, setBioText] = useState('');
   const [pillar1Title, setPillar1Title] = useState(DEFAULT_PILLAR_1_TITLE);
@@ -103,34 +104,34 @@ function OrganizationManifestoPageContent() {
 
     let active = true;
 
-    async function fetchOrgProfile() {
+    async function loadProfileData() {
       setIsLoading(true);
 
       try {
         if (!supabase) return;
 
         let organization: Record<string, unknown> | null = null;
-        if (publicOrganizationId) {
+        if (publicOrgId) {
           const { data: publicRows, error: publicError } = await supabase
             .from('organizations')
             .select('*')
-            .eq('id', publicOrganizationId)
+            .eq('id', publicOrgId)
             .limit(1);
 
           if (publicError) throw publicError;
           organization = publicRows && publicRows.length > 0 ? publicRows[0] : null;
-        } else if (user?.id) {
+        } else if (userId) {
           const { data: userRows, error: userError } = await supabase
             .from('organizations')
             .select('*')
-            .eq('user_id', user.id)
+            .eq('user_id', userId)
             .limit(1);
 
           if (userError) throw userError;
           organization = userRows && userRows.length > 0 ? userRows[0] : null;
         }
 
-        if (!organization && !publicOrganizationId) {
+        if (!organization && !publicOrgId) {
           const { data: companyRows, error: companyError } = await supabase
             .from('organizations')
             .select('*')
@@ -177,13 +178,15 @@ function OrganizationManifestoPageContent() {
       }
     }
 
-    void fetchOrgProfile();
+    void loadProfileData();
     return () => {
       active = false;
     };
-  }, [authLoading, contextCompanyName, publicOrganizationId, supabase, user?.id]);
+  }, [authLoading, contextCompanyName, publicOrgId, supabase, userId]);
 
   function enterEditMode() {
+    if (publicOrgId) return;
+
     editSnapshot.current = currentFields();
     setSaveError(null);
     setSaveSuccess(false);
@@ -197,7 +200,7 @@ function OrganizationManifestoPageContent() {
   }
 
   async function handleSaveProfile() {
-    if (!supabase || !user?.id) {
+    if (publicOrgId || !supabase || !userId) {
       setSaveError('Sign in to edit this organization profile.');
       return;
     }
@@ -226,7 +229,7 @@ function OrganizationManifestoPageContent() {
       const { data: userRows, error: userLookupError } = await supabase
         .from('organizations')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .limit(1);
 
       if (userLookupError) throw userLookupError;
@@ -245,7 +248,7 @@ function OrganizationManifestoPageContent() {
       }
 
       const databaseFields = {
-        user_id: user.id,
+        user_id: userId,
         company_name: normalizedFields.companyName,
         mission_text: normalizedFields.bioText,
         pillar1_title: normalizedFields.pillar1Title,
@@ -305,10 +308,10 @@ function OrganizationManifestoPageContent() {
             MeliusIQ Workspace
           </Link>
           <Link
-            href={publicOrganizationId ? '/home' : '/organization/dashboard'}
+            href={publicOrgId ? '/home' : '/organization/dashboard'}
             className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-300/35 hover:text-cyan-100"
           >
-            {publicOrganizationId ? 'Candidate dashboard' : 'Workspace dashboard'}
+            {publicOrgId ? 'Candidate dashboard' : 'Workspace dashboard'}
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </nav>
@@ -318,7 +321,7 @@ function OrganizationManifestoPageContent() {
             <BadgeCheck className="h-4 w-4" />
             Verified Workspace
           </div>
-          {user?.id && !publicOrganizationId && !isEditing ? (
+          {!publicOrgId && userId && !isEditing ? (
             <button
               type="button"
               onClick={enterEditMode}
@@ -337,7 +340,7 @@ function OrganizationManifestoPageContent() {
           </div>
         ) : null}
 
-        {isEditing ? (
+        {isEditing && !publicOrgId ? (
           <section className="my-10 rounded-[2rem] border border-purple-300/20 bg-[#090c1c]/95 p-6 shadow-[0_30px_100px_rgba(0,0,0,0.38)] sm:p-9">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-300">Hero</p>
