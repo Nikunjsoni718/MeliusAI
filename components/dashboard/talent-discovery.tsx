@@ -181,11 +181,6 @@ export function OrganizationJobPostingHub() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!organizationId) {
-      setErrorMessage('Unable to identify the active organization workspace. Please sign in again.');
-      return;
-    }
-
     if (!formData.job_title.trim() || !formData.core_requirements.trim()) {
       setErrorMessage('Add a job title and core requirements before broadcasting.');
       return;
@@ -215,10 +210,34 @@ export function OrganizationJobPostingHub() {
       const extractedCoreSkills = keywordPayload.tags.trim();
       setCoreSkills(extractedCoreSkills);
 
-      const sessionResult = supabase ? await supabase.auth.getSession() : null;
+      const authResult = supabase ? await supabase.auth.getUser() : null;
+      if (authResult?.error) {
+        throw authResult.error;
+      }
+
+      const loggedInUser = authResult?.data.user || user;
+      if (!loggedInUser?.id) {
+        throw new Error('Unable to identify the authenticated organization account. Please sign in again.');
+      }
+
+      let resolvedOrganizationId = organizationId;
+      if (supabase) {
+        const { data: organizationRows, error: organizationError } = await supabase
+          .from('organizations')
+          .select('id')
+          .eq('user_id', loggedInUser.id)
+          .limit(1);
+
+        if (organizationError) {
+          throw organizationError;
+        }
+
+        resolvedOrganizationId = organizationRows?.[0]?.id || resolvedOrganizationId;
+      }
+
+      resolvedOrganizationId ||= loggedInUser.id;
       const loggedInUserEmail =
-        sessionResult?.data.session?.user.email?.trim().toLowerCase() ||
-        user?.email?.trim().toLowerCase() ||
+        loggedInUser.email?.trim().toLowerCase() ||
         '';
 
       if (!isEditing && !loggedInUserEmail) {
@@ -231,7 +250,7 @@ export function OrganizationJobPostingHub() {
           method: isEditing ? 'PUT' : 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Organization-Id': organizationId,
+            'X-Organization-Id': resolvedOrganizationId,
             'X-Company-Name': encodeURIComponent(organizationName),
             'X-Company-Email': loggedInUserEmail,
           },
@@ -241,7 +260,7 @@ export function OrganizationJobPostingHub() {
             core_requirements: formData.core_requirements.trim(),
             core_skills: extractedCoreSkills,
             company_email: loggedInUserEmail,
-            organization_id: organizationId,
+            organization_id: resolvedOrganizationId,
           }),
         }
       );
