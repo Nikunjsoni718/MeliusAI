@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
   BadgeCheck,
@@ -54,8 +54,8 @@ function parseCommaList(value: string, fallback: string) {
 }
 
 function OrganizationManifestoPageContent() {
-  const params = useParams<{ organizationId?: string }>();
-  const publicOrgId = params?.organizationId?.trim() || null;
+  const searchParams = useSearchParams();
+  const publicOrgId = searchParams.get('orgId')?.trim() || null;
   const { loading: authLoading, profile, supabase, user } = useViewerProfile();
   const userId = user?.id;
   const [companyName, setCompanyName] = useState('');
@@ -112,34 +112,23 @@ function OrganizationManifestoPageContent() {
 
         let organization: Record<string, unknown> | null = null;
         if (publicOrgId) {
-          const { data: publicRows, error: publicError } = await supabase
+          const { data: publicOrganization, error: publicError } = await supabase
             .from('organizations')
             .select('*')
             .eq('id', publicOrgId)
-            .limit(1);
+            .single();
 
           if (publicError) throw publicError;
-          organization = publicRows && publicRows.length > 0 ? publicRows[0] : null;
+          organization = publicOrganization;
         } else if (userId) {
-          const { data: userRows, error: userError } = await supabase
+          const { data: userOrganization, error: userError } = await supabase
             .from('organizations')
             .select('*')
             .eq('user_id', userId)
-            .limit(1);
+            .single();
 
           if (userError) throw userError;
-          organization = userRows && userRows.length > 0 ? userRows[0] : null;
-        }
-
-        if (!organization && !publicOrgId) {
-          const { data: companyRows, error: companyError } = await supabase
-            .from('organizations')
-            .select('*')
-            .ilike('company_name', contextCompanyName)
-            .limit(1);
-
-          if (companyError) throw companyError;
-          organization = companyRows && companyRows.length > 0 ? companyRows[0] : null;
+          organization = userOrganization;
         }
 
         if (!active) return;
@@ -321,7 +310,7 @@ function OrganizationManifestoPageContent() {
             <BadgeCheck className="h-4 w-4" />
             Verified Workspace
           </div>
-          {!publicOrgId && userId && !isEditing ? (
+          {!publicOrgId && !isEditing && userId && (
             <button
               type="button"
               onClick={enterEditMode}
@@ -330,7 +319,7 @@ function OrganizationManifestoPageContent() {
               <Pencil className="h-3.5 w-3.5" />
               Edit Profile
             </button>
-          ) : null}
+          )}
         </div>
 
         {saveSuccess ? (

@@ -98,7 +98,9 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <button
               type="button"
-              onClick={() => router.push(`/company/${item.organization_id}/manifesto`)}
+              onClick={() =>
+                router.push(`/organization/dashboard/manifesto?orgId=${item.organization_id}`)
+              }
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-600/80 bg-slate-900/55 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-200 transition hover:border-purple-400/50 hover:bg-purple-500/10 hover:text-purple-100"
             >
               <Building2 className="h-4 w-4" aria-hidden="true" />

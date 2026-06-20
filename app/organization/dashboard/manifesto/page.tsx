@@ -1,5 +1,5 @@
 import OrganizationManifestoPage from '@/app/organization/about/page';
 
-export default function PublicOrganizationManifestoPage() {
+export default function DashboardManifestoPage() {
   return <OrganizationManifestoPage />;
 }
