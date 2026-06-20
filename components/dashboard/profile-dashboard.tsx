@@ -67,6 +67,7 @@ type ProjectItem = {
 };
 
 type LiveOpportunityItem = {
+  organization_id: string;
   recruiter_name: string;
   role_title: string;
   core_skills: string;
@@ -234,6 +235,8 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
     : [];
 
   return {
+    organization_id:
+      typeof opportunity.organization_id === 'string' ? opportunity.organization_id.trim() : '',
     recruiter_name:
       typeof opportunity.recruiter_name === 'string' && opportunity.recruiter_name.trim()
         ? opportunity.recruiter_name.trim()

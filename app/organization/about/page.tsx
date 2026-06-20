@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
   BadgeCheck,
@@ -52,7 +53,9 @@ function parseCommaList(value: string, fallback: string) {
   return items.length > 0 ? items : fallback.split(',').map((item) => item.trim());
 }
 
-export default function OrganizationManifestoPage() {
+function OrganizationManifestoPageContent() {
+  const searchParams = useSearchParams();
+  const publicOrganizationId = searchParams.get('organization_id')?.trim() || null;
   const { loading: authLoading, profile, supabase, user } = useViewerProfile();
   const [companyName, setCompanyName] = useState('');
   const [bioText, setBioText] = useState('');
@@ -107,7 +110,16 @@ export default function OrganizationManifestoPage() {
         if (!supabase) return;
 
         let organization: Record<string, unknown> | null = null;
-        if (user?.id) {
+        if (publicOrganizationId) {
+          const { data: publicRows, error: publicError } = await supabase
+            .from('organizations')
+            .select('*')
+            .eq('id', publicOrganizationId)
+            .limit(1);
+
+          if (publicError) throw publicError;
+          organization = publicRows && publicRows.length > 0 ? publicRows[0] : null;
+        } else if (user?.id) {
           const { data: userRows, error: userError } = await supabase
             .from('organizations')
             .select('*')
@@ -118,7 +130,7 @@ export default function OrganizationManifestoPage() {
           organization = userRows && userRows.length > 0 ? userRows[0] : null;
         }
 
-        if (!organization) {
+        if (!organization && !publicOrganizationId) {
           const { data: companyRows, error: companyError } = await supabase
             .from('organizations')
             .select('*')
@@ -169,7 +181,7 @@ export default function OrganizationManifestoPage() {
     return () => {
       active = false;
     };
-  }, [authLoading, contextCompanyName, supabase, user?.id]);
+  }, [authLoading, contextCompanyName, publicOrganizationId, supabase, user?.id]);
 
   function enterEditMode() {
     editSnapshot.current = currentFields();
@@ -293,10 +305,10 @@ export default function OrganizationManifestoPage() {
             MeliusIQ Workspace
           </Link>
           <Link
-            href="/organization/dashboard"
+            href={publicOrganizationId ? '/home' : '/organization/dashboard'}
             className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-300/35 hover:text-cyan-100"
           >
-            Workspace dashboard
+            {publicOrganizationId ? 'Candidate dashboard' : 'Workspace dashboard'}
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </nav>
@@ -306,7 +318,7 @@ export default function OrganizationManifestoPage() {
             <BadgeCheck className="h-4 w-4" />
             Verified Workspace
           </div>
-          {user?.id && !isEditing ? (
+          {user?.id && !publicOrganizationId && !isEditing ? (
             <button
               type="button"
               onClick={enterEditMode}
@@ -468,6 +480,14 @@ export default function OrganizationManifestoPage() {
         </footer>
       </div>
     </main>
+  );
+}
+
+export default function OrganizationManifestoPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-[#030512]" />}>
+      <OrganizationManifestoPageContent />
+    </Suspense>
   );
 }
 
