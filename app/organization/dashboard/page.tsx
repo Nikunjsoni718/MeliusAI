@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import { Suspense, useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Compass, Cpu, Info, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
@@ -23,6 +23,7 @@ interface CandidateProfile {
   id: string;
   full_name?: string;
   username: string;
+  role_title?: string;
   bio: string;
   skills: string[];
   avg_project_score: number;
@@ -167,6 +168,12 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
       : typeof row.role === 'string'
         ? row.role
         : 'Verified MeliusAI talent profile.';
+  const roleTitle =
+    typeof row.role_title === 'string'
+      ? row.role_title.trim()
+      : typeof row.role === 'string'
+        ? row.role.trim()
+        : '';
   const vectorMatch = normalizeDecimalMatch(row.vector_match ?? row.semantic_similarity ?? row.similarity);
   const compositeMatchIndex = normalizeDecimalMatch(
     row.composite_match_index ?? row.matchScore ?? row.match_index ?? row.match_score ?? row.score
@@ -177,6 +184,7 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
     id,
     full_name: typeof row.full_name === 'string' ? row.full_name : undefined,
     username,
+    role_title: roleTitle || undefined,
     bio,
     skills: normalizeSkills(row.skills ?? row.tags),
     avg_project_score: getNumberValue(row.avg_project_score, 0),
@@ -190,6 +198,16 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
           ? row.reasoning
           : undefined,
   };
+}
+
+function calculateWeightedCandidateMatch(candidate: CandidateProfile) {
+  const requirementMatchScore = Math.max(
+    0,
+    Math.min(100, candidate.matchScore ?? candidate.composite_match_index * 100)
+  );
+  const verifiedExecutionScore = Math.max(0, Math.min(100, candidate.avg_project_score));
+
+  return requirementMatchScore * 0.62 + verifiedExecutionScore * 0.38;
 }
 
 function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon'] }) {
@@ -261,7 +279,8 @@ function OrganizationDashboardContent() {
   const [linkedProfilesState, setLinkedProfilesState] = useState<OrganizationLinkedProfile[]>([]);
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('Looking for a ui ux designer who is good at typescript');
+  const [matcherQuery, setMatcherQuery] = useState('Looking for a ui ux designer who is good at typescript');
+  const [searchQuery, setSearchQuery] = useState('');
   const [candidatesPool, setCandidatesPool] = useState<CandidateProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>('');
@@ -274,6 +293,24 @@ function OrganizationDashboardContent() {
   const currentOrg = activeWorkspace;
   const currentOrgId = activeWorkspace.id;
   const isWorkspaceContextPending = loading || isLoading;
+  const filteredCandidates = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return candidatesPool
+      .filter((candidate) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const searchableValues = [candidate.role_title, candidate.bio, ...(candidate.skills ?? [])];
+        return searchableValues.some((value) => value?.toLowerCase().includes(normalizedQuery));
+      })
+      .sort((candidateA, candidateB) => {
+        const candidateAScore = calculateWeightedCandidateMatch(candidateA);
+        const candidateBScore = calculateWeightedCandidateMatch(candidateB);
+        return candidateBScore - candidateAScore;
+      });
+  }, [candidatesPool, searchQuery]);
   const messageRecipients = Array.from(
     new Map(
       [
@@ -311,7 +348,7 @@ function OrganizationDashboardContent() {
     }
 
     setSearchError('');
-    const prompt = searchQuery.trim();
+    const prompt = matcherQuery.trim();
 
     if (!prompt) {
       setSearchError('Search input required. Add clearer recruiter intent to continue.');
@@ -333,7 +370,7 @@ function OrganizationDashboardContent() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: searchQuery.trim(),
+          prompt: matcherQuery.trim(),
         }),
       });
 
@@ -372,7 +409,7 @@ function OrganizationDashboardContent() {
   }
 
   async function handleMatchFeedback(candidate: CandidateProfile, action: 'clicked' | 'shortlisted' | 'skipped') {
-    if (!currentOrg.id || !candidate.id || !searchQuery.trim()) {
+    if (!currentOrg.id || !candidate.id || !matcherQuery.trim()) {
       return;
     }
 
@@ -386,7 +423,7 @@ function OrganizationDashboardContent() {
         body: JSON.stringify({
           organization_id: currentOrg.id,
           candidate_id: candidate.id,
-          search_prompt: searchQuery,
+          search_prompt: matcherQuery,
           action,
         }),
       });
@@ -944,9 +981,9 @@ function OrganizationDashboardContent() {
 
               <form onSubmit={handleSearchTalent} className="mt-6 space-y-4">
                 <textarea
-                  value={searchQuery}
+                  value={matcherQuery}
                   onChange={(event) => {
-                    setSearchQuery(event.target.value);
+                    setMatcherQuery(event.target.value);
                     setSearchError('');
                   }}
                   placeholder="Describe your ideal candidate requirement specification here... (e.g., 'Looking for a Senior Python backend engineering architect who understands custom database clustering structures')"
@@ -1012,8 +1049,24 @@ function OrganizationDashboardContent() {
           {activeTab !== 'messages' ? (
           <section id="talent-discovery" className="scroll-mt-20 space-y-6 md:scroll-mt-8">
             {!searchError && candidatesPool.length > 0 ? (
-              <div className="grid grid-cols-1 gap-4">
-                {candidatesPool.map((candidate, index) => {
+              <>
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search by skill, role, or keyword..."
+                    className="w-full rounded-xl border border-slate-800 bg-[#080b1d]/90 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-purple-500/60 focus:ring-2 focus:ring-purple-500/20"
+                  />
+                </div>
+
+                {filteredCandidates.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4">
+                  {filteredCandidates.map((candidate, index) => {
                   const compositeMatchPercent = Math.round((candidate?.composite_match_index ?? 0) * 100);
                   const vectorMatchPercent = Math.round((candidate?.vector_match ?? 0) * 100);
                   const averageProjectMetric = candidate?.avg_project_score ?? 0;
@@ -1083,8 +1136,14 @@ function OrganizationDashboardContent() {
                       </div>
                     </div>
                   );
-                })}
-              </div>
+                  })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-800 bg-[#040615]/50 px-6 py-10 text-center">
+                    <p className="text-sm font-medium text-slate-400">No candidates match this search criteria.</p>
+                  </div>
+                )}
+              </>
             ) : null}
 
           </section>
