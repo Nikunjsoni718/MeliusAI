@@ -1317,6 +1317,7 @@ async def get_opportunities(candidate_id: str):
         )
 
         matched_alerts = []
+        manifesto_by_recruiter = {}
         for opportunity in opportunities_response.data or []:
             role_title = str(opportunity.get("role_title") or "").lower()
             required_skills = list(
@@ -1369,9 +1370,30 @@ async def get_opportunities(candidate_id: str):
                 if matched_skills
                 else "Broad role alignment based on your verified profile."
             )
+
+            recruiter_name = str(opportunity.get("recruiter_name") or "").strip()
+            recruiter_key = recruiter_name.casefold()
+            if recruiter_name and recruiter_key not in manifesto_by_recruiter:
+                organization_response = await asyncio.to_thread(
+                    lambda: supabase.table("organizations")
+                    .select("mission_text, pillar1_title, tech_input, perks_input")
+                    .ilike("company_name", recruiter_name)
+                    .limit(1)
+                    .execute()
+                )
+                organization_rows = organization_response.data or []
+                manifesto_by_recruiter[recruiter_key] = (
+                    organization_rows[0] if organization_rows else {}
+                )
+
+            manifesto = manifesto_by_recruiter.get(recruiter_key, {})
             matched_alerts.append(
                 {
                     **opportunity,
+                    "mission_text": str(manifesto.get("mission_text") or ""),
+                    "pillar1_title": str(manifesto.get("pillar1_title") or ""),
+                    "tech_input": str(manifesto.get("tech_input") or ""),
+                    "perks_input": str(manifesto.get("perks_input") or ""),
                     "match_score": organic_match_score,
                     "matched_skills": matched_skills,
                     "triggered_skills": matched_skills,

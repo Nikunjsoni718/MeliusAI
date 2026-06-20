@@ -8,6 +8,7 @@ import { FileText, FolderLock, House, Mail, Menu, Search, Settings as SettingsIc
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
+import { CandidateOpportunityCard } from '@/components/dashboard/candidate-opportunity-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -74,6 +75,10 @@ type LiveOpportunityItem = {
   match_explanation: string;
   company_email: string | null;
   status: string;
+  mission_text: string;
+  pillar1_title: string;
+  tech_input: string;
+  perks_input: string;
 };
 type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
   id?: string | null;
@@ -250,6 +255,10 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
       typeof opportunity.company_email === 'string' && opportunity.company_email.trim()
         ? opportunity.company_email.trim()
         : null,
+    mission_text: typeof opportunity.mission_text === 'string' ? opportunity.mission_text.trim() : '',
+    pillar1_title: typeof opportunity.pillar1_title === 'string' ? opportunity.pillar1_title.trim() : '',
+    tech_input: typeof opportunity.tech_input === 'string' ? opportunity.tech_input.trim() : '',
+    perks_input: typeof opportunity.perks_input === 'string' ? opportunity.perks_input.trim() : '',
     status: typeof opportunity.status === 'string' && opportunity.status.trim() ? opportunity.status.trim() : 'active',
   };
 }
@@ -3582,81 +3591,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : liveJobs.length > 0 ? (
                 <div className="space-y-4">
-                  {liveJobs.map((item, index) => {
-                    const matchedKeywords = item.matched_skills.join(', ');
-                    const organicMatchScore = Math.round(item.match_score);
-                    const matchDescription = matchedKeywords
-                      ? `You match this role because your profile contains verified expertise in: ${matchedKeywords}`
-                      : item.match_explanation;
-                    const gmailComposeUrl = item.company_email
-                      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(item.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
-                      : null;
-
-                    return (
-                      <Card
-                        key={`${item.recruiter_name}-${item.role_title}-${index}`}
-                        className="border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md"
-                      >
-                        <CardContent className="flex flex-col gap-6 p-6">
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0 flex-1">
-                              <span className="inline-flex rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
-                                {item.recruiter_name}
-                              </span>
-                              <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{item.role_title}</h3>
-                              {item.core_skills ? (
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  {item.core_skills
-                                    .split(',')
-                                    .map((skill) => skill.trim())
-                                    .filter(Boolean)
-                                    .map((skill, skillIndex) => (
-                                      <span
-                                        key={`${skill}-${skillIndex}`}
-                                        className="rounded-md border border-purple-700/50 bg-purple-900/30 px-3 py-1 text-xs font-bold tracking-wide text-purple-300"
-                                      >
-                                        {skill}
-                                      </span>
-                                    ))}
-                                </div>
-                              ) : null}
-                            </div>
-                            <span className="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
-                              {item.status}
-                            </span>
-                          </div>
-
-                          <div className="rounded-2xl border border-cyan-400/15 bg-cyan-500/[0.06] px-4 py-3">
-                            <span className="block text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
-                              Verified skill match: {matchedKeywords}
-                            </span>
-                            <p className="mt-1 text-sm font-medium leading-6 text-slate-200">{matchDescription}</p>
-                          </div>
-
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                            <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/15 px-4 py-2 text-sm font-bold text-purple-100 shadow-[0_0_26px_rgba(168,85,247,0.18)]">
-                              {organicMatchScore}% MATCH
-                            </span>
-                            {gmailComposeUrl ? (
-                              <a
-                                href={gmailComposeUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.15)] transition hover:border-cyan-200 hover:from-cyan-500/30 hover:to-blue-500/30"
-                              >
-                                <Mail className="h-4 w-4" aria-hidden="true" />
-                                Apply directly via Gmail
-                              </a>
-                            ) : (
-                              <span className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/60 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-                                Application email unavailable
-                              </span>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
+                  {liveJobs.map((item, index) => (
+                    <CandidateOpportunityCard
+                      key={`${item.recruiter_name}-${item.role_title}-${index}`}
+                      item={item}
+                      displayName={displayName}
+                    />
+                  ))}
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
