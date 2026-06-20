@@ -42,6 +42,9 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
   const gmailComposeUrl = item.company_email
     ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(item.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
     : null;
+
+  console.log('Current Opportunity Data:', item);
+
   return (
     <motion.div
       layout

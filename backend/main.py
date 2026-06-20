@@ -396,6 +396,7 @@ class CreateOpportunityRequest(BaseModel):
     description: str | None = None
     core_skills: str
     company_email: str
+    organization_id: str | None = None
 
 
 class UpdateOpportunityRequest(BaseModel):
@@ -1057,6 +1058,10 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
     core_skills = payload.core_skills.strip()
     company_email = payload.company_email.strip().lower()
     organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
+    organization_id = (
+        (payload.organization_id or "").strip()
+        or request.headers.get("x-organization-id", "").strip()
+    )
 
     if not job_title or not core_requirements_text or not core_skills:
         raise HTTPException(status_code=400, detail="Job title, core requirements, and core skills are required")
@@ -1066,6 +1071,7 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
     try:
         supabase = get_supabase_service_role_client()
         insert_data = {
+            "organization_id": organization_id or None,
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements_text,
@@ -1113,7 +1119,10 @@ async def organization_opportunities(recruiter_name: str):
         supabase = get_supabase_service_role_client()
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select("*")
+            .select(
+                "id, organization_id, recruiter_name, role_title, core_skills, "
+                "company_email, status, created_at, description"
+            )
             .eq("recruiter_name", resolved_recruiter_name)
             .order("created_at", desc=True)
             .execute()
@@ -1310,7 +1319,10 @@ async def get_opportunities(candidate_id: str):
         unique_skills = list(dict.fromkeys(candidate_skills))
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
-            .select("*")
+            .select(
+                "id, organization_id, recruiter_name, role_title, core_skills, "
+                "company_email, status, created_at, description"
+            )
             .eq("status", "active")
             .order("created_at", desc=True)
             .execute()
@@ -1376,7 +1388,7 @@ async def get_opportunities(candidate_id: str):
             if recruiter_name and recruiter_key not in manifesto_by_recruiter:
                 organization_response = await asyncio.to_thread(
                     lambda: supabase.table("organizations")
-                    .select("mission_text, pillar1_title, tech_input, perks_input")
+                    .select("id, mission_text, pillar1_title, tech_input, perks_input")
                     .ilike("company_name", recruiter_name)
                     .limit(1)
                     .execute()
@@ -1387,9 +1399,13 @@ async def get_opportunities(candidate_id: str):
                 )
 
             manifesto = manifesto_by_recruiter.get(recruiter_key, {})
+            organization_id = str(
+                opportunity.get("organization_id") or manifesto.get("id") or ""
+            ).strip()
             matched_alerts.append(
                 {
                     **opportunity,
+                    "organization_id": organization_id,
                     "mission_text": str(manifesto.get("mission_text") or ""),
                     "pillar1_title": str(manifesto.get("pillar1_title") or ""),
                     "tech_input": str(manifesto.get("tech_input") or ""),

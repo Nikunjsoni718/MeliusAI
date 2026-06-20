@@ -241,6 +241,7 @@ export function OrganizationJobPostingHub() {
             core_requirements: formData.core_requirements.trim(),
             core_skills: extractedCoreSkills,
             company_email: loggedInUserEmail,
+            organization_id: organizationId,
           }),
         }
       );
