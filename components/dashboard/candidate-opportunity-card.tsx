@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 
 type OpportunityCardItem = {
   organization_id: string;
+  organizations?: { id?: string | null } | null;
   recruiter_name: string;
   role_title: string;
   core_skills: string;
@@ -43,7 +44,17 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
     ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(item.company_email)}&su=${encodeURIComponent(`MeliusAI Opportunity Application — ${displayName}`)}`
     : null;
 
-  console.log('Current Opportunity Data:', item);
+  const handleReadManifesto = () => {
+    const targetId = item.organization_id || item.organizations?.id;
+
+    if (!targetId) {
+      console.error('Missing organization ID. Current data:', item);
+      alert('Data syncing. Please refresh your feed.');
+      return;
+    }
+
+    router.push(`/organization/dashboard/about?orgId=${targetId}`);
+  };
 
   return (
     <motion.div
@@ -101,9 +112,7 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <button
               type="button"
-              onClick={() =>
-                router.push(`/organization/dashboard/manifesto?orgId=${item.organization_id}`)
-              }
+              onClick={handleReadManifesto}
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-600/80 bg-slate-900/55 px-5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-200 transition hover:border-purple-400/50 hover:bg-purple-500/10 hover:text-purple-100"
             >
               <Building2 className="h-4 w-4" aria-hidden="true" />

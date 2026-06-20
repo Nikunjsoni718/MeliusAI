@@ -68,6 +68,7 @@ type ProjectItem = {
 
 type LiveOpportunityItem = {
   organization_id: string;
+  organizations: { id: string | null } | null;
   recruiter_name: string;
   role_title: string;
   core_skills: string;
@@ -227,6 +228,11 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
   }
 
   const rawMatchScore = Number(opportunity.match_score ?? 0);
+  const organizationRelation = opportunity.organizations;
+  const nestedOrganizationId =
+    organizationRelation && typeof organizationRelation === 'object' && !Array.isArray(organizationRelation)
+      ? (organizationRelation as Record<string, unknown>).id
+      : null;
   const matchedSkills = Array.isArray(opportunity.matched_skills)
     ? opportunity.matched_skills
         .filter((skill): skill is string => typeof skill === 'string')
@@ -237,6 +243,9 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
   return {
     organization_id:
       typeof opportunity.organization_id === 'string' ? opportunity.organization_id.trim() : '',
+    organizations: {
+      id: typeof nestedOrganizationId === 'string' ? nestedOrganizationId.trim() : null,
+    },
     recruiter_name:
       typeof opportunity.recruiter_name === 'string' && opportunity.recruiter_name.trim()
         ? opportunity.recruiter_name.trim()
