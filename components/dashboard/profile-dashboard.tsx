@@ -68,6 +68,7 @@ type ProjectItem = {
 type LiveOpportunityItem = {
   recruiter_name: string;
   role_title: string;
+  core_skills: string;
   match_score: number;
   matched_skills: string[];
   match_explanation: string;
@@ -233,6 +234,12 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
         ? opportunity.recruiter_name.trim()
         : 'Verified Organisation',
     role_title: roleTitle,
+    core_skills:
+      typeof opportunity.core_skills === 'string'
+        ? opportunity.core_skills.trim()
+        : Array.isArray(opportunity.core_skills)
+          ? opportunity.core_skills.map(String).join(', ')
+          : '',
     match_score: Number.isFinite(rawMatchScore) ? Math.max(0, Math.min(100, rawMatchScore)) : 0,
     matched_skills: matchedSkills,
     match_explanation:
@@ -3596,6 +3603,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 {item.recruiter_name}
                               </span>
                               <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">{item.role_title}</h3>
+                              {item.core_skills ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {item.core_skills
+                                    .split(',')
+                                    .map((skill) => skill.trim())
+                                    .filter(Boolean)
+                                    .map((skill, skillIndex) => (
+                                      <span
+                                        key={`${skill}-${skillIndex}`}
+                                        className="rounded-md border border-purple-700/50 bg-purple-900/30 px-3 py-1 text-xs font-bold tracking-wide text-purple-300"
+                                      >
+                                        {skill}
+                                      </span>
+                                    ))}
+                                </div>
+                              ) : null}
                             </div>
                             <span className="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200">
                               {item.status}

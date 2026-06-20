@@ -30,6 +30,7 @@ type OpportunityHistoryItem = {
   recruiter_name: string;
   role_title: string;
   description: string;
+  core_skills: string;
   created_at: string | null;
 };
 
@@ -39,6 +40,7 @@ export function OrganizationJobPostingHub() {
     job_title: '',
     core_requirements: '',
   });
+  const [coreSkills, setCoreSkills] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -105,6 +107,7 @@ export function OrganizationJobPostingHub() {
               typeof row.recruiter_name === 'string' ? row.recruiter_name.trim() : organizationName,
             role_title: roleTitle,
             description: typeof descriptionSource === 'string' ? descriptionSource.trim() : '',
+            core_skills: typeof row.core_skills === 'string' ? row.core_skills.trim() : '',
             created_at: typeof row.created_at === 'string' ? row.created_at : null,
           };
         })
@@ -134,6 +137,7 @@ export function OrganizationJobPostingHub() {
       job_title: item.role_title,
       core_requirements: item.description,
     });
+    setCoreSkills(item.core_skills);
     setSuccessMessage(null);
     setErrorMessage(null);
 
@@ -163,6 +167,7 @@ export function OrganizationJobPostingHub() {
       if (editingId === id) {
         setEditingId(null);
         setFormData({ job_title: '', core_requirements: '' });
+        setCoreSkills('');
       }
       setSuccessMessage('Opportunity deleted successfully.');
       await fetchHistory();
@@ -181,8 +186,8 @@ export function OrganizationJobPostingHub() {
       return;
     }
 
-    if (!formData.job_title.trim() || !formData.core_requirements.trim()) {
-      setErrorMessage('Add a job title and core requirement description before broadcasting.');
+    if (!formData.job_title.trim() || !formData.core_requirements.trim() || !coreSkills.trim()) {
+      setErrorMessage('Add a job title, core requirements, and technical skills before broadcasting.');
       return;
     }
 
@@ -216,6 +221,7 @@ export function OrganizationJobPostingHub() {
             ...(editingId ? { id: editingId } : {}),
             job_title: formData.job_title.trim(),
             core_requirements: formData.core_requirements.trim(),
+            core_skills: coreSkills.trim(),
             company_email: loggedInUserEmail,
           }),
         }
@@ -232,6 +238,7 @@ export function OrganizationJobPostingHub() {
         job_title: '',
         core_requirements: '',
       });
+      setCoreSkills('');
       setEditingId(null);
       setSuccessMessage(
         isEditing
@@ -347,6 +354,42 @@ export function OrganizationJobPostingHub() {
                 placeholder="Describe the role, expected outcomes, essential skills, seniority, and the kind of verified portfolio evidence you want to see..."
                 className="w-full resize-y rounded-2xl border border-[#1F223D] bg-[#090b19] px-4 py-4 text-sm leading-7 text-white outline-none transition placeholder:text-slate-600 focus:border-purple-400/60 focus:ring-2 focus:ring-purple-400/15"
               />
+            </label>
+
+            <label className="block space-y-2 text-sm font-medium text-slate-300">
+              <span className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-emerald-300" />
+                Core Technical Skills (Comma-separated for AI Matching)
+              </span>
+              <input
+                name="core_skills"
+                type="text"
+                required
+                value={coreSkills}
+                onChange={(event) => {
+                  setCoreSkills(event.target.value);
+                  setSuccessMessage(null);
+                  setErrorMessage(null);
+                }}
+                placeholder="React, TypeScript, Next.js, Tailwind CSS"
+                className="h-12 w-full rounded-xl border border-[#1F223D] bg-[#090b19] px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-400/15"
+              />
+              {coreSkills.trim() ? (
+                <span className="flex flex-wrap gap-2 pt-1">
+                  {coreSkills
+                    .split(',')
+                    .map((skill) => skill.trim())
+                    .filter(Boolean)
+                    .map((skill) => (
+                      <span
+                        key={skill}
+                        className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-200"
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                </span>
+              ) : null}
             </label>
 
             {errorMessage ? (

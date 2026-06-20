@@ -394,6 +394,7 @@ class CreateOpportunityRequest(BaseModel):
     job_title: str
     core_requirements: str | None = None
     description: str | None = None
+    core_skills: str
     company_email: str
 
 
@@ -401,6 +402,7 @@ class UpdateOpportunityRequest(BaseModel):
     id: str
     job_title: str
     core_requirements: str
+    core_skills: str
 
 
 class UpdateOrganizationProfileRequest(BaseModel):
@@ -1052,11 +1054,12 @@ async def talent_discovery():
 async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
     job_title = payload.job_title.strip()
     core_requirements_text = (payload.core_requirements or payload.description or "").strip()
+    core_skills = payload.core_skills.strip()
     company_email = payload.company_email.strip().lower()
     organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
 
-    if not job_title or not core_requirements_text:
-        raise HTTPException(status_code=400, detail="Job title and core requirements are required")
+    if not job_title or not core_requirements_text or not core_skills:
+        raise HTTPException(status_code=400, detail="Job title, core requirements, and core skills are required")
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", company_email):
         raise HTTPException(status_code=400, detail="A valid company email is required")
 
@@ -1066,6 +1069,7 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements_text,
+            "core_skills": core_skills,
             "company_email": company_email,
             "status": "active",
         }
@@ -1130,11 +1134,12 @@ async def update_opportunity(payload: UpdateOpportunityRequest):
     opportunity_id = payload.id.strip()
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
+    core_skills = payload.core_skills.strip()
 
     if not opportunity_id:
         raise HTTPException(status_code=400, detail="Opportunity id is required")
-    if not job_title or not core_requirements:
-        raise HTTPException(status_code=400, detail="Job title and core requirements are required")
+    if not job_title or not core_requirements or not core_skills:
+        raise HTTPException(status_code=400, detail="Job title, core requirements, and core skills are required")
 
     try:
         supabase = get_supabase_service_role_client()
@@ -1144,6 +1149,7 @@ async def update_opportunity(payload: UpdateOpportunityRequest):
                 {
                     "role_title": job_title,
                     "description": core_requirements,
+                    "core_skills": core_skills,
                 }
             )
             .eq("id", opportunity_id)
@@ -1312,17 +1318,22 @@ async def get_opportunities(candidate_id: str):
 
         matched_alerts = []
         for opportunity in opportunities_response.data or []:
-            role_title = str(opportunity.get("role_title") or "").lower()
+            opportunity_match_text = " ".join(
+                [
+                    str(opportunity.get("role_title") or ""),
+                    str(opportunity.get("core_skills") or ""),
+                ]
+            ).lower()
 
             matched_skills = []
             for skill in unique_skills:
                 if re.fullmatch(r"[a-z0-9]+", skill):
                     is_match = re.search(
                         rf"\b{re.escape(skill)}\b",
-                        role_title,
+                        opportunity_match_text,
                     ) is not None
                 else:
-                    is_match = skill in role_title
+                    is_match = skill in opportunity_match_text
 
                 if is_match:
                     matched_skills.append(skill)
