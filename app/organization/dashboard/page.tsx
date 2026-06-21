@@ -255,10 +255,6 @@ const FUSE_QUERY_STOP_WORDS = new Set([
   'of',
   'the',
   'with',
-  'year',
-  'years',
-  'yr',
-  'yrs',
 ]);
 
 const FUSE_NUMBER_WORDS: Record<string, string> = {
@@ -292,7 +288,7 @@ function formatFuseExtendedQuery(query: string) {
     .map((term) => FUSE_NUMBER_WORDS[term] ?? term)
     .filter((term) => !FUSE_QUERY_STOP_WORDS.has(term))
     .map((term) => `'${term}`)
-    .join(' ');
+    .join(' | ');
 }
 
 function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon'] }) {
