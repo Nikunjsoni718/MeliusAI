@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
+from typing import Dict, List
 
 try:
     from supabase import create_client
@@ -75,6 +76,53 @@ supabase_backend_client = None
 supabase_service_role_client = None
 supabase = None
 
+BIO_EXTRACTION_SYSTEM_PROMPT = (
+    "You are an expert technical recruiter. Analyze the following candidate biography. "
+    "Extract specific technical experiences (years, tools, roles) and work preferences "
+    "(remote, hybrid, startup, enterprise, etc.). Return ONLY a valid JSON object with two "
+    "keys: 'experience' (a list of strings) and 'preferences' (a list of strings). Do not "
+    "return markdown, just raw JSON."
+)
+
+
+async def extract_bio_data(bio_text: str) -> Dict[str, List[str]]:
+    clean_bio = str(bio_text or "").strip()
+
+    if not clean_bio:
+        return {"experience": [], "preferences": []}
+
+    try:
+        completion = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": BIO_EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": clean_bio},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        raw_content = completion.choices[0].message.content or "{}"
+        parsed_content = json.loads(raw_content)
+
+        def normalize_extracted_list(value: Any) -> List[str]:
+            if not isinstance(value, list):
+                return []
+
+            normalized_values = []
+            for item in value:
+                normalized_item = str(item).strip()
+                if normalized_item and normalized_item not in normalized_values:
+                    normalized_values.append(normalized_item)
+
+            return normalized_values
+
+        return {
+            "experience": normalize_extracted_list(parsed_content.get("experience")),
+            "preferences": normalize_extracted_list(parsed_content.get("preferences")),
+        }
+    except Exception as extraction_error:
+        logger.warning("Candidate bio extraction failed: %s", extraction_error)
+        return {"experience": [], "preferences": []}
 
 def get_supabase_backend_client():
     global supabase_backend_client

@@ -242,6 +242,59 @@ function calculateWeightedCandidateMatch(candidate: CandidateProfile, requiremen
   return requirementMatchScore * 0.62 + verifiedExecutionScore * 0.38;
 }
 
+const FUSE_QUERY_STOP_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'experience',
+  'experienced',
+  'for',
+  'has',
+  'have',
+  'is',
+  'of',
+  'the',
+  'with',
+  'year',
+  'years',
+  'yr',
+  'yrs',
+]);
+
+const FUSE_NUMBER_WORDS: Record<string, string> = {
+  zero: '0',
+  one: '1',
+  two: '2',
+  three: '3',
+  four: '4',
+  five: '5',
+  six: '6',
+  seven: '7',
+  eight: '8',
+  nine: '9',
+  ten: '10',
+  eleven: '11',
+  twelve: '12',
+  thirteen: '13',
+  fourteen: '14',
+  fifteen: '15',
+  sixteen: '16',
+  seventeen: '17',
+  eighteen: '18',
+  nineteen: '19',
+  twenty: '20',
+};
+
+function formatFuseExtendedQuery(query: string) {
+  const queryTerms = query.toLowerCase().match(/[a-z0-9+#.-]+/g) ?? [];
+
+  return queryTerms
+    .map((term) => FUSE_NUMBER_WORDS[term] ?? term)
+    .filter((term) => !FUSE_QUERY_STOP_WORDS.has(term))
+    .map((term) => `'${term}`)
+    .join(' ');
+}
+
 function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon'] }) {
   const commonProps = {
     xmlns: 'http://www.w3.org/2000/svg',
@@ -339,14 +392,16 @@ function OrganizationDashboardContent() {
         ],
         threshold: 0.3,
         ignoreLocation: true,
+        useExtendedSearch: true,
         minMatchCharLength: 2,
       }),
     [candidates]
   );
   const filteredCandidates = useMemo(() => {
     const requirementTerms = getRequirementTerms(matcherQuery);
-    const matchingCandidates = searchQuery
-      ? fuse.search(searchQuery).map((result) => result.item)
+    const formattedQuery = formatFuseExtendedQuery(searchQuery);
+    const matchingCandidates = formattedQuery
+      ? fuse.search(formattedQuery).map((result) => result.item)
       : candidates;
 
     return [...matchingCandidates]
