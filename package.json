@@ -16,7 +16,6 @@
     "@supabase/supabase-js": "^2.57.4",
     "ai": "^6.0.205",
     "framer-motion": "^12.38.0",
-    "fuse.js": "^7.4.2",
     "jszip": "^3.10.1",
     "lucide-react": "^1.16.0",
     "next": "^16.2.3",

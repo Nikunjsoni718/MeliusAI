@@ -7,6 +7,7 @@ import math
 import re
 import time
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID
@@ -84,6 +85,13 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
     "return markdown, just raw JSON."
 )
 
+SEARCH_QUERY_SYSTEM_PROMPT = (
+    "You are a talent search engine. The user will type a natural language search query. "
+    "Extract their intent into a JSON object with three arrays: 'target_skills' "
+    "(e.g. ['ui', 'ux', 'designer']), 'target_experience' (convert words to numbers, "
+    "e.g. ['4 years']), and 'target_preferences'. Return ONLY valid JSON."
+)
+
 
 async def extract_bio_data(bio_text: str) -> Dict[str, List[str]]:
     clean_bio = str(bio_text or "").strip()
@@ -123,6 +131,52 @@ async def extract_bio_data(bio_text: str) -> Dict[str, List[str]]:
     except Exception as extraction_error:
         logger.warning("Candidate bio extraction failed: %s", extraction_error)
         return {"experience": [], "preferences": []}
+
+
+async def parse_search_query(query: str) -> dict:
+    clean_query = str(query or "").strip()
+    empty_intent = {
+        "target_skills": [],
+        "target_experience": [],
+        "target_preferences": [],
+    }
+
+    if not clean_query:
+        return empty_intent
+
+    try:
+        completion = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SEARCH_QUERY_SYSTEM_PROMPT},
+                {"role": "user", "content": clean_query},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        raw_content = completion.choices[0].message.content or "{}"
+        parsed_content = json.loads(raw_content)
+
+        def normalize_intent_values(value: Any) -> List[str]:
+            if not isinstance(value, list):
+                return []
+
+            normalized_values = []
+            for item in value:
+                normalized_item = str(item).strip().lower()
+                if normalized_item and normalized_item not in normalized_values:
+                    normalized_values.append(normalized_item)
+
+            return normalized_values
+
+        return {
+            "target_skills": normalize_intent_values(parsed_content.get("target_skills")),
+            "target_experience": normalize_intent_values(parsed_content.get("target_experience")),
+            "target_preferences": normalize_intent_values(parsed_content.get("target_preferences")),
+        }
+    except Exception as parsing_error:
+        logger.warning("Talent search query parsing failed: %s", parsing_error)
+        return empty_intent
 
 def get_supabase_backend_client():
     global supabase_backend_client
@@ -436,6 +490,10 @@ class VerifyRequest(BaseModel):
 class MatchTalentRequest(BaseModel):
     prompt: str
     organization_id: str | None = None
+
+
+class SearchRequest(BaseModel):
+    query: str
 
 
 class CreateOpportunityRequest(BaseModel):
@@ -1562,6 +1620,100 @@ async def verify_asset(payload: VerifyRequest):
     except Exception as error:
         logger.exception("verify_asset.failed")
         raise HTTPException(status_code=500, detail=str(error))
+
+
+def normalize_searchable_values(value: Any) -> List[str]:
+    if isinstance(value, list):
+        raw_values = value
+    elif isinstance(value, str):
+        raw_values = value.split(",")
+    else:
+        return []
+
+    normalized_values = []
+    for item in raw_values:
+        normalized_item = re.sub(r"\s+", " ", str(item).strip().lower())
+        if normalized_item and normalized_item not in normalized_values:
+            normalized_values.append(normalized_item)
+
+    return normalized_values
+
+
+def search_terms_are_similar(target_term: str, candidate_term: str) -> bool:
+    if target_term == candidate_term:
+        return True
+
+    if target_term in candidate_term or candidate_term in target_term:
+        return True
+
+    simplified_target = re.sub(r"[^a-z0-9]+", " ", target_term).strip()
+    simplified_candidate = re.sub(r"[^a-z0-9]+", " ", candidate_term).strip()
+    if min(len(simplified_target), len(simplified_candidate)) >= 2 and (
+        simplified_target in simplified_candidate
+        or simplified_candidate in simplified_target
+    ):
+        return True
+
+    return SequenceMatcher(None, target_term, candidate_term).ratio() >= 0.78
+
+
+def score_search_terms(target_terms: List[str], candidate_values: Any) -> int:
+    normalized_candidate_values = normalize_searchable_values(candidate_values)
+
+    return sum(
+        1
+        for target_term in target_terms
+        if any(
+            search_terms_are_similar(target_term, candidate_term)
+            for candidate_term in normalized_candidate_values
+        )
+    )
+
+
+async def fetch_search_candidates() -> List[Dict[str, Any]]:
+    supabase = get_supabase_backend_client()
+    response = await asyncio.to_thread(
+        lambda: (
+            supabase.table("profiles")
+            .select(
+                "id, full_name, username, current_status, bio, skills, "
+                "extracted_experience, extracted_preferences, avg_project_score"
+            )
+            .execute()
+        )
+    )
+    return response.data if isinstance(response.data, list) else []
+
+
+@app.post("/api/search-talent")
+async def search_talent(payload: SearchRequest):
+    query = payload.query.strip()
+
+    if not query:
+        return await fetch_search_candidates()
+
+    search_intent = await parse_search_query(query)
+    candidates = await fetch_search_candidates()
+    scored_candidates = []
+
+    for candidate in candidates:
+        match_score = 0
+        match_score += score_search_terms(search_intent["target_skills"], candidate.get("skills"))
+        match_score += score_search_terms(
+            search_intent["target_experience"],
+            candidate.get("extracted_experience"),
+        )
+        match_score += score_search_terms(
+            search_intent["target_preferences"],
+            candidate.get("extracted_preferences"),
+        )
+        scored_candidates.append({**candidate, "match_score": match_score})
+
+    return sorted(
+        scored_candidates,
+        key=lambda candidate: candidate["match_score"],
+        reverse=True,
+    )
 
 
 @app.post("/api/match-talent")

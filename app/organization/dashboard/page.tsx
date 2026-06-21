@@ -1,10 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
+import { Suspense, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Compass, Cpu, Info, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
-import Fuse from 'fuse.js';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
@@ -207,90 +206,6 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
   };
 }
 
-function getRequirementTerms(requirement: string) {
-  const ignoredTerms = new Set([
-    'a', 'an', 'and', 'are', 'for', 'good', 'in', 'is', 'of', 'or', 'the', 'to', 'who', 'with',
-  ]);
-
-  return Array.from(
-    new Set(
-      (requirement.toLowerCase().match(/[a-z0-9+#.]+/g) ?? []).filter(
-        (term) => term.length > 1 && !ignoredTerms.has(term)
-      )
-    )
-  );
-}
-
-function calculateWeightedCandidateMatch(candidate: CandidateProfile, requirementTerms: string[]) {
-  const storedRequirementScore = Math.max(
-    0,
-    Math.min(100, candidate.matchScore ?? candidate.composite_match_index * 100)
-  );
-  const candidateSearchText = [candidate.role_title, candidate.bio, ...candidate.skills]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  const matchedRequirementCount = requirementTerms.filter((term) =>
-    candidateSearchText.includes(term)
-  ).length;
-  const liveRequirementScore = requirementTerms.length
-    ? (matchedRequirementCount / requirementTerms.length) * 100
-    : 0;
-  const requirementMatchScore = Math.max(storedRequirementScore, liveRequirementScore);
-  const verifiedExecutionScore = Math.max(0, Math.min(100, candidate.avg_project_score));
-
-  return requirementMatchScore * 0.62 + verifiedExecutionScore * 0.38;
-}
-
-const FUSE_QUERY_STOP_WORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'experience',
-  'experienced',
-  'for',
-  'has',
-  'have',
-  'is',
-  'of',
-  'the',
-  'with',
-]);
-
-const FUSE_NUMBER_WORDS: Record<string, string> = {
-  zero: '0',
-  one: '1',
-  two: '2',
-  three: '3',
-  four: '4',
-  five: '5',
-  six: '6',
-  seven: '7',
-  eight: '8',
-  nine: '9',
-  ten: '10',
-  eleven: '11',
-  twelve: '12',
-  thirteen: '13',
-  fourteen: '14',
-  fifteen: '15',
-  sixteen: '16',
-  seventeen: '17',
-  eighteen: '18',
-  nineteen: '19',
-  twenty: '20',
-};
-
-function formatFuseExtendedQuery(query: string) {
-  const queryTerms = query.toLowerCase().match(/[a-z0-9+#.-]+/g) ?? [];
-
-  return queryTerms
-    .map((term) => FUSE_NUMBER_WORDS[term] ?? term)
-    .filter((term) => !FUSE_QUERY_STOP_WORDS.has(term))
-    .map((term) => `'${term}`)
-    .join(' | ');
-}
-
 function MobileNavIcon({ icon }: { icon: (typeof mobileNavItems)[number]['icon'] }) {
   const commonProps = {
     xmlns: 'http://www.w3.org/2000/svg',
@@ -361,7 +276,6 @@ function OrganizationDashboardContent() {
   const [profileSaveState, setProfileSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [matcherQuery, setMatcherQuery] = useState('Looking for a ui ux designer who is good at typescript');
-  const [searchQuery, setSearchQuery] = useState('');
   const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
   const [isCandidatePoolLoading, setIsCandidatePoolLoading] = useState(true);
   const [candidatePoolError, setCandidatePoolError] = useState('');
@@ -376,37 +290,6 @@ function OrganizationDashboardContent() {
   const currentOrg = activeWorkspace;
   const currentOrgId = activeWorkspace.id;
   const isWorkspaceContextPending = loading || isLoading;
-  const fuse = useMemo(
-    () =>
-      new Fuse(candidates, {
-        keys: [
-          { name: 'role_title', weight: 0.4 },
-          { name: 'skills', weight: 0.3 },
-          { name: 'extracted_experience', weight: 0.2 },
-          { name: 'bio', weight: 0.1 },
-          { name: 'extracted_preferences', weight: 0.3 },
-        ],
-        threshold: 0.3,
-        ignoreLocation: true,
-        useExtendedSearch: true,
-        minMatchCharLength: 2,
-      }),
-    [candidates]
-  );
-  const filteredCandidates = useMemo(() => {
-    const requirementTerms = getRequirementTerms(matcherQuery);
-    const formattedQuery = formatFuseExtendedQuery(searchQuery);
-    const matchingCandidates = formattedQuery
-      ? fuse.search(formattedQuery).map((result) => result.item)
-      : candidates;
-
-    return [...matchingCandidates]
-      .sort((candidateA, candidateB) => {
-        const candidateAScore = calculateWeightedCandidateMatch(candidateA, requirementTerms);
-        const candidateBScore = calculateWeightedCandidateMatch(candidateB, requirementTerms);
-        return candidateBScore - candidateAScore;
-      });
-  }, [candidates, fuse, matcherQuery, searchQuery]);
   const messageRecipients = Array.from(
     new Map(
       [
