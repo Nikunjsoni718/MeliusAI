@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState, type FormEvent, type MouseEvent
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Compass, Cpu, Info, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
+import Fuse from 'fuse.js';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
@@ -322,25 +323,29 @@ function OrganizationDashboardContent() {
   const currentOrg = activeWorkspace;
   const currentOrgId = activeWorkspace.id;
   const isWorkspaceContextPending = loading || isLoading;
+  const fuse = useMemo(
+    () =>
+      new Fuse(candidates, {
+        keys: ['role_title', 'skills', 'bio'],
+        threshold: 0.3,
+        ignoreLocation: true,
+        minMatchCharLength: 2,
+      }),
+    [candidates]
+  );
   const filteredCandidates = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
     const requirementTerms = getRequirementTerms(matcherQuery);
+    const matchingCandidates = searchQuery
+      ? fuse.search(searchQuery).map((result) => result.item)
+      : candidates;
 
-    return candidates
-      .filter((candidate) => {
-        if (!normalizedQuery) {
-          return true;
-        }
-
-        const searchableValues = [candidate.role_title, candidate.bio, ...(candidate.skills ?? [])];
-        return searchableValues.some((value) => value?.toLowerCase().includes(normalizedQuery));
-      })
+    return [...matchingCandidates]
       .sort((candidateA, candidateB) => {
         const candidateAScore = calculateWeightedCandidateMatch(candidateA, requirementTerms);
         const candidateBScore = calculateWeightedCandidateMatch(candidateB, requirementTerms);
         return candidateBScore - candidateAScore;
       });
-  }, [candidates, matcherQuery, searchQuery]);
+  }, [candidates, fuse, matcherQuery, searchQuery]);
   const messageRecipients = Array.from(
     new Map(
       [
