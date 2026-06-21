@@ -277,9 +277,10 @@ function OrganizationDashboardContent() {
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [matcherQuery, setMatcherQuery] = useState('Looking for a ui ux designer who is good at typescript');
   const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
+  const [matches, setMatches] = useState<CandidateProfile[]>([]);
   const [isCandidatePoolLoading, setIsCandidatePoolLoading] = useState(true);
   const [candidatePoolError, setCandidatePoolError] = useState('');
-  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [isMatching, setIsMatching] = useState(false);
   const [searchError, setSearchError] = useState<string>('');
   const [hasRunMatcher, setHasRunMatcher] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
@@ -334,7 +335,7 @@ function OrganizationDashboardContent() {
       return;
     }
 
-    setIsSearching(true);
+    setIsMatching(true);
     setIsCandidatePoolLoading(false);
     setCandidatePoolError('');
     setHasRunMatcher(true);
@@ -359,12 +360,19 @@ function OrganizationDashboardContent() {
       }
 
       const data = await response.json();
-      const rawCandidates = Array.isArray(data) ? data : Array.isArray(data?.candidates) ? data.candidates : [];
+      const rawCandidates = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.candidates)
+          ? data.candidates
+          : Array.isArray(data?.ranked_candidates)
+            ? data.ranked_candidates
+            : [];
       const normalizedCandidates = rawCandidates
         .map((candidate: unknown) => normalizeCandidateProfile(candidate))
         .filter((candidate: CandidateProfile | null): candidate is CandidateProfile => Boolean(candidate));
 
       console.log('Candidates payload pulled successfully:', data);
+      setMatches(normalizedCandidates);
       setCandidates(normalizedCandidates);
     } catch (err) {
       console.error('Caught search routine exception:', err);
@@ -383,8 +391,9 @@ function OrganizationDashboardContent() {
       }
 
       setSearchError(errorMessage || 'Failed to successfully connect to our semantic match server.');
+      setMatches([]);
     } finally {
-      setIsSearching(false);
+      setIsMatching(false);
     }
   }
 
@@ -1029,7 +1038,7 @@ function OrganizationDashboardContent() {
                   </p>
                   <button
                     type="button"
-                    disabled={isSearching}
+                    disabled={isMatching}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -1038,10 +1047,70 @@ function OrganizationDashboardContent() {
                     }}
                     className="relative z-50 cursor-pointer select-none rounded-lg bg-purple-600 px-6 py-3 font-semibold text-white hover:bg-purple-700 active:scale-95 transition-all"
                   >
-                    {isSearching ? 'Searching Talent Graph...' : 'Run AI Matcher Algorithm'}
+                    {isMatching ? 'Analyzing & Ranking...' : 'Run AI Matcher Algorithm'}
                   </button>
                 </div>
               </form>
+
+              {matches.length > 0 ? (
+                <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                  {matches.map((candidate, index) => {
+                    const displayName = candidate.full_name?.trim() || `@${candidate.username}`;
+                    const role = candidate.role_title || candidate.skills[0] || 'Verified Talent';
+                    const matchPercentage = Math.round(
+                      candidate.matchScore ?? candidate.composite_match_index * 100
+                    );
+
+                    return (
+                      <article
+                        key={candidate.id || `match-${index}`}
+                        className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-[#0c0e2b] via-[#05071a] to-[#030512] p-5 shadow-xl"
+                      >
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-lg font-semibold text-white">{displayName}</p>
+                            <p className="mt-1 text-sm font-medium text-purple-300">{role}</p>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-300">
+                            {matchPercentage}% Match
+                          </span>
+                        </div>
+
+                        <p className="mt-4 line-clamp-3 text-sm leading-6 text-slate-400">
+                          {candidate.aiReasoning || candidate.bio || 'No AI rationale available.'}
+                        </p>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {candidate.skills.length > 0 ? (
+                            candidate.skills.slice(0, 5).map((skill) => (
+                              <span
+                                key={`${candidate.id}-${skill}`}
+                                className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs text-slate-300"
+                              >
+                                {skill}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-slate-600">Skills pending</span>
+                          )}
+                        </div>
+
+                        {candidate.username.trim() ? (
+                          <Link
+                            href={`/profile/${encodeURIComponent(candidate.username)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => void handleMatchFeedback(candidate, 'clicked')}
+                            className="mt-5 inline-flex rounded-xl border border-purple-400/30 bg-purple-500/10 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.14em] text-purple-100 transition hover:border-purple-300/60 hover:bg-purple-500/15"
+                          >
+                            Review Profile
+                          </Link>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           </section>
           ) : null}
@@ -1058,7 +1127,7 @@ function OrganizationDashboardContent() {
             </div>
           ) : null}
 
-          {activeTab !== 'messages' && isSearching ? (
+          {activeTab !== 'messages' && isMatching ? (
             <div className="w-full bg-[#0d1533] border border-cyan-500/20 rounded-2xl p-5 mb-4 flex flex-col justify-between shadow-xl text-sm font-semibold text-cyan-300 shadow-[0_0_35px_rgba(34,211,238,0.08)] animate-pulse md:mb-0 md:bg-cyan-950/10">
               MeliusAI Machine Learning Engine mapping profile semantic vectors and optimizing feedback scores... Processing...
             </div>
