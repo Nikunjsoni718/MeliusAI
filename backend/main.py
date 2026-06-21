@@ -1594,7 +1594,10 @@ async def match_talent(payload: MatchTalentRequest):
         ]
         profile_rows_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
-            .select("id, full_name, username, bio, skills, avg_project_score")
+            .select(
+                "id, full_name, username, bio, skills, extracted_experience, "
+                "extracted_preferences, avg_project_score"
+            )
             .in_("id", candidate_ids)
             .execute()
         )
@@ -1625,6 +1628,8 @@ async def match_talent(payload: MatchTalentRequest):
                 "full_name": profile.get("full_name") or profile.get("username") or "MeliusAI Talent",
                 "bio": str(profile.get("bio") or "")[:1600],
                 "skills": normalize_skill_list(profile.get("skills")),
+                "extracted_experience": normalize_skill_list(profile.get("extracted_experience")),
+                "extracted_preferences": normalize_skill_list(profile.get("extracted_preferences")),
                 "average_project_score": get_average_project_score(profile),
                 "vector_similarity": profile.get("similarity") or profile.get("match_score") or profile.get("vector_match"),
             })
@@ -1702,6 +1707,8 @@ async def match_talent(payload: MatchTalentRequest):
                 "bio": source_profile.get("bio") or evaluation.bio,
                 "skills": skills,
                 "skillsMatched": skills,
+                "extracted_experience": normalize_skill_list(source_profile.get("extracted_experience")),
+                "extracted_preferences": normalize_skill_list(source_profile.get("extracted_preferences")),
                 "avg_project_score": average_project_score,
                 "average_project_score": average_project_score,
                 "matchScore": score,

@@ -27,6 +27,8 @@ interface CandidateProfile {
   role_title?: string;
   bio: string;
   skills: string[];
+  extracted_experience: string[];
+  extracted_preferences: string[];
   avg_project_score: number;
   vector_match: number;
   composite_match_index: number;
@@ -190,6 +192,8 @@ function normalizeCandidateProfile(value: unknown): CandidateProfile | null {
     role_title: roleTitle || undefined,
     bio,
     skills: normalizeSkills(row.skills ?? row.tags),
+    extracted_experience: normalizeSkills(row.extracted_experience),
+    extracted_preferences: normalizeSkills(row.extracted_preferences),
     avg_project_score: getNumberValue(row.avg_project_score, 0),
     vector_match: vectorMatch,
     composite_match_index: compositeMatchIndex,
@@ -326,7 +330,13 @@ function OrganizationDashboardContent() {
   const fuse = useMemo(
     () =>
       new Fuse(candidates, {
-        keys: ['role_title', 'skills', 'bio'],
+        keys: [
+          { name: 'role_title', weight: 0.4 },
+          { name: 'skills', weight: 0.3 },
+          { name: 'extracted_experience', weight: 0.2 },
+          { name: 'bio', weight: 0.1 },
+          { name: 'extracted_preferences', weight: 0.3 },
+        ],
         threshold: 0.3,
         ignoreLocation: true,
         minMatchCharLength: 2,
@@ -653,7 +663,9 @@ function OrganizationDashboardContent() {
 
         const { data, error } = await supabase
           .from('profiles')
-          .select('id, full_name, username, bio, skills, avg_project_score, current_status')
+          .select(
+            'id, full_name, username, bio, skills, extracted_experience, extracted_preferences, avg_project_score, current_status'
+          )
           .order('avg_project_score', { ascending: false });
 
         if (error) {

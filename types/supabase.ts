@@ -30,6 +30,8 @@ export type ProfileRow = {
   bio: string | null;
   skills: string[] | null;
   internal_keywords?: string[] | null;
+  extracted_experience?: string[] | null;
+  extracted_preferences?: string[] | null;
   avatar_url: string | null;
   age: number | null;
   current_status: string | null;
