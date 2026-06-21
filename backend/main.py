@@ -1685,6 +1685,56 @@ async def fetch_search_candidates() -> List[Dict[str, Any]]:
     return response.data if isinstance(response.data, list) else []
 
 
+def rank_search_candidates(
+    candidates: List[Dict[str, Any]],
+    search_intent: Dict[str, List[str]],
+) -> List[Dict[str, Any]]:
+    target_skills = search_intent.get("target_skills", [])
+    target_experience = search_intent.get("target_experience", [])
+    target_preferences = search_intent.get("target_preferences", [])
+    total_targets = len(target_skills) + len(target_experience) + len(target_preferences)
+
+    if total_targets == 0:
+        return [
+            {**candidate, "match_score": 0, "match_percentage": 0}
+            for candidate in candidates
+        ]
+
+    scored_candidates = []
+    for candidate in candidates:
+        match_score = 0
+        match_score += score_search_terms(target_skills, candidate.get("skills"))
+        match_score += score_search_terms(
+            target_experience,
+            candidate.get("extracted_experience"),
+        )
+        match_score += score_search_terms(
+            target_preferences,
+            candidate.get("extracted_preferences"),
+        )
+
+        if total_targets >= 2 and match_score < 2:
+            continue
+
+        if total_targets == 1 and match_score == 0:
+            continue
+
+        match_percentage = int((match_score / total_targets) * 100)
+        scored_candidates.append(
+            {
+                **candidate,
+                "match_score": match_score,
+                "match_percentage": match_percentage,
+            }
+        )
+
+    return sorted(
+        scored_candidates,
+        key=lambda candidate: candidate["match_percentage"],
+        reverse=True,
+    )
+
+
 @app.post("/api/search-talent")
 async def search_talent(payload: SearchRequest):
     query = payload.query.strip()
@@ -1694,26 +1744,7 @@ async def search_talent(payload: SearchRequest):
 
     search_intent = await parse_search_query(query)
     candidates = await fetch_search_candidates()
-    scored_candidates = []
-
-    for candidate in candidates:
-        match_score = 0
-        match_score += score_search_terms(search_intent["target_skills"], candidate.get("skills"))
-        match_score += score_search_terms(
-            search_intent["target_experience"],
-            candidate.get("extracted_experience"),
-        )
-        match_score += score_search_terms(
-            search_intent["target_preferences"],
-            candidate.get("extracted_preferences"),
-        )
-        scored_candidates.append({**candidate, "match_score": match_score})
-
-    return sorted(
-        scored_candidates,
-        key=lambda candidate: candidate["match_score"],
-        reverse=True,
-    )
+    return rank_search_candidates(candidates, search_intent)
 
 
 @app.post("/api/match-talent")

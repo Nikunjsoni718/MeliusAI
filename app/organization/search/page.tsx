@@ -11,7 +11,7 @@ type CandidateSearchResult = {
   role_title: string;
   bio: string;
   skills: string[];
-  match_score?: number;
+  match_percentage?: number;
 };
 
 const PYTHON_API_URL = (
@@ -42,7 +42,7 @@ function normalizeCandidate(value: unknown): CandidateSearchResult | null {
   const roleTitle = [row.role_title, row.current_status, row.role].find(
     (field): field is string => typeof field === 'string' && Boolean(field.trim())
   );
-  const rawMatchScore = Number(row.match_score);
+  const rawMatchPercentage = Number(row.match_percentage);
 
   return {
     id,
@@ -51,11 +51,19 @@ function normalizeCandidate(value: unknown): CandidateSearchResult | null {
     role_title: roleTitle?.trim() || '',
     bio: typeof row.bio === 'string' ? row.bio.trim() : '',
     skills: normalizeSkills(row.skills),
-    match_score: Number.isFinite(rawMatchScore) ? rawMatchScore : undefined,
+    match_percentage: Number.isFinite(rawMatchPercentage) ? rawMatchPercentage : undefined,
   };
 }
 
 function CandidateCard({ candidate }: { candidate: CandidateSearchResult }) {
+  const matchPercentage = candidate.match_percentage;
+  const matchPercentageColor =
+    matchPercentage !== undefined && matchPercentage >= 80
+      ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300'
+      : matchPercentage !== undefined && matchPercentage >= 50
+        ? 'border-amber-400/20 bg-amber-500/10 text-amber-300'
+        : 'border-slate-600/30 bg-slate-700/20 text-slate-400';
+
   return (
     <article className="rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#0c1028] via-[#070a19] to-[#040611] p-6 shadow-xl">
       <div className="flex items-start gap-4">
@@ -65,9 +73,11 @@ function CandidateCard({ candidate }: { candidate: CandidateSearchResult }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-lg font-semibold text-white">{candidate.full_name}</p>
-            {candidate.match_score !== undefined ? (
-              <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300">
-                {candidate.match_score} matches
+            {matchPercentage !== undefined ? (
+              <span
+                className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${matchPercentageColor}`}
+              >
+                {matchPercentage}% Match
               </span>
             ) : null}
           </div>
