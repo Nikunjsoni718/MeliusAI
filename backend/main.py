@@ -89,7 +89,9 @@ SEARCH_QUERY_SYSTEM_PROMPT = (
     "You are a talent search engine. The user will type a natural language search query. "
     "Extract their intent into a JSON object with three arrays: 'target_skills' "
     "(e.g. ['ui', 'ux', 'designer']), 'target_experience' (convert words to numbers, "
-    "e.g. ['4 years']), and 'target_preferences'. Return ONLY valid JSON."
+    "e.g. ['4 years']), and 'target_preferences', plus 'target_name': str | null. "
+    "If the query contains a specific person's name or username, extract it into "
+    "'target_name'. Otherwise, leave it null. Return ONLY valid JSON."
 )
 
 
@@ -139,6 +141,7 @@ async def parse_search_query(query: str) -> dict:
         "target_skills": [],
         "target_experience": [],
         "target_preferences": [],
+        "target_name": None,
     }
 
     if not clean_query:
@@ -173,6 +176,12 @@ async def parse_search_query(query: str) -> dict:
             "target_skills": normalize_intent_values(parsed_content.get("target_skills")),
             "target_experience": normalize_intent_values(parsed_content.get("target_experience")),
             "target_preferences": normalize_intent_values(parsed_content.get("target_preferences")),
+            "target_name": (
+                str(parsed_content.get("target_name")).strip()
+                if isinstance(parsed_content.get("target_name"), str)
+                and str(parsed_content.get("target_name")).strip()
+                else None
+            ),
         }
     except Exception as parsing_error:
         logger.warning("Talent search query parsing failed: %s", parsing_error)
@@ -1687,21 +1696,51 @@ async def fetch_search_candidates() -> List[Dict[str, Any]]:
 
 def rank_search_candidates(
     candidates: List[Dict[str, Any]],
-    search_intent: Dict[str, List[str]],
+    search_intent: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     target_skills = search_intent.get("target_skills", [])
     target_experience = search_intent.get("target_experience", [])
     target_preferences = search_intent.get("target_preferences", [])
+    target_name = str(search_intent.get("target_name") or "").strip().lower().lstrip("@")
     total_targets = len(target_skills) + len(target_experience) + len(target_preferences)
 
-    if total_targets == 0:
+    if total_targets == 0 and not target_name:
         return [
-            {**candidate, "match_score": 0, "match_percentage": 0}
+            {
+                **candidate,
+                "match_score": 0,
+                "match_percentage": 0,
+                "is_exact_name_match": False,
+            }
             for candidate in candidates
         ]
 
     scored_candidates = []
     for candidate in candidates:
+        candidate_full_name = str(candidate.get("full_name") or "").strip().lower()
+        candidate_username = str(candidate.get("username") or "").strip().lower().lstrip("@")
+        is_exact_name_match = bool(
+            target_name
+            and (
+                target_name in candidate_full_name
+                or target_name in candidate_username
+            )
+        )
+
+        if is_exact_name_match:
+            scored_candidates.append(
+                {
+                    **candidate,
+                    "match_score": 999,
+                    "match_percentage": 100,
+                    "is_exact_name_match": True,
+                }
+            )
+            continue
+
+        if total_targets == 0:
+            continue
+
         match_score = 0
         match_score += score_search_terms(target_skills, candidate.get("skills"))
         match_score += score_search_terms(
@@ -1725,12 +1764,16 @@ def rank_search_candidates(
                 **candidate,
                 "match_score": match_score,
                 "match_percentage": match_percentage,
+                "is_exact_name_match": False,
             }
         )
 
     return sorted(
         scored_candidates,
-        key=lambda candidate: candidate["match_percentage"],
+        key=lambda candidate: (
+            candidate["match_percentage"],
+            candidate["match_score"],
+        ),
         reverse=True,
     )
 
