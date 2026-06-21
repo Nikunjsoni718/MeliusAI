@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Compass, Cpu, Info, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, FileText, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
@@ -56,10 +56,14 @@ const navItems: Array<{
   targetId?: DashboardTab;
 }> = [
   { label: 'Overview', href: '/organization/dashboard', icon: LayoutDashboard, targetId: 'overview' },
-  { label: 'AI Matcher', href: '/organization/dashboard?tab=matcher', icon: Cpu, targetId: 'ai-matcher' },
-  { label: 'Talent Discovery', href: '/organization/talent-discovery', icon: Compass, targetId: 'talent-discovery' },
   { label: 'Search', href: '/organization/search', icon: Search },
-  { label: 'Manifesto', href: '/organization/about', icon: Info },
+  { label: 'Manifesto', href: '/organization/about', icon: FileText },
+  {
+    label: 'Job Posting',
+    href: '/organization/talent-discovery',
+    icon: BriefcaseBusiness,
+    targetId: 'talent-discovery',
+  },
 ];
 
 const mobileNavItems: Array<{
