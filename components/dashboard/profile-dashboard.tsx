@@ -3474,7 +3474,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               </p>
                               {project.description ? (
                                 <p className="mt-1 line-clamp-2 text-sm text-gray-400">
-                                  {project.description}
+                                  {project.description.replace(/##\s*Executive Summary/i, '').trim()}
                                 </p>
                               ) : null}
                             </div>
