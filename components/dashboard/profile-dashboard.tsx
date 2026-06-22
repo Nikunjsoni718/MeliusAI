@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEven
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Mail, Menu, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { FileText, FolderLock, House, Mail, Menu, Search } from 'lucide-react';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -1661,11 +1661,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         icon: <Search className="h-5 w-5" strokeWidth={1.8} />,
       },
       {
-        href: '/meliusai',
-        label: 'MeliusAI',
-        icon: <Sparkles className="h-5 w-5" strokeWidth={1.8} />,
-      },
-      {
         href:
           isSpectator && targetUsername
             ? `/vault?profile=${encodeURIComponent(targetUsername)}`
@@ -1680,11 +1675,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             : '/resume',
         label: 'Resume',
         icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
-      },
-      {
-        href: '/settings',
-        label: 'Settings',
-        icon: <SettingsIcon className="h-5 w-5" strokeWidth={1.8} />,
       },
     ],
     [isSpectator, profileHref, targetUsername]
@@ -3012,8 +3002,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
               <nav className="flex flex-col gap-1">
               {dashboardNavigation.map((item) => {
-                const isSpectatorRestrictedItem =
-                  item.label === 'MeliusAI' || item.label === 'Opportunities';
+                const isSpectatorRestrictedItem = item.label === 'Opportunities';
 
                 return !isSpectator || !isSpectatorRestrictedItem ? (
                   <SidebarNavButton

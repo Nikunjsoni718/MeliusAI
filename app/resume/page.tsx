@@ -13,7 +13,7 @@ import {
 } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { FileText, FolderLock, House, Search, Settings, Sparkles, UserRound } from 'lucide-react';
+import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -54,10 +54,8 @@ const sectionActionClass =
 const navigationItems = [
   { href: '/profile', label: 'Home', icon: House },
   { href: '/search', label: 'Search', icon: Search },
-  { href: '/meliusai', label: 'MeliusAI', icon: Sparkles },
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Resume', icon: FileText },
-  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 function SidebarLink({
@@ -76,7 +74,6 @@ function SidebarLink({
       href={href}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
-        label === 'MeliusAI' ? 'text-cyan-400/90 hover:text-cyan-400' : null,
         active ? 'bg-blue-950/35 text-white' : null
       )}
     >
@@ -415,10 +412,6 @@ function DashboardResumePageContent() {
             </div>
             <nav className="flex flex-col gap-1">
             {navigationItems.map((item) => {
-              if (isSpectator && (item.label === 'MeliusAI' || item.label === 'Settings')) {
-                return null;
-              }
-
               const Icon = item.icon;
               const href =
                 isSpectator && targetUsername
