@@ -23,7 +23,7 @@ type OpportunityCardItem = {
 type CandidateOpportunityCardProps = {
   item: OpportunityCardItem;
   displayName: string;
-  onDismiss: (opportunityId: string) => void;
+  onDismiss: (opportunityId: string) => void | Promise<void>;
 };
 
 function splitTags(value: string) {
@@ -86,7 +86,7 @@ export function CandidateOpportunityCard({ item, displayName, onDismiss }: Candi
               </span>
               <button
                 type="button"
-                onClick={() => onDismiss(item.id)}
+                onClick={() => void onDismiss(item.id)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/40 text-slate-400 transition duration-200 hover:border-rose-400/40 hover:bg-rose-500/10 hover:text-rose-200"
                 aria-label={`Discard ${item.role_title} opportunity`}
                 title="Discard"

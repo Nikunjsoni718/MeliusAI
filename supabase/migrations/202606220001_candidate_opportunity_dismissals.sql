@@ -35,3 +35,5 @@ create policy "Candidates can restore dismissed opportunities"
   using (auth.uid() = candidate_id);
 
 grant select, insert, delete on public.candidate_opportunity_dismissals to authenticated;
+
+notify pgrst, 'reload schema';

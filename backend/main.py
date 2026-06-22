@@ -505,6 +505,11 @@ class SearchRequest(BaseModel):
     query: str
 
 
+class DismissOpportunityRequest(BaseModel):
+    candidate_id: str
+    opportunity_id: str
+
+
 class CreateOpportunityRequest(BaseModel):
     job_title: str
     core_requirements: str | None = None
@@ -1403,6 +1408,59 @@ async def update_organization_profile(request: Request):
     
 
     
+@app.post("/api/dismiss-opportunity")
+async def dismiss_opportunity(payload: DismissOpportunityRequest):
+    try:
+        candidate_id = str(UUID(payload.candidate_id.strip()))
+        opportunity_id = str(UUID(payload.opportunity_id.strip()))
+    except (ValueError, AttributeError) as identifier_error:
+        raise HTTPException(
+            status_code=400,
+            detail="candidate_id and opportunity_id must be valid UUIDs",
+        ) from identifier_error
+
+    try:
+        supabase = get_supabase_service_role_client()
+        await asyncio.to_thread(
+            lambda: supabase.table("candidate_opportunity_dismissals")
+            .insert(
+                {
+                    "candidate_id": candidate_id,
+                    "opportunity_id": opportunity_id,
+                }
+            )
+            .execute()
+        )
+        return {
+            "success": True,
+            "candidate_id": candidate_id,
+            "opportunity_id": opportunity_id,
+        }
+    except Exception as error:
+        error_text = str(error)
+        if "23505" in error_text or "duplicate key" in error_text.lower():
+            return {
+                "success": True,
+                "candidate_id": candidate_id,
+                "opportunity_id": opportunity_id,
+            }
+
+        logger.exception("dismiss_opportunity.failed")
+        if "PGRST205" in error_text:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Opportunity dismissals are not available yet. Apply migration "
+                    "202606220001_candidate_opportunity_dismissals.sql and reload the PostgREST schema."
+                ),
+            ) from error
+
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to persist this opportunity dismissal",
+        ) from error
+
+
 @app.get("/api/get-opportunities")
 async def get_opportunities(candidate_id: str):
     resolved_candidate_id = candidate_id.strip()
@@ -1432,15 +1490,25 @@ async def get_opportunities(candidate_id: str):
             candidate_skills = []
 
         unique_skills = list(dict.fromkeys(candidate_skills))
-        dismissals_response = await asyncio.to_thread(
-            lambda: supabase.table("candidate_opportunity_dismissals")
-            .select("opportunity_id")
-            .eq("candidate_id", resolved_candidate_id)
-            .execute()
-        )
+        try:
+            dismissals_response = await asyncio.to_thread(
+                lambda: supabase.table("candidate_opportunity_dismissals")
+                .select("opportunity_id")
+                .eq("candidate_id", resolved_candidate_id)
+                .execute()
+            )
+        except Exception as dismissal_lookup_error:
+            if "PGRST205" not in str(dismissal_lookup_error):
+                raise
+
+            logger.warning(
+                "Opportunity dismissal table is not in the PostgREST schema cache yet."
+            )
+            dismissals_response = None
+
         dismissed_opportunity_ids = {
             str(dismissal.get("opportunity_id") or "")
-            for dismissal in (dismissals_response.data or [])
+            for dismissal in ((dismissals_response.data or []) if dismissals_response else [])
             if dismissal.get("opportunity_id")
         }
         opportunities_response = await asyncio.to_thread(

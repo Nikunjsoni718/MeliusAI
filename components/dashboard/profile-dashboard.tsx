@@ -2069,7 +2069,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     };
   }, [currentUser?.id, isSpectator, profileHydrated]);
 
-  async function handleDismissOpportunity(opportunityId: string) {
+  async function handleDismiss(opportunityId: string) {
     const dismissedOpportunity = liveJobs.find((opportunity) => opportunity.id === opportunityId);
     if (!dismissedOpportunity) return;
 
@@ -2078,7 +2078,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
     setFetchError(null);
 
-    if (!supabase || !currentUser?.id) {
+    if (!currentUser?.id) {
       setLiveJobs((currentOpportunities) =>
         [...currentOpportunities, dismissedOpportunity].sort(
           (left, right) => right.match_score - left.match_score
@@ -2088,26 +2088,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const { error } = await supabase
-      .from('candidate_opportunity_dismissals')
-      .upsert(
-        {
+    try {
+      const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/dismiss-opportunity`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           candidate_id: currentUser.id,
           opportunity_id: opportunityId,
-        },
-        {
-          onConflict: 'candidate_id,opportunity_id',
-          ignoreDuplicates: true,
-        }
-      );
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
 
-    if (error) {
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.detail === 'string'
+            ? payload.detail
+            : `Dismissal service returned HTTP ${response.status}.`
+        );
+      }
+    } catch (error) {
       setLiveJobs((currentOpportunities) =>
         [...currentOpportunities, dismissedOpportunity].sort(
           (left, right) => right.match_score - left.match_score
         )
       );
-      setFetchError('Unable to save this dismissal. The opportunity has been restored.');
+      setFetchError(
+        error instanceof Error
+          ? `${error.message} The opportunity has been restored.`
+          : 'Unable to save this dismissal. The opportunity has been restored.'
+      );
     }
   }
 
@@ -3581,7 +3590,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       key={item.id || `${item.recruiter_name}-${item.role_title}-${index}`}
                       item={item}
                       displayName={displayName}
-                      onDismiss={handleDismissOpportunity}
+                      onDismiss={handleDismiss}
                     />
                   ))}
                 </div>
