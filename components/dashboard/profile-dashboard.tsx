@@ -98,6 +98,7 @@ type SpectatorScanItem = {
   logic_score?: number | null;
   summary?: string | null;
   ai_summary?: string | null;
+  description?: string | null;
   created_at?: string | null;
 };
 type SpectateProfileResponse = {
@@ -113,16 +114,6 @@ type DashboardNavigationItem = {
   label: string;
   icon: ReactNode;
 };
-type ProjectAuditSummary = {
-  score?: number | null;
-  summary: string;
-  breakdown: {
-    strengths: string[];
-    weaknesses: string[];
-  };
-  isStructured: boolean;
-};
-
 type ProfileDraft = {
   displayName: string;
   username: string;
@@ -407,59 +398,6 @@ function getProjectFileType(project: ProjectItem) {
 
 function getProjectDownloadHref(project: ProjectItem) {
   return project.preview_url ?? project.source_url ?? null;
-}
-
-function parseProjectAuditSummary(value?: string | null): ProjectAuditSummary | null {
-  if (!value?.trim()) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as {
-      score?: unknown;
-      summary?: unknown;
-      breakdown?: {
-        strengths?: unknown;
-        weaknesses?: unknown;
-      };
-    };
-
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.summary !== 'string') {
-      throw new Error('Unsupported audit format.');
-    }
-
-    const strengths = Array.isArray(parsed.breakdown?.strengths)
-      ? parsed.breakdown.strengths.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-      : [];
-    const weaknesses = Array.isArray(parsed.breakdown?.weaknesses)
-      ? parsed.breakdown.weaknesses.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-      : [];
-    const score = typeof parsed.score === 'number' ? parsed.score : null;
-
-    return {
-      score,
-      summary: parsed.summary,
-      breakdown: {
-        strengths,
-        weaknesses,
-      },
-      isStructured: true,
-    };
-  } catch {
-    if (/is stored as a .* project/i.test(value) && /add more detail to your bio/i.test(value)) {
-      return null;
-    }
-
-    return {
-      score: null,
-      summary: value,
-      breakdown: {
-        strengths: [],
-        weaknesses: [],
-      },
-      isStructured: false,
-    };
-  }
 }
 
 function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
@@ -1715,6 +1653,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           status: relatedProject?.status ?? null,
           logic_score: typeof scanScore === 'number' ? scanScore : null,
           ai_summary: scan.ai_summary ?? scan.summary ?? relatedProject?.ai_summary ?? null,
+          description: scan.description ?? relatedProject?.description ?? null,
           created_at: scan.created_at ?? relatedProject?.created_at ?? null,
         } satisfies ProjectItem;
       })
@@ -3533,9 +3472,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               <p className="mt-1 text-sm text-slate-400">
                                 {project.created_at ? formatScanDate(project.created_at) : 'Recent scan'}
                               </p>
-                              {parseProjectAuditSummary(project.ai_summary) ? (
-                                <p className="mt-1 line-clamp-2 text-sm text-slate-500">
-                                  {parseProjectAuditSummary(project.ai_summary)?.summary}
+                              {project.description ? (
+                                <p className="mt-1 line-clamp-2 text-sm text-gray-400">
+                                  {project.description}
                                 </p>
                               ) : null}
                             </div>
