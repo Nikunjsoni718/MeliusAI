@@ -1432,6 +1432,17 @@ async def get_opportunities(candidate_id: str):
             candidate_skills = []
 
         unique_skills = list(dict.fromkeys(candidate_skills))
+        dismissals_response = await asyncio.to_thread(
+            lambda: supabase.table("candidate_opportunity_dismissals")
+            .select("opportunity_id")
+            .eq("candidate_id", resolved_candidate_id)
+            .execute()
+        )
+        dismissed_opportunity_ids = {
+            str(dismissal.get("opportunity_id") or "")
+            for dismissal in (dismissals_response.data or [])
+            if dismissal.get("opportunity_id")
+        }
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
             .select("*, organization_id")
@@ -1443,6 +1454,9 @@ async def get_opportunities(candidate_id: str):
         matched_alerts = []
         manifesto_by_recruiter = {}
         for opportunity in opportunities_response.data or []:
+            if str(opportunity.get("id") or "") in dismissed_opportunity_ids:
+                continue
+
             role_title = str(opportunity.get("role_title") or "").lower()
             required_skills = list(
                 dict.fromkeys(

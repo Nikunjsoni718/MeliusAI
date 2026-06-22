@@ -67,6 +67,7 @@ type ProjectItem = {
 };
 
 type LiveOpportunityItem = {
+  id: string;
   organization_id: string;
   organizations: { id: string | null } | null;
   recruiter_name: string;
@@ -213,8 +214,9 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
   }
 
   const opportunity = value as Record<string, unknown>;
+  const opportunityId = typeof opportunity.id === 'string' ? opportunity.id.trim() : '';
   const roleTitle = typeof opportunity.role_title === 'string' ? opportunity.role_title.trim() : '';
-  if (!roleTitle) {
+  if (!opportunityId || !roleTitle) {
     return null;
   }
 
@@ -232,6 +234,7 @@ function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
     : [];
 
   return {
+    id: opportunityId,
     organization_id:
       typeof opportunity.organization_id === 'string' ? opportunity.organization_id.trim() : '',
     organizations: {
@@ -2066,6 +2069,48 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     };
   }, [currentUser?.id, isSpectator, profileHydrated]);
 
+  async function handleDismissOpportunity(opportunityId: string) {
+    const dismissedOpportunity = liveJobs.find((opportunity) => opportunity.id === opportunityId);
+    if (!dismissedOpportunity) return;
+
+    setLiveJobs((currentOpportunities) =>
+      currentOpportunities.filter((opportunity) => opportunity.id !== opportunityId)
+    );
+    setFetchError(null);
+
+    if (!supabase || !currentUser?.id) {
+      setLiveJobs((currentOpportunities) =>
+        [...currentOpportunities, dismissedOpportunity].sort(
+          (left, right) => right.match_score - left.match_score
+        )
+      );
+      setFetchError('Unable to persist this dismissal. Please sign in again.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('candidate_opportunity_dismissals')
+      .upsert(
+        {
+          candidate_id: currentUser.id,
+          opportunity_id: opportunityId,
+        },
+        {
+          onConflict: 'candidate_id,opportunity_id',
+          ignoreDuplicates: true,
+        }
+      );
+
+    if (error) {
+      setLiveJobs((currentOpportunities) =>
+        [...currentOpportunities, dismissedOpportunity].sort(
+          (left, right) => right.match_score - left.match_score
+        )
+      );
+      setFetchError('Unable to save this dismissal. The opportunity has been restored.');
+    }
+  }
+
   useEffect(() => {
     return () => {
       if (avatarPreviewUrl?.startsWith('blob:')) {
@@ -3533,9 +3578,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <div className="space-y-4">
                   {liveJobs.map((item, index) => (
                     <CandidateOpportunityCard
-                      key={`${item.recruiter_name}-${item.role_title}-${index}`}
+                      key={item.id || `${item.recruiter_name}-${item.role_title}-${index}`}
                       item={item}
                       displayName={displayName}
+                      onDismiss={handleDismissOpportunity}
                     />
                   ))}
                 </div>

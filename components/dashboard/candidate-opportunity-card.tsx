@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Building2, Mail, X } from 'lucide-react';
@@ -8,6 +7,7 @@ import { Building2, Mail, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
 type OpportunityCardItem = {
+  id: string;
   organization_id: string;
   organizations?: { id?: string | null } | null;
   recruiter_name: string;
@@ -23,18 +23,15 @@ type OpportunityCardItem = {
 type CandidateOpportunityCardProps = {
   item: OpportunityCardItem;
   displayName: string;
+  onDismiss: (opportunityId: string) => void;
 };
 
 function splitTags(value: string) {
   return value.split(',').map((entry) => entry.trim()).filter(Boolean);
 }
 
-export function CandidateOpportunityCard({ item, displayName }: CandidateOpportunityCardProps) {
+export function CandidateOpportunityCard({ item, displayName, onDismiss }: CandidateOpportunityCardProps) {
   const router = useRouter();
-  const [isDismissed, setIsDismissed] = useState(false);
-  const [isRemoved, setIsRemoved] = useState(false);
-
-  if (isRemoved) return null;
 
   const matchedKeywords = item.matched_skills.join(', ');
   const matchDescription = matchedKeywords
@@ -60,11 +57,8 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
     <motion.div
       layout
       initial={{ opacity: 0, y: 12 }}
-      animate={isDismissed ? { opacity: 0, y: -8, scale: 0.98, height: 0 } : { opacity: 1, y: 0, scale: 1, height: 'auto' }}
+      animate={{ opacity: 1, y: 0, scale: 1, height: 'auto' }}
       transition={{ duration: 0.24, ease: 'easeOut' }}
-      onAnimationComplete={() => {
-        if (isDismissed) setIsRemoved(true);
-      }}
       className="overflow-hidden"
     >
       <Card className="overflow-hidden border-blue-950/50 bg-gradient-to-br from-[#0b1024]/95 via-[#090d1f]/90 to-[#071329]/80 backdrop-blur-md">
@@ -92,7 +86,7 @@ export function CandidateOpportunityCard({ item, displayName }: CandidateOpportu
               </span>
               <button
                 type="button"
-                onClick={() => setIsDismissed(true)}
+                onClick={() => onDismiss(item.id)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/40 text-slate-400 transition duration-200 hover:border-rose-400/40 hover:bg-rose-500/10 hover:text-rose-200"
                 aria-label={`Discard ${item.role_title} opportunity`}
                 title="Discard"
