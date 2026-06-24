@@ -15,7 +15,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
+import { Briefcase, Code2, FileText, FolderLock, Globe2, House, Search, UserRound } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,7 +36,7 @@ type ResumeDraft = {
 };
 type ResumeFields = Pick<
   ProfileRow,
-  'full_name' | 'avatar_url' | 'age' | 'current_status' | 'qualifications' | 'experience' | 'hobbies'
+  'full_name' | 'avatar_url' | 'age' | 'current_status' | 'qualifications' | 'experience' | 'hobbies' | 'skills'
 > & {
   name?: string | null;
   status?: string | null;
@@ -58,6 +58,28 @@ const navigationItems = [
   { href: '/search', label: 'Search', icon: Search },
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Resume', icon: FileText },
+];
+const fallbackSkills = ['React', 'Next.js', 'Python', 'UI/UX'];
+const featuredProjects = [
+  {
+    title: 'Portfolio Intelligence Dashboard',
+    subtitle: 'github.com/meliusai/portfolio-lab',
+    href: 'https://github.com',
+    description:
+      'A creator-facing workspace that turns uploaded work into structured signals for matching, review, and opportunity discovery.',
+  },
+  {
+    title: 'Interactive Product Case Study',
+    subtitle: 'portfolio.example.com/case-study',
+    href: 'https://example.com',
+    description:
+      'A concise product walkthrough showing problem framing, design decisions, implementation notes, and measurable outcomes.',
+  },
+];
+const externalLinkItems = [
+  { label: 'GitHub', href: 'https://github.com', icon: Code2 },
+  { label: 'LinkedIn', href: 'https://www.linkedin.com', icon: Briefcase },
+  { label: 'Portfolio', href: 'https://example.com', icon: Globe2 },
 ];
 
 function SidebarLink({
@@ -183,6 +205,7 @@ function DashboardResumePageContent() {
   const [experienceText, setExperienceText] = useState('');
   const [hobbyText, setHobbyText] = useState('');
   const [qualificationsList, setQualificationsList] = useState<string[]>([]);
+  const [skillsList, setSkillsList] = useState<string[]>([]);
   const [experienceList, setExperienceList] = useState<string[]>([]);
   const [hobbiesList, setHobbiesList] = useState<string[]>([]);
   const [formLoading, setFormLoading] = useState(true);
@@ -191,6 +214,10 @@ function DashboardResumePageContent() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const canEdit = !isSpectator && isEditingGlobal;
+  const displaySkills = useMemo(
+    () => (skillsList.length > 0 ? skillsList : fallbackSkills),
+    [skillsList]
+  );
 
   useEffect(() => {
     if (!isSpectator && !loading && authEnabled && !user) {
@@ -233,7 +260,7 @@ function DashboardResumePageContent() {
         } else if (supabase && user) {
           const { data, error } = await supabase
             .from('profiles')
-            .select('full_name, avatar_url, age, current_status, qualifications, experience, hobbies')
+            .select('full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies')
             .eq('id', user.id)
             .maybeSingle();
 
@@ -264,6 +291,7 @@ function DashboardResumePageContent() {
         setAge(typeof resume?.age === 'number' ? String(resume.age) : '');
         setCurrentStatus(resume?.current_status ?? resume?.status ?? '');
         setQualificationsList(normalizeList(resume?.qualifications));
+        setSkillsList(normalizeList(resume?.skills));
         setExperienceList(normalizeList(resume?.experience));
         setHobbiesList(normalizeList(resume?.hobbies));
       } catch (error) {
@@ -557,6 +585,28 @@ function DashboardResumePageContent() {
                         <p className="py-3 text-sm text-zinc-300">{currentStatus || 'Not specified'}</p>
                       )}
                     </div>
+
+                    <div className="space-y-3 sm:col-span-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">External Links</p>
+                      <div className="flex flex-wrap gap-2">
+                        {externalLinkItems.map((item) => {
+                          const Icon = item.icon;
+
+                          return (
+                            <a
+                              key={item.label}
+                              href={item.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 rounded-full border border-blue-950/60 bg-[#050b1b]/70 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-cyan-500/30 hover:text-cyan-300"
+                            >
+                              <Icon className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
+                              {item.label}
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -575,6 +625,20 @@ function DashboardResumePageContent() {
                 onRemove={(index) => removeListItem(setQualificationsList, index)}
               />
 
+              <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
+                <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Skills</p>
+                <div className="flex flex-wrap gap-2">
+                  {displaySkills.map((skill) => (
+                    <div
+                      key={skill}
+                      className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-200"
+                    >
+                      {skill}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <BulletInput
                 id="resume-experience"
                 label="Professional Experience"
@@ -588,6 +652,29 @@ function DashboardResumePageContent() {
                 }
                 onRemove={(index) => removeListItem(setExperienceList, index)}
               />
+
+              <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
+                <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {featuredProjects.map((project) => (
+                    <article
+                      key={project.title}
+                      className="rounded-xl border border-blue-950/50 bg-[#050b1b]/60 p-4"
+                    >
+                      <h2 className="text-sm font-semibold text-zinc-100">{project.title}</h2>
+                      <a
+                        href={project.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 block text-xs text-cyan-400 transition-colors hover:text-cyan-300"
+                      >
+                        {project.subtitle}
+                      </a>
+                      <p className="mt-3 text-sm leading-6 text-zinc-400">{project.description}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
 
               <BulletInput
                 id="resume-hobbies"
