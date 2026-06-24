@@ -242,14 +242,16 @@ export default function GlobalDirectorySearchPage() {
               {peopleResults.map((person) => (
                 <Link
                   key={person.id}
-                  href={`/profile/${encodeURIComponent(person.id)}`}
-                  className="group flex items-center gap-4 rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#0c1028] via-[#070a19] to-[#040611] p-5 shadow-xl transition hover:-translate-y-0.5 hover:border-purple-400/35"
+                  href={`/profile/${encodeURIComponent(person.username || person.id)}`}
+                  className="block w-full"
                 >
-                  <DirectoryAvatar imageUrl={person.avatar_url} label={person.full_name} />
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-semibold text-white group-hover:text-purple-100">{person.full_name}</p>
-                    <p className="mt-1 truncate text-sm text-slate-400">{person.headline}</p>
-                    {person.username ? <p className="mt-1 truncate text-xs text-purple-400">@{person.username}</p> : null}
+                  <div className="group flex cursor-pointer items-center gap-4 rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#0c1028] via-[#070a19] to-[#040611] p-5 shadow-xl transition hover:-translate-y-0.5 hover:border-purple-400/35">
+                    <DirectoryAvatar imageUrl={person.avatar_url} label={person.full_name} />
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-white group-hover:text-purple-100">{person.full_name}</p>
+                      <p className="mt-1 truncate text-sm text-slate-400">{person.headline}</p>
+                      {person.username ? <p className="mt-1 truncate text-xs text-purple-400">@{person.username}</p> : null}
+                    </div>
                   </div>
                 </Link>
               ))}
@@ -259,14 +261,16 @@ export default function GlobalDirectorySearchPage() {
               {companyResults.map((company) => (
                 <Link
                   key={company.id}
-                  href={`/organization/${encodeURIComponent(company.id)}`}
-                  className="group flex items-center gap-4 rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#0c1028] via-[#070a19] to-[#040611] p-5 shadow-xl transition hover:-translate-y-0.5 hover:border-cyan-400/35"
+                  href={`/organization/about?orgId=${encodeURIComponent(company.id)}`}
+                  className="block w-full"
                 >
-                  <DirectoryAvatar imageUrl={company.logo_url} label={company.company_name} />
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-semibold text-white group-hover:text-cyan-100">{company.company_name}</p>
-                    <p className="mt-1 truncate text-sm text-slate-400">{company.industry}</p>
-                    {company.handle ? <p className="mt-1 truncate text-xs text-cyan-400">@{company.handle}</p> : null}
+                  <div className="group flex cursor-pointer items-center gap-4 rounded-2xl border border-slate-800/80 bg-gradient-to-br from-[#0c1028] via-[#070a19] to-[#040611] p-5 shadow-xl transition hover:-translate-y-0.5 hover:border-cyan-400/35">
+                    <DirectoryAvatar imageUrl={company.logo_url} label={company.company_name} />
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-white group-hover:text-cyan-100">{company.company_name}</p>
+                      <p className="mt-1 truncate text-sm text-slate-400">{company.industry}</p>
+                      {company.handle ? <p className="mt-1 truncate text-xs text-cyan-400">@{company.handle}</p> : null}
+                    </div>
                   </div>
                 </Link>
               ))}
