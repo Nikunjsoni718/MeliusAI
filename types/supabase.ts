@@ -39,6 +39,8 @@ export type ProfileRow = {
   qualifications: string[] | null;
   experience: string[] | null;
   hobbies: string[] | null;
+  resume_projects?: Json[] | null;
+  external_links?: Json[] | null;
   created_at: string;
   updated_at: string;
 };
