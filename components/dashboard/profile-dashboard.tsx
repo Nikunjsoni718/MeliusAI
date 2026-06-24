@@ -195,6 +195,10 @@ function normalizeProfileUsername(value: string | null | undefined) {
   }
 }
 
+function normalizeRouteIdentity(value: string | null | undefined) {
+  return normalizeProfileUsername(value)?.toLowerCase() ?? null;
+}
+
 function getProfileUsernameFromPathname(pathname: string) {
   const profilePathMatch = pathname.match(/^\/profile\/([^/?#]+)/);
   return normalizeProfileUsername(profilePathMatch?.[1]);
@@ -1553,6 +1557,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       normalizeProfileUsername(profileId)
     );
   }, [pathname, profileId, profileUsername, routeParams]);
+  const routeProfileUsername = useMemo(() => getProfileUsernameFromPathname(pathname), [pathname]);
+  const viewerMetadataUsername =
+    typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
+  const viewerRouteIdentifiers = useMemo(() => {
+    return new Set(
+      [profile?.username, profile?.id, user?.id, viewerMetadataUsername]
+        .map((value) => normalizeRouteIdentity(value))
+        .filter((value): value is string => Boolean(value))
+    );
+  }, [profile?.id, profile?.username, user?.id, viewerMetadataUsername]);
+  const isSpectatingProfileRoute = Boolean(
+    routeProfileUsername &&
+      !isOwner &&
+      !viewerRouteIdentifiers.has(normalizeRouteIdentity(routeProfileUsername) ?? '')
+  );
 
   const displayName =
     profileDraft.displayName ||
@@ -1590,35 +1609,41 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       ? Math.round(profileFallback.avgProjectScore)
       : 0;
   const dashboardNavigation = useMemo<DashboardNavigationItem[]>(
-    () => [
-      {
-        href: profileHref,
-        label: 'Home',
-        icon: <House className="h-5 w-5" strokeWidth={1.8} />,
-      },
-      {
-        href: '/search',
-        label: 'Search',
-        icon: <Search className="h-5 w-5" strokeWidth={1.8} />,
-      },
-      {
-        href:
-          isSpectator && targetUsername
-            ? `/vault?profile=${encodeURIComponent(targetUsername)}`
-            : '/vault',
-        label: 'Vault',
-        icon: <FolderLock className="h-5 w-5" strokeWidth={1.8} />,
-      },
-      {
-        href:
-          isSpectator && targetUsername
-            ? `/resume?profile=${encodeURIComponent(targetUsername)}`
-            : '/resume',
-        label: 'Resume',
-        icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
-      },
-    ],
-    [isSpectator, profileHref, targetUsername]
+    () => {
+      const items = [
+        {
+          href: profileHref,
+          label: 'Home',
+          icon: <House className="h-5 w-5" strokeWidth={1.8} />,
+        },
+        {
+          href: '/search',
+          label: 'Search',
+          icon: <Search className="h-5 w-5" strokeWidth={1.8} />,
+        },
+        {
+          href:
+            isSpectator && targetUsername
+              ? `/vault?profile=${encodeURIComponent(targetUsername)}`
+              : '/vault',
+          label: 'Vault',
+          icon: <FolderLock className="h-5 w-5" strokeWidth={1.8} />,
+        },
+        {
+          href:
+            isSpectator && targetUsername
+              ? `/resume?profile=${encodeURIComponent(targetUsername)}`
+              : '/resume',
+          label: 'Resume',
+          icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
+        },
+      ];
+
+      return isSpectatingProfileRoute
+        ? items.filter((item) => item.label !== 'Search')
+        : items;
+    },
+    [isSpectatingProfileRoute, isSpectator, profileHref, targetUsername]
   );
 
   const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
@@ -1822,8 +1847,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           portfolio_links?: Partial<PortfolioLinks>;
         };
         const authenticatedUsername = authenticatedProfile?.username?.trim() ?? null;
+        const normalizedTargetIdentity = normalizeRouteIdentity(targetUsername);
         const ownsProfile = Boolean(
-          sessionUser && authenticatedUsername && authenticatedUsername === targetUsername
+          sessionUser &&
+            normalizedTargetIdentity &&
+            (normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity ||
+              normalizeRouteIdentity(sessionUser.id) === normalizedTargetIdentity)
         );
         const isOwnProfile = ownsProfile;
         let savedProfile: SavedProfileItem | null = null;
@@ -2994,23 +3023,30 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
               <nav className="flex flex-col gap-1">
-              {dashboardNavigation.map((item) => {
-                const isSpectatorRestrictedItem = item.label === 'Opportunities';
-
-                return !isSpectator || !isSpectatorRestrictedItem ? (
-                  <SidebarNavButton
-                    key={item.label}
-                    href={item.href}
-                    label={item.label}
-                    active={
-                      pathname === item.href ||
-                      (item.href === profileHref && pathname.startsWith('/profile/'))
-                    }
-                    icon={item.icon}
-                    onClick={() => setIsOpen(false)}
-                  />
-                ) : null;
-              })}
+                <AnimatePresence initial={false}>
+                  {dashboardNavigation.map((item) => (
+                    <motion.div
+                      key={item.label}
+                      layout
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="overflow-hidden"
+                    >
+                      <SidebarNavButton
+                        href={item.href}
+                        label={item.label}
+                        active={
+                          pathname === item.href ||
+                          (item.href === profileHref && pathname.startsWith('/profile/'))
+                        }
+                        icon={item.icon}
+                        onClick={() => setIsOpen(false)}
+                      />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               </nav>
             </div>
             <div className="space-y-2">

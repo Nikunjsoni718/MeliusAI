@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   Suspense,
@@ -13,6 +14,7 @@ import {
 } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { AnimatePresence, motion } from 'framer-motion';
 import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -166,6 +168,10 @@ function DashboardResumePageContent() {
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
   const isSpectator = Boolean(targetUsername);
+  const visibleNavigationItems = useMemo(
+    () => (isSpectator ? navigationItems.filter((item) => item.label !== 'Search') : navigationItems),
+    [isSpectator]
+  );
   const { authEnabled, loading, supabase, user } = useViewerProfile();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const editSnapshotRef = useRef<ResumeDraft | null>(null);
@@ -411,26 +417,37 @@ function DashboardResumePageContent() {
               </div>
             </div>
             <nav className="flex flex-col gap-1">
-            {navigationItems.map((item) => {
-              const Icon = item.icon;
-              const href =
-                isSpectator && targetUsername
-                  ? item.label === 'Home'
-                    ? `/profile/${encodeURIComponent(targetUsername)}`
-                    : item.label === 'Vault' || item.label === 'Resume'
-                      ? `${item.href}?profile=${encodeURIComponent(targetUsername)}`
-                      : item.href
-                  : item.href;
-              return (
-                <SidebarLink
-                  key={item.href}
-                  href={href}
-                  label={item.label}
-                  active={pathname === item.href}
-                  icon={<Icon className="h-5 w-5" strokeWidth={1.8} />}
-                />
-              );
-            })}
+              <AnimatePresence initial={false}>
+                {visibleNavigationItems.map((item) => {
+                  const Icon = item.icon;
+                  const href =
+                    isSpectator && targetUsername
+                      ? item.label === 'Home'
+                        ? `/profile/${encodeURIComponent(targetUsername)}`
+                        : item.label === 'Vault' || item.label === 'Resume'
+                          ? `${item.href}?profile=${encodeURIComponent(targetUsername)}`
+                          : item.href
+                      : item.href;
+                  return (
+                    <motion.div
+                      key={item.href}
+                      layout
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="overflow-hidden"
+                    >
+                      <SidebarLink
+                        href={href}
+                        label={item.label}
+                        active={pathname === item.href}
+                        icon={<Icon className="h-5 w-5" strokeWidth={1.8} />}
+                      />
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </nav>
           </div>
           <div className="rounded-xl border border-blue-950/40 bg-[#090d1f]/40 p-3 text-xs text-slate-500">
