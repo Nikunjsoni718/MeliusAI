@@ -36,6 +36,7 @@ type VerificationInput = {
 type ProjectRecord = Record<string, unknown>;
 
 const MAX_CODE_CONTENT_BYTES = 5 * 1024 * 1024;
+const STORAGE_BUCKET_NAME = 'vault';
 const CODE_TEXT_EXTENSIONS = new Set([
   'c',
   'cc',
@@ -90,6 +91,14 @@ function getProjectFileUrl(project: ProjectRecord | null | undefined) {
   return getProjectString(project, 'file_url') || getProjectString(project, 'source_url');
 }
 
+function getProjectFilePath(project: ProjectRecord | null | undefined) {
+  return (
+    getProjectString(project, 'file_path') ||
+    getProjectString(project, 'storage_path') ||
+    getProjectString(project, 'path')
+  );
+}
+
 function getExtensionFromNameOrUrl(value: string) {
   const withoutQuery = value.split('?')[0]?.split('#')[0] ?? value;
   const cleanValue = (() => {
@@ -125,33 +134,59 @@ async function readUploadedCodeContent(file: File) {
   return (await file.text()).trim();
 }
 
-async function fetchStoredCodeContent(fileUrl: string, filename: string) {
+function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
   if (!fileUrl) {
     return '';
   }
 
-  const response = await fetch(fileUrl, { cache: 'no-store' });
+  try {
+    const url = new URL(fileUrl);
+    const marker = `/storage/v1/object/public/${bucketName}/`;
+    const markerIndex = url.pathname.indexOf(marker);
 
-  if (!response.ok) {
+    if (markerIndex === -1) {
+      return '';
+    }
+
+    return decodeURIComponent(url.pathname.slice(markerIndex + marker.length));
+  } catch {
+    return '';
+  }
+}
+
+async function downloadStoredCodeContent({
+  assetName,
+  filePath,
+  fileUrl,
+  supabase,
+}: {
+  assetName: string;
+  filePath: string;
+  fileUrl: string;
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+}) {
+  const storagePath = filePath || getStoragePathFromUrl(fileUrl, STORAGE_BUCKET_NAME);
+
+  if (!storagePath) {
     return '';
   }
 
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!isTextLikeContent(filename, contentType) && !isTextLikeContent(fileUrl, contentType)) {
+  const { data, error } = await supabase.storage.from(STORAGE_BUCKET_NAME).download(storagePath);
+
+  if (error || !data) {
+    throw new Error('Failed to download file from storage');
+  }
+
+  const contentType = data.type ?? '';
+  if (!isTextLikeContent(assetName, contentType) && !isTextLikeContent(storagePath, contentType)) {
     return '';
   }
 
-  const contentLength = Number.parseInt(response.headers.get('content-length') ?? '', 10);
-  if (Number.isFinite(contentLength) && contentLength > MAX_CODE_CONTENT_BYTES) {
+  if (data.size > MAX_CODE_CONTENT_BYTES) {
     throw new Error('Raw code content must be 5 MB or smaller.');
   }
 
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_CODE_CONTENT_BYTES) {
-    throw new Error('Raw code content must be 5 MB or smaller.');
-  }
-
-  return new TextDecoder('utf-8', { fatal: false }).decode(buffer).trim();
+  return (await data.text()).trim();
 }
 
 async function readVerificationInput(req: Request): Promise<VerificationInput> {
@@ -246,7 +281,15 @@ export async function POST(req: Request) {
     const project = projectData as ProjectRecord;
     const assetName = getAssetNameFromProject(project, input.assetName);
     const fileUrl = getProjectFileUrl(project);
-    const storedCodeContent = input.codeContent ? '' : await fetchStoredCodeContent(fileUrl, assetName);
+    const filePath = getProjectFilePath(project);
+    const storedCodeContent = input.codeContent
+      ? ''
+      : await downloadStoredCodeContent({
+          assetName,
+          filePath,
+          fileUrl,
+          supabase,
+        });
     const rawCodeContent = input.codeContent || storedCodeContent;
     const codeContent = rawCodeContent || input.assetTextContent;
     const userContextDescription = input.userContextDescription;
