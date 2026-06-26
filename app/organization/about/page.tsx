@@ -21,89 +21,80 @@ import { useViewerProfile } from '@/lib/viewer-client';
 const DEFAULT_COMPANY = 'MeliusAI';
 
 type OrgProfileData = {
-  heroEyebrow: string;
-  missionTitle: string;
-  missionDesc: string;
-  section1Subheading: string;
-  section1Heading: string;
-  featureOneTitle: string;
-  featureOneDesc: string;
-  infrastructureTitle: string;
-  infrastructureDesc: string;
-  section2Subheading: string;
-  section2Heading: string;
-  section2Desc: string;
-  section3Subheading: string;
-  benefitTitle: string;
-  benefitDesc: string;
+  hero_eyebrow: string;
+  mission_title: string;
+  mission_text: string;
+  section1_subheading: string;
+  section1_heading: string;
+  pillar1_title: string;
+  pillar1_desc: string;
+  pillar2_title: string;
+  pillar2_desc: string;
+  section2_subheading: string;
+  section2_heading: string;
+  tech_input: string;
+  section3_subheading: string;
+  pillar3_title: string;
+  pillar3_desc: string;
+  perks_input: string;
   loadingStatusText: string;
 };
 
 type OrganizationRecord = Record<string, unknown>;
 type OrganizationUpdateColumn =
-  | 'user_id'
-  | 'company_name'
   | 'mission_text'
-  | 'hero_eyebrow'
-  | 'mission_title'
-  | 'mission_desc'
-  | 'section1_subheading'
-  | 'section1_heading'
-  | 'feature_one_title'
-  | 'feature_one_desc'
-  | 'infrastructure_title'
-  | 'infrastructure_desc'
-  | 'section2_subheading'
-  | 'section2_heading'
-  | 'section2_desc'
-  | 'section3_subheading'
-  | 'benefit_title'
-  | 'benefit_desc'
-  | 'loading_status_text'
   | 'pillar1_title'
   | 'pillar1_desc'
   | 'pillar2_title'
   | 'pillar2_desc'
+  | 'pillar3_title'
+  | 'pillar3_desc'
   | 'tech_input'
   | 'perks_input';
 
 type OrganizationUpdatePayload = Partial<Record<OrganizationUpdateColumn, string | null>>;
+type OrganizationInsertPayload = OrganizationUpdatePayload & {
+  user_id: string;
+  company_name: string;
+};
 
 const emptyOrgData: OrgProfileData = {
-  heroEyebrow: '',
-  missionTitle: '',
-  missionDesc: '',
-  section1Subheading: '',
-  section1Heading: '',
-  featureOneTitle: '',
-  featureOneDesc: '',
-  infrastructureTitle: '',
-  infrastructureDesc: '',
-  section2Subheading: '',
-  section2Heading: '',
-  section2Desc: '',
-  section3Subheading: '',
-  benefitTitle: '',
-  benefitDesc: '',
+  hero_eyebrow: '',
+  mission_title: '',
+  mission_text: '',
+  section1_subheading: '',
+  section1_heading: '',
+  pillar1_title: '',
+  pillar1_desc: '',
+  pillar2_title: '',
+  pillar2_desc: '',
+  section2_subheading: '',
+  section2_heading: '',
+  tech_input: '',
+  section3_subheading: '',
+  pillar3_title: '',
+  pillar3_desc: '',
+  perks_input: '',
   loadingStatusText: '',
 };
 
 const fallbacks: OrgProfileData = {
-  heroEyebrow: '',
-  missionTitle: 'Click Edit to add your company mission',
-  missionDesc: 'Share the promise your company makes to candidates, collaborators, and the market.',
-  section1Subheading: 'Company feature',
-  section1Heading: 'How we turn intent into execution.',
-  featureOneTitle: 'Click Edit to add your first company principle',
-  featureOneDesc: 'Describe the way your team turns intent into execution.',
-  infrastructureTitle: 'Click Edit to add your company infrastructure',
-  infrastructureDesc: 'Describe the systems, tools, or operating model behind your work.',
-  section2Subheading: 'Infrastructure',
-  section2Heading: 'Click Edit to add your infrastructure headline',
-  section2Desc: 'Describe the systems, tools, or operating model behind your work.',
-  section3Subheading: 'Benefits',
-  benefitTitle: 'Click Edit to add your company benefit',
-  benefitDesc: 'Describe why ambitious people should build with your organization.',
+  hero_eyebrow: '',
+  mission_title: 'Click Edit to add your company mission',
+  mission_text: 'Share the promise your company makes to candidates, collaborators, and the market.',
+  section1_subheading: 'Company feature',
+  section1_heading: 'How we turn intent into execution.',
+  pillar1_title: 'Click Edit to add your first company principle',
+  pillar1_desc: 'Describe the way your team turns intent into execution.',
+  pillar2_title: 'Click Edit to add your company infrastructure',
+  pillar2_desc: 'Describe the systems, tools, or operating model behind your work.',
+  section2_subheading: 'Infrastructure',
+  section2_heading: 'Click Edit to add your infrastructure headline',
+  tech_input: 'Describe the systems, tools, or operating model behind your work.',
+  section3_subheading: 'Benefits',
+  pillar3_title: 'Click Edit to add your company benefit',
+  pillar3_desc: 'Describe why ambitious people should build with your organization.',
+  perks_input: 'Describe why ambitious people should build with your organization.',
   loadingStatusText: 'Synchronizing verified workspace details...',
 };
 
@@ -135,42 +126,44 @@ function readText(row: OrganizationRecord | null, keys: string[]) {
 
 function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: string): OrgProfileData {
   return {
-    heroEyebrow: readText(row, ['hero_eyebrow']),
-    missionTitle: readText(row, ['mission_title']) || companyName,
-    missionDesc: readText(row, ['mission_desc', 'mission_text', 'description', 'bio']),
-    section1Subheading: readText(row, ['section1_subheading']),
-    section1Heading: readText(row, ['section1_heading']),
-    featureOneTitle: readText(row, ['feature_one_title', 'pillar1_title']),
-    featureOneDesc: readText(row, ['feature_one_desc', 'pillar1_desc']),
-    infrastructureTitle: readText(row, ['infrastructure_title', 'pillar2_title']),
-    infrastructureDesc: readText(row, ['infrastructure_desc', 'tech_input']),
-    section2Subheading: readText(row, ['section2_subheading']),
-    section2Heading: readText(row, ['section2_heading', 'infrastructure_title', 'pillar2_title']),
-    section2Desc: readText(row, ['section2_desc', 'infrastructure_desc', 'tech_input', 'pillar2_desc']),
-    section3Subheading: readText(row, ['section3_subheading']),
-    benefitTitle: readText(row, ['benefit_title']),
-    benefitDesc: readText(row, ['benefit_desc', 'perks_input']),
+    hero_eyebrow: readText(row, ['hero_eyebrow']),
+    mission_title: readText(row, ['mission_title']) || companyName,
+    mission_text: readText(row, ['mission_text', 'mission_desc', 'description', 'bio']),
+    section1_subheading: readText(row, ['section1_subheading']),
+    section1_heading: readText(row, ['section1_heading']),
+    pillar1_title: readText(row, ['pillar1_title', 'feature_one_title']),
+    pillar1_desc: readText(row, ['pillar1_desc', 'feature_one_desc']),
+    pillar2_title: readText(row, ['pillar2_title', 'infrastructure_title']),
+    pillar2_desc: readText(row, ['pillar2_desc', 'infrastructure_desc']),
+    section2_subheading: readText(row, ['section2_subheading']),
+    section2_heading: readText(row, ['section2_heading', 'pillar2_title', 'infrastructure_title']),
+    tech_input: readText(row, ['tech_input', 'section2_desc', 'infrastructure_desc', 'pillar2_desc']),
+    section3_subheading: readText(row, ['section3_subheading']),
+    pillar3_title: readText(row, ['pillar3_title', 'benefit_title']),
+    pillar3_desc: readText(row, ['pillar3_desc', 'benefit_desc', 'perks_input']),
+    perks_input: readText(row, ['perks_input', 'pillar3_desc', 'benefit_desc']),
     loadingStatusText: readText(row, ['loading_status_text']),
   };
 }
 
 function normalizeOrgData(data: OrgProfileData): OrgProfileData {
   return {
-    heroEyebrow: data.heroEyebrow.trim(),
-    missionTitle: data.missionTitle.trim(),
-    missionDesc: data.missionDesc.trim(),
-    section1Subheading: data.section1Subheading.trim(),
-    section1Heading: data.section1Heading.trim(),
-    featureOneTitle: data.featureOneTitle.trim(),
-    featureOneDesc: data.featureOneDesc.trim(),
-    infrastructureTitle: data.infrastructureTitle.trim(),
-    infrastructureDesc: data.infrastructureDesc.trim(),
-    section2Subheading: data.section2Subheading.trim(),
-    section2Heading: data.section2Heading.trim(),
-    section2Desc: data.section2Desc.trim(),
-    section3Subheading: data.section3Subheading.trim(),
-    benefitTitle: data.benefitTitle.trim(),
-    benefitDesc: data.benefitDesc.trim(),
+    hero_eyebrow: data.hero_eyebrow.trim(),
+    mission_title: data.mission_title.trim(),
+    mission_text: data.mission_text.trim(),
+    section1_subheading: data.section1_subheading.trim(),
+    section1_heading: data.section1_heading.trim(),
+    pillar1_title: data.pillar1_title.trim(),
+    pillar1_desc: data.pillar1_desc.trim(),
+    pillar2_title: data.pillar2_title.trim(),
+    pillar2_desc: data.pillar2_desc.trim(),
+    section2_subheading: data.section2_subheading.trim(),
+    section2_heading: data.section2_heading.trim(),
+    tech_input: data.tech_input.trim(),
+    section3_subheading: data.section3_subheading.trim(),
+    pillar3_title: data.pillar3_title.trim(),
+    pillar3_desc: data.pillar3_desc.trim(),
+    perks_input: data.perks_input.trim(),
     loadingStatusText: data.loadingStatusText.trim(),
   };
 }
@@ -216,21 +209,22 @@ function OrganizationManifestoPageContent() {
   );
   const displayData = useMemo(
     () => ({
-      heroEyebrow: getDisplay(orgData.heroEyebrow, displayCompanyName),
-      missionTitle: getDisplay(orgData.missionTitle, fallbacks.missionTitle),
-      missionDesc: getDisplay(orgData.missionDesc, fallbacks.missionDesc),
-      section1Subheading: getDisplay(orgData.section1Subheading, fallbacks.section1Subheading),
-      section1Heading: getDisplay(orgData.section1Heading, fallbacks.section1Heading),
-      featureOneTitle: getDisplay(orgData.featureOneTitle, fallbacks.featureOneTitle),
-      featureOneDesc: getDisplay(orgData.featureOneDesc, fallbacks.featureOneDesc),
-      infrastructureTitle: getDisplay(orgData.infrastructureTitle, fallbacks.infrastructureTitle),
-      infrastructureDesc: getDisplay(orgData.infrastructureDesc, fallbacks.infrastructureDesc),
-      section2Subheading: getDisplay(orgData.section2Subheading, fallbacks.section2Subheading),
-      section2Heading: getDisplay(orgData.section2Heading, fallbacks.section2Heading),
-      section2Desc: getDisplay(orgData.section2Desc, fallbacks.section2Desc),
-      section3Subheading: getDisplay(orgData.section3Subheading, fallbacks.section3Subheading),
-      benefitTitle: getDisplay(orgData.benefitTitle, fallbacks.benefitTitle),
-      benefitDesc: getDisplay(orgData.benefitDesc, fallbacks.benefitDesc),
+      hero_eyebrow: getDisplay(orgData.hero_eyebrow, displayCompanyName),
+      mission_title: getDisplay(orgData.mission_title, fallbacks.mission_title),
+      mission_text: getDisplay(orgData.mission_text, fallbacks.mission_text),
+      section1_subheading: getDisplay(orgData.section1_subheading, fallbacks.section1_subheading),
+      section1_heading: getDisplay(orgData.section1_heading, fallbacks.section1_heading),
+      pillar1_title: getDisplay(orgData.pillar1_title, fallbacks.pillar1_title),
+      pillar1_desc: getDisplay(orgData.pillar1_desc, fallbacks.pillar1_desc),
+      pillar2_title: getDisplay(orgData.pillar2_title, fallbacks.pillar2_title),
+      pillar2_desc: getDisplay(orgData.pillar2_desc, fallbacks.pillar2_desc),
+      section2_subheading: getDisplay(orgData.section2_subheading, fallbacks.section2_subheading),
+      section2_heading: getDisplay(orgData.section2_heading, fallbacks.section2_heading),
+      tech_input: getDisplay(orgData.tech_input, fallbacks.tech_input),
+      section3_subheading: getDisplay(orgData.section3_subheading, fallbacks.section3_subheading),
+      pillar3_title: getDisplay(orgData.pillar3_title, fallbacks.pillar3_title),
+      pillar3_desc: getDisplay(orgData.pillar3_desc, fallbacks.pillar3_desc),
+      perks_input: getDisplay(orgData.perks_input, fallbacks.perks_input),
       loadingStatusText: getDisplay(orgData.loadingStatusText, fallbacks.loadingStatusText),
     }),
     [displayCompanyName, orgData]
@@ -336,31 +330,15 @@ function OrganizationManifestoPageContent() {
 
     try {
       const updatePayload = stripUndefinedFields({
-        user_id: userId,
-        company_name: displayCompanyName,
-        mission_text: normalizedData.missionDesc || null,
-        hero_eyebrow: normalizedData.heroEyebrow || null,
-        mission_title: normalizedData.missionTitle || null,
-        mission_desc: normalizedData.missionDesc || null,
-        section1_subheading: normalizedData.section1Subheading || null,
-        section1_heading: normalizedData.section1Heading || null,
-        feature_one_title: normalizedData.featureOneTitle || null,
-        feature_one_desc: normalizedData.featureOneDesc || null,
-        infrastructure_title: normalizedData.infrastructureTitle || null,
-        infrastructure_desc: normalizedData.infrastructureDesc || null,
-        section2_subheading: normalizedData.section2Subheading || null,
-        section2_heading: normalizedData.section2Heading || null,
-        section2_desc: normalizedData.section2Desc || null,
-        section3_subheading: normalizedData.section3Subheading || null,
-        benefit_title: normalizedData.benefitTitle || null,
-        benefit_desc: normalizedData.benefitDesc || null,
-        loading_status_text: normalizedData.loadingStatusText || null,
-        pillar1_title: normalizedData.featureOneTitle || null,
-        pillar1_desc: normalizedData.featureOneDesc || null,
-        pillar2_title: normalizedData.infrastructureTitle || null,
-        pillar2_desc: normalizedData.infrastructureDesc || null,
-        tech_input: normalizedData.infrastructureDesc || null,
-        perks_input: normalizedData.benefitDesc || null,
+        mission_text: normalizedData.mission_text || null,
+        pillar1_title: normalizedData.pillar1_title || null,
+        pillar1_desc: normalizedData.pillar1_desc || null,
+        pillar2_title: normalizedData.pillar2_title || null,
+        pillar2_desc: normalizedData.pillar2_desc || null,
+        pillar3_title: normalizedData.pillar3_title || null,
+        pillar3_desc: normalizedData.pillar3_desc || normalizedData.perks_input || null,
+        tech_input: normalizedData.tech_input || null,
+        perks_input: normalizedData.perks_input || normalizedData.pillar3_desc || null,
       });
 
       let nextOrganizationId = organizationId;
@@ -382,15 +360,20 @@ function OrganizationManifestoPageContent() {
         const { error } = await supabase
           .from('organizations')
           .update(updatePayload)
-          .eq('id', nextOrganizationId);
+          .eq('user_id', userId);
 
         if (error) {
           throw error;
         }
       } else {
+        const insertPayload: OrganizationInsertPayload = {
+          ...updatePayload,
+          user_id: userId,
+          company_name: displayCompanyName,
+        };
         const { data, error } = await supabase
           .from('organizations')
-          .insert([updatePayload])
+          .insert([insertPayload])
           .select('id')
           .single();
 
@@ -484,41 +467,41 @@ function OrganizationManifestoPageContent() {
             <EditorInput
               label="Hero eyebrow"
               placeholder="Enter hero eyebrow..."
-              value={orgData.heroEyebrow}
-              onChange={(value) => updateOrgField('heroEyebrow', value)}
+              value={orgData.hero_eyebrow}
+              onChange={(value) => updateOrgField('hero_eyebrow', value)}
               className="text-xs font-bold uppercase tracking-[0.28em] text-slate-300"
             />
           ) : (
             <p className="text-xs font-bold uppercase tracking-[0.28em] text-slate-500">
-              {displayData.heroEyebrow}
+              {displayData.hero_eyebrow}
             </p>
           )}
           {isEditing ? (
             <EditorTextarea
               label="Mission title"
               placeholder="Enter your main company heading..."
-              value={orgData.missionTitle}
-              onChange={(value) => updateOrgField('missionTitle', value)}
+              value={orgData.mission_title}
+              onChange={(value) => updateOrgField('mission_title', value)}
               rows={2}
               className="mt-5 max-w-6xl text-5xl font-black leading-[0.95] text-white sm:text-7xl lg:text-[7.4rem]"
             />
           ) : (
             <h1 className="mt-5 max-w-6xl bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-5xl font-black leading-[0.95] text-transparent sm:text-7xl lg:text-[7.4rem]">
-              {displayData.missionTitle}
+              {displayData.mission_title}
             </h1>
           )}
           {isEditing ? (
             <EditorTextarea
               label="Mission description"
               placeholder="Describe your company mission..."
-              value={orgData.missionDesc}
-              onChange={(value) => updateOrgField('missionDesc', value)}
+              value={orgData.mission_text}
+              onChange={(value) => updateOrgField('mission_text', value)}
               rows={5}
               className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10"
             />
           ) : (
             <p className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10">
-              {displayData.missionDesc}
+              {displayData.mission_text}
             </p>
           )}
           {isLoading ? (
@@ -543,54 +526,54 @@ function OrganizationManifestoPageContent() {
             <EditorInput
               label="Section one subheading"
               placeholder="Enter section label..."
-              value={orgData.section1Subheading}
-              onChange={(value) => updateOrgField('section1Subheading', value)}
+              value={orgData.section1_subheading}
+              onChange={(value) => updateOrgField('section1_subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-purple-200"
             />
           ) : (
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-purple-300">
-              {displayData.section1Subheading}
+              {displayData.section1_subheading}
             </p>
           )}
           {isEditing ? (
             <EditorTextarea
               label="Section one heading"
               placeholder="Enter section heading..."
-              value={orgData.section1Heading}
-              onChange={(value) => updateOrgField('section1Heading', value)}
+              value={orgData.section1_heading}
+              onChange={(value) => updateOrgField('section1_heading', value)}
               rows={2}
               className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl"
             />
           ) : (
             <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">
-              {displayData.section1Heading}
+              {displayData.section1_heading}
             </h2>
           )}
           <div className="mt-10 grid gap-5 md:grid-cols-2">
             <EditableProfileCard
               accent="from-cyan-400/20 to-blue-500/5"
-              description={orgData.featureOneDesc}
-              descriptionFallback={displayData.featureOneDesc}
+              description={orgData.pillar1_desc}
+              descriptionFallback={displayData.pillar1_desc}
               descriptionLabel="Feature description"
               icon={<Rocket className="h-6 w-6 text-white" />}
               isEditing={isEditing}
-              onDescriptionChange={(value) => updateOrgField('featureOneDesc', value)}
-              onTitleChange={(value) => updateOrgField('featureOneTitle', value)}
-              title={orgData.featureOneTitle}
-              titleFallback={displayData.featureOneTitle}
+              onDescriptionChange={(value) => updateOrgField('pillar1_desc', value)}
+              onTitleChange={(value) => updateOrgField('pillar1_title', value)}
+              title={orgData.pillar1_title}
+              titleFallback={displayData.pillar1_title}
               titleLabel="Feature title"
             />
             <EditableProfileCard
               accent="from-purple-400/20 to-fuchsia-500/5"
-              description={orgData.infrastructureDesc}
-              descriptionFallback={displayData.infrastructureDesc}
+              description={orgData.pillar2_desc}
+              descriptionFallback={displayData.pillar2_desc}
               descriptionLabel="Infrastructure description"
               icon={<Cpu className="h-6 w-6 text-white" />}
               isEditing={isEditing}
-              onDescriptionChange={(value) => updateOrgField('infrastructureDesc', value)}
-              onTitleChange={(value) => updateOrgField('infrastructureTitle', value)}
-              title={orgData.infrastructureTitle}
-              titleFallback={displayData.infrastructureTitle}
+              onDescriptionChange={(value) => updateOrgField('pillar2_desc', value)}
+              onTitleChange={(value) => updateOrgField('pillar2_title', value)}
+              title={orgData.pillar2_title}
+              titleFallback={displayData.pillar2_title}
               titleLabel="Infrastructure title"
             />
           </div>
@@ -603,26 +586,26 @@ function OrganizationManifestoPageContent() {
               <EditorInput
                 label="Section two subheading"
                 placeholder="Enter section label..."
-                value={orgData.section2Subheading}
-                onChange={(value) => updateOrgField('section2Subheading', value)}
+                value={orgData.section2_subheading}
+                onChange={(value) => updateOrgField('section2_subheading', value)}
                 className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-200"
               />
             ) : (
               <p className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">
-                {displayData.section2Subheading}
+                {displayData.section2_subheading}
               </p>
             )}
             {isEditing ? (
               <EditorInput
                 label="Section two heading"
                 placeholder="Enter infrastructure heading..."
-                value={orgData.section2Heading}
-                onChange={(value) => updateOrgField('section2Heading', value)}
+                value={orgData.section2_heading}
+                onChange={(value) => updateOrgField('section2_heading', value)}
                 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl"
               />
             ) : (
               <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-                {displayData.section2Heading}
+                {displayData.section2_heading}
               </h2>
             )}
           </div>
@@ -631,13 +614,13 @@ function OrganizationManifestoPageContent() {
               <EditorTextarea
                 label="Section two description"
                 placeholder="Describe your infrastructure..."
-                value={orgData.section2Desc}
-                onChange={(value) => updateOrgField('section2Desc', value)}
+                value={orgData.tech_input}
+                onChange={(value) => updateOrgField('tech_input', value)}
                 rows={6}
                 className="text-base leading-8 text-slate-300"
               />
             ) : (
-              <p className="text-base leading-8 text-slate-300">{displayData.section2Desc}</p>
+              <p className="text-base leading-8 text-slate-300">{displayData.tech_input}</p>
             )}
           </div>
         </section>
@@ -647,26 +630,26 @@ function OrganizationManifestoPageContent() {
             <EditorInput
               label="Section three subheading"
               placeholder="Enter section label..."
-              value={orgData.section3Subheading}
-              onChange={(value) => updateOrgField('section3Subheading', value)}
+              value={orgData.section3_subheading}
+              onChange={(value) => updateOrgField('section3_subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-200"
             />
           ) : (
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">
-              {displayData.section3Subheading}
+              {displayData.section3_subheading}
             </p>
           )}
           {isEditing ? (
             <EditorInput
               label="Benefit title"
               placeholder="Enter benefits heading..."
-              value={orgData.benefitTitle}
-              onChange={(value) => updateOrgField('benefitTitle', value)}
+              value={orgData.pillar3_title}
+              onChange={(value) => updateOrgField('pillar3_title', value)}
               className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl"
             />
           ) : (
             <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">
-              {displayData.benefitTitle}
+              {displayData.pillar3_title}
             </h2>
           )}
           <div className="mt-10 rounded-2xl border border-white/10 bg-[#080b19]/75 p-6">
@@ -678,13 +661,19 @@ function OrganizationManifestoPageContent() {
                 <EditorTextarea
                   label="Benefit description"
                   placeholder="Describe your company benefits..."
-                  value={orgData.benefitDesc}
-                  onChange={(value) => updateOrgField('benefitDesc', value)}
+                  value={orgData.perks_input}
+                  onChange={(value) =>
+                    setOrgData((currentData) => ({
+                      ...currentData,
+                      pillar3_desc: value,
+                      perks_input: value,
+                    }))
+                  }
                   rows={4}
                   className="text-sm font-semibold leading-7 text-slate-200"
                 />
               ) : (
-                <p className="text-sm font-semibold leading-7 text-slate-200">{displayData.benefitDesc}</p>
+                <p className="text-sm font-semibold leading-7 text-slate-200">{displayData.perks_input}</p>
               )}
             </div>
           </div>
