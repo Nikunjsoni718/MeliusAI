@@ -22,7 +22,6 @@ const DEFAULT_COMPANY = 'MeliusAI';
 
 type OrgProfileData = {
   heroEyebrow: string;
-  verifiedBadgeText: string;
   missionTitle: string;
   missionDesc: string;
   section1Subheading: string;
@@ -37,16 +36,41 @@ type OrgProfileData = {
   section3Subheading: string;
   benefitTitle: string;
   benefitDesc: string;
-  footerNote: string;
-  footerBadgeText: string;
   loadingStatusText: string;
 };
 
 type OrganizationRecord = Record<string, unknown>;
+type OrganizationUpdateColumn =
+  | 'user_id'
+  | 'company_name'
+  | 'mission_text'
+  | 'hero_eyebrow'
+  | 'mission_title'
+  | 'mission_desc'
+  | 'section1_subheading'
+  | 'section1_heading'
+  | 'feature_one_title'
+  | 'feature_one_desc'
+  | 'infrastructure_title'
+  | 'infrastructure_desc'
+  | 'section2_subheading'
+  | 'section2_heading'
+  | 'section2_desc'
+  | 'section3_subheading'
+  | 'benefit_title'
+  | 'benefit_desc'
+  | 'loading_status_text'
+  | 'pillar1_title'
+  | 'pillar1_desc'
+  | 'pillar2_title'
+  | 'pillar2_desc'
+  | 'tech_input'
+  | 'perks_input';
+
+type OrganizationUpdatePayload = Partial<Record<OrganizationUpdateColumn, string | null>>;
 
 const emptyOrgData: OrgProfileData = {
   heroEyebrow: '',
-  verifiedBadgeText: '',
   missionTitle: '',
   missionDesc: '',
   section1Subheading: '',
@@ -61,14 +85,11 @@ const emptyOrgData: OrgProfileData = {
   section3Subheading: '',
   benefitTitle: '',
   benefitDesc: '',
-  footerNote: '',
-  footerBadgeText: '',
   loadingStatusText: '',
 };
 
 const fallbacks: OrgProfileData = {
   heroEyebrow: '',
-  verifiedBadgeText: 'Verified Workspace',
   missionTitle: 'Click Edit to add your company mission',
   missionDesc: 'Share the promise your company makes to candidates, collaborators, and the market.',
   section1Subheading: 'Company feature',
@@ -83,8 +104,6 @@ const fallbacks: OrgProfileData = {
   section3Subheading: 'Benefits',
   benefitTitle: 'Click Edit to add your company benefit',
   benefitDesc: 'Describe why ambitious people should build with your organization.',
-  footerNote: 'Verified through MeliusIQ.',
-  footerBadgeText: 'Protected workspace profile',
   loadingStatusText: 'Synchronizing verified workspace details...',
 };
 
@@ -117,7 +136,6 @@ function readText(row: OrganizationRecord | null, keys: string[]) {
 function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: string): OrgProfileData {
   return {
     heroEyebrow: readText(row, ['hero_eyebrow']),
-    verifiedBadgeText: readText(row, ['verified_badge_text']),
     missionTitle: readText(row, ['mission_title']) || companyName,
     missionDesc: readText(row, ['mission_desc', 'mission_text', 'description', 'bio']),
     section1Subheading: readText(row, ['section1_subheading']),
@@ -132,8 +150,6 @@ function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: s
     section3Subheading: readText(row, ['section3_subheading']),
     benefitTitle: readText(row, ['benefit_title']),
     benefitDesc: readText(row, ['benefit_desc', 'perks_input']),
-    footerNote: readText(row, ['footer_note']),
-    footerBadgeText: readText(row, ['footer_badge_text']),
     loadingStatusText: readText(row, ['loading_status_text']),
   };
 }
@@ -141,7 +157,6 @@ function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: s
 function normalizeOrgData(data: OrgProfileData): OrgProfileData {
   return {
     heroEyebrow: data.heroEyebrow.trim(),
-    verifiedBadgeText: data.verifiedBadgeText.trim(),
     missionTitle: data.missionTitle.trim(),
     missionDesc: data.missionDesc.trim(),
     section1Subheading: data.section1Subheading.trim(),
@@ -156,14 +171,24 @@ function normalizeOrgData(data: OrgProfileData): OrgProfileData {
     section3Subheading: data.section3Subheading.trim(),
     benefitTitle: data.benefitTitle.trim(),
     benefitDesc: data.benefitDesc.trim(),
-    footerNote: data.footerNote.trim(),
-    footerBadgeText: data.footerBadgeText.trim(),
     loadingStatusText: data.loadingStatusText.trim(),
   };
 }
 
 function getDisplay(value: string, fallback: string) {
   return value.trim() || fallback;
+}
+
+function stripUndefinedFields(payload: OrganizationUpdatePayload): OrganizationUpdatePayload {
+  const cleanedPayload: OrganizationUpdatePayload = {};
+
+  for (const [key, value] of Object.entries(payload) as [OrganizationUpdateColumn, string | null | undefined][]) {
+    if (value !== undefined) {
+      cleanedPayload[key] = value;
+    }
+  }
+
+  return cleanedPayload;
 }
 
 function OrganizationManifestoPageContent() {
@@ -192,7 +217,6 @@ function OrganizationManifestoPageContent() {
   const displayData = useMemo(
     () => ({
       heroEyebrow: getDisplay(orgData.heroEyebrow, displayCompanyName),
-      verifiedBadgeText: getDisplay(orgData.verifiedBadgeText, fallbacks.verifiedBadgeText),
       missionTitle: getDisplay(orgData.missionTitle, fallbacks.missionTitle),
       missionDesc: getDisplay(orgData.missionDesc, fallbacks.missionDesc),
       section1Subheading: getDisplay(orgData.section1Subheading, fallbacks.section1Subheading),
@@ -207,8 +231,6 @@ function OrganizationManifestoPageContent() {
       section3Subheading: getDisplay(orgData.section3Subheading, fallbacks.section3Subheading),
       benefitTitle: getDisplay(orgData.benefitTitle, fallbacks.benefitTitle),
       benefitDesc: getDisplay(orgData.benefitDesc, fallbacks.benefitDesc),
-      footerNote: getDisplay(orgData.footerNote, fallbacks.footerNote),
-      footerBadgeText: getDisplay(orgData.footerBadgeText, fallbacks.footerBadgeText),
       loadingStatusText: getDisplay(orgData.loadingStatusText, fallbacks.loadingStatusText),
     }),
     [displayCompanyName, orgData]
@@ -313,13 +335,11 @@ function OrganizationManifestoPageContent() {
     setSaveSuccess(false);
 
     try {
-      const payload = {
+      const updatePayload = stripUndefinedFields({
         user_id: userId,
         company_name: displayCompanyName,
-        name: displayCompanyName,
         mission_text: normalizedData.missionDesc || null,
         hero_eyebrow: normalizedData.heroEyebrow || null,
-        verified_badge_text: normalizedData.verifiedBadgeText || null,
         mission_title: normalizedData.missionTitle || null,
         mission_desc: normalizedData.missionDesc || null,
         section1_subheading: normalizedData.section1Subheading || null,
@@ -334,8 +354,6 @@ function OrganizationManifestoPageContent() {
         section3_subheading: normalizedData.section3Subheading || null,
         benefit_title: normalizedData.benefitTitle || null,
         benefit_desc: normalizedData.benefitDesc || null,
-        footer_note: normalizedData.footerNote || null,
-        footer_badge_text: normalizedData.footerBadgeText || null,
         loading_status_text: normalizedData.loadingStatusText || null,
         pillar1_title: normalizedData.featureOneTitle || null,
         pillar1_desc: normalizedData.featureOneDesc || null,
@@ -343,7 +361,7 @@ function OrganizationManifestoPageContent() {
         pillar2_desc: normalizedData.infrastructureDesc || null,
         tech_input: normalizedData.infrastructureDesc || null,
         perks_input: normalizedData.benefitDesc || null,
-      };
+      });
 
       let nextOrganizationId = organizationId;
 
@@ -363,7 +381,7 @@ function OrganizationManifestoPageContent() {
       if (nextOrganizationId) {
         const { error } = await supabase
           .from('organizations')
-          .update(payload)
+          .update(updatePayload)
           .eq('id', nextOrganizationId);
 
         if (error) {
@@ -372,7 +390,7 @@ function OrganizationManifestoPageContent() {
       } else {
         const { data, error } = await supabase
           .from('organizations')
-          .insert([payload])
+          .insert([updatePayload])
           .select('id')
           .single();
 
@@ -425,17 +443,7 @@ function OrganizationManifestoPageContent() {
         <div className="sticky top-4 z-40 mt-12 flex flex-wrap items-center justify-between gap-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-200 backdrop-blur-md">
             <BadgeCheck className="h-4 w-4" />
-            {isEditing ? (
-              <EditorInput
-                label="Verified badge text"
-                placeholder="Verified badge text..."
-                value={orgData.verifiedBadgeText}
-                onChange={(value) => updateOrgField('verifiedBadgeText', value)}
-                className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-100"
-              />
-            ) : (
-              displayData.verifiedBadgeText
-            )}
+            VERIFIED WORKSPACE
           </div>
           {canEditProfile ? (
             <button
@@ -683,31 +691,11 @@ function OrganizationManifestoPageContent() {
         </section>
 
         <footer className="flex flex-col gap-4 border-t border-white/10 py-8 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
-          {isEditing ? (
-            <EditorInput
-              label="Footer note"
-              placeholder="Footer note..."
-              value={orgData.footerNote}
-              onChange={(value) => updateOrgField('footerNote', value)}
-              className="text-xs text-slate-400"
-            />
-          ) : (
-            <p>© {new Date().getFullYear()} {displayCompanyName}. {displayData.footerNote}</p>
-          )}
-          {isEditing ? (
-            <EditorInput
-              label="Footer badge text"
-              placeholder="Footer badge text..."
-              value={orgData.footerBadgeText}
-              onChange={(value) => updateOrgField('footerBadgeText', value)}
-              className="text-xs text-slate-400"
-            />
-          ) : (
-            <span className="inline-flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" />
-              {displayData.footerBadgeText}
-            </span>
-          )}
+          <p>© 2026 MeliusAI. Verified through MeliusIQ.</p>
+          <span className="inline-flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" />
+            Protected workspace profile
+          </span>
         </footer>
       </div>
     </main>
