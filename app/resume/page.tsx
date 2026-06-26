@@ -117,28 +117,6 @@ function normalizeList(value: unknown) {
   return [];
 }
 
-function normalizeFeaturedProjectIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => {
-      if (typeof item === 'string') {
-        return item;
-      }
-
-      if (item && typeof item === 'object') {
-        const row = item as Record<string, unknown>;
-        const id = row.projectId ?? row.project_id ?? row.id;
-        return typeof id === 'string' ? id : null;
-      }
-
-      return null;
-    })
-    .filter((item): item is string => Boolean(item));
-}
-
 function normalizeExternalLinks(value: unknown): ResumeExternalLink[] {
   if (!Array.isArray(value)) {
     return [];
@@ -201,6 +179,21 @@ function getAssetSummary(project: ProjectRow) {
 
 function isVerifiedAsset(project: ProjectRow) {
   return Boolean(project.has_been_audited || getAssetScore(project) !== null);
+}
+
+function getTopScoringAssets(assets: ProjectRow[]) {
+  return [...assets]
+    .filter(isVerifiedAsset)
+    .sort((left, right) => {
+      const scoreDifference = (getAssetScore(right) ?? 0) - (getAssetScore(left) ?? 0);
+
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      return new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime();
+    })
+    .slice(0, 4);
 }
 
 function isMissingOptionalProfileColumn(error: { code?: string; message?: string } | null) {
@@ -316,29 +309,11 @@ function EditableStringListSection({
 function EditableProjectsSection({
   assets,
   isEditing,
-  onToggle,
-  selectedAssetIds,
 }: {
   assets: ProjectRow[];
   isEditing: boolean;
-  onToggle: (projectId: string) => void;
-  selectedAssetIds: string[];
 }) {
-  const selectedIds = new Set(selectedAssetIds);
-  const verifiedAssets = assets.filter(isVerifiedAsset);
-  const visibleProjects = selectedAssetIds.length
-    ? assets.filter((project) => selectedIds.has(project.id))
-    : verifiedAssets;
-  const sortedAssets = [...assets].sort((left, right) => {
-    const leftSelected = selectedIds.has(left.id) ? 1 : 0;
-    const rightSelected = selectedIds.has(right.id) ? 1 : 0;
-
-    if (leftSelected !== rightSelected) {
-      return rightSelected - leftSelected;
-    }
-
-    return new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime();
-  });
+  const visibleProjects = assets;
 
   const renderScoreBadge = (project: ProjectRow) => {
     const score = getAssetScore(project);
@@ -362,48 +337,12 @@ function EditableProjectsSection({
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
       <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
       {isEditing ? (
-        sortedAssets.length > 0 ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {sortedAssets.map((project) => {
-              const isSelected = selectedIds.has(project.id);
-
-              return (
-                <label
-                  key={project.id}
-                  className={cn(
-                    'flex cursor-pointer gap-3 rounded-xl border bg-[#050b1b]/60 p-4 transition',
-                    isSelected
-                      ? 'border-cyan-400/40 ring-1 ring-cyan-400/20'
-                      : 'border-blue-950/50 hover:border-cyan-500/25'
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggle(project.id)}
-                    className="mt-1 h-4 w-4 rounded border-blue-900 bg-slate-950 text-cyan-400"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-start justify-between gap-3">
-                      <span>
-                        <span className="block truncate text-sm font-semibold text-zinc-100">{getAssetName(project)}</span>
-                        <span className="mt-1 block text-xs text-cyan-400">{getAssetSubtitle(project)}</span>
-                      </span>
-                      {renderScoreBadge(project)}
-                    </span>
-                    <span className="mt-3 line-clamp-2 block text-sm leading-6 text-zinc-400">
-                      {renderAssetSummary(project)}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-zinc-600">No uploaded Vault files found yet.</p>
-        )
-      ) : visibleProjects.length > 0 ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <p className="mb-4 text-sm leading-6 text-slate-400">
+          Your top 4 highest-scoring projects are automatically featured on your public profile.
+        </p>
+      ) : null}
+      {visibleProjects.length > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {visibleProjects.map((project) => (
             <article
               key={project.id}
@@ -638,9 +577,9 @@ function DashboardResumePageContent() {
         }
 
         const nextFormData = createDefaultFormData();
-        const loadedFeaturedProjectIds = normalizeFeaturedProjectIds(resume?.resume_projects);
         const loadedExternalLinks = normalizeExternalLinks(resume?.external_links);
-        const defaultFeaturedProjectIds = assets.filter(isVerifiedAsset).map((asset) => asset.id);
+        const topProjects = getTopScoringAssets(assets);
+        const topProjectIds = topProjects.map((asset) => asset.id);
 
         setFormData({
           ...nextFormData,
@@ -656,11 +595,10 @@ function DashboardResumePageContent() {
           skills: resume ? normalizeList(resume.skills) : nextFormData.skills,
           experience: resume ? normalizeList(resume.experience) : nextFormData.experience,
           hobbies: resume ? normalizeList(resume.hobbies) : nextFormData.hobbies,
-          featuredProjectIds:
-            loadedFeaturedProjectIds.length > 0 ? loadedFeaturedProjectIds : defaultFeaturedProjectIds,
+          featuredProjectIds: topProjectIds,
           externalLinks: loadedExternalLinks.length > 0 ? loadedExternalLinks : nextFormData.externalLinks,
         });
-        setUploadedAssets(assets);
+        setUploadedAssets(topProjects);
         setAvatarUrl(
           resume?.avatar_url ??
             (user?.user_metadata?.avatar_url as string | undefined) ??
@@ -722,15 +660,6 @@ function DashboardResumePageContent() {
     }));
   }
 
-  function toggleFeaturedProject(projectId: string) {
-    setFormData((current) => ({
-      ...current,
-      featuredProjectIds: current.featuredProjectIds.includes(projectId)
-        ? current.featuredProjectIds.filter((id) => id !== projectId)
-        : [...current.featuredProjectIds, projectId],
-    }));
-  }
-
   function updateExternalLink(index: number, field: keyof ResumeExternalLink, value: string) {
     setFormData((current) => ({
       ...current,
@@ -772,9 +701,7 @@ function DashboardResumePageContent() {
         experience: formData.experience.map((item) => item.trim()).filter(Boolean),
         hobbies: formData.hobbies.map((item) => item.trim()).filter(Boolean),
         skills: formData.skills.map((item) => item.trim()).filter(Boolean),
-        featuredProjectIds: formData.featuredProjectIds.filter((id) =>
-          uploadedAssets.some((asset) => asset.id === id)
-        ),
+        featuredProjectIds: uploadedAssets.map((asset) => asset.id),
         externalLinks: formData.externalLinks
           .map((link) => ({ label: link.label.trim(), href: link.href.trim() }))
           .filter((link) => link.label || link.href),
@@ -1144,8 +1071,6 @@ function DashboardResumePageContent() {
               <EditableProjectsSection
                 assets={uploadedAssets}
                 isEditing={canEdit}
-                onToggle={toggleFeaturedProject}
-                selectedAssetIds={formData.featuredProjectIds}
               />
 
               <EditableStringListSection
