@@ -12,7 +12,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Briefcase, Code2, FileText, FolderLock, Globe2, House, Search, UserRound } from 'lucide-react';
+import { Briefcase, Code2, FileText, FolderLock, Globe2, House, Maximize2, Play, Search, UserRound, X } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -154,11 +154,57 @@ function createDefaultFormData(): ResumeFormData {
 }
 
 function getAssetName(project: ProjectRow) {
-  return project.file_name?.trim() || project.name?.trim() || project.title?.trim() || 'Untitled Vault Asset';
+  return project.name?.trim() || project.file_name?.trim() || project.title?.trim() || 'Untitled Vault Asset';
+}
+
+function getAssetUrl(project: ProjectRow) {
+  return project.file_url?.trim() || project.source_url?.trim() || null;
 }
 
 function getAssetSubtitle(project: ProjectRow) {
   return project.file_type?.trim() || project.source_kind?.trim() || project.status?.trim() || 'Vault asset';
+}
+
+function getAssetExtension(project: ProjectRow) {
+  const fileType = project.file_type?.toLowerCase() ?? '';
+
+  if (fileType.includes('pdf')) {
+    return 'pdf';
+  }
+
+  if (fileType.includes('wordprocessingml') || fileType.includes('msword')) {
+    return 'docx';
+  }
+
+  if (fileType.startsWith('video/')) {
+    return fileType.split('/').pop() || 'video';
+  }
+
+  if (fileType.startsWith('image/')) {
+    return fileType.split('/').pop() || 'image';
+  }
+
+  const source = [project.file_name, project.name, project.title, project.file_url, project.source_url]
+    .find((value) => typeof value === 'string' && value.trim().includes('.'))
+    ?.trim();
+  const cleanSource = source?.split('?')[0]?.split('#')[0] ?? '';
+  const extension = cleanSource.match(/\.([a-z0-9]+)$/i)?.[1];
+
+  return extension?.toLowerCase() ?? 'file';
+}
+
+function isVideoAsset(project: ProjectRow) {
+  return Boolean(project.file_type?.toLowerCase().startsWith('video/')) ||
+    ['mp4', 'webm', 'mov', 'm4v', 'ogg', 'quicktime'].includes(getAssetExtension(project));
+}
+
+function isPdfAsset(project: ProjectRow) {
+  return getAssetExtension(project) === 'pdf';
+}
+
+function isImageAsset(project: ProjectRow) {
+  return Boolean(project.file_type?.toLowerCase().startsWith('image/')) ||
+    ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'].includes(getAssetExtension(project));
 }
 
 function getAssetScore(project: ProjectRow) {
@@ -321,9 +367,11 @@ function EditableStringListSection({
 function EditableProjectsSection({
   assets,
   isEditing,
+  onFocusProject,
 }: {
   assets: ProjectRow[];
   isEditing: boolean;
+  onFocusProject: (project: ProjectRow) => void;
 }) {
   const visibleProjects = assets;
 
@@ -344,6 +392,59 @@ function EditableProjectsSection({
   const renderAssetSummary = (project: ProjectRow) => (
     getAssetSummary(project) || 'AI parsing summary will appear here after the asset is verified.'
   );
+
+  const renderThumbnail = (project: ProjectRow) => {
+    const assetUrl = getAssetUrl(project);
+    const extension = getAssetExtension(project).toUpperCase();
+    const isVideo = isVideoAsset(project);
+    const isImage = isImageAsset(project);
+
+    return (
+      <button
+        type="button"
+        onClick={() => onFocusProject(project)}
+        className="group relative mt-4 h-32 w-full cursor-pointer overflow-hidden rounded-md border border-slate-800/70 bg-slate-800 text-left transition-all duration-300 hover:border-cyan-500/35 hover:shadow-[0_0_24px_rgba(6,182,212,0.12)] focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+        aria-label={`Open full focus view for ${getAssetName(project)}`}
+      >
+        {isVideo && assetUrl ? (
+          <video
+            src={assetUrl}
+            muted
+            playsInline
+            preload="metadata"
+            className="h-full w-full object-cover opacity-80 transition duration-300 group-hover:scale-[1.02] group-hover:opacity-100"
+          />
+        ) : isImage && assetUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={assetUrl}
+            alt=""
+            className="h-full w-full object-cover opacity-85 transition duration-300 group-hover:scale-[1.02] group-hover:opacity-100"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[linear-gradient(135deg,rgba(15,23,42,0.94),rgba(8,13,31,0.96))] px-4 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">
+              <FileText className="h-6 w-6" strokeWidth={1.6} />
+            </div>
+            <span className="rounded-full border border-slate-700/80 bg-slate-950/50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+              {extension}
+            </span>
+          </div>
+        )}
+        {isVideo ? (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/15">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-black/45 text-white shadow-xl">
+              <Play className="h-5 w-5 fill-current" strokeWidth={1.7} />
+            </span>
+          </span>
+        ) : null}
+        <span className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 via-black/45 to-transparent px-3 pb-2 pt-8 text-[11px] font-medium text-slate-200 opacity-95">
+          <span>Full focus</span>
+          <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
@@ -369,18 +470,7 @@ function EditableProjectsSection({
               <h2 className="truncate text-sm font-bold text-slate-100" title={getAssetName(project)}>
                 {getAssetName(project)}
               </h2>
-              {project.source_url || project.file_url ? (
-                <a
-                  href={project.file_url ?? project.source_url ?? '#'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 block truncate text-[11px] text-slate-500 transition-colors hover:text-cyan-300"
-                >
-                  {project.file_name || project.source_url || project.file_url}
-                </a>
-              ) : (
-                <p className="mt-1 text-[11px] text-slate-500">{project.file_name || 'Stored in Vault'}</p>
-              )}
+              {renderThumbnail(project)}
               <p className="mt-4 line-clamp-4 text-sm leading-6 text-zinc-400">
                 {renderAssetSummary(project)}
               </p>
@@ -390,6 +480,126 @@ function EditableProjectsSection({
       ) : (
         <p className="text-sm text-zinc-600">No verified Vault assets found yet. Upload and verify assets from Home or Vault to feature them here.</p>
       )}
+    </div>
+  );
+}
+
+function FeaturedProjectFocusModal({
+  onClose,
+  project,
+}: {
+  onClose: () => void;
+  project: ProjectRow;
+}) {
+  const assetUrl = getAssetUrl(project);
+  const extension = getAssetExtension(project).toUpperCase();
+  const isVideo = isVideoAsset(project);
+  const isPdf = isPdfAsset(project);
+  const isImage = isImageAsset(project);
+  const summary = getAssetSummary(project) || 'AI parsing summary will appear here after the asset is verified.';
+  const score = getAssetScore(project);
+
+  const renderFocusMedia = () => {
+    if (isVideo && assetUrl) {
+      return (
+        <video
+          src={assetUrl}
+          controls
+          autoPlay
+          className="w-full max-h-[80vh] rounded-lg shadow-2xl"
+        />
+      );
+    }
+
+    if (isPdf && assetUrl) {
+      return (
+        <iframe
+          src={assetUrl}
+          title={`${getAssetName(project)} preview`}
+          className="h-[80vh] w-full rounded-lg bg-white"
+        />
+      );
+    }
+
+    if (isImage && assetUrl) {
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={assetUrl}
+          alt=""
+          className="mx-auto max-h-[80vh] w-auto rounded-lg object-contain shadow-2xl"
+        />
+      );
+    }
+
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-5 rounded-lg border border-slate-800 bg-[#050b1b] px-6 py-12 text-center">
+        <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">
+          <FileText className="h-10 w-10" strokeWidth={1.4} />
+        </div>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-300">{extension}</p>
+          <p className="mt-2 max-w-md text-sm leading-6 text-slate-400">
+            This asset is stored in Vault. Open the source file to inspect the original upload.
+          </p>
+        </div>
+        {assetUrl ? (
+          <a
+            href={assetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/60 hover:bg-cyan-500/15"
+          >
+            Open asset
+          </a>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm md:p-10"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${getAssetName(project)} full focus view`}
+      onClick={onClose}
+    >
+      <div
+        className="relative flex max-h-full w-full max-w-6xl flex-col gap-4 overflow-y-auto rounded-2xl border border-slate-800 bg-[#070b1a] p-4 shadow-2xl md:p-6"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-950/80 text-slate-300 transition hover:border-cyan-500/40 hover:text-white"
+          aria-label="Close full focus view"
+        >
+          <X className="h-5 w-5" strokeWidth={1.8} />
+        </button>
+
+        <div className="pr-12">
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-400">Full Focus</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">{getAssetName(project)}</h2>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-slate-800/80 bg-black/40 p-2">
+          {renderFocusMedia()}
+        </div>
+
+        <div className="grid gap-4 rounded-xl border border-slate-800/70 bg-[#090e24] p-4 md:grid-cols-[1fr_auto]">
+          <div>
+            <h3 className="text-base font-semibold text-slate-100">{getAssetName(project)}</h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-400">{summary}</p>
+          </div>
+          {score !== null ? (
+            <div className="h-fit rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">AI Score</p>
+              <p className="mt-1 text-2xl font-semibold text-white">{score}</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -495,7 +705,9 @@ function DashboardResumePageContent() {
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [hasCreatorProfileColumns, setHasCreatorProfileColumns] = useState(true);
+  const [activeFocusId, setActiveFocusId] = useState<ProjectRow | null>(null);
   const canEdit = !isSpectator && isEditing;
+  const closeFocus = () => setActiveFocusId(null);
 
   useEffect(() => {
     if (!isSpectator && !loading && authEnabled && !user) {
@@ -1100,6 +1312,7 @@ function DashboardResumePageContent() {
               <EditableProjectsSection
                 assets={uploadedAssets}
                 isEditing={canEdit}
+                onFocusProject={setActiveFocusId}
               />
 
               <EditableStringListSection
@@ -1123,6 +1336,12 @@ function DashboardResumePageContent() {
           </div>
         </section>
       </div>
+      {activeFocusId ? (
+        <FeaturedProjectFocusModal
+          project={activeFocusId}
+          onClose={closeFocus}
+        />
+      ) : null}
     </main>
   );
 }
