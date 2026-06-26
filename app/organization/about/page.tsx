@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -19,255 +19,301 @@ import {
 import { useViewerProfile } from '@/lib/viewer-client';
 
 const DEFAULT_COMPANY = 'MeliusAI';
-const DEFAULT_BIO =
-  'We build intelligent career infrastructure that turns verified work into trusted opportunity for ambitious people and modern teams.';
-const DEFAULT_PILLAR_1_TITLE = 'Core Principle';
-const DEFAULT_PILLAR_1_DESC = 'Your description here...';
-const DEFAULT_PILLAR_2_TITLE = 'Execution Style';
-const DEFAULT_PILLAR_2_DESC = 'Your description here...';
-const DEFAULT_TECH = 'Next.js, Supabase';
-const DEFAULT_PERKS = 'Flexible Hours, Competitive Equity';
 
-type BrochureFields = {
-  companyName: string;
-  bioText: string;
-  pillar1Title: string;
-  pillar1Desc: string;
-  pillar2Title: string;
-  pillar2Desc: string;
-  techInput: string;
-  perksInput: string;
+type OrgProfileData = {
+  missionTitle: string;
+  missionDesc: string;
+  featureOneTitle: string;
+  featureOneDesc: string;
+  infrastructureTitle: string;
+  infrastructureDesc: string;
+  benefitTitle: string;
+  benefitDesc: string;
 };
 
-function readText(row: Record<string, unknown>, key: string, fallback: string) {
-  const value = row[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+type OrganizationRecord = Record<string, unknown>;
+
+const emptyOrgData: OrgProfileData = {
+  missionTitle: '',
+  missionDesc: '',
+  featureOneTitle: '',
+  featureOneDesc: '',
+  infrastructureTitle: '',
+  infrastructureDesc: '',
+  benefitTitle: '',
+  benefitDesc: '',
+};
+
+const fallbacks: OrgProfileData = {
+  missionTitle: 'Click Edit to add your company mission',
+  missionDesc: 'Share the promise your company makes to candidates, collaborators, and the market.',
+  featureOneTitle: 'Click Edit to add your first company principle',
+  featureOneDesc: 'Describe the way your team turns intent into execution.',
+  infrastructureTitle: 'Click Edit to add your company infrastructure',
+  infrastructureDesc: 'Describe the systems, tools, or operating model behind your work.',
+  benefitTitle: 'Click Edit to add your company benefit',
+  benefitDesc: 'Describe why ambitious people should build with your organization.',
+};
+
+const placeholderValues = new Set(['your description here...']);
+
+function cleanText(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmedValue = value.trim();
+  return placeholderValues.has(trimmedValue.toLowerCase()) ? '' : trimmedValue;
 }
 
-function parseCommaList(value: string, fallback: string) {
-  const items = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+function readText(row: OrganizationRecord | null, keys: string[]) {
+  if (!row) {
+    return '';
+  }
 
-  return items.length > 0 ? items : fallback.split(',').map((item) => item.trim());
+  for (const key of keys) {
+    const value = cleanText(row[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: string): OrgProfileData {
+  return {
+    missionTitle: readText(row, ['mission_title']) || companyName,
+    missionDesc: readText(row, ['mission_desc', 'mission_text', 'description', 'bio']),
+    featureOneTitle: readText(row, ['feature_one_title', 'pillar1_title']),
+    featureOneDesc: readText(row, ['feature_one_desc', 'pillar1_desc']),
+    infrastructureTitle: readText(row, ['infrastructure_title', 'pillar2_title']),
+    infrastructureDesc: readText(row, ['infrastructure_desc', 'tech_input']),
+    benefitTitle: readText(row, ['benefit_title']),
+    benefitDesc: readText(row, ['benefit_desc', 'perks_input']),
+  };
+}
+
+function normalizeOrgData(data: OrgProfileData): OrgProfileData {
+  return {
+    missionTitle: data.missionTitle.trim(),
+    missionDesc: data.missionDesc.trim(),
+    featureOneTitle: data.featureOneTitle.trim(),
+    featureOneDesc: data.featureOneDesc.trim(),
+    infrastructureTitle: data.infrastructureTitle.trim(),
+    infrastructureDesc: data.infrastructureDesc.trim(),
+    benefitTitle: data.benefitTitle.trim(),
+    benefitDesc: data.benefitDesc.trim(),
+  };
+}
+
+function getDisplay(value: string, fallback: string) {
+  return value.trim() || fallback;
 }
 
 function OrganizationManifestoPageContent() {
   const searchParams = useSearchParams();
   const publicOrgId = searchParams.get('orgId')?.trim() || null;
   const { loading: authLoading, profile, supabase, user } = useViewerProfile();
-  const userId = user?.id;
-  const [companyName, setCompanyName] = useState('');
-  const [bioText, setBioText] = useState('');
-  const [pillar1Title, setPillar1Title] = useState(DEFAULT_PILLAR_1_TITLE);
-  const [pillar1Desc, setPillar1Desc] = useState(DEFAULT_PILLAR_1_DESC);
-  const [pillar2Title, setPillar2Title] = useState(DEFAULT_PILLAR_2_TITLE);
-  const [pillar2Desc, setPillar2Desc] = useState(DEFAULT_PILLAR_2_DESC);
-  const [techInput, setTechInput] = useState(DEFAULT_TECH);
-  const [perksInput, setPerksInput] = useState(DEFAULT_PERKS);
+  const userId = user?.id ?? null;
+  const userMetadata = (user?.user_metadata ?? {}) as { company_name?: string };
+  const contextCompanyName =
+    userMetadata.company_name || profile?.company_name || profile?.display_name || DEFAULT_COMPANY;
+
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [organizationOwnerId, setOrganizationOwnerId] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState(contextCompanyName);
+  const [orgData, setOrgData] = useState<OrgProfileData>(emptyOrgData);
   const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const editSnapshot = useRef<BrochureFields | null>(null);
 
-  const userMetadata = (user?.user_metadata ?? {}) as { company_name?: string };
-  const contextCompanyName =
-    userMetadata.company_name || profile?.company_name || profile?.display_name || DEFAULT_COMPANY;
-
-  const currentFields = (): BrochureFields => ({
-    companyName,
-    bioText,
-    pillar1Title,
-    pillar1Desc,
-    pillar2Title,
-    pillar2Desc,
-    techInput,
-    perksInput,
-  });
-
-  function applyFields(fields: BrochureFields) {
-    setCompanyName(fields.companyName);
-    setBioText(fields.bioText);
-    setPillar1Title(fields.pillar1Title);
-    setPillar1Desc(fields.pillar1Desc);
-    setPillar2Title(fields.pillar2Title);
-    setPillar2Desc(fields.pillar2Desc);
-    setTechInput(fields.techInput);
-    setPerksInput(fields.perksInput);
-  }
+  const displayCompanyName = companyName || contextCompanyName || DEFAULT_COMPANY;
+  const canEditProfile = Boolean(
+    userId && ((organizationOwnerId && organizationOwnerId === userId) || (!publicOrgId && !organizationOwnerId))
+  );
+  const displayData = useMemo(
+    () => ({
+      missionTitle: getDisplay(orgData.missionTitle, fallbacks.missionTitle),
+      missionDesc: getDisplay(orgData.missionDesc, fallbacks.missionDesc),
+      featureOneTitle: getDisplay(orgData.featureOneTitle, fallbacks.featureOneTitle),
+      featureOneDesc: getDisplay(orgData.featureOneDesc, fallbacks.featureOneDesc),
+      infrastructureTitle: getDisplay(orgData.infrastructureTitle, fallbacks.infrastructureTitle),
+      infrastructureDesc: getDisplay(orgData.infrastructureDesc, fallbacks.infrastructureDesc),
+      benefitTitle: getDisplay(orgData.benefitTitle, fallbacks.benefitTitle),
+      benefitDesc: getDisplay(orgData.benefitDesc, fallbacks.benefitDesc),
+    }),
+    [orgData]
+  );
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading) {
+      return;
+    }
 
     let active = true;
 
-    async function loadProfileData() {
+    async function loadOrganizationProfile() {
       setIsLoading(true);
+      setSaveError(null);
 
       try {
-        if (!supabase) return;
+        if (!supabase) {
+          if (active) {
+            setCompanyName(contextCompanyName);
+            setOrgData(emptyOrgData);
+          }
+          return;
+        }
 
-        let organization: Record<string, unknown> | null = null;
+        let organization: OrganizationRecord | null = null;
+
         if (publicOrgId) {
-          const { data: publicOrganization, error: publicError } = await supabase
+          const { data, error } = await supabase
             .from('organizations')
             .select('*')
             .eq('id', publicOrgId)
-            .single();
+            .maybeSingle();
 
-          if (publicError) throw publicError;
-          organization = publicOrganization;
+          if (error) {
+            throw error;
+          }
+          organization = (data as OrganizationRecord | null) ?? null;
         } else if (userId) {
-          const { data: userOrganization, error: userError } = await supabase
+          const { data, error } = await supabase
             .from('organizations')
             .select('*')
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
-          if (userError) throw userError;
-          organization = userOrganization;
+          if (error) {
+            throw error;
+          }
+          organization = (data as OrganizationRecord | null) ?? null;
         }
 
-        if (!active) return;
+        if (!active) {
+          return;
+        }
 
-        const loadedFields: BrochureFields = organization
-          ? {
-              companyName: readText(organization, 'company_name', contextCompanyName),
-              bioText: readText(organization, 'mission_text', DEFAULT_BIO),
-              pillar1Title: readText(organization, 'pillar1_title', DEFAULT_PILLAR_1_TITLE),
-              pillar1Desc: readText(organization, 'pillar1_desc', DEFAULT_PILLAR_1_DESC),
-              pillar2Title: readText(organization, 'pillar2_title', DEFAULT_PILLAR_2_TITLE),
-              pillar2Desc: readText(organization, 'pillar2_desc', DEFAULT_PILLAR_2_DESC),
-              techInput: readText(organization, 'tech_input', DEFAULT_TECH),
-              perksInput: readText(organization, 'perks_input', DEFAULT_PERKS),
-            }
-          : {
-              companyName: contextCompanyName,
-              bioText: DEFAULT_BIO,
-              pillar1Title: DEFAULT_PILLAR_1_TITLE,
-              pillar1Desc: DEFAULT_PILLAR_1_DESC,
-              pillar2Title: DEFAULT_PILLAR_2_TITLE,
-              pillar2Desc: DEFAULT_PILLAR_2_DESC,
-              techInput: DEFAULT_TECH,
-              perksInput: DEFAULT_PERKS,
-            };
+        const loadedCompanyName =
+          readText(organization, ['company_name', 'name']) || contextCompanyName || DEFAULT_COMPANY;
+        const ownerId = readText(organization, ['user_id']);
+        const loadedOrgId = readText(organization, ['id']);
 
-        applyFields(loadedFields);
+        setCompanyName(loadedCompanyName);
+        setOrganizationOwnerId(ownerId || (!publicOrgId && userId ? userId : null));
+        setOrganizationId(loadedOrgId || null);
+        setOrgData(mapOrganizationToProfile(organization, loadedCompanyName));
       } catch (error) {
-        console.error('Unable to load the organization manifesto:', error);
+        console.error('Unable to load the organization profile:', error);
         if (active) {
           setCompanyName(contextCompanyName);
-          setBioText(DEFAULT_BIO);
+          setOrgData(emptyOrgData);
+          setOrganizationOwnerId(!publicOrgId && userId ? userId : null);
         }
       } finally {
-        if (active) setIsLoading(false);
+        if (active) {
+          setIsLoading(false);
+        }
       }
     }
 
-    void loadProfileData();
+    void loadOrganizationProfile();
     return () => {
       active = false;
     };
   }, [authLoading, contextCompanyName, publicOrgId, supabase, userId]);
 
-  function enterEditMode() {
-    if (publicOrgId) return;
-
-    editSnapshot.current = currentFields();
-    setSaveError(null);
-    setSaveSuccess(false);
-    setIsEditing(true);
+  function updateOrgField(field: keyof OrgProfileData, value: string) {
+    setOrgData((currentData) => ({
+      ...currentData,
+      [field]: value,
+    }));
   }
 
-  function cancelEditMode() {
-    if (editSnapshot.current) applyFields(editSnapshot.current);
-    setSaveError(null);
-    setIsEditing(false);
-  }
-
-  async function handleSaveProfile() {
-    if (publicOrgId || !supabase || !userId) {
-      setSaveError('Sign in to edit this organization profile.');
+  async function handleSave() {
+    if (!canEditProfile || !supabase || !userId) {
+      setSaveError('Only the organization owner can edit this profile.');
       return;
     }
 
-    const normalizedFields: BrochureFields = {
-      companyName: companyName.trim(),
-      bioText: bioText.trim(),
-      pillar1Title: pillar1Title.trim(),
-      pillar1Desc: pillar1Desc.trim(),
-      pillar2Title: pillar2Title.trim(),
-      pillar2Desc: pillar2Desc.trim(),
-      techInput: techInput.trim(),
-      perksInput: perksInput.trim(),
-    };
-
-    if (!normalizedFields.companyName || !normalizedFields.bioText) {
-      setSaveError('Company name and mission statement are required.');
-      return;
-    }
+    const normalizedData = normalizeOrgData(orgData);
 
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
 
     try {
-      const { data: userRows, error: userLookupError } = await supabase
-        .from('organizations')
-        .select('id')
-        .eq('user_id', userId)
-        .limit(1);
-
-      if (userLookupError) throw userLookupError;
-      let organization = userRows && userRows.length > 0 ? userRows[0] : null;
-
-      if (!organization) {
-        const lookupName = editSnapshot.current?.companyName || contextCompanyName;
-        const { data: companyRows, error: companyLookupError } = await supabase
-          .from('organizations')
-          .select('id')
-          .ilike('company_name', lookupName)
-          .limit(1);
-
-        if (companyLookupError) throw companyLookupError;
-        organization = companyRows && companyRows.length > 0 ? companyRows[0] : null;
-      }
-
-      const databaseFields = {
+      const payload = {
         user_id: userId,
-        company_name: normalizedFields.companyName,
-        mission_text: normalizedFields.bioText,
-        pillar1_title: normalizedFields.pillar1Title,
-        pillar1_desc: normalizedFields.pillar1Desc,
-        pillar2_title: normalizedFields.pillar2Title,
-        pillar2_desc: normalizedFields.pillar2Desc,
-        tech_input: normalizedFields.techInput,
-        perks_input: normalizedFields.perksInput,
+        company_name: displayCompanyName,
+        name: displayCompanyName,
+        description: normalizedData.missionDesc || null,
+        mission_text: normalizedData.missionDesc || null,
+        mission_title: normalizedData.missionTitle || null,
+        mission_desc: normalizedData.missionDesc || null,
+        feature_one_title: normalizedData.featureOneTitle || null,
+        feature_one_desc: normalizedData.featureOneDesc || null,
+        infrastructure_title: normalizedData.infrastructureTitle || null,
+        infrastructure_desc: normalizedData.infrastructureDesc || null,
+        benefit_title: normalizedData.benefitTitle || null,
+        benefit_desc: normalizedData.benefitDesc || null,
+        pillar1_title: normalizedData.featureOneTitle || null,
+        pillar1_desc: normalizedData.featureOneDesc || null,
+        pillar2_title: normalizedData.infrastructureTitle || null,
+        pillar2_desc: normalizedData.infrastructureDesc || null,
+        tech_input: normalizedData.infrastructureDesc || null,
+        perks_input: normalizedData.benefitDesc || null,
       };
 
-      if (organization?.id) {
-        const { error: updateError } = await supabase
-          .from('organizations')
-          .update(databaseFields)
-          .eq('id', organization.id);
+      let nextOrganizationId = organizationId;
 
-        if (updateError) throw updateError;
-      } else {
-        const { error: insertError } = await supabase.from('organizations').insert([databaseFields]);
-        if (insertError) throw insertError;
+      if (!nextOrganizationId) {
+        const { data: existingRows, error: lookupError } = await supabase
+          .from('organizations')
+          .select('id')
+          .eq('user_id', userId)
+          .limit(1);
+
+        if (lookupError) {
+          throw lookupError;
+        }
+        nextOrganizationId = existingRows?.[0]?.id ?? null;
       }
 
-      applyFields(normalizedFields);
-      editSnapshot.current = null;
-      setSaveError(null);
-      setSaveSuccess(true);
+      if (nextOrganizationId) {
+        const { error } = await supabase
+          .from('organizations')
+          .update(payload)
+          .eq('id', nextOrganizationId);
+
+        if (error) {
+          throw error;
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('organizations')
+          .insert([payload])
+          .select('id')
+          .single();
+
+        if (error) {
+          throw error;
+        }
+        nextOrganizationId = data?.id ?? null;
+      }
+
+      setOrganizationId(nextOrganizationId);
+      setOrganizationOwnerId(userId);
+      setOrgData(normalizedData);
       setIsEditing(false);
+      setSaveSuccess(true);
       window.setTimeout(() => setSaveSuccess(false), 2400);
     } catch (error: any) {
-      console.error('Manifesto save failed:', error);
+      console.error('Organization profile save failed:', error);
       setSaveError(
         error?.message ||
           error?.error_description ||
@@ -277,11 +323,6 @@ function OrganizationManifestoPageContent() {
       setIsSaving(false);
     }
   }
-
-  const displayCompanyName = companyName || DEFAULT_COMPANY;
-  const displayBio = bioText || DEFAULT_BIO;
-  const techTags = parseCommaList(techInput, DEFAULT_TECH);
-  const perkItems = parseCommaList(perksInput, DEFAULT_PERKS);
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#030512] text-white">
@@ -294,7 +335,7 @@ function OrganizationManifestoPageContent() {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-500/10 text-cyan-200">
               <Boxes className="h-4 w-4" />
             </span>
-            MeliusIQ Workspace
+            {displayCompanyName}
           </Link>
           <Link
             href={publicOrgId ? '/home' : '/organization/dashboard'}
@@ -305,166 +346,176 @@ function OrganizationManifestoPageContent() {
           </Link>
         </nav>
 
-        <div className="mt-12 flex flex-wrap items-center justify-between gap-4">
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-200">
+        <div className="sticky top-4 z-40 mt-12 flex flex-wrap items-center justify-between gap-4">
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-200 backdrop-blur-md">
             <BadgeCheck className="h-4 w-4" />
             Verified Workspace
           </div>
-          {!publicOrgId && !isEditing && userId && (
+          {canEditProfile ? (
             <button
               type="button"
-              onClick={enterEditMode}
-              className="inline-flex items-center gap-2 rounded-full border border-purple-300/25 bg-purple-500/10 px-4 py-2 text-xs font-bold text-purple-100 transition hover:border-purple-200/50 hover:bg-purple-500/15"
+              onClick={() => {
+                if (isEditing) {
+                  void handleSave();
+                } else {
+                  setSaveError(null);
+                  setSaveSuccess(false);
+                  setIsEditing(true);
+                }
+              }}
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 rounded-full border border-purple-300/25 bg-[#080b1b]/90 px-4 py-2 text-xs font-bold text-purple-100 shadow-2xl backdrop-blur-md transition hover:border-purple-200/50 hover:bg-purple-500/15 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Pencil className="h-3.5 w-3.5" />
-              Edit Profile
+              {isEditing ? <Save className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+              {isSaving ? 'Saving...' : isEditing ? 'Save Changes' : 'Edit Profile'}
             </button>
-          )}
+          ) : null}
         </div>
 
         {saveSuccess ? (
           <div className="fixed right-5 top-5 z-50 flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-[#071a18]/95 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-2xl" role="status">
             <CheckCircle2 className="h-4 w-4" />
-            Manifesto updated successfully
+            Organization profile updated
           </div>
         ) : null}
 
-        {isEditing && !publicOrgId ? (
-          <section className="my-10 rounded-[2rem] border border-purple-300/20 bg-[#090c1c]/95 p-6 shadow-[0_30px_100px_rgba(0,0,0,0.38)] sm:p-9">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-300">Hero</p>
-              <div className="mt-5 grid gap-5">
-                <EditorInput label="Company name" value={companyName} onChange={setCompanyName} />
-                <EditorTextarea label="Mission statement" value={bioText} onChange={setBioText} rows={5} />
-              </div>
-            </div>
+        {saveError ? (
+          <p className="mt-6 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" role="alert">
+            {saveError}
+          </p>
+        ) : null}
 
-            <EditorSection title="Company Principles">
-              <div className="grid gap-5 lg:grid-cols-2">
-                <div className="space-y-4">
-                  <EditorInput label="Principle one title" value={pillar1Title} onChange={setPillar1Title} />
-                  <EditorTextarea label="Principle one description" value={pillar1Desc} onChange={setPillar1Desc} />
-                </div>
-                <div className="space-y-4">
-                  <EditorInput label="Principle two title" value={pillar2Title} onChange={setPillar2Title} />
-                  <EditorTextarea label="Principle two description" value={pillar2Desc} onChange={setPillar2Desc} />
-                </div>
-              </div>
-            </EditorSection>
+        <section className="py-20 sm:py-28 lg:py-32">
+          <p className="text-xs font-bold uppercase tracking-[0.28em] text-slate-500">
+            {displayCompanyName}
+          </p>
+          {isEditing ? (
+            <EditorTextarea
+              label="Mission title"
+              value={orgData.missionTitle}
+              onChange={(value) => updateOrgField('missionTitle', value)}
+              rows={2}
+              className="mt-5 text-4xl font-black leading-tight sm:text-6xl"
+            />
+          ) : (
+            <h1 className="mt-5 max-w-6xl bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-5xl font-black leading-[0.95] tracking-[-0.05em] text-transparent sm:text-7xl lg:text-[7.4rem]">
+              {displayData.missionTitle}
+            </h1>
+          )}
+          {isEditing ? (
+            <EditorTextarea
+              label="Mission description"
+              value={orgData.missionDesc}
+              onChange={(value) => updateOrgField('missionDesc', value)}
+              rows={5}
+              className="mt-6 text-lg leading-8"
+            />
+          ) : (
+            <p className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10">
+              {displayData.missionDesc}
+            </p>
+          )}
+          {isLoading ? (
+            <p className="mt-8 text-xs font-medium text-slate-600" role="status">Synchronizing verified workspace details...</p>
+          ) : null}
+        </section>
 
-            <EditorSection title="Infrastructure">
-              <EditorTextarea
-                label="Technology badges (comma-separated)"
-                value={techInput}
-                onChange={setTechInput}
-                rows={3}
+        <section className="border-t border-white/10 py-16 sm:py-20">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-purple-300">Company feature</p>
+          <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">How we turn intent into execution.</h2>
+          <div className="mt-10 grid gap-5 md:grid-cols-2">
+            <EditableProfileCard
+              accent="from-cyan-400/20 to-blue-500/5"
+              description={orgData.featureOneDesc}
+              descriptionFallback={displayData.featureOneDesc}
+              descriptionLabel="Feature description"
+              icon={<Rocket className="h-6 w-6 text-white" />}
+              isEditing={isEditing}
+              onDescriptionChange={(value) => updateOrgField('featureOneDesc', value)}
+              onTitleChange={(value) => updateOrgField('featureOneTitle', value)}
+              title={orgData.featureOneTitle}
+              titleFallback={displayData.featureOneTitle}
+              titleLabel="Feature title"
+            />
+            <EditableProfileCard
+              accent="from-purple-400/20 to-fuchsia-500/5"
+              description={orgData.infrastructureDesc}
+              descriptionFallback={displayData.infrastructureDesc}
+              descriptionLabel="Infrastructure description"
+              icon={<Cpu className="h-6 w-6 text-white" />}
+              isEditing={isEditing}
+              onDescriptionChange={(value) => updateOrgField('infrastructureDesc', value)}
+              onTitleChange={(value) => updateOrgField('infrastructureTitle', value)}
+              title={orgData.infrastructureTitle}
+              titleFallback={displayData.infrastructureTitle}
+              titleLabel="Infrastructure title"
+            />
+          </div>
+        </section>
+
+        <section className="grid gap-8 border-t border-white/10 py-16 sm:py-20 lg:grid-cols-[0.8fr_1.2fr]">
+          <div>
+            <Sparkles className="h-6 w-6 text-cyan-300" />
+            <p className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Infrastructure</p>
+            {isEditing ? (
+              <EditorInput
+                label="Infrastructure title"
+                value={orgData.infrastructureTitle}
+                onChange={(value) => updateOrgField('infrastructureTitle', value)}
+                className="mt-4 text-2xl font-semibold"
               />
-            </EditorSection>
-
-            <EditorSection title="Benefits">
+            ) : (
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+                {displayData.infrastructureTitle}
+              </h2>
+            )}
+          </div>
+          <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.025] p-7">
+            {isEditing ? (
               <EditorTextarea
-                label="Workspace perks (comma-separated)"
-                value={perksInput}
-                onChange={setPerksInput}
-                rows={3}
+                label="Infrastructure description"
+                value={orgData.infrastructureDesc}
+                onChange={(value) => updateOrgField('infrastructureDesc', value)}
+                rows={6}
               />
-            </EditorSection>
+            ) : (
+              <p className="text-base leading-8 text-slate-300">{displayData.infrastructureDesc}</p>
+            )}
+          </div>
+        </section>
 
-            {saveError ? (
-              <p className="mt-6 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" role="alert">
-                {saveError}
-              </p>
-            ) : null}
-
-            <div className="mt-8 flex flex-wrap justify-end gap-3 border-t border-white/10 pt-6">
-              <button
-                type="button"
-                onClick={cancelEditMode}
-                disabled={isSaving}
-                className="rounded-xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-slate-300 transition hover:text-white disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveProfile()}
-                disabled={isSaving}
-                className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 px-5 py-3 text-sm font-bold text-white shadow-[0_0_30px_rgba(34,211,238,0.12)] disabled:opacity-50"
-              >
-                <Save className="h-4 w-4" />
-                {isSaving ? 'Saving...' : 'Save Changes'}
-              </button>
+        <section className="border-t border-white/10 py-16 sm:py-20">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">Benefits</p>
+          {isEditing ? (
+            <EditorInput
+              label="Benefit title"
+              value={orgData.benefitTitle}
+              onChange={(value) => updateOrgField('benefitTitle', value)}
+              className="mt-4 text-2xl font-semibold"
+            />
+          ) : (
+            <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">
+              {displayData.benefitTitle}
+            </h2>
+          )}
+          <div className="mt-10 rounded-2xl border border-white/10 bg-[#080b19]/75 p-6">
+            <div className="flex gap-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
+                <CheckCircle2 className="h-4 w-4" />
+              </span>
+              {isEditing ? (
+                <EditorTextarea
+                  label="Benefit description"
+                  value={orgData.benefitDesc}
+                  onChange={(value) => updateOrgField('benefitDesc', value)}
+                  rows={4}
+                />
+              ) : (
+                <p className="text-sm font-semibold leading-7 text-slate-200">{displayData.benefitDesc}</p>
+              )}
             </div>
-          </section>
-        ) : (
-          <>
-            <section className="py-20 sm:py-28 lg:py-32">
-              <p className="text-xs font-bold uppercase tracking-[0.28em] text-slate-500">Meet the organization</p>
-              <h1 className="mt-5 max-w-6xl bg-gradient-to-r from-white via-cyan-100 to-purple-300 bg-clip-text text-5xl font-black leading-[0.95] tracking-[-0.05em] text-transparent sm:text-7xl lg:text-[7.4rem]">
-                {displayCompanyName}
-              </h1>
-              <p className="mt-8 max-w-4xl text-xl font-medium leading-9 text-slate-300 sm:text-2xl sm:leading-10">
-                {displayBio}
-              </p>
-              {isLoading ? (
-                <p className="mt-8 text-xs font-medium text-slate-600" role="status">Synchronizing verified workspace details...</p>
-              ) : null}
-            </section>
-
-            <section className="border-t border-white/10 py-16 sm:py-20">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-purple-300">Company principles</p>
-              <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">How we turn intent into execution.</h2>
-              <div className="mt-10 grid gap-5 md:grid-cols-2">
-                {[
-                  { title: pillar1Title, description: pillar1Desc, icon: Rocket, accent: 'from-cyan-400/20 to-blue-500/5' },
-                  { title: pillar2Title, description: pillar2Desc, icon: Cpu, accent: 'from-purple-400/20 to-fuchsia-500/5' },
-                ].map((pillar, index) => {
-                  const Icon = pillar.icon;
-                  return (
-                    <article key={`${pillar.title}-${index}`} className="relative overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#0a0d1d]/85 p-8">
-                      <div className={`absolute inset-0 bg-gradient-to-br ${pillar.accent}`} />
-                      <div className="relative">
-                        <Icon className="h-6 w-6 text-white" />
-                        <h3 className="mt-8 text-2xl font-semibold">{pillar.title || `Principle ${index + 1}`}</h3>
-                        <p className="mt-4 max-w-xl text-sm leading-7 text-slate-400">{pillar.description}</p>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="grid gap-8 border-t border-white/10 py-16 sm:py-20 lg:grid-cols-[0.8fr_1.2fr]">
-              <div>
-                <Sparkles className="h-6 w-6 text-cyan-300" />
-                <p className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Infrastructure</p>
-                <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">The ecosystem behind the work.</h2>
-              </div>
-              <div className="flex flex-wrap content-start gap-3 rounded-[1.75rem] border border-white/10 bg-white/[0.025] p-7">
-                {techTags.map((tag) => (
-                  <span key={tag} className="rounded-full border border-purple-300/20 bg-purple-500/[0.08] px-4 py-2.5 text-sm font-semibold text-purple-100">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </section>
-
-            <section className="border-t border-white/10 py-16 sm:py-20">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">Benefits</p>
-              <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl">A workspace designed for sustainable ambition.</h2>
-              <ul className="mt-10 grid gap-4 sm:grid-cols-2">
-                {perkItems.map((perk) => (
-                  <li key={perk} className="flex items-center gap-4 rounded-2xl border border-white/10 bg-[#080b19]/75 p-5 text-sm font-semibold text-slate-200">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
-                      <CheckCircle2 className="h-4 w-4" />
-                    </span>
-                    {perk}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </>
-        )}
+          </div>
+        </section>
 
         <footer className="flex flex-col gap-4 border-t border-white/10 py-8 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} {displayCompanyName}. Verified through MeliusIQ.</p>
@@ -483,48 +534,107 @@ export default function OrganizationManifestoPage() {
   );
 }
 
-function EditorSection({ title, children }: { title: string; children: ReactNode }) {
+function EditableProfileCard({
+  accent,
+  description,
+  descriptionFallback,
+  descriptionLabel,
+  icon,
+  isEditing,
+  onDescriptionChange,
+  onTitleChange,
+  title,
+  titleFallback,
+  titleLabel,
+}: {
+  accent: string;
+  description: string;
+  descriptionFallback: string;
+  descriptionLabel: string;
+  icon: ReactNode;
+  isEditing: boolean;
+  onDescriptionChange: (value: string) => void;
+  onTitleChange: (value: string) => void;
+  title: string;
+  titleFallback: string;
+  titleLabel: string;
+}) {
   return (
-    <section className="mt-8 border-t border-white/10 pt-8">
-      <p className="mb-5 text-xs font-bold uppercase tracking-[0.22em] text-purple-300">{title}</p>
-      {children}
-    </section>
+    <article className="relative overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#0a0d1d]/85 p-8">
+      <div className={`absolute inset-0 bg-gradient-to-br ${accent}`} />
+      <div className="relative">
+        {icon}
+        {isEditing ? (
+          <EditorInput
+            label={titleLabel}
+            value={title}
+            onChange={onTitleChange}
+            className="mt-8 text-xl font-semibold"
+          />
+        ) : (
+          <h3 className="mt-8 text-2xl font-semibold">{titleFallback}</h3>
+        )}
+        {isEditing ? (
+          <EditorTextarea
+            label={descriptionLabel}
+            value={description}
+            onChange={onDescriptionChange}
+            rows={5}
+            className="mt-4"
+          />
+        ) : (
+          <p className="mt-4 max-w-xl text-sm leading-7 text-slate-400">{descriptionFallback}</p>
+        )}
+      </div>
+    </article>
   );
 }
 
-function EditorInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function EditorInput({
+  className,
+  label,
+  value,
+  onChange,
+}: {
+  className?: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
-    <label className="block">
+    <label className="block w-full">
       <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</span>
       <input
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/10"
+        className={`mt-2 w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/10 ${className ?? ''}`}
       />
     </label>
   );
 }
 
 function EditorTextarea({
+  className,
   label,
   value,
   onChange,
   rows = 4,
 }: {
+  className?: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
   rows?: number;
 }) {
   return (
-    <label className="block">
+    <label className="block w-full">
       <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
-        className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm leading-7 text-slate-200 outline-none transition focus:border-purple-300/50 focus:ring-2 focus:ring-purple-300/10"
+        className={`mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm leading-7 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-purple-300/50 focus:ring-2 focus:ring-purple-300/10 ${className ?? ''}`}
       />
     </label>
   );
