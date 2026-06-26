@@ -441,6 +441,7 @@ CRITICAL MULTI-LANGUAGE RULES:
 - If TypeScript/React (.ts, .tsx): Focus on component re-render loops (missing useEffect dependencies), type safety bypasses caused by excessive any, race conditions, missing list array keys, and unhandled async fetches.
 - If JavaScript/React (.js, .jsx): Focus on component re-render loops, race conditions, missing list array keys, unhandled promises, unsafe browser API usage, and runtime type hazards.
 - All languages: Scan for leaked API keys, hardcoded credentials, broken access controls, unsafe filesystem handling, and SQL injection risks.
+- SCORING PRECISION: Do NOT default to lazy round numbers (e.g., 40, 70, 80, 90). You must calculate a highly precise, granular score out of 100 (e.g., 34, 78, 93) based on a strict deduction system. Deduct exact points for every missing dependency, unclosed connection, or type safety violation.
 
 OUTPUT FORMAT (Strict JSON matching the dashboard UI):
 {{
@@ -448,7 +449,7 @@ OUTPUT FORMAT (Strict JSON matching the dashboard UI):
   "goods_and_strengths": ["Line-level engineering praise 1", "Line-level engineering praise 2"],
   "bads_and_flaws": ["Line-level architectural or security flaw 1", "Line-level architectural or security flaw 2"],
   "strategic_recommendations": ["Actionable refactoring strategy 1", "Actionable refactoring strategy 2"],
-  "overall_score": 80
+  "overall_score": 87
 }}
 """
 
