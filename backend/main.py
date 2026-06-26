@@ -6,22 +6,25 @@ import logging
 import math
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID
-from fastapi import FastAPI, UploadFile, HTTPException, Request
+from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
-from typing import Dict, List
+from typing import Any, Dict, List
 
 try:
-    from supabase import create_client
+    from supabase import ClientOptions, create_client
 except ImportError:
     create_client = None
+    ClientOptions = None
 
 # --- MULTIMODAL PARSER EXTENSIONS ---
 import fitz  # PyMuPDF
@@ -74,8 +77,10 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 supabase_backend_client = None
-supabase_service_role_client = None
 supabase = None
+bearer_scheme = HTTPBearer(auto_error=False)
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
 
 BIO_EXTRACTION_SYSTEM_PROMPT = (
     "You are an expert technical recruiter. Analyze the following candidate biography. "
@@ -187,6 +192,19 @@ async def parse_search_query(query: str) -> dict:
         logger.warning("Talent search query parsing failed: %s", parsing_error)
         return empty_intent
 
+def get_supabase_public_config():
+    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase URL/anon key environment variables are not configured.",
+        )
+
+    return supabase_url, supabase_key
+
+
 def get_supabase_backend_client():
     global supabase_backend_client
 
@@ -197,46 +215,141 @@ def get_supabase_backend_client():
         )
 
     if supabase_backend_client is None:
-        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-        supabase_key = (
-            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-            or os.getenv("SUPABASE_ANON_KEY")
-            or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-        )
-
-        if not supabase_url or not supabase_key:
-            raise HTTPException(
-                status_code=500,
-                detail="Supabase URL/key environment variables are not configured for member search.",
-            )
-
+        supabase_url, supabase_key = get_supabase_public_config()
         supabase_backend_client = create_client(supabase_url, supabase_key)
 
     return supabase_backend_client
 
 
-def get_supabase_service_role_client():
-    global supabase_service_role_client
-
-    if create_client is None:
+def get_supabase_authenticated_client(access_token: str):
+    if create_client is None or ClientOptions is None:
         raise HTTPException(
             status_code=500,
             detail="The supabase-py package is not installed in the Python backend environment.",
         )
 
-    if supabase_service_role_client is None:
-        supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_url, supabase_key = get_supabase_public_config()
+    options = ClientOptions(
+        headers={"Authorization": f"Bearer {access_token}"},
+        auto_refresh_token=False,
+        persist_session=False,
+    )
+    return create_client(supabase_url, supabase_key, options)
 
-        if not supabase_url or not supabase_key:
-            raise HTTPException(
-                status_code=500,
-                detail="NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured for asset verification.",
-            )
 
-        supabase_service_role_client = create_client(supabase_url, supabase_key)
+def get_request_supabase_client(request: Request):
+    authenticated_client = getattr(request.state, "supabase", None)
 
-    return supabase_service_role_client
+    if authenticated_client is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return authenticated_client
+
+
+def get_supabase_user_id(user_response: Any) -> str | None:
+    auth_user = getattr(user_response, "user", None)
+
+    if isinstance(auth_user, dict):
+        user_id = auth_user.get("id")
+    else:
+        user_id = getattr(auth_user, "id", None)
+
+    return str(user_id).strip() if user_id else None
+
+
+def get_supabase_user_roles(user_response: Any) -> List[str]:
+    auth_user = getattr(user_response, "user", None)
+    role_values = []
+
+    for metadata_name in ("app_metadata", "user_metadata"):
+        metadata = (
+            auth_user.get(metadata_name)
+            if isinstance(auth_user, dict)
+            else getattr(auth_user, metadata_name, None)
+        )
+        if isinstance(metadata, dict):
+            role_values.extend([metadata.get("role"), metadata.get("roles")])
+
+    normalized_roles = []
+    for value in role_values:
+        values = value if isinstance(value, list) else [value]
+        for role in values:
+            if isinstance(role, str) and role.strip():
+                normalized_roles.append(role.strip().lower())
+
+    return normalized_roles
+
+
+async def verify_user(
+    request: Request,
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> str:
+    if token is None or token.scheme.lower() != "bearer" or not token.credentials:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    supabase_client = get_supabase_backend_client()
+
+    try:
+        user_response = await asyncio.to_thread(
+            lambda: supabase_client.auth.get_user(token.credentials)
+        )
+    except Exception as auth_error:
+        logger.warning("Supabase JWT verification failed: %s", auth_error)
+        raise HTTPException(status_code=401, detail="Invalid bearer token") from auth_error
+
+    user_id = get_supabase_user_id(user_response)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+    request.state.user_id = user_id
+    request.state.access_token = token.credentials
+    request.state.user_roles = get_supabase_user_roles(user_response)
+    request.state.supabase = get_supabase_authenticated_client(token.credentials)
+
+    return user_id
+
+
+async def verify_reviewer_user(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+) -> str:
+    roles = set(getattr(request.state, "user_roles", []) or [])
+
+    try:
+        supabase_client = get_request_supabase_client(request)
+        user_profile_response = await asyncio.to_thread(
+            lambda: supabase_client.table("users")
+            .select("role")
+            .eq("id", current_user_id)
+            .maybe_single()
+            .execute()
+        )
+        profile_role = (user_profile_response.data or {}).get("role")
+        if isinstance(profile_role, str) and profile_role.strip():
+            roles.add(profile_role.strip().lower())
+    except Exception as role_error:
+        logger.warning("Reviewer role lookup failed: %s", role_error)
+
+    if not roles.intersection(AUTHORIZED_REVIEWER_ROLES):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return current_user_id
+
+
+async def get_user_organization(
+    request: Request,
+    current_user_id: str,
+) -> Dict[str, Any]:
+    supabase_client = get_request_supabase_client(request)
+    organization_response = await asyncio.to_thread(
+        lambda: supabase_client.table("organizations")
+        .select("*")
+        .eq("user_id", current_user_id)
+        .limit(1)
+        .execute()
+    )
+    organization_rows = organization_response.data or []
+    return organization_rows[0] if organization_rows else {}
 
 
 # --- FILE PARSING ENGINE UTILITIES ---
@@ -273,12 +386,28 @@ def encode_image_to_base64(path):
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 
+def secure_filename(filename: str | None) -> str:
+    original_name = Path(str(filename or "upload").replace("\\", "/")).name
+    sanitized_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", original_name).strip("._")
+    return sanitized_name or "upload"
+
+
 # --- EXPERT REVIEWS ENDPOINT ---
 @app.post("/api/review")
-async def review_portfolio_asset(file: UploadFile):
+async def review_portfolio_asset(
+    file: UploadFile,
+    current_user_id: str = Depends(verify_user),
+):
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
-    temp_file_path = upload_dir / file.filename
+    if file.size is None or file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Uploaded files must be 5 MB or smaller.",
+        )
+
+    safe_name = secure_filename(file.filename)
+    temp_file_path = upload_dir / f"{uuid.uuid4().hex}_{safe_name}"
     temporary_processing_paths = []
     code_extensions = [
         ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json",
@@ -287,9 +416,24 @@ async def review_portfolio_asset(file: UploadFile):
     ]
 
     try:
-        # Stream raw incoming file bytes down to local server disk storage
+        # Stream raw incoming file bytes down to local server disk storage.
+        bytes_written = 0
         with open(temp_file_path, "wb") as buffer:
-            buffer.write(await file.read())
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+
+                bytes_written += len(chunk)
+                if bytes_written > MAX_UPLOAD_BYTES:
+                    if temp_file_path.exists():
+                        temp_file_path.unlink()
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Uploaded files must be 5 MB or smaller.",
+                    )
+
+                buffer.write(chunk)
 
         extension = temp_file_path.suffix.lower()
         content_stream = ""
@@ -506,7 +650,7 @@ class SearchRequest(BaseModel):
 
 
 class DismissOpportunityRequest(BaseModel):
-    candidate_id: str
+    candidate_id: str | None = None
     opportunity_id: str
 
 
@@ -935,15 +1079,18 @@ def deterministic_candidate_match(
 
 
 @app.post("/api/profile/sync-embedding")
-async def sync_single_profile_embedding(request: Request):
+async def sync_single_profile_embedding(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     data = await request.json()
 
     try:
-        profile_id = data.get("id") or data.get("profile_id")
+        profile_id = current_user_id
         if not profile_id:
             return {"success": False, "message": "Profile vector sync skipped: missing profile id."}
 
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         profile_text = build_profile_embedding_text(data)
 
         if not profile_text.strip():
@@ -966,7 +1113,7 @@ async def sync_single_profile_embedding(request: Request):
         if internal_keywords:
             update_payload["internal_keywords"] = internal_keywords
 
-        supabase.table("profiles").update(update_payload).eq("id", profile_id).execute()
+        supabase.table("profiles").update(update_payload).eq("id", current_user_id).execute()
         print("--- ML SUCCESS: Automatically synchronized profile vector embeddings in background thread ---")
 
         return {"success": True, "message": "Profile vector embedding synchronized."}
@@ -976,7 +1123,10 @@ async def sync_single_profile_embedding(request: Request):
 
 
 @app.post("/api/search-member")
-async def verify_member(request: Request):
+async def verify_member(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     data = await request.json()
     print(f"--- DEBUG: Full Raw Payload Received: {data} ---")
 
@@ -1000,7 +1150,7 @@ async def verify_member(request: Request):
     if not target_username:
         return {"success": False, "message": "No username provided."}
 
-    supabase = get_supabase_backend_client()
+    supabase = get_request_supabase_client(request)
     result = supabase.table("profiles").select("*").ilike("username", target_username).execute()
 
     if not result.data:
@@ -1010,14 +1160,18 @@ async def verify_member(request: Request):
 
 
 @app.get("/api/spectate-profile/{username}")
-async def spectate_profile(username: str):
+async def spectate_profile(
+    username: str,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         target_username = username.strip().lower()
 
         if not target_username:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         profile_query = (
             supabase.table("profiles")
             .select("*")
@@ -1052,17 +1206,7 @@ async def spectate_profile(username: str):
         if not profile_id:
             raise HTTPException(status_code=404, detail="Target candidate profile not found")
 
-        profile_email = profile_data.get("email")
-        if not profile_email:
-            try:
-                service_role_client = get_supabase_service_role_client()
-                auth_response = service_role_client.auth.admin.get_user_by_id(str(profile_id))
-                auth_user = getattr(auth_response, "user", None)
-                profile_email = getattr(auth_user, "email", None)
-            except Exception as email_lookup_error:
-                print(f"--- SPECTATE PROFILE EMAIL LOOKUP ERROR: {str(email_lookup_error)} ---")
-
-        profile_data = {**profile_data, "email": profile_email}
+        profile_data = {**profile_data, "email": profile_data.get("email")}
 
         projects_query = (
             supabase.table("projects")
@@ -1101,9 +1245,12 @@ async def spectate_profile(username: str):
 
 
 @app.get("/api/talent-discovery")
-async def talent_discovery():
+async def talent_discovery(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
             .select(
@@ -1172,16 +1319,15 @@ async def talent_discovery():
 
 
 @app.post("/api/create-opportunity", status_code=201)
-async def create_opportunity(payload: CreateOpportunityRequest, request: Request):
+async def create_opportunity(
+    payload: CreateOpportunityRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     job_title = payload.job_title.strip()
     core_requirements_text = (payload.core_requirements or payload.description or "").strip()
     core_skills = payload.core_skills.strip()
     company_email = payload.company_email.strip().lower()
-    organization_name = unquote(request.headers.get("x-company-name", "").strip()) or "MeliusAI"
-    organization_id = (
-        (payload.organization_id or "").strip()
-        or request.headers.get("x-organization-id", "").strip()
-    )
 
     if not job_title or not core_requirements_text or not core_skills:
         raise HTTPException(status_code=400, detail="Job title, core requirements, and core skills are required")
@@ -1189,9 +1335,16 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
         raise HTTPException(status_code=400, detail="A valid company email is required")
 
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
+        organization_name = (
+            str(organization.get("company_name") or "").strip()
+            or unquote(request.headers.get("x-company-name", "").strip())
+            or "MeliusAI"
+        )
         insert_data = {
-            "organization_id": organization_id or None,
+            "organization_id": organization_id,
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements_text,
@@ -1230,20 +1383,22 @@ async def create_opportunity(payload: CreateOpportunityRequest, request: Request
 
 
 @app.get("/api/organization-opportunities")
-async def organization_opportunities(recruiter_name: str):
-    resolved_recruiter_name = recruiter_name.strip()
-    if not resolved_recruiter_name:
-        raise HTTPException(status_code=400, detail="Recruiter name is required")
-
+async def organization_opportunities(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+    recruiter_name: str = "",
+):
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
             .select(
                 "id, organization_id, recruiter_name, role_title, core_skills, "
                 "company_email, status, created_at, description"
             )
-            .eq("recruiter_name", resolved_recruiter_name)
+            .eq("organization_id", organization_id)
             .order("created_at", desc=True)
             .execute()
         )
@@ -1259,7 +1414,11 @@ async def organization_opportunities(recruiter_name: str):
 
 
 @app.put("/api/update-opportunity")
-async def update_opportunity(payload: UpdateOpportunityRequest):
+async def update_opportunity(
+    payload: UpdateOpportunityRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     opportunity_id = payload.id.strip()
     job_title = payload.job_title.strip()
     core_requirements = payload.core_requirements.strip()
@@ -1271,7 +1430,9 @@ async def update_opportunity(payload: UpdateOpportunityRequest):
         raise HTTPException(status_code=400, detail="Job title, core requirements, and core skills are required")
 
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
         opportunity_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
             .update(
@@ -1282,6 +1443,7 @@ async def update_opportunity(payload: UpdateOpportunityRequest):
                 }
             )
             .eq("id", opportunity_id)
+            .eq("organization_id", organization_id)
             .execute()
         )
         updated_rows = opportunity_response.data or []
@@ -1305,7 +1467,10 @@ async def update_opportunity(payload: UpdateOpportunityRequest):
 
 
 @app.delete("/api/delete-opportunity")
-async def delete_opportunity(request: Request):
+async def delete_opportunity(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     opportunity_id = str(request.query_params.get("id") or "").strip()
     if not opportunity_id:
         try:
@@ -1319,11 +1484,14 @@ async def delete_opportunity(request: Request):
         raise HTTPException(status_code=400, detail="Opportunity id is required")
 
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
         await asyncio.to_thread(
             lambda: supabase.table("opportunities")
             .delete()
             .eq("id", opportunity_id)
+            .eq("organization_id", organization_id)
             .execute()
         )
         return JSONResponse(
@@ -1343,60 +1511,26 @@ async def delete_opportunity(request: Request):
 
 
 @app.post("/api/update-organization-profile")
-async def update_organization_profile(request: Request):
+async def update_organization_profile(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         data = await request.json()
-        user_id = data.get("user_id")
         bio_text = data.get("mission_text")
         company_name = data.get("company_name") or "MeliusAI"
-        
-        # 1. LOOK FOR THE CLIENT ANYWHERE IT COULD BE HIDING
-        client = None
-        if 'supabase' in globals() and globals()['supabase'] is not None:
-            client = globals()['supabase']
-        elif hasattr(request, "app") and hasattr(request.app, "state") and hasattr(request.app.state, "supabase"):
-            client = request.app.state.supabase
-            
-        # 2. SCAN EVERY POSSIBLE ENV VARIABLE VARIATION TO FORCE REBUILD
-        if client is None:
-            import os
-            from supabase import create_client
-            
-            # Checks standard, frontend copy-paste, and project-level keys
-            url = (os.environ.get("SUPABASE_URL") or 
-                   os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or 
-                   os.environ.get("SUPABASE_PROJECT_URL"))
-                   
-            key = (os.environ.get("SUPABASE_KEY") or 
-                   os.environ.get("SUPABASE_ANON_KEY") or 
-                   os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or 
-                   os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
-            
-            if not url or not key:
-                from fastapi.responses import JSONResponse
-                return JSONResponse(status_code=500, content={"error": "Supabase environment configuration missing on Render variables tab."})
-                
-            client = create_client(url, key)
-            
-        # 3. PUSH THE TEXT DIRECTLY TO THE TABLE
+
+        client = get_request_supabase_client(request)
         response = client.table("organizations").update({
             "mission_text": bio_text,
             "company_name": company_name
-        }).eq("user_id", user_id).execute()
-        
-        # Fallback Strategy A: If user_id matching returns empty, match by name text
-        if not response.data:
-            response = client.table("organizations").update({
-                "mission_text": bio_text,
-                "user_id": user_id  
-            }).ilike("company_name", company_name).execute()
-            
-        # Fallback Strategy B: If no row exists whatsoever, force a fresh insert
+        }).eq("user_id", current_user_id).execute()
+
         if not response.data:
             response = client.table("organizations").insert({
                 "company_name": company_name,
                 "mission_text": bio_text,
-                "user_id": user_id
+                "user_id": current_user_id
             }).execute()
             
         return {"status": "success", "data": response.data}
@@ -1409,9 +1543,13 @@ async def update_organization_profile(request: Request):
 
     
 @app.post("/api/dismiss-opportunity")
-async def dismiss_opportunity(payload: DismissOpportunityRequest):
+async def dismiss_opportunity(
+    payload: DismissOpportunityRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
-        candidate_id = str(UUID(payload.candidate_id.strip()))
+        candidate_id = str(UUID(current_user_id))
         opportunity_id = str(UUID(payload.opportunity_id.strip()))
     except (ValueError, AttributeError) as identifier_error:
         raise HTTPException(
@@ -1420,7 +1558,7 @@ async def dismiss_opportunity(payload: DismissOpportunityRequest):
         ) from identifier_error
 
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
         await asyncio.to_thread(
             lambda: supabase.table("candidate_opportunity_dismissals")
             .insert(
@@ -1462,13 +1600,17 @@ async def dismiss_opportunity(payload: DismissOpportunityRequest):
 
 
 @app.get("/api/get-opportunities")
-async def get_opportunities(candidate_id: str):
-    resolved_candidate_id = candidate_id.strip()
+async def get_opportunities(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+    candidate_id: str | None = None,
+):
+    resolved_candidate_id = current_user_id.strip()
     if not resolved_candidate_id:
         raise HTTPException(status_code=400, detail="Candidate profile id is required")
 
     try:
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
 
         profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
@@ -1627,7 +1769,11 @@ async def get_opportunities(candidate_id: str):
 
 
 @app.post("/api/verify-asset")
-async def verify_asset(payload: VerifyRequest):
+async def verify_asset(
+    payload: VerifyRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         project_id = payload.projectId.strip()
         asset_name = payload.assetName.strip() or "Project Asset"
@@ -1685,7 +1831,7 @@ async def verify_asset(payload: VerifyRequest):
 
         audit_payload = serialize_pydantic_model(audit_report)
         project_id_filter = str(project_id)
-        supabase = get_supabase_service_role_client()
+        supabase = get_request_supabase_client(request)
 
         update_payload = {
             "score": audit_report.calculatedScore,
@@ -1701,6 +1847,7 @@ async def verify_asset(payload: VerifyRequest):
             lambda: supabase.table("projects")
             .update(update_payload)
             .eq("id", project_id_filter)
+            .or_(f"owner_id.eq.{current_user_id},user_id.eq.{current_user_id}")
             .execute()
         )
 
@@ -1761,8 +1908,7 @@ def score_search_terms(target_terms: List[str], candidate_values: Any) -> int:
     )
 
 
-async def fetch_search_candidates() -> List[Dict[str, Any]]:
-    supabase = get_supabase_backend_client()
+async def fetch_search_candidates(supabase) -> List[Dict[str, Any]]:
     response = await asyncio.to_thread(
         lambda: (
             supabase.table("profiles")
@@ -1861,19 +2007,28 @@ def rank_search_candidates(
 
 
 @app.post("/api/search-talent")
-async def search_talent(payload: SearchRequest):
+async def search_talent(
+    payload: SearchRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     query = payload.query.strip()
+    supabase = get_request_supabase_client(request)
 
     if not query:
-        return await fetch_search_candidates()
+        return await fetch_search_candidates(supabase)
 
     search_intent = await parse_search_query(query)
-    candidates = await fetch_search_candidates()
+    candidates = await fetch_search_candidates(supabase)
     return rank_search_candidates(candidates, search_intent)
 
 
 @app.post("/api/match-talent")
-async def match_talent(payload: MatchTalentRequest):
+async def match_talent(
+    payload: MatchTalentRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     prompt = payload.prompt.strip()
 
     if len(prompt) == 0:
@@ -1884,7 +2039,7 @@ async def match_talent(payload: MatchTalentRequest):
 
     try:
         openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
 
         def normalize_skill_list(value: Any) -> List[str]:
             if isinstance(value, list):
@@ -2098,18 +2253,22 @@ async def match_talent(payload: MatchTalentRequest):
         )
 
 @app.post("/api/match-feedback")
-async def match_feedback(request: Request):
+async def match_feedback(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         data = await request.json()
-        organization_id = data.get("organization_id") if isinstance(data, dict) else None
         candidate_id = data.get("candidate_id") if isinstance(data, dict) else None
         search_prompt = str(data.get("search_prompt", "") if isinstance(data, dict) else "").strip()
         action = str(data.get("action", "") if isinstance(data, dict) else "").strip().lower()
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
 
         if not organization_id or not candidate_id or not search_prompt or action not in ["clicked", "shortlisted", "skipped"]:
             return {"success": False, "message": "Invalid matching feedback payload."}
 
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         supabase.table("matching_feedback").insert({
             "organization_id": organization_id,
             "candidate_id": candidate_id,
@@ -2140,13 +2299,17 @@ def parse_supabase_timestamp(value):
 
 
 @app.get("/api/organization-invitations")
-async def organization_invitations(request: Request):
-    organization_id = request.query_params.get("organization_id")
+async def organization_invitations(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
+    organization = await get_user_organization(request, current_user_id)
+    organization_id = str(organization.get("id") or current_user_id).strip()
 
     if not organization_id:
         return {"success": False, "message": "organization_id is required.", "invitations": []}
 
-    supabase = get_supabase_backend_client()
+    supabase = get_request_supabase_client(request)
     invitation_result = (
         supabase.table("organization_invitations")
         .select("*")
@@ -2197,15 +2360,20 @@ async def organization_invitations(request: Request):
 
 
 @app.post("/api/cancel-invitation")
-async def cancel_invitation(request: Request):
+async def cancel_invitation(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     data = await request.json()
     invitation_id = data.get("id")
 
     if not invitation_id:
         return {"success": False, "message": "Invitation id is required."}
 
-    supabase = get_supabase_backend_client()
-    supabase.table("organization_invitations").update({"status": "cancelled"}).eq("id", invitation_id).execute()
+    supabase = get_request_supabase_client(request)
+    organization = await get_user_organization(request, current_user_id)
+    organization_id = str(organization.get("id") or current_user_id).strip()
+    supabase.table("organization_invitations").update({"status": "cancelled"}).eq("id", invitation_id).eq("organization_id", organization_id).execute()
 
     return {"success": True, "message": "Invitation cancelled successfully."}
 
@@ -2223,13 +2391,17 @@ class MessageSendSchema(BaseModel):
 
 
 @app.get("/api/chat/rooms/{user_id}")
-async def get_chat_rooms(user_id: str):
+async def get_chat_rooms(
+    user_id: str,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
-        candidate_id = user_id.strip()
+        candidate_id = current_user_id.strip()
         if not candidate_id:
             raise HTTPException(status_code=400, detail="user_id is required")
 
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         rooms_query = (
             supabase.table("chat_rooms")
             .select("*")
@@ -2314,13 +2486,35 @@ async def get_chat_rooms(user_id: str):
 
 
 @app.get("/api/chat/messages/{room_id}")
-async def get_chat_messages(room_id: str):
+async def get_chat_messages(
+    room_id: str,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         target_room_id = room_id.strip()
         if not target_room_id:
             raise HTTPException(status_code=400, detail="room_id is required")
 
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or current_user_id).strip()
+        room_lookup = (
+            supabase.table("chat_rooms")
+            .select("*")
+            .eq("id", target_room_id)
+            .limit(1)
+            .execute()
+        )
+        room_rows = room_lookup.data or []
+        room_record = room_rows[0] if room_rows else None
+        if not room_record or (
+            str(room_record.get("candidate_id") or "") != current_user_id
+            and str(room_record.get("organization_id") or room_record.get("company_id") or "") != organization_id
+            and str(room_record.get("recruiter_id") or room_record.get("sender_id") or "") != current_user_id
+        ):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         messages_query = (
             supabase.table("messages")
             .select("*")
@@ -2338,12 +2532,18 @@ async def get_chat_messages(room_id: str):
 
 
 @app.post("/api/chat/send", status_code=201)
-async def send_chat_message(payload: MessageSendSchema):
+async def send_chat_message(
+    payload: MessageSendSchema,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         requested_room_id = payload.room_id.strip()
-        sender_id = payload.sender_id.strip()
+        sender_id = current_user_id
         message_text = payload.message_text.strip()
-        organization_id = (payload.organization_id or "").strip()
+        supabase = get_request_supabase_client(request)
+        organization = await get_user_organization(request, current_user_id)
+        organization_id = str(organization.get("id") or (payload.organization_id or "")).strip()
         candidate_id = (payload.candidate_id or "").strip()
 
         if not requested_room_id or not sender_id or not message_text:
@@ -2352,7 +2552,6 @@ async def send_chat_message(payload: MessageSendSchema):
                 detail="room_id, sender_id, and message_text are required",
             )
 
-        supabase = get_supabase_backend_client()
         room_lookup = (
             supabase.table("chat_rooms")
             .select("*")
@@ -2365,7 +2564,7 @@ async def send_chat_message(payload: MessageSendSchema):
 
         if not room_record:
             candidate_id = candidate_id or requested_room_id
-            organization_id = organization_id or sender_id
+            organization_id = organization_id or current_user_id
 
             matching_room_query = (
                 supabase.table("chat_rooms")
@@ -2397,6 +2596,13 @@ async def send_chat_message(payload: MessageSendSchema):
         if not resolved_room_id:
             raise RuntimeError("Chat room resolution returned no room id")
 
+        if (
+            str(room_record.get("candidate_id") or "") != current_user_id
+            and str(room_record.get("organization_id") or room_record.get("company_id") or "") != organization_id
+            and str(room_record.get("recruiter_id") or room_record.get("sender_id") or "") != current_user_id
+        ):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         message_payload = {
             "room_id": resolved_room_id,
             "sender_id": sender_id,
@@ -2422,7 +2628,10 @@ async def send_chat_message(payload: MessageSendSchema):
 
 
 @app.post("/api/chat")
-async def interactive_chat_station(request: ChatHistoryRequest):
+async def interactive_chat_station(
+    request: ChatHistoryRequest,
+    current_user_id: str = Depends(verify_user),
+):
     try:
         system_prompt = (
             "You are MeliusAI, an incredibly bright, high-energy, supportive tech mentor, and close developer friend! "
@@ -2463,9 +2672,12 @@ async def interactive_chat_station(request: ChatHistoryRequest):
 
 
 @app.post("/api/admin/sync-embeddings")
-async def sync_database_embeddings():
+async def sync_database_embeddings(
+    request: Request,
+    current_user_id: str = Depends(verify_reviewer_user),
+):
     try:
-        supabase = get_supabase_backend_client()
+        supabase = get_request_supabase_client(request)
         
         # 1. Pull all records from the profiles table
         response = supabase.table("profiles").select("*").execute()

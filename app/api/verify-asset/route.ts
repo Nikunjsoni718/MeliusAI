@@ -1,8 +1,10 @@
 import { openai } from '@ai-sdk/openai';
-import { createClient } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 import { generateObject } from 'ai';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
@@ -23,20 +25,20 @@ type VerifyAssetPayload = {
   userContextDescription?: unknown;
 };
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const AUTHORIZED_REVIEWER_ROLES = new Set(['admin', 'reviewer', 'recruiter']);
 
-function getSupabaseBackendClient() {
-  if (!supabaseUrl || !supabaseServiceRoleKey) {
-    throw new Error('Supabase backend credentials are not configured for asset verification.');
-  }
+function getUserMetadataRoles(user: User) {
+  const roleValues = [
+    user.app_metadata?.role,
+    user.user_metadata?.role,
+    user.app_metadata?.roles,
+    user.user_metadata?.roles,
+  ].flatMap((value) => (Array.isArray(value) ? value : [value]));
 
-  return createClient(supabaseUrl, supabaseServiceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return roleValues
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function getString(value: unknown) {
@@ -68,6 +70,35 @@ MeliusAI Verification Score: **${report.calculatedScore}/100**`;
 
 export async function POST(req: Request) {
   try {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { data: userProfile, error: userProfileError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (userProfileError) {
+      throw new Error(`Unable to resolve reviewer authorization: ${userProfileError.message}`);
+    }
+
+    const authorizedRoles = [
+      ...getUserMetadataRoles(user),
+      typeof userProfile?.role === 'string' ? userProfile.role.toLowerCase() : '',
+    ];
+
+    if (!authorizedRoles.some((role) => AUTHORIZED_REVIEWER_ROLES.has(role))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = (await req.json()) as VerifyAssetPayload;
     const projectId = getString(body.projectId);
     const assetName = getString(body.assetName) || 'Project Asset';
@@ -97,7 +128,6 @@ ${assetTextContent}`,
     });
 
     const reportText = buildReportMarkdown(assetName, auditReport);
-    const supabase = getSupabaseBackendClient();
     const updatePayload = {
       score: auditReport.calculatedScore,
       audit_summary: auditReport.executiveSummary,
@@ -117,8 +147,13 @@ ${assetTextContent}`,
       .from('projects')
       .update(updatePayload)
       .eq('id', projectId)
+      .or(`owner_id.eq.${user.id},user_id.eq.${user.id}`)
       .select('*')
       .single();
+
+    if (updateError?.code === 'PGRST116') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     if (updateError) {
       throw new Error(`Supabase project audit persistence failed: ${updateError.message}`);

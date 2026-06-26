@@ -5,6 +5,19 @@ import type { FilePreviewResponse, StructuredPreview } from '@/lib/file-preview'
 
 export const runtime = 'nodejs';
 
+const MAX_FILE_PREVIEW_BYTES = 5 * 1024 * 1024;
+
+function isPreviewPayloadTooLarge(request: Request) {
+  const contentLength = request.headers.get('content-length');
+
+  if (!contentLength) {
+    return false;
+  }
+
+  const parsedLength = Number.parseInt(contentLength, 10);
+  return Number.isFinite(parsedLength) && parsedLength > MAX_FILE_PREVIEW_BYTES;
+}
+
 function getFileExtension(fileName: string) {
   return fileName.split('.').pop()?.trim().toLowerCase() ?? '';
 }
@@ -203,6 +216,13 @@ async function buildPptPreview(file: File): Promise<StructuredPreview> {
 
 export async function POST(request: Request) {
   try {
+    if (isPreviewPayloadTooLarge(request)) {
+      return NextResponse.json<FilePreviewResponse>(
+        { error: 'File preview payloads must be 5 MB or smaller.' },
+        { status: 413 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get('file');
     const sourceKind = String(formData.get('sourceKind') ?? 'File');
@@ -211,6 +231,13 @@ export async function POST(request: Request) {
       return NextResponse.json<FilePreviewResponse>(
         { error: 'A file is required.' },
         { status: 400 }
+      );
+    }
+
+    if (file.size > MAX_FILE_PREVIEW_BYTES) {
+      return NextResponse.json<FilePreviewResponse>(
+        { error: 'File preview payloads must be 5 MB or smaller.' },
+        { status: 413 }
       );
     }
 
@@ -242,4 +269,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
