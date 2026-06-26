@@ -1377,7 +1377,7 @@ function ProjectCard({
   const fileName = project.file_name || project.title;
 
   return (
-    <Card className="relative overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
+    <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
       <CardContent className="p-0">
         <div className="relative flex h-full flex-col justify-between p-5">
           <div className="flex flex-1 flex-col">
@@ -3069,15 +3069,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           <section
             className={
               isOrganizationWorkspace
-                ? 'h-screen w-full flex-1 overflow-y-auto px-4 pb-6 pt-20 md:p-8'
-                : 'flex h-full w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto pt-16 md:pt-0'
+                ? 'flex-1 w-full p-8 min-h-screen overflow-y-auto pt-20 md:pt-8'
+                : 'flex flex-1 w-full p-8 min-h-screen flex-col overflow-x-hidden overflow-y-auto pt-20 md:pt-8'
             }
           >
             <div
               className={
                 isOrganizationWorkspace
-                  ? 'mx-auto flex w-full max-w-6xl flex-col gap-6'
-                  : 'mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8'
+                  ? 'flex w-full flex-col gap-6'
+                  : 'flex w-full flex-col gap-6'
               }
             >
             <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
@@ -3442,7 +3442,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : (
                 <>
-                  <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
                     {visibleProjects.map((project) => (
                       <ProjectCard
                         key={project.id}

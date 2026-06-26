@@ -461,7 +461,7 @@ function UniversalAssetCard({
   const fileName = project.file_name || project.name || assetName;
 
   return (
-    <Card className="relative overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
+    <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
       <CardContent className="p-0">
         <div className="relative flex h-full flex-col justify-between p-5">
           <div className="flex flex-1 flex-col">
@@ -626,7 +626,7 @@ export function UniversalAssetGrid({
 
   return (
     <>
-      <div className={cn('grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4', gridClassName, className)}>
+      <div className={cn('grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full', gridClassName, className)}>
         {patchedAssets.map((project) => (
           <UniversalAssetCard
             key={project.id}

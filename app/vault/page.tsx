@@ -1396,9 +1396,9 @@ Return Markdown sections for goods, bads, project description, and a final score
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="relative z-10 flex h-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto"
+          className="relative z-10 flex flex-1 w-full p-8 min-h-screen flex-col overflow-x-hidden overflow-y-auto"
         >
-          <section className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-8">
+          <section className="flex w-full flex-col gap-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h1 className="text-3xl font-semibold text-white">Storage Vault</h1>
@@ -1417,7 +1417,7 @@ Return Markdown sections for goods, bads, project description, and a final score
             ) : null}
 
             {loading ? (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
                 {Array.from({ length: 4 }).map((_, index) => (
                   <Card key={index} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                     <CardContent className="p-0">
@@ -1435,9 +1435,9 @@ Return Markdown sections for goods, bads, project description, and a final score
                 ))}
               </div>
             ) : vaultError ? null : vaultAssets.length === 0 ? (
-              <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+              <Card className="w-full border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                 <CardContent className="p-8">
-                  <div className="rounded-2xl border border-dashed border-blue-950/60 py-20 text-center font-mono text-xs text-slate-500">
+                  <div className="w-full rounded-2xl border border-dashed border-blue-950/60 py-20 text-center font-mono text-xs text-slate-500">
                     [ Storage Empty: No active project assets committed to this security protocol. ]
                   </div>
                 </CardContent>

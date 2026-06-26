@@ -920,7 +920,7 @@ function OrganizationDashboardContent() {
       </aside>
 
       <main
-        className="flex-1 overflow-y-auto h-screen p-8 space-y-8 CustomScrollbar bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512]"
+        className="flex-1 w-full p-8 min-h-screen overflow-y-auto space-y-8 CustomScrollbar bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512]"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 md:gap-10">
