@@ -21,11 +21,166 @@ type VerifyAssetPayload = {
   projectId?: unknown;
   assetName?: unknown;
   assetTextContent?: unknown;
+  codeContent?: unknown;
   userContextDescription?: unknown;
 };
 
+type VerificationInput = {
+  projectId: string;
+  assetName: string;
+  assetTextContent: string;
+  codeContent: string;
+  userContextDescription: string;
+};
+
+type ProjectRecord = Record<string, unknown>;
+
+const MAX_CODE_CONTENT_BYTES = 5 * 1024 * 1024;
+const CODE_TEXT_EXTENSIONS = new Set([
+  'c',
+  'cc',
+  'cpp',
+  'cs',
+  'css',
+  'go',
+  'h',
+  'html',
+  'java',
+  'js',
+  'jsx',
+  'json',
+  'kt',
+  'md',
+  'mjs',
+  'php',
+  'py',
+  'rb',
+  'rs',
+  'sh',
+  'sql',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'xml',
+  'yaml',
+  'yml',
+]);
+
 function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function getProjectString(project: ProjectRecord | null | undefined, key: string) {
+  return getString(project?.[key]);
+}
+
+function getAssetNameFromProject(project: ProjectRecord | null | undefined, fallback: string) {
+  return (
+    getProjectString(project, 'name') ||
+    getProjectString(project, 'file_name') ||
+    getProjectString(project, 'title') ||
+    fallback ||
+    'Project Asset'
+  );
+}
+
+function getProjectFileUrl(project: ProjectRecord | null | undefined) {
+  return getProjectString(project, 'file_url') || getProjectString(project, 'source_url');
+}
+
+function getExtensionFromNameOrUrl(value: string) {
+  const withoutQuery = value.split('?')[0]?.split('#')[0] ?? value;
+  const cleanValue = (() => {
+    try {
+      return new URL(withoutQuery).pathname;
+    } catch {
+      return withoutQuery;
+    }
+  })();
+  return cleanValue.split('/').pop()?.split('.').pop()?.trim().toLowerCase() ?? '';
+}
+
+function isTextLikeContent(filename: string, contentType: string) {
+  const normalizedType = contentType.toLowerCase();
+  const extension = getExtensionFromNameOrUrl(filename);
+
+  return (
+    CODE_TEXT_EXTENSIONS.has(extension) ||
+    normalizedType.startsWith('text/') ||
+    normalizedType.includes('javascript') ||
+    normalizedType.includes('json') ||
+    normalizedType.includes('typescript') ||
+    normalizedType.includes('xml') ||
+    normalizedType.includes('yaml')
+  );
+}
+
+async function readUploadedCodeContent(file: File) {
+  if (file.size > MAX_CODE_CONTENT_BYTES) {
+    throw new Error('Raw code content must be 5 MB or smaller.');
+  }
+
+  return (await file.text()).trim();
+}
+
+async function fetchStoredCodeContent(fileUrl: string, filename: string) {
+  if (!fileUrl) {
+    return '';
+  }
+
+  const response = await fetch(fileUrl, { cache: 'no-store' });
+
+  if (!response.ok) {
+    return '';
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!isTextLikeContent(filename, contentType) && !isTextLikeContent(fileUrl, contentType)) {
+    return '';
+  }
+
+  const contentLength = Number.parseInt(response.headers.get('content-length') ?? '', 10);
+  if (Number.isFinite(contentLength) && contentLength > MAX_CODE_CONTENT_BYTES) {
+    throw new Error('Raw code content must be 5 MB or smaller.');
+  }
+
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > MAX_CODE_CONTENT_BYTES) {
+    throw new Error('Raw code content must be 5 MB or smaller.');
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(buffer).trim();
+}
+
+async function readVerificationInput(req: Request): Promise<VerificationInput> {
+  const contentType = req.headers.get('content-type')?.toLowerCase() ?? '';
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await req.formData();
+    const file = formData.get('file');
+    const formAssetName = getString(formData.get('assetName'));
+    const uploadedFile = file instanceof File ? file : null;
+
+    return {
+      projectId: getString(formData.get('projectId')),
+      assetName: uploadedFile?.name?.trim() || formAssetName || 'Project Asset',
+      assetTextContent: getString(formData.get('assetTextContent')),
+      codeContent: uploadedFile ? await readUploadedCodeContent(uploadedFile) : getString(formData.get('codeContent')),
+      userContextDescription: getString(formData.get('userContextDescription')),
+    };
+  }
+
+  const body = (await req.json()) as VerifyAssetPayload;
+
+  return {
+    projectId: getString(body.projectId),
+    assetName: getString(body.assetName) || 'Project Asset',
+    assetTextContent: getString(body.assetTextContent),
+    codeContent: getString(body.codeContent),
+    userContextDescription: getString(body.userContextDescription),
+  };
 }
 
 function buildReportMarkdown(assetName: string, report: AuditReport) {
@@ -63,32 +218,77 @@ export async function POST(req: Request) {
       return new Response('Unauthorized', { status: 401 });
     }
 
-    const body = (await req.json()) as VerifyAssetPayload;
-    const projectId = getString(body.projectId);
-    const assetName = getString(body.assetName) || 'Project Asset';
-    const assetTextContent = getString(body.assetTextContent);
-    const userContextDescription = getString(body.userContextDescription);
+    const input = await readVerificationInput(req);
+    const projectId = input.projectId;
 
-    if (!projectId || !assetTextContent) {
+    if (!projectId) {
       return NextResponse.json(
-        { error: 'projectId and assetTextContent are required.' },
+        { error: 'projectId is required.' },
         { status: 400 }
       );
     }
+
+    const { data: projectData, error: projectError } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (projectError) {
+      throw new Error(`Supabase project lookup failed: ${projectError.message}`);
+    }
+
+    if (!projectData) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const project = projectData as ProjectRecord;
+    const assetName = getAssetNameFromProject(project, input.assetName);
+    const fileUrl = getProjectFileUrl(project);
+    const storedCodeContent = input.codeContent ? '' : await fetchStoredCodeContent(fileUrl, assetName);
+    const rawCodeContent = input.codeContent || storedCodeContent;
+    const codeContent = rawCodeContent || input.assetTextContent;
+    const userContextDescription = input.userContextDescription;
+    const textAssetExpected = isTextLikeContent(assetName, '') || isTextLikeContent(fileUrl, '');
+
+    if (textAssetExpected && !rawCodeContent) {
+      return NextResponse.json(
+        { error: `Unable to read raw code content for ${assetName}.` },
+        { status: 400 }
+      );
+    }
+
+    if (!codeContent) {
+      return NextResponse.json(
+        { error: 'Unable to verify this asset because no readable file content was provided.' },
+        { status: 400 }
+      );
+    }
+
+    const rawCodeInstruction = `Here is the raw code content for ${assetName}. Analyze this specific code.`;
+    const supplementalContext =
+      input.assetTextContent && input.assetTextContent !== codeContent
+        ? `\n\nSupplemental asset context:\n${input.assetTextContent.slice(0, 8000)}`
+        : '';
 
     const { object: auditReport } = await generateObject({
       model: openai('gpt-4o-mini'),
       schema: auditReportSchema,
       system:
-        'You are MeliusAI, a production-grade multimodal asset verification engine. Thoroughly audit the submitted asset text against the user-provided intent and context. Calculate an objective score out of 100 based on correctness, completeness, technical clarity, implementation quality, and alignment with the stated criteria. Return only structured data that satisfies the schema. The executiveSummary must be clean Markdown text detailing performance. The pros, cons, and strategicRecommendations arrays must contain specific, actionable observations.',
-      prompt: `Asset name:
+        `You are MeliusAI, a production-grade multimodal asset verification engine. ${rawCodeInstruction} Thoroughly audit the submitted asset text against the user-provided intent and context. Calculate an objective score out of 100 based on correctness, completeness, technical clarity, implementation quality, and alignment with the stated criteria. Return only structured data that satisfies the schema. The executiveSummary must be clean Markdown text detailing performance. The pros, cons, and strategicRecommendations arrays must contain specific, actionable observations.`,
+      prompt: `Filename:
 ${assetName}
 
 User context / audit criteria:
 ${userContextDescription || 'No explicit user criteria were provided. Infer reasonable verification criteria from the asset content.'}
 
-Asset text content:
-${assetTextContent}`,
+${rawCodeInstruction}
+
+codeContent:
+\`\`\`
+${codeContent.slice(0, 24000)}
+\`\`\`${supplementalContext}`,
     });
 
     const reportText = buildReportMarkdown(assetName, auditReport);
