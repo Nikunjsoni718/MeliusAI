@@ -2384,7 +2384,7 @@ class ChatHistoryRequest(BaseModel):
 
 class MessageSendSchema(BaseModel):
     room_id: str
-    sender_id: str
+    sender_id: str | None = None
     message_text: str
     organization_id: str | None = None
     candidate_id: str | None = None
@@ -2543,13 +2543,13 @@ async def send_chat_message(
         message_text = payload.message_text.strip()
         supabase = get_request_supabase_client(request)
         organization = await get_user_organization(request, current_user_id)
-        organization_id = str(organization.get("id") or (payload.organization_id or "")).strip()
+        organization_id = str(organization.get("id") or "").strip()
         candidate_id = (payload.candidate_id or "").strip()
 
-        if not requested_room_id or not sender_id or not message_text:
+        if not requested_room_id or not message_text:
             raise HTTPException(
                 status_code=400,
-                detail="room_id, sender_id, and message_text are required",
+                detail="room_id and message_text are required",
             )
 
         room_lookup = (
@@ -2563,8 +2563,10 @@ async def send_chat_message(
         room_record = room_rows[0] if room_rows else None
 
         if not room_record:
+            if not organization_id:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+
             candidate_id = candidate_id or requested_room_id
-            organization_id = organization_id or current_user_id
 
             matching_room_query = (
                 supabase.table("chat_rooms")
@@ -2578,6 +2580,16 @@ async def send_chat_message(
             room_record = matching_room_rows[0] if matching_room_rows else None
 
         if not room_record:
+            candidate_lookup = (
+                supabase.table("profiles")
+                .select("id")
+                .eq("id", candidate_id)
+                .limit(1)
+                .execute()
+            )
+            if not (candidate_lookup.data or []):
+                raise HTTPException(status_code=404, detail="Candidate profile not found")
+
             create_room_query = (
                 supabase.table("chat_rooms")
                 .insert(
