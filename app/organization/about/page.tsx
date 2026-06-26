@@ -82,16 +82,16 @@ const fallbacks: OrgProfileData = {
   hero_eyebrow: '',
   mission_title: 'Click Edit to add your company mission',
   mission_text: 'Share the promise your company makes to candidates, collaborators, and the market.',
-  section1_subheading: 'Company feature',
+  section1_subheading: 'Features of the company',
   section1_heading: 'How we turn intent into execution.',
   pillar1_title: 'Click Edit to add your first company principle',
   pillar1_desc: 'Describe the way your team turns intent into execution.',
   pillar2_title: 'Click Edit to add your company infrastructure',
   pillar2_desc: 'Describe the systems, tools, or operating model behind your work.',
-  section2_subheading: 'Infrastructure',
+  section2_subheading: 'How we work',
   section2_heading: 'Click Edit to add your infrastructure headline',
   tech_input: 'Describe the systems, tools, or operating model behind your work.',
-  section3_subheading: 'Benefits',
+  section3_subheading: 'Benefit of working with us',
   pillar3_title: 'Click Edit to add your company benefit',
   pillar3_desc: 'Describe why ambitious people should build with your organization.',
   perks_input: 'Describe why ambitious people should build with your organization.',
@@ -525,7 +525,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Section one subheading"
-              placeholder="Enter section label..."
+              placeholder="Features of the company"
               value={orgData.section1_subheading}
               onChange={(value) => updateOrgField('section1_subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-purple-200"
@@ -585,7 +585,7 @@ function OrganizationManifestoPageContent() {
             {isEditing ? (
               <EditorInput
                 label="Section two subheading"
-                placeholder="Enter section label..."
+                placeholder="How we work"
                 value={orgData.section2_subheading}
                 onChange={(value) => updateOrgField('section2_subheading', value)}
                 className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-200"
@@ -629,7 +629,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Section three subheading"
-              placeholder="Enter section label..."
+              placeholder="Benefit of working with us"
               value={orgData.section3_subheading}
               onChange={(value) => updateOrgField('section3_subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-200"
