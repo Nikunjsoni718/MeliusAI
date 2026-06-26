@@ -111,7 +111,7 @@ ${assetTextContent}`,
       .from('projects')
       .update(updatePayload)
       .eq('id', projectId)
-      .or(`owner_id.eq.${user.id},user_id.eq.${user.id}`)
+      .eq('user_id', user.id)
       .select('*')
       .single();
 
