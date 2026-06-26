@@ -17,19 +17,12 @@ import { Briefcase, Code2, FileText, FolderLock, Globe2, House, Search, UserRoun
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProfileRow } from '@/types/supabase';
+import type { ProfileRow, ProjectRow } from '@/types/supabase';
 
 type ResumeStatus = string;
 type SaveState = 'idle' | 'saving' | 'saved';
-type ResumeProject = {
-  title: string;
-  subtitle: string;
-  href: string;
-  description: string;
-};
 type ResumeExternalLink = {
   label: string;
   href: string;
@@ -42,7 +35,7 @@ type ResumeFormData = {
   experience: string[];
   hobbies: string[];
   skills: string[];
-  projects: ResumeProject[];
+  featuredProjectIds: string[];
   externalLinks: ResumeExternalLink[];
 };
 type ResumeFields = Pick<
@@ -63,11 +56,14 @@ type ResumeFields = Pick<
 };
 type SpectatorResumeResponse = {
   profile?: ResumeFields | null;
+  projects?: ProjectRow[] | null;
   detail?: string;
   message?: string;
 };
 
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
+const BASE_RESUME_SELECT = 'full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
+const EXTENDED_RESUME_SELECT = `${BASE_RESUME_SELECT}, resume_projects, external_links`;
 const PROFILE_SPECTATOR_BASE_URL = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
@@ -78,22 +74,6 @@ const navigationItems = [
   { href: '/resume', label: 'Resume', icon: FileText },
 ];
 const fallbackSkills = ['React', 'Next.js', 'Python', 'UI/UX'];
-const fallbackProjects: ResumeProject[] = [
-  {
-    title: 'Portfolio Intelligence Dashboard',
-    subtitle: 'github.com/meliusai/portfolio-lab',
-    href: 'https://github.com',
-    description:
-      'A creator-facing workspace that turns uploaded work into structured signals for matching, review, and opportunity discovery.',
-  },
-  {
-    title: 'Interactive Product Case Study',
-    subtitle: 'portfolio.example.com/case-study',
-    href: 'https://example.com',
-    description:
-      'A concise product walkthrough showing problem framing, design decisions, implementation notes, and measurable outcomes.',
-  },
-];
 const fallbackExternalLinks: ResumeExternalLink[] = [
   { label: 'GitHub', href: 'https://github.com' },
   { label: 'LinkedIn', href: 'https://www.linkedin.com' },
@@ -137,26 +117,26 @@ function normalizeList(value: unknown) {
   return [];
 }
 
-function normalizeProjects(value: unknown): ResumeProject[] {
+function normalizeFeaturedProjectIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
     .map((item) => {
-      if (!item || typeof item !== 'object') {
-        return null;
+      if (typeof item === 'string') {
+        return item;
       }
 
-      const row = item as Record<string, unknown>;
-      const title = typeof row.title === 'string' ? row.title : '';
-      const subtitle = typeof row.subtitle === 'string' ? row.subtitle : '';
-      const href = typeof row.href === 'string' ? row.href : '';
-      const description = typeof row.description === 'string' ? row.description : '';
+      if (item && typeof item === 'object') {
+        const row = item as Record<string, unknown>;
+        const id = row.projectId ?? row.project_id ?? row.id;
+        return typeof id === 'string' ? id : null;
+      }
 
-      return { title, subtitle, href, description };
+      return null;
     })
-    .filter((item): item is ResumeProject => item !== null);
+    .filter((item): item is string => Boolean(item));
 }
 
 function normalizeExternalLinks(value: unknown): ResumeExternalLink[] {
@@ -188,9 +168,50 @@ function createDefaultFormData(): ResumeFormData {
     experience: [],
     hobbies: [],
     skills: fallbackSkills,
-    projects: fallbackProjects,
+    featuredProjectIds: [],
     externalLinks: fallbackExternalLinks,
   };
+}
+
+function getAssetName(project: ProjectRow) {
+  return project.file_name?.trim() || project.name?.trim() || project.title?.trim() || 'Untitled Vault Asset';
+}
+
+function getAssetSubtitle(project: ProjectRow) {
+  return project.file_type?.trim() || project.source_kind?.trim() || project.status?.trim() || 'Vault asset';
+}
+
+function getAssetScore(project: ProjectRow) {
+  const rawScore = project.logic_score ?? project.evaluation_score ?? project.score ?? null;
+  const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
+
+  return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
+}
+
+function getAssetSummary(project: ProjectRow) {
+  const summary =
+    project.ai_summary?.trim() ||
+    project.summary?.trim() ||
+    project.user_description?.trim() ||
+    project.description?.trim() ||
+    '';
+
+  return summary.replace(/##\s*Executive Summary/i, '').trim();
+}
+
+function isVerifiedAsset(project: ProjectRow) {
+  return Boolean(project.has_been_audited || getAssetScore(project) !== null);
+}
+
+function isMissingOptionalProfileColumn(error: { code?: string; message?: string } | null) {
+  const message = error?.message?.toLowerCase() ?? '';
+
+  return (
+    error?.code === 'PGRST204' ||
+    message.includes('resume_projects') ||
+    message.includes('external_links') ||
+    message.includes('could not find')
+  );
 }
 
 function getExternalLinkIcon(label: string) {
@@ -293,100 +314,130 @@ function EditableStringListSection({
 }
 
 function EditableProjectsSection({
+  assets,
   isEditing,
-  onAdd,
-  onDelete,
-  onUpdate,
-  projects,
+  onToggle,
+  selectedAssetIds,
 }: {
+  assets: ProjectRow[];
   isEditing: boolean;
-  onAdd: () => void;
-  onDelete: (index: number) => void;
-  onUpdate: (index: number, field: keyof ResumeProject, value: string) => void;
-  projects: ResumeProject[];
+  onToggle: (projectId: string) => void;
+  selectedAssetIds: string[];
 }) {
-  const visibleProjects = projects.filter(
-    (project) => project.title.trim() || project.subtitle.trim() || project.description.trim()
+  const selectedIds = new Set(selectedAssetIds);
+  const verifiedAssets = assets.filter(isVerifiedAsset);
+  const visibleProjects = selectedAssetIds.length
+    ? assets.filter((project) => selectedIds.has(project.id))
+    : verifiedAssets;
+  const sortedAssets = [...assets].sort((left, right) => {
+    const leftSelected = selectedIds.has(left.id) ? 1 : 0;
+    const rightSelected = selectedIds.has(right.id) ? 1 : 0;
+
+    if (leftSelected !== rightSelected) {
+      return rightSelected - leftSelected;
+    }
+
+    return new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime();
+  });
+
+  const renderScoreBadge = (project: ProjectRow) => {
+    const score = getAssetScore(project);
+
+    return score !== null ? (
+      <span className="rounded-md border border-slate-800/80 bg-slate-950/60 px-2.5 py-0.5 text-[11px] font-medium tracking-wide text-slate-400">
+        Score: {score}/100
+      </span>
+    ) : (
+      <span className="rounded-md border border-slate-800/80 bg-slate-950/60 px-2.5 py-0.5 text-[11px] font-medium tracking-wide text-slate-500">
+        Pending verification
+      </span>
+    );
+  };
+
+  const renderAssetSummary = (project: ProjectRow) => (
+    getAssetSummary(project) || 'AI parsing summary will appear here after the asset is verified.'
   );
 
   return (
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
       <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
       {isEditing ? (
-        <div className="space-y-4">
-          {projects.map((project, index) => (
-            <div key={`project-${index}`} className="rounded-xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
-              <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  value={project.title}
-                  onChange={(event) => onUpdate(index, 'title', event.target.value)}
-                  placeholder="Project title"
-                  className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10"
-                />
-                <Input
-                  value={project.subtitle}
-                  onChange={(event) => onUpdate(index, 'subtitle', event.target.value)}
-                  placeholder="Subtitle or short link label"
-                  className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10"
-                />
-                <Input
-                  value={project.href}
-                  onChange={(event) => onUpdate(index, 'href', event.target.value)}
-                  placeholder="https://..."
-                  className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10 md:col-span-2"
-                />
-                <Textarea
-                  value={project.description}
-                  onChange={(event) => onUpdate(index, 'description', event.target.value)}
-                  placeholder="Short project description"
-                  className="min-h-24 rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10 md:col-span-2"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => onDelete(index)}
-                className="mt-3 rounded-full border border-rose-900/50 bg-rose-950/20 px-3 py-1.5 text-xs text-rose-300 transition hover:border-rose-500/50 hover:bg-rose-950/35"
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={onAdd}
-            className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-4 py-2 text-xs font-medium text-cyan-200 transition hover:border-cyan-400/45 hover:bg-cyan-500/15"
-          >
-            + Add New Project
-          </button>
-        </div>
+        sortedAssets.length > 0 ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {sortedAssets.map((project) => {
+              const isSelected = selectedIds.has(project.id);
+
+              return (
+                <label
+                  key={project.id}
+                  className={cn(
+                    'flex cursor-pointer gap-3 rounded-xl border bg-[#050b1b]/60 p-4 transition',
+                    isSelected
+                      ? 'border-cyan-400/40 ring-1 ring-cyan-400/20'
+                      : 'border-blue-950/50 hover:border-cyan-500/25'
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggle(project.id)}
+                    className="mt-1 h-4 w-4 rounded border-blue-900 bg-slate-950 text-cyan-400"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start justify-between gap-3">
+                      <span>
+                        <span className="block truncate text-sm font-semibold text-zinc-100">{getAssetName(project)}</span>
+                        <span className="mt-1 block text-xs text-cyan-400">{getAssetSubtitle(project)}</span>
+                      </span>
+                      {renderScoreBadge(project)}
+                    </span>
+                    <span className="mt-3 line-clamp-2 block text-sm leading-6 text-zinc-400">
+                      {renderAssetSummary(project)}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-600">No uploaded Vault files found yet.</p>
+        )
       ) : visibleProjects.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2">
-          {visibleProjects.map((project, index) => (
+          {visibleProjects.map((project) => (
             <article
-              key={`${project.title}-${index}`}
-              className="rounded-xl border border-blue-950/50 bg-[#050b1b]/60 p-4"
+              key={project.id}
+              className="rounded-2xl border border-slate-800/60 bg-[#090e24] p-5 shadow-lg transition-all duration-300 hover:border-slate-700/80"
             >
-              <h2 className="text-sm font-semibold text-zinc-100">{project.title || 'Untitled Project'}</h2>
-              {project.href ? (
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                  {getAssetSubtitle(project)}
+                </span>
+                {renderScoreBadge(project)}
+              </div>
+              <h2 className="truncate text-sm font-bold text-slate-100" title={getAssetName(project)}>
+                {getAssetName(project)}
+              </h2>
+              {project.source_url || project.file_url ? (
                 <a
-                  href={project.href}
+                  href={project.file_url ?? project.source_url ?? '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-1 block text-xs text-cyan-400 transition-colors hover:text-cyan-300"
+                  className="mt-1 block truncate text-[11px] text-slate-500 transition-colors hover:text-cyan-300"
                 >
-                  {project.subtitle || project.href}
+                  {project.file_name || project.source_url || project.file_url}
                 </a>
               ) : (
-                <p className="mt-1 text-xs text-cyan-400">{project.subtitle}</p>
+                <p className="mt-1 text-[11px] text-slate-500">{project.file_name || 'Stored in Vault'}</p>
               )}
-              <p className="mt-3 text-sm leading-6 text-zinc-400">
-                {project.description || 'Project description pending.'}
+              <p className="mt-4 line-clamp-4 text-sm leading-6 text-zinc-400">
+                {renderAssetSummary(project)}
               </p>
             </article>
           ))}
         </div>
       ) : (
-        <p className="text-sm text-zinc-600">No featured projects added yet.</p>
+        <p className="text-sm text-zinc-600">No verified Vault assets found yet. Upload and verify assets from Home or Vault to feature them here.</p>
       )}
     </div>
   );
@@ -484,6 +535,7 @@ function DashboardResumePageContent() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const successTimerRef = useRef<number | null>(null);
   const [formData, setFormData] = useState<ResumeFormData>(() => createDefaultFormData());
+  const [uploadedAssets, setUploadedAssets] = useState<ProjectRow[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -491,6 +543,7 @@ function DashboardResumePageContent() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [hasCreatorProfileColumns, setHasCreatorProfileColumns] = useState(true);
   const canEdit = !isSpectator && isEditing;
 
   useEffect(() => {
@@ -518,6 +571,7 @@ function DashboardResumePageContent() {
 
       try {
         let resume: ResumeFields | null = null;
+        let assets: ProjectRow[] = [];
 
         if (isSpectator && targetUsername) {
           const response = await fetch(
@@ -531,18 +585,52 @@ function DashboardResumePageContent() {
           }
 
           resume = payload.profile;
+          assets = Array.isArray(payload.projects)
+            ? payload.projects.filter((project) => project.is_public !== false)
+            : [];
         } else if (supabase && user) {
-          const { data, error } = await supabase
+          const profileResponse = await supabase
             .from('profiles')
-            .select('full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies, resume_projects, external_links')
+            .select(EXTENDED_RESUME_SELECT)
             .eq('id', user.id)
             .maybeSingle();
 
-          if (error) {
-            throw error;
+          if (profileResponse.error && isMissingOptionalProfileColumn(profileResponse.error)) {
+            console.warn('Resume optional profile columns are unavailable; loading base profile fields only.');
+            if (active) {
+              setHasCreatorProfileColumns(false);
+            }
+            const fallbackProfileResponse = await supabase
+              .from('profiles')
+              .select(BASE_RESUME_SELECT)
+              .eq('id', user.id)
+              .maybeSingle();
+
+            if (fallbackProfileResponse.error) {
+              throw fallbackProfileResponse.error;
+            }
+
+            resume = fallbackProfileResponse.data as ResumeFields | null;
+          } else if (profileResponse.error) {
+            throw profileResponse.error;
+          } else {
+            if (active) {
+              setHasCreatorProfileColumns(true);
+            }
+            resume = profileResponse.data as ResumeFields | null;
           }
 
-          resume = data as ResumeFields | null;
+          const { data: assetData, error: assetError } = await supabase
+            .from('projects')
+            .select('*')
+            .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+            .order('created_at', { ascending: false });
+
+          if (assetError) {
+            console.warn('Resume asset fetch failed; continuing with an empty Featured Projects list.', assetError);
+          }
+
+          assets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
         }
 
         if (!active) {
@@ -550,8 +638,9 @@ function DashboardResumePageContent() {
         }
 
         const nextFormData = createDefaultFormData();
-        const loadedProjects = normalizeProjects(resume?.resume_projects);
+        const loadedFeaturedProjectIds = normalizeFeaturedProjectIds(resume?.resume_projects);
         const loadedExternalLinks = normalizeExternalLinks(resume?.external_links);
+        const defaultFeaturedProjectIds = assets.filter(isVerifiedAsset).map((asset) => asset.id);
 
         setFormData({
           ...nextFormData,
@@ -567,9 +656,11 @@ function DashboardResumePageContent() {
           skills: resume ? normalizeList(resume.skills) : nextFormData.skills,
           experience: resume ? normalizeList(resume.experience) : nextFormData.experience,
           hobbies: resume ? normalizeList(resume.hobbies) : nextFormData.hobbies,
-          projects: resume ? loadedProjects : nextFormData.projects,
-          externalLinks: resume ? loadedExternalLinks : nextFormData.externalLinks,
+          featuredProjectIds:
+            loadedFeaturedProjectIds.length > 0 ? loadedFeaturedProjectIds : defaultFeaturedProjectIds,
+          externalLinks: loadedExternalLinks.length > 0 ? loadedExternalLinks : nextFormData.externalLinks,
         });
+        setUploadedAssets(assets);
         setAvatarUrl(
           resume?.avatar_url ??
             (user?.user_metadata?.avatar_url as string | undefined) ??
@@ -631,26 +722,12 @@ function DashboardResumePageContent() {
     }));
   }
 
-  function updateProject(index: number, field: keyof ResumeProject, value: string) {
+  function toggleFeaturedProject(projectId: string) {
     setFormData((current) => ({
       ...current,
-      projects: current.projects.map((project, itemIndex) =>
-        itemIndex === index ? { ...project, [field]: value } : project
-      ),
-    }));
-  }
-
-  function addProject() {
-    setFormData((current) => ({
-      ...current,
-      projects: [...current.projects, { title: '', subtitle: '', href: '', description: '' }],
-    }));
-  }
-
-  function deleteProject(index: number) {
-    setFormData((current) => ({
-      ...current,
-      projects: current.projects.filter((_, itemIndex) => itemIndex !== index),
+      featuredProjectIds: current.featuredProjectIds.includes(projectId)
+        ? current.featuredProjectIds.filter((id) => id !== projectId)
+        : [...current.featuredProjectIds, projectId],
     }));
   }
 
@@ -695,41 +772,67 @@ function DashboardResumePageContent() {
         experience: formData.experience.map((item) => item.trim()).filter(Boolean),
         hobbies: formData.hobbies.map((item) => item.trim()).filter(Boolean),
         skills: formData.skills.map((item) => item.trim()).filter(Boolean),
-        projects: formData.projects
-          .map((project) => ({
-            title: project.title.trim(),
-            subtitle: project.subtitle.trim(),
-            href: project.href.trim(),
-            description: project.description.trim(),
-          }))
-          .filter((project) => project.title || project.subtitle || project.href || project.description),
+        featuredProjectIds: formData.featuredProjectIds.filter((id) =>
+          uploadedAssets.some((asset) => asset.id === id)
+        ),
         externalLinks: formData.externalLinks
           .map((link) => ({ label: link.label.trim(), href: link.href.trim() }))
           .filter((link) => link.label || link.href),
       };
+      const updatePayload: Record<string, unknown> = {
+        full_name: nextFormData.name || null,
+        age: Number.isFinite(parsedAge) ? parsedAge : null,
+        current_status: nextFormData.status || null,
+        qualifications: nextFormData.qualifications,
+        experience: nextFormData.experience,
+        hobbies: nextFormData.hobbies,
+        skills: nextFormData.skills,
+      };
+
+      if (hasCreatorProfileColumns) {
+        updatePayload.resume_projects = nextFormData.featuredProjectIds;
+        updatePayload.external_links = nextFormData.externalLinks;
+      }
+
+      let savedCreatorColumns = hasCreatorProfileColumns;
       const { error } = await supabase
         .from('profiles')
-        .update({
-          full_name: nextFormData.name || null,
-          age: Number.isFinite(parsedAge) ? parsedAge : null,
-          current_status: nextFormData.status || null,
-          qualifications: nextFormData.qualifications,
-          experience: nextFormData.experience,
-          hobbies: nextFormData.hobbies,
-          skills: nextFormData.skills,
-          resume_projects: nextFormData.projects,
-          external_links: nextFormData.externalLinks,
-        })
+        .update(updatePayload)
         .eq('id', user.id);
 
       if (error) {
-        throw error;
+        if (isMissingOptionalProfileColumn(error)) {
+          savedCreatorColumns = false;
+          setHasCreatorProfileColumns(false);
+          const { error: fallbackError } = await supabase
+            .from('profiles')
+            .update({
+              full_name: nextFormData.name || null,
+              age: Number.isFinite(parsedAge) ? parsedAge : null,
+              current_status: nextFormData.status || null,
+              qualifications: nextFormData.qualifications,
+              experience: nextFormData.experience,
+              hobbies: nextFormData.hobbies,
+              skills: nextFormData.skills,
+            })
+            .eq('id', user.id);
+
+          if (fallbackError) {
+            throw fallbackError;
+          }
+        } else {
+          throw error;
+        }
       }
 
       setFormData(nextFormData);
       setSaveState('saved');
       setIsEditing(false);
-      setSuccessMessage('Resume changes saved.');
+      setSuccessMessage(
+        savedCreatorColumns
+          ? 'Resume changes saved.'
+          : 'Core resume saved. Apply the latest migration to persist featured pins and external links.'
+      );
       if (successTimerRef.current) {
         window.clearTimeout(successTimerRef.current);
       }
@@ -1039,11 +1142,10 @@ function DashboardResumePageContent() {
               />
 
               <EditableProjectsSection
+                assets={uploadedAssets}
                 isEditing={canEdit}
-                onAdd={addProject}
-                onDelete={deleteProject}
-                onUpdate={updateProject}
-                projects={formData.projects}
+                onToggle={toggleFeaturedProject}
+                selectedAssetIds={formData.featuredProjectIds}
               />
 
               <EditableStringListSection
