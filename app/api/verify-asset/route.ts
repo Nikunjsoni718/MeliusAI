@@ -1,5 +1,4 @@
 import { openai } from '@ai-sdk/openai';
-import type { User } from '@supabase/supabase-js';
 import { generateObject } from 'ai';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -24,22 +23,6 @@ type VerifyAssetPayload = {
   assetTextContent?: unknown;
   userContextDescription?: unknown;
 };
-
-const AUTHORIZED_REVIEWER_ROLES = new Set(['admin', 'reviewer', 'recruiter']);
-
-function getUserMetadataRoles(user: User) {
-  const roleValues = [
-    user.app_metadata?.role,
-    user.user_metadata?.role,
-    user.app_metadata?.roles,
-    user.user_metadata?.roles,
-  ].flatMap((value) => (Array.isArray(value) ? value : [value]));
-
-  return roleValues
-    .filter((value): value is string => typeof value === 'string')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-}
 
 function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -73,30 +56,11 @@ export async function POST(req: Request) {
     const supabase = await createSupabaseServerClient();
     const {
       data: { user },
-      error: userError,
+      error: authError,
     } = await supabase.auth.getUser();
 
-    if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: userProfile, error: userProfileError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (userProfileError) {
-      throw new Error(`Unable to resolve reviewer authorization: ${userProfileError.message}`);
-    }
-
-    const authorizedRoles = [
-      ...getUserMetadataRoles(user),
-      typeof userProfile?.role === 'string' ? userProfile.role.toLowerCase() : '',
-    ];
-
-    if (!authorizedRoles.some((role) => AUTHORIZED_REVIEWER_ROLES.has(role))) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (authError || !user) {
+      return new Response('Unauthorized', { status: 401 });
     }
 
     const body = (await req.json()) as VerifyAssetPayload;

@@ -2040,7 +2040,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, isSpectator, resolvedProfileId, supabase]);
 
   useEffect(() => {
-    if (isSpectator || !profileHydrated || !currentUser?.id) {
+    if (isSpectator || !profileHydrated || !currentUser?.id || !supabase) {
       setLiveJobs([]);
       setLoadingState(false);
       setFetchError(null);
@@ -2054,10 +2054,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setFetchError(null);
 
       try {
-        const response = await fetch(
-          `${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities?candidate_id=${encodeURIComponent(currentUser.id)}`,
-          { cache: 'no-store', signal: controller.signal }
-        );
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
+        if (!token) {
+          throw new Error('Unable to load opportunities. Please sign in again.');
+        }
+
+        const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities`, {
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         const data = (await response.json().catch(() => null)) as unknown;
 
         if (!response.ok) {
@@ -2096,7 +2108,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       controller.abort();
     };
-  }, [currentUser?.id, isSpectator, profileHydrated]);
+  }, [currentUser?.id, isSpectator, profileHydrated, supabase]);
 
   async function handleDismiss(opportunityId: string) {
     const dismissedOpportunity = liveJobs.find((opportunity) => opportunity.id === opportunityId);
@@ -2118,11 +2130,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
+      if (!supabase) {
+        throw new Error('Unable to persist this dismissal. Please sign in again.');
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('Unable to persist this dismissal. Please sign in again.');
+      }
+
       const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/dismiss-opportunity`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          candidate_id: currentUser.id,
           opportunity_id: opportunityId,
         }),
       });
