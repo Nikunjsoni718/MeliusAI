@@ -38,6 +38,7 @@ type PreviewProject = {
 type AssetPreviewModalProps = {
   activePreviewName: string | null;
   activePreviewUrl: string | null;
+  canVerify?: boolean;
   previewProject?: PreviewProject | null;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onClose: () => void;
@@ -187,6 +188,7 @@ function MetricList({
 export function AssetPreviewModal({
   activePreviewName,
   activePreviewUrl,
+  canVerify = true,
   previewProject,
   onProjectUpdated,
   onClose,
@@ -371,6 +373,7 @@ export function AssetPreviewModal({
             </p>
           </div>
 
+          {canVerify ? (
           <div className="flex justify-end">
             <button
               type="button"
@@ -385,6 +388,7 @@ export function AssetPreviewModal({
               {isVerifying ? 'Auditing via GPT Engine...' : 'Verify with MeliusAI'}
             </button>
           </div>
+          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
             <div className="flex items-center justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-5">

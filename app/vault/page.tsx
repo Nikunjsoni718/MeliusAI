@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
-import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
+import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
@@ -877,9 +877,6 @@ function VaultPageContent() {
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [syncToken, setSyncToken] = useState(0);
-  const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
-  const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
-  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectRow | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
@@ -1381,11 +1378,6 @@ Return Markdown sections for goods, bads, project description, and a final score
         delete descriptionSaveTimersRef.current[id];
       }
       setViewingAuditAsset((currentAsset) => (currentAsset?.id === id ? null : currentAsset));
-      setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === id ? null : currentPreviewId));
-      if (activePreviewProjectId === id) {
-        setActivePreviewName(null);
-        setActivePreviewUrl(null);
-      }
     } catch (error) {
       console.error('Failed to delete vault asset', error);
       setVaultError('Unable to delete this asset right now.');
@@ -1451,24 +1443,31 @@ Return Markdown sections for goods, bads, project description, and a final score
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {vaultAssets.map((project) => (
-                  <VaultProjectCard
-                    key={project.id}
-                    project={project}
-                    isSpectator={isSpectator}
-                    deletingAssetId={deletingAssetId}
-                    isVisibilityUpdating={visibilityUpdatingIds.includes(project.id)}
-                    verifyingAssetId={verifyingAssetId}
-                    onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
-                    onReadProtocol={handleReadFullAuditProtocol}
-                    onToggleVisibility={(projectId, currentVisibilityStatus) =>
-                      void handleToggleVisibility(projectId, currentVisibilityStatus)
-                    }
-                    onDelete={(projectId) => void handleDeleteVaultAsset(projectId)}
-                  />
-                ))}
-              </div>
+              <UniversalAssetGrid
+                assets={vaultAssets}
+                isSpectator={isSpectator}
+                deletingAssetId={deletingAssetId}
+                verifyingAssetId={verifyingAssetId}
+                visibilityUpdatingIds={visibilityUpdatingIds}
+                onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
+                onReadProtocol={handleReadFullAuditProtocol}
+                onToggleVisibility={(projectId, currentVisibilityStatus) =>
+                  void handleToggleVisibility(projectId, currentVisibilityStatus)
+                }
+                onDelete={(projectId) => void handleDeleteVaultAsset(projectId)}
+                onProjectUpdated={(projectId, projectPatch) => {
+                  setVaultAssets((currentAssets) =>
+                    currentAssets.map((asset) =>
+                      asset.id === projectId
+                        ? {
+                            ...asset,
+                            ...projectPatch,
+                          }
+                        : asset
+                    )
+                  );
+                }}
+              />
             )}
           </section>
         </motion.div>
@@ -1505,16 +1504,6 @@ Return Markdown sections for goods, bads, project description, and a final score
           }}
         />
       ) : null}
-
-      <AssetPreviewModal
-        activePreviewName={activePreviewName}
-        activePreviewUrl={activePreviewUrl}
-        onClose={() => {
-          setActivePreviewProjectId(null);
-          setActivePreviewName(null);
-          setActivePreviewUrl(null);
-        }}
-      />
     </>
   );
 }
