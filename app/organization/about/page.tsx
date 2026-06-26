@@ -429,6 +429,7 @@ function OrganizationManifestoPageContent() {
             {isEditing ? (
               <EditorInput
                 label="Verified badge text"
+                placeholder="Verified badge text..."
                 value={orgData.verifiedBadgeText}
                 onChange={(value) => updateOrgField('verifiedBadgeText', value)}
                 className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-100"
@@ -475,6 +476,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Hero eyebrow"
+              placeholder="Enter hero eyebrow..."
               value={orgData.heroEyebrow}
               onChange={(value) => updateOrgField('heroEyebrow', value)}
               className="text-xs font-bold uppercase tracking-[0.28em] text-slate-300"
@@ -487,6 +489,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorTextarea
               label="Mission title"
+              placeholder="Enter your main company heading..."
               value={orgData.missionTitle}
               onChange={(value) => updateOrgField('missionTitle', value)}
               rows={2}
@@ -500,6 +503,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorTextarea
               label="Mission description"
+              placeholder="Describe your company mission..."
               value={orgData.missionDesc}
               onChange={(value) => updateOrgField('missionDesc', value)}
               rows={5}
@@ -514,6 +518,7 @@ function OrganizationManifestoPageContent() {
             isEditing ? (
               <EditorInput
                 label="Loading status text"
+                placeholder="Loading status text..."
                 value={orgData.loadingStatusText}
                 onChange={(value) => updateOrgField('loadingStatusText', value)}
                 className="mt-8 text-xs font-medium text-slate-500"
@@ -530,6 +535,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Section one subheading"
+              placeholder="Enter section label..."
               value={orgData.section1Subheading}
               onChange={(value) => updateOrgField('section1Subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-purple-200"
@@ -542,6 +548,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorTextarea
               label="Section one heading"
+              placeholder="Enter section heading..."
               value={orgData.section1Heading}
               onChange={(value) => updateOrgField('section1Heading', value)}
               rows={2}
@@ -588,6 +595,7 @@ function OrganizationManifestoPageContent() {
             {isEditing ? (
               <EditorInput
                 label="Section two subheading"
+                placeholder="Enter section label..."
                 value={orgData.section2Subheading}
                 onChange={(value) => updateOrgField('section2Subheading', value)}
                 className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-200"
@@ -600,6 +608,7 @@ function OrganizationManifestoPageContent() {
             {isEditing ? (
               <EditorInput
                 label="Section two heading"
+                placeholder="Enter infrastructure heading..."
                 value={orgData.section2Heading}
                 onChange={(value) => updateOrgField('section2Heading', value)}
                 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl"
@@ -613,12 +622,13 @@ function OrganizationManifestoPageContent() {
           <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.025] p-7">
             {isEditing ? (
               <EditorTextarea
-              label="Section two description"
-              value={orgData.section2Desc}
-              onChange={(value) => updateOrgField('section2Desc', value)}
-              rows={6}
-              className="text-base leading-8 text-slate-300"
-            />
+                label="Section two description"
+                placeholder="Describe your infrastructure..."
+                value={orgData.section2Desc}
+                onChange={(value) => updateOrgField('section2Desc', value)}
+                rows={6}
+                className="text-base leading-8 text-slate-300"
+              />
             ) : (
               <p className="text-base leading-8 text-slate-300">{displayData.section2Desc}</p>
             )}
@@ -629,6 +639,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Section three subheading"
+              placeholder="Enter section label..."
               value={orgData.section3Subheading}
               onChange={(value) => updateOrgField('section3Subheading', value)}
               className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-200"
@@ -641,6 +652,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Benefit title"
+              placeholder="Enter benefits heading..."
               value={orgData.benefitTitle}
               onChange={(value) => updateOrgField('benefitTitle', value)}
               className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl"
@@ -658,6 +670,7 @@ function OrganizationManifestoPageContent() {
               {isEditing ? (
                 <EditorTextarea
                   label="Benefit description"
+                  placeholder="Describe your company benefits..."
                   value={orgData.benefitDesc}
                   onChange={(value) => updateOrgField('benefitDesc', value)}
                   rows={4}
@@ -674,6 +687,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Footer note"
+              placeholder="Footer note..."
               value={orgData.footerNote}
               onChange={(value) => updateOrgField('footerNote', value)}
               className="text-xs text-slate-400"
@@ -684,6 +698,7 @@ function OrganizationManifestoPageContent() {
           {isEditing ? (
             <EditorInput
               label="Footer badge text"
+              placeholder="Footer badge text..."
               value={orgData.footerBadgeText}
               onChange={(value) => updateOrgField('footerBadgeText', value)}
               className="text-xs text-slate-400"
@@ -741,6 +756,7 @@ function EditableProfileCard({
         {isEditing ? (
           <EditorInput
             label={titleLabel}
+            placeholder={titleLabel === 'Feature title' ? 'Feature title...' : 'Infrastructure title...'}
             value={title}
             onChange={onTitleChange}
             className="mt-8 text-2xl font-semibold"
@@ -751,6 +767,7 @@ function EditableProfileCard({
         {isEditing ? (
           <EditorTextarea
             label={descriptionLabel}
+            placeholder={descriptionLabel === 'Feature description' ? 'Describe this feature...' : 'Describe this infrastructure...'}
             value={description}
             onChange={onDescriptionChange}
             rows={5}
@@ -767,11 +784,13 @@ function EditableProfileCard({
 function EditorInput({
   className,
   label,
+  placeholder,
   value,
   onChange,
 }: {
   className?: string;
   label: string;
+  placeholder: string;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -780,9 +799,10 @@ function EditorInput({
       <span className="sr-only">{label}</span>
       <input
         type="text"
+        placeholder={placeholder}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`block w-full border-b border-white/15 bg-transparent px-0 py-2 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/60 ${className ?? ''}`}
+        className={`block w-full rounded-lg border border-slate-700 bg-slate-800/50 p-3 text-sm text-white outline-none transition-all placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 ${className ?? ''}`}
       />
     </label>
   );
@@ -791,12 +811,14 @@ function EditorInput({
 function EditorTextarea({
   className,
   label,
+  placeholder,
   value,
   onChange,
   rows = 4,
 }: {
   className?: string;
   label: string;
+  placeholder: string;
   value: string;
   onChange: (value: string) => void;
   rows?: number;
@@ -805,10 +827,11 @@ function EditorTextarea({
     <label className="block w-full">
       <span className="sr-only">{label}</span>
       <textarea
+        placeholder={placeholder}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
-        className={`block w-full resize-y rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-purple-300/50 focus:ring-2 focus:ring-purple-300/10 ${className ?? ''}`}
+        className={`block min-h-[100px] w-full resize-none rounded-lg border border-slate-700 bg-slate-800/50 p-3 text-sm leading-7 text-slate-200 outline-none transition-all placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 ${className ?? ''}`}
       />
     </label>
   );
