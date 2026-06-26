@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -193,6 +194,7 @@ export function AssetPreviewModal({
   onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
+  const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
@@ -207,6 +209,10 @@ export function AssetPreviewModal({
   const cons = getMetricItems(liveProject, 'cons');
   const recommendations = getMetricItems(liveProject, 'recommendations');
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
+
+  useEffect(() => {
+    setIsPortalMounted(true);
+  }, []);
 
   useEffect(() => {
     setLiveProject(previewProject ?? null);
@@ -231,7 +237,7 @@ export function AssetPreviewModal({
     };
   }, [activePreviewUrl, onClose]);
 
-  if (!activePreviewUrl || !viewerSrc) {
+  if (!isPortalMounted || !activePreviewUrl || !viewerSrc) {
     return null;
   }
 
@@ -289,8 +295,8 @@ export function AssetPreviewModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
+  const modal = (
+    <div className="fixed inset-0 z-[9999] w-screen h-screen bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
       <div
         className={`relative w-full max-w-5xl bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col transition-all duration-300 ${
           isExpandedViewer ? 'max-h-[85vh]' : 'max-h-[90vh] overflow-y-auto'
@@ -417,4 +423,6 @@ export function AssetPreviewModal({
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }

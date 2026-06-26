@@ -12,7 +12,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Briefcase, Code2, FileText, FolderLock, Globe2, House, Search, UserRound } from 'lucide-react';
+import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Input } from '@/components/ui/input';
@@ -24,10 +24,6 @@ import type { ProfileRow, ProjectRow } from '@/types/supabase';
 
 type ResumeStatus = string;
 type SaveState = 'idle' | 'saving' | 'saved';
-type ResumeExternalLink = {
-  label: string;
-  href: string;
-};
 type ResumeFormData = {
   name: string;
   age: string;
@@ -37,7 +33,6 @@ type ResumeFormData = {
   hobbies: string[];
   skills: string[];
   featuredProjectIds: string[];
-  externalLinks: ResumeExternalLink[];
 };
 type ResumeFields = Pick<
   ProfileRow,
@@ -52,7 +47,6 @@ type ResumeFields = Pick<
   | 'hobbies'
   | 'skills'
   | 'resume_projects'
-  | 'external_links'
 > & {
   name?: string | null;
   status?: string | null;
@@ -66,7 +60,7 @@ type SpectatorResumeResponse = {
 
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
-const EXTENDED_RESUME_SELECT = `${BASE_RESUME_SELECT}, resume_projects, external_links`;
+const EXTENDED_RESUME_SELECT = `${BASE_RESUME_SELECT}, resume_projects`;
 const PROFILE_SPECTATOR_BASE_URL = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
@@ -77,11 +71,6 @@ const navigationItems = [
   { href: '/resume', label: 'Resume', icon: FileText },
 ];
 const fallbackSkills = ['React', 'Next.js', 'Python', 'UI/UX'];
-const fallbackExternalLinks: ResumeExternalLink[] = [
-  { label: 'GitHub', href: 'https://github.com' },
-  { label: 'LinkedIn', href: 'https://www.linkedin.com' },
-  { label: 'Portfolio', href: 'https://example.com' },
-];
 
 function SidebarLink({
   active,
@@ -120,26 +109,6 @@ function normalizeList(value: unknown) {
   return [];
 }
 
-function normalizeExternalLinks(value: unknown): ResumeExternalLink[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => {
-      if (!item || typeof item !== 'object') {
-        return null;
-      }
-
-      const row = item as Record<string, unknown>;
-      const label = typeof row.label === 'string' ? row.label : '';
-      const href = typeof row.href === 'string' ? row.href : '';
-
-      return { label, href };
-    })
-    .filter((item): item is ResumeExternalLink => item !== null);
-}
-
 function createDefaultFormData(): ResumeFormData {
   return {
     name: '',
@@ -150,7 +119,6 @@ function createDefaultFormData(): ResumeFormData {
     hobbies: [],
     skills: fallbackSkills,
     featuredProjectIds: [],
-    externalLinks: fallbackExternalLinks,
   };
 }
 
@@ -196,23 +164,8 @@ function isMissingOptionalProfileColumn(error: { code?: string; message?: string
   return (
     error?.code === 'PGRST204' ||
     message.includes('resume_projects') ||
-    message.includes('external_links') ||
     message.includes('could not find')
   );
-}
-
-function getExternalLinkIcon(label: string) {
-  const normalizedLabel = label.toLowerCase();
-
-  if (normalizedLabel.includes('github')) {
-    return Code2;
-  }
-
-  if (normalizedLabel.includes('linkedin')) {
-    return Briefcase;
-  }
-
-  return Globe2;
 }
 
 function EditableStringListSection({
@@ -295,84 +248,6 @@ function EditableStringListSection({
         )
       ) : (
         <p className="text-sm text-zinc-600">{emptyLabel}</p>
-      )}
-    </div>
-  );
-}
-
-function ExternalLinksEditor({
-  isEditing,
-  links,
-  onAdd,
-  onDelete,
-  onUpdate,
-}: {
-  isEditing: boolean;
-  links: ResumeExternalLink[];
-  onAdd: () => void;
-  onDelete: (index: number) => void;
-  onUpdate: (index: number, field: keyof ResumeExternalLink, value: string) => void;
-}) {
-  const visibleLinks = links.filter((link) => link.label.trim() || link.href.trim());
-
-  return (
-    <div className="space-y-3 sm:col-span-2">
-      <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">External Links</p>
-      {isEditing ? (
-        <div className="space-y-3">
-          {links.map((link, index) => (
-            <div key={`external-link-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)_auto]">
-              <Input
-                value={link.label}
-                onChange={(event) => onUpdate(index, 'label', event.target.value)}
-                placeholder="GitHub"
-                className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10"
-              />
-              <Input
-                value={link.href}
-                onChange={(event) => onUpdate(index, 'href', event.target.value)}
-                placeholder="https://..."
-                className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10"
-              />
-              <button
-                type="button"
-                onClick={() => onDelete(index)}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-rose-900/50 bg-rose-950/20 text-rose-300 transition hover:border-rose-500/50 hover:bg-rose-950/35"
-                aria-label="Delete external link"
-              >
-                &times;
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={onAdd}
-            className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-4 py-2 text-xs font-medium text-cyan-200 transition hover:border-cyan-400/45 hover:bg-cyan-500/15"
-          >
-            + Add New Link
-          </button>
-        </div>
-      ) : visibleLinks.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {visibleLinks.map((item, index) => {
-            const Icon = getExternalLinkIcon(item.label);
-
-            return (
-              <a
-                key={`${item.label}-${index}`}
-                href={item.href || '#'}
-                target={item.href ? '_blank' : undefined}
-                rel={item.href ? 'noopener noreferrer' : undefined}
-                className="inline-flex items-center gap-2 rounded-full border border-blue-950/60 bg-[#050b1b]/70 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-cyan-500/30 hover:text-cyan-300"
-              >
-                <Icon className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-                {item.label || item.href || 'Link'}
-              </a>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="text-sm text-zinc-600">No external links added yet.</p>
       )}
     </div>
   );
@@ -512,7 +387,6 @@ function DashboardResumePageContent() {
         }
 
         const nextFormData = createDefaultFormData();
-        const loadedExternalLinks = normalizeExternalLinks(resume?.external_links);
         const topProjects = getTopScoringAssets(assets);
         const topProjectIds = topProjects.map((asset) => asset.id);
 
@@ -531,7 +405,6 @@ function DashboardResumePageContent() {
           experience: resume ? normalizeList(resume.experience) : nextFormData.experience,
           hobbies: resume ? normalizeList(resume.hobbies) : nextFormData.hobbies,
           featuredProjectIds: topProjectIds,
-          externalLinks: loadedExternalLinks.length > 0 ? loadedExternalLinks : nextFormData.externalLinks,
         });
         setTopProjects(topProjects);
         setAvatarUrl(
@@ -595,29 +468,6 @@ function DashboardResumePageContent() {
     }));
   }
 
-  function updateExternalLink(index: number, field: keyof ResumeExternalLink, value: string) {
-    setFormData((current) => ({
-      ...current,
-      externalLinks: current.externalLinks.map((link, itemIndex) =>
-        itemIndex === index ? { ...link, [field]: value } : link
-      ),
-    }));
-  }
-
-  function addExternalLink() {
-    setFormData((current) => ({
-      ...current,
-      externalLinks: [...current.externalLinks, { label: '', href: '' }],
-    }));
-  }
-
-  function deleteExternalLink(index: number) {
-    setFormData((current) => ({
-      ...current,
-      externalLinks: current.externalLinks.filter((_, itemIndex) => itemIndex !== index),
-    }));
-  }
-
   async function handleSave() {
     if (isSpectator || !supabase || !user || saveState === 'saving') {
       return;
@@ -637,9 +487,6 @@ function DashboardResumePageContent() {
         hobbies: formData.hobbies.map((item) => item.trim()).filter(Boolean),
         skills: formData.skills.map((item) => item.trim()).filter(Boolean),
         featuredProjectIds: topProjects.map((asset) => asset.id),
-        externalLinks: formData.externalLinks
-          .map((link) => ({ label: link.label.trim(), href: link.href.trim() }))
-          .filter((link) => link.label || link.href),
       };
       const updatePayload: Record<string, unknown> = {
         full_name: nextFormData.name || null,
@@ -653,7 +500,6 @@ function DashboardResumePageContent() {
 
       if (hasCreatorProfileColumns) {
         updatePayload.resume_projects = nextFormData.featuredProjectIds;
-        updatePayload.external_links = nextFormData.externalLinks;
       }
 
       let savedCreatorColumns = hasCreatorProfileColumns;
@@ -693,7 +539,7 @@ function DashboardResumePageContent() {
       setSuccessMessage(
         savedCreatorColumns
           ? 'Resume changes saved.'
-          : 'Core resume saved. Apply the latest migration to persist featured pins and external links.'
+          : 'Core resume saved. Apply the latest migration to persist featured pins.'
       );
       if (successTimerRef.current) {
         window.clearTimeout(successTimerRef.current);
@@ -955,13 +801,6 @@ function DashboardResumePageContent() {
                       )}
                     </div>
 
-                    <ExternalLinksEditor
-                      isEditing={canEdit}
-                      links={formData.externalLinks}
-                      onAdd={addExternalLink}
-                      onDelete={deleteExternalLink}
-                      onUpdate={updateExternalLink}
-                    />
                   </div>
                 </div>
               </div>
