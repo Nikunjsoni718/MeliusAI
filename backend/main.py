@@ -12,7 +12,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID
-from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request
+from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -390,6 +390,97 @@ def secure_filename(filename: str | None) -> str:
     original_name = Path(str(filename or "upload").replace("\\", "/")).name
     sanitized_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", original_name).strip("._")
     return sanitized_name or "upload"
+
+
+# --- POLYGLOT CODE ANALYSIS ENDPOINT ---
+@app.post("/api/analyze-code")
+async def analyze_code(
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(verify_user),
+):
+    filename = secure_filename(file.filename)
+    _, ext = os.path.splitext(filename.lower())
+
+    extension_map = {
+        ".py": "Python",
+        ".ts": "TypeScript",
+        ".tsx": "TypeScript (React/JSX)",
+        ".js": "JavaScript",
+        ".jsx": "JavaScript (React/JSX)",
+    }
+    detected_language = extension_map.get(ext, "Unknown/Generic Text")
+
+    if file.size is None or file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Uploaded files must be 5 MB or smaller.",
+        )
+
+    try:
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Uploaded files must be 5 MB or smaller.",
+            )
+
+        try:
+            code_content = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            code_content = file_bytes.decode("utf-8", errors="ignore")
+
+        if not code_content.strip():
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        system_prompt = f"""
+You are the MeliusAI Elite Principal Engineer. You are performing a ruthless, line-by-line production-ready code audit.
+The user has uploaded a file written in: {detected_language}.
+
+CRITICAL MULTI-LANGUAGE RULES:
+- If Python: Focus on async bottlenecks, unclosed database sessions, memory leaks, and global state tracking.
+- If TypeScript/React (.ts, .tsx): Focus on component re-render loops (missing useEffect dependencies), type safety bypasses caused by excessive any, race conditions, missing list array keys, and unhandled async fetches.
+- If JavaScript/React (.js, .jsx): Focus on component re-render loops, race conditions, missing list array keys, unhandled promises, unsafe browser API usage, and runtime type hazards.
+- All languages: Scan for leaked API keys, hardcoded credentials, broken access controls, unsafe filesystem handling, and SQL injection risks.
+
+OUTPUT FORMAT (Strict JSON matching the dashboard UI):
+{{
+  "executive_summary": "Deeply technical summary evaluating the architecture of this {detected_language} asset.",
+  "goods_and_strengths": ["Line-level engineering praise 1", "Line-level engineering praise 2"],
+  "bads_and_flaws": ["Line-level architectural or security flaw 1", "Line-level architectural or security flaw 2"],
+  "strategic_recommendations": ["Actionable refactoring strategy 1", "Actionable refactoring strategy 2"],
+  "overall_score": 80
+}}
+"""
+
+        completion = await async_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"File Name: {filename}\n"
+                        f"Language: {detected_language}\n\n"
+                        f"Raw Content:\n{code_content}"
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+
+        raw_content = completion.choices[0].message.content or "{}"
+        return json.loads(raw_content)
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail="The code analysis model returned malformed JSON.",
+        ) from parse_error
+    except Exception as error:
+        logger.exception("code_analysis.failed")
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 # --- EXPERT REVIEWS ENDPOINT ---
