@@ -3,7 +3,6 @@
 import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
-import { SiteFooter } from '@/components/layout/site-footer';
 import { SiteHeader } from '@/components/layout/site-header';
 
 const hiddenChromeRoutes = [
@@ -37,7 +36,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="relative min-h-screen">
       <SiteHeader />
       {children}
-      <SiteFooter />
     </div>
   );
 }

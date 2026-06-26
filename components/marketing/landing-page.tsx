@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button';
 
 export function LandingPage() {
   return (
-    <main className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-7xl flex-col px-4 py-0 sm:px-6 lg:px-8">
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center w-full mt-16 flex-1">
+    <main className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-7xl flex-col px-4 pb-16 pt-32 sm:px-6 lg:px-8">
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center w-full flex-1">
         <div className="flex flex-col items-start text-left max-w-4xl">
           <Badge variant="accent" className="mb-2">
             Introduction
