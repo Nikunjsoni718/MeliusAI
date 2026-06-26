@@ -89,7 +89,7 @@ const fallbacks: OrgProfileData = {
   loadingStatusText: 'Synchronizing verified workspace details...',
 };
 
-const placeholderValues = new Set(['your description here...']);
+const placeholderValues = new Set(['your description here...', 'feature one', 'ai-native operations']);
 
 function cleanText(value: unknown) {
   if (typeof value !== 'string') {
