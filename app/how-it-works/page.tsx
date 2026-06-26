@@ -8,15 +8,12 @@ function PrivateVaultMockup() {
         </span>
       </div>
       <div className="space-y-3">
-        {['auth-flow.tsx', 'api-review.py', 'dashboard-state.ts'].map((file) => (
+        {['app.tsx', 'main.py', 'utils.ts'].map((file) => (
           <div key={file} className="flex items-center gap-3 rounded-xl bg-slate-900/70 px-4 py-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-400/10 font-mono text-xs text-cyan-200">
               {'</>'}
             </span>
-            <div>
-              <p className="text-sm font-medium text-white">{file}</p>
-              <p className="text-xs text-slate-500">Raw engineering proof</p>
-            </div>
+            <p className="text-sm font-medium text-white">{file}</p>
           </div>
         ))}
       </div>
@@ -59,10 +56,14 @@ function VerifiedProfileMockup() {
         </div>
       </div>
       <div className="mt-8 grid grid-cols-3 gap-3">
-        {['Logic', 'Security', 'Delivery'].map((node) => (
-          <div key={node} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-center">
-            <p className="text-xs text-slate-500">{node}</p>
-            <p className="mt-2 text-sm font-semibold text-cyan-200">Verified</p>
+        {[
+          { label: 'Logic', value: '92/100' },
+          { label: 'Marks', value: '94/100' },
+          { label: 'Compatibility', value: '89%' },
+        ].map((metric) => (
+          <div key={metric.label} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-center">
+            <p className="text-xs text-slate-500">{metric.label}</p>
+            <p className="mt-2 text-sm font-semibold text-cyan-200">{metric.value}</p>
           </div>
         ))}
       </div>
