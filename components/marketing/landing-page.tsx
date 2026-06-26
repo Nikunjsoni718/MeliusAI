@@ -10,10 +10,10 @@ export function LandingPage() {
             Introduction
           </Badge>
           <h1 className="max-w-4xl text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
-            Verify Engineering Excellence.
+            The Standard for Verified Engineering Talent.
           </h1>
           <p className="mt-6 mb-10 max-w-2xl text-lg leading-8 text-slate-300">
-            The intelligence layer for technical talent. For developers building a verified body of work, and organizations seeking undeniable signal to make their next great hire.
+            The private workspace where developers prove their technical depth through line-by-line AI audits, and organizations find the top 1% of hires without the resume guesswork.
           </p>
           <div className="flex flex-row justify-start gap-4 mb-6">
             <Button size="lg" href="/auth">
