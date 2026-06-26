@@ -40,6 +40,8 @@ type ResumeFormData = {
 };
 type ResumeFields = Pick<
   ProfileRow,
+  | 'id'
+  | 'username'
   | 'full_name'
   | 'avatar_url'
   | 'age'
@@ -62,7 +64,7 @@ type SpectatorResumeResponse = {
 };
 
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
-const BASE_RESUME_SELECT = 'full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
+const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
 const EXTENDED_RESUME_SELECT = `${BASE_RESUME_SELECT}, resume_projects, external_links`;
 const PROFILE_SPECTATOR_BASE_URL = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
@@ -160,7 +162,17 @@ function getAssetSubtitle(project: ProjectRow) {
 }
 
 function getAssetScore(project: ProjectRow) {
-  const rawScore = project.logic_score ?? project.evaluation_score ?? project.score ?? null;
+  const extendedProject = project as ProjectRow & {
+    ai_score?: number | string | null;
+    marks?: number | string | null;
+  };
+  const rawScore =
+    extendedProject.logic_score ??
+    extendedProject.evaluation_score ??
+    extendedProject.score ??
+    extendedProject.marks ??
+    extendedProject.ai_score ??
+    null;
   const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
 
   return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
@@ -511,6 +523,8 @@ function DashboardResumePageContent() {
       try {
         let resume: ResumeFields | null = null;
         let assets: ProjectRow[] = [];
+        let fallbackAssets: ProjectRow[] = [];
+        let profileUuid: string | null = null;
 
         if (isSpectator && targetUsername) {
           const response = await fetch(
@@ -524,7 +538,8 @@ function DashboardResumePageContent() {
           }
 
           resume = payload.profile;
-          assets = Array.isArray(payload.projects)
+          profileUuid = resume?.id ?? null;
+          fallbackAssets = Array.isArray(payload.projects)
             ? payload.projects.filter((project) => project.is_public !== false)
             : [];
         } else if (supabase && user) {
@@ -558,18 +573,32 @@ function DashboardResumePageContent() {
             }
             resume = profileResponse.data as ResumeFields | null;
           }
+          profileUuid = resume?.id ?? user.id;
+        }
 
+        profileUuid = profileUuid ?? resume?.id ?? (!isSpectator ? user?.id ?? null : null);
+
+        if (profileUuid && supabase) {
           const { data: assetData, error: assetError } = await supabase
             .from('projects')
             .select('*')
-            .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
-            .order('created_at', { ascending: false });
+            .eq('user_id', profileUuid);
 
           if (assetError) {
-            console.warn('Resume asset fetch failed; continuing with an empty Featured Projects list.', assetError);
+            console.warn('Resume asset fetch failed; using available spectator asset payload if present.', assetError);
+            assets = fallbackAssets;
+          } else {
+            const queriedAssets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
+            assets = isSpectator && queriedAssets.length === 0 && fallbackAssets.length > 0
+              ? fallbackAssets
+              : queriedAssets;
           }
+        } else {
+          assets = fallbackAssets;
+        }
 
-          assets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
+        if (isSpectator) {
+          assets = assets.filter((project) => project.is_public !== false);
         }
 
         if (!active) {
