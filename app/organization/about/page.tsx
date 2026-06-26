@@ -9,6 +9,7 @@ import {
   Boxes,
   CheckCircle2,
   Cpu,
+  Mail,
   Pencil,
   Rocket,
   Save,
@@ -21,6 +22,7 @@ import { useViewerProfile } from '@/lib/viewer-client';
 const DEFAULT_COMPANY = 'MeliusAI';
 
 type OrgProfileData = {
+  company_email: string;
   hero_eyebrow: string;
   mission_title: string;
   mission_text: string;
@@ -39,6 +41,7 @@ type OrgProfileData = {
 
 type OrganizationRecord = Record<string, unknown>;
 type OrganizationUpdateColumn =
+  | 'company_email'
   | 'mission_text'
   | 'pillar1_title'
   | 'pillar1_desc'
@@ -56,6 +59,7 @@ type OrganizationInsertPayload = OrganizationUpdatePayload & {
 };
 
 const emptyOrgData: OrgProfileData = {
+  company_email: '',
   hero_eyebrow: '',
   mission_title: '',
   mission_text: '',
@@ -73,6 +77,7 @@ const emptyOrgData: OrgProfileData = {
 };
 
 const fallbacks: OrgProfileData = {
+  company_email: '',
   hero_eyebrow: '',
   mission_title: 'Click Edit to add your company mission',
   mission_text: 'Share the promise your company makes to candidates, collaborators, and the market.',
@@ -117,6 +122,7 @@ function readText(row: OrganizationRecord | null, keys: string[]) {
 
 function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: string): OrgProfileData {
   return {
+    company_email: readText(row, ['company_email', 'contact_email', 'org_email']),
     hero_eyebrow: readText(row, ['hero_eyebrow']),
     mission_title: readText(row, ['mission_title']) || companyName,
     mission_text: readText(row, ['mission_text', 'mission_desc', 'description', 'bio']),
@@ -136,6 +142,7 @@ function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: s
 
 function normalizeOrgData(data: OrgProfileData): OrgProfileData {
   return {
+    company_email: data.company_email.trim(),
     hero_eyebrow: data.hero_eyebrow.trim(),
     mission_title: data.mission_title.trim(),
     mission_text: data.mission_text.trim(),
@@ -211,6 +218,7 @@ function OrganizationManifestoPageContent() {
     }),
     [displayCompanyName, orgData]
   );
+  const contactEmail = orgData.company_email.trim();
 
   useEffect(() => {
     if (authLoading) {
@@ -305,6 +313,10 @@ function OrganizationManifestoPageContent() {
     }
 
     const normalizedData = normalizeOrgData(orgData);
+    if (normalizedData.company_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedData.company_email)) {
+      setSaveError('Enter a valid contact email address.');
+      return;
+    }
 
     setIsSaving(true);
     setSaveError(null);
@@ -312,6 +324,7 @@ function OrganizationManifestoPageContent() {
 
     try {
       const updatePayload = stripUndefinedFields({
+        company_email: normalizedData.company_email || null,
         mission_text: normalizedData.mission_text || null,
         pillar1_title: normalizedData.pillar1_title || null,
         pillar1_desc: normalizedData.pillar1_desc || null,
@@ -486,6 +499,23 @@ function OrganizationManifestoPageContent() {
               {displayData.mission_text}
             </p>
           )}
+          {isEditing ? (
+            <EditorInput
+              label="Contact email"
+              placeholder="company@example.com"
+              value={orgData.company_email}
+              onChange={(value) => updateOrgField('company_email', value)}
+              className="mt-6 max-w-md text-sm font-medium text-slate-200"
+            />
+          ) : contactEmail ? (
+            <a
+              href={`mailto:${contactEmail}`}
+              className="mt-8 inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700/50"
+            >
+              <Mail className="h-4 w-4" />
+              {contactEmail}
+            </a>
+          ) : null}
           {isLoading ? (
             isEditing ? (
               <EditorInput
