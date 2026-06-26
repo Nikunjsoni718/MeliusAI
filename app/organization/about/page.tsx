@@ -24,16 +24,13 @@ type OrgProfileData = {
   hero_eyebrow: string;
   mission_title: string;
   mission_text: string;
-  section1_subheading: string;
   section1_heading: string;
   pillar1_title: string;
   pillar1_desc: string;
   pillar2_title: string;
   pillar2_desc: string;
-  section2_subheading: string;
   section2_heading: string;
   tech_input: string;
-  section3_subheading: string;
   pillar3_title: string;
   pillar3_desc: string;
   perks_input: string;
@@ -62,16 +59,13 @@ const emptyOrgData: OrgProfileData = {
   hero_eyebrow: '',
   mission_title: '',
   mission_text: '',
-  section1_subheading: '',
   section1_heading: '',
   pillar1_title: '',
   pillar1_desc: '',
   pillar2_title: '',
   pillar2_desc: '',
-  section2_subheading: '',
   section2_heading: '',
   tech_input: '',
-  section3_subheading: '',
   pillar3_title: '',
   pillar3_desc: '',
   perks_input: '',
@@ -82,17 +76,14 @@ const fallbacks: OrgProfileData = {
   hero_eyebrow: '',
   mission_title: 'Click Edit to add your company mission',
   mission_text: 'Share the promise your company makes to candidates, collaborators, and the market.',
-  section1_subheading: 'Features of the company',
-  section1_heading: 'How we turn intent into execution.',
+  section1_heading: 'Features of the company',
   pillar1_title: 'Click Edit to add your first company principle',
   pillar1_desc: 'Describe the way your team turns intent into execution.',
   pillar2_title: 'Click Edit to add your company infrastructure',
   pillar2_desc: 'Describe the systems, tools, or operating model behind your work.',
-  section2_subheading: 'How we work',
-  section2_heading: 'Click Edit to add your infrastructure headline',
+  section2_heading: 'How we work',
   tech_input: 'Describe the systems, tools, or operating model behind your work.',
-  section3_subheading: 'Benefit of working with us',
-  pillar3_title: 'Click Edit to add your company benefit',
+  pillar3_title: 'Benefits of working with us',
   pillar3_desc: 'Describe why ambitious people should build with your organization.',
   perks_input: 'Describe why ambitious people should build with your organization.',
   loadingStatusText: 'Synchronizing verified workspace details...',
@@ -129,16 +120,13 @@ function mapOrganizationToProfile(row: OrganizationRecord | null, companyName: s
     hero_eyebrow: readText(row, ['hero_eyebrow']),
     mission_title: readText(row, ['mission_title']) || companyName,
     mission_text: readText(row, ['mission_text', 'mission_desc', 'description', 'bio']),
-    section1_subheading: readText(row, ['section1_subheading']),
     section1_heading: readText(row, ['section1_heading']),
     pillar1_title: readText(row, ['pillar1_title', 'feature_one_title']),
     pillar1_desc: readText(row, ['pillar1_desc', 'feature_one_desc']),
     pillar2_title: readText(row, ['pillar2_title', 'infrastructure_title']),
     pillar2_desc: readText(row, ['pillar2_desc', 'infrastructure_desc']),
-    section2_subheading: readText(row, ['section2_subheading']),
     section2_heading: readText(row, ['section2_heading', 'pillar2_title', 'infrastructure_title']),
     tech_input: readText(row, ['tech_input', 'section2_desc', 'infrastructure_desc', 'pillar2_desc']),
-    section3_subheading: readText(row, ['section3_subheading']),
     pillar3_title: readText(row, ['pillar3_title', 'benefit_title']),
     pillar3_desc: readText(row, ['pillar3_desc', 'benefit_desc', 'perks_input']),
     perks_input: readText(row, ['perks_input', 'pillar3_desc', 'benefit_desc']),
@@ -151,16 +139,13 @@ function normalizeOrgData(data: OrgProfileData): OrgProfileData {
     hero_eyebrow: data.hero_eyebrow.trim(),
     mission_title: data.mission_title.trim(),
     mission_text: data.mission_text.trim(),
-    section1_subheading: data.section1_subheading.trim(),
     section1_heading: data.section1_heading.trim(),
     pillar1_title: data.pillar1_title.trim(),
     pillar1_desc: data.pillar1_desc.trim(),
     pillar2_title: data.pillar2_title.trim(),
     pillar2_desc: data.pillar2_desc.trim(),
-    section2_subheading: data.section2_subheading.trim(),
     section2_heading: data.section2_heading.trim(),
     tech_input: data.tech_input.trim(),
-    section3_subheading: data.section3_subheading.trim(),
     pillar3_title: data.pillar3_title.trim(),
     pillar3_desc: data.pillar3_desc.trim(),
     perks_input: data.perks_input.trim(),
@@ -212,16 +197,13 @@ function OrganizationManifestoPageContent() {
       hero_eyebrow: getDisplay(orgData.hero_eyebrow, displayCompanyName),
       mission_title: getDisplay(orgData.mission_title, fallbacks.mission_title),
       mission_text: getDisplay(orgData.mission_text, fallbacks.mission_text),
-      section1_subheading: getDisplay(orgData.section1_subheading, fallbacks.section1_subheading),
       section1_heading: getDisplay(orgData.section1_heading, fallbacks.section1_heading),
       pillar1_title: getDisplay(orgData.pillar1_title, fallbacks.pillar1_title),
       pillar1_desc: getDisplay(orgData.pillar1_desc, fallbacks.pillar1_desc),
       pillar2_title: getDisplay(orgData.pillar2_title, fallbacks.pillar2_title),
       pillar2_desc: getDisplay(orgData.pillar2_desc, fallbacks.pillar2_desc),
-      section2_subheading: getDisplay(orgData.section2_subheading, fallbacks.section2_subheading),
       section2_heading: getDisplay(orgData.section2_heading, fallbacks.section2_heading),
       tech_input: getDisplay(orgData.tech_input, fallbacks.tech_input),
-      section3_subheading: getDisplay(orgData.section3_subheading, fallbacks.section3_subheading),
       pillar3_title: getDisplay(orgData.pillar3_title, fallbacks.pillar3_title),
       pillar3_desc: getDisplay(orgData.pillar3_desc, fallbacks.pillar3_desc),
       perks_input: getDisplay(orgData.perks_input, fallbacks.perks_input),
@@ -523,22 +505,9 @@ function OrganizationManifestoPageContent() {
 
         <section className="border-t border-white/10 py-16 sm:py-20">
           {isEditing ? (
-            <EditorInput
-              label="Section one subheading"
-              placeholder="Features of the company"
-              value={orgData.section1_subheading}
-              onChange={(value) => updateOrgField('section1_subheading', value)}
-              className="text-xs font-bold uppercase tracking-[0.24em] text-purple-200"
-            />
-          ) : (
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-purple-300">
-              {displayData.section1_subheading}
-            </p>
-          )}
-          {isEditing ? (
             <EditorTextarea
               label="Section one heading"
-              placeholder="Enter section heading..."
+              placeholder="Features of the company"
               value={orgData.section1_heading}
               onChange={(value) => updateOrgField('section1_heading', value)}
               rows={2}
@@ -584,27 +553,14 @@ function OrganizationManifestoPageContent() {
             <Sparkles className="h-6 w-6 text-cyan-300" />
             {isEditing ? (
               <EditorInput
-                label="Section two subheading"
-                placeholder="How we work"
-                value={orgData.section2_subheading}
-                onChange={(value) => updateOrgField('section2_subheading', value)}
-                className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-200"
-              />
-            ) : (
-              <p className="mt-6 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">
-                {displayData.section2_subheading}
-              </p>
-            )}
-            {isEditing ? (
-              <EditorInput
                 label="Section two heading"
-                placeholder="Enter infrastructure heading..."
+                placeholder="How we work"
                 value={orgData.section2_heading}
                 onChange={(value) => updateOrgField('section2_heading', value)}
-                className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl"
+                className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl"
               />
             ) : (
-              <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+              <h2 className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl">
                 {displayData.section2_heading}
               </h2>
             )}
@@ -628,21 +584,8 @@ function OrganizationManifestoPageContent() {
         <section className="border-t border-white/10 py-16 sm:py-20">
           {isEditing ? (
             <EditorInput
-              label="Section three subheading"
-              placeholder="Benefit of working with us"
-              value={orgData.section3_subheading}
-              onChange={(value) => updateOrgField('section3_subheading', value)}
-              className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-200"
-            />
-          ) : (
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">
-              {displayData.section3_subheading}
-            </p>
-          )}
-          {isEditing ? (
-            <EditorInput
               label="Benefit title"
-              placeholder="Enter benefits heading..."
+              placeholder="Benefits of working with us"
               value={orgData.pillar3_title}
               onChange={(value) => updateOrgField('pillar3_title', value)}
               className="mt-4 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl"
