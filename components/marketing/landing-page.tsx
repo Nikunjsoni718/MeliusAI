@@ -4,16 +4,16 @@ import { Button } from '@/components/ui/button';
 export function LandingPage() {
   return (
     <main className="mx-auto flex min-h-[calc(100vh-11rem)] w-full max-w-7xl flex-col px-4 py-0 sm:px-6 lg:px-8">
-      <section className="flex flex-col items-start justify-center text-left w-full mt-16 flex-1">
-        <div className="max-w-4xl">
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center w-full mt-16 flex-1">
+        <div className="flex flex-col items-start text-left max-w-4xl">
           <Badge variant="accent" className="mb-2">
             Introduction
           </Badge>
           <h1 className="max-w-4xl text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
-            Verify Your Work. Level Up Your Career.
+            Verify Engineering Excellence.
           </h1>
           <p className="mt-6 mb-10 max-w-2xl text-lg leading-8 text-slate-300">
-            Don&apos;t just list your skills. Upload your projects, get an elite AI audit in seconds, and know exactly what to fix before your next big move.
+            The intelligence layer for technical talent. For developers building a verified body of work, and organizations seeking undeniable signal to make their next great hire.
           </p>
           <div className="flex flex-row justify-start gap-4 mb-6">
             <Button size="lg" href="/auth">
@@ -33,6 +33,45 @@ export function LandingPage() {
             <Button variant="outline" size="lg" href="/about-us">
               About us
             </Button>
+          </div>
+        </div>
+
+        <div className="relative w-full">
+          <div className="relative rounded-xl border border-gray-800 bg-gray-900/50 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-xl">
+            <div className="flex items-center gap-2 border-b border-gray-800 px-5 py-4">
+              <span className="h-3 w-3 rounded-full bg-red-400" />
+              <span className="h-3 w-3 rounded-full bg-yellow-400" />
+              <span className="h-3 w-3 rounded-full bg-emerald-400" />
+            </div>
+            <pre className="overflow-x-auto px-5 py-6 text-left text-sm leading-7 text-slate-300">
+              <code>
+                <span className="text-fuchsia-300">import</span>
+                <span className="text-slate-300"> asyncio</span>
+                {'\n\n'}
+                <span className="text-fuchsia-300">async def</span>
+                <span className="text-sky-300"> fetch_data</span>
+                <span className="text-slate-300">():</span>
+                {'\n'}
+                <span className="text-slate-500">  # AI scanning architecture...</span>
+                {'\n'}
+                <span className="text-slate-300">  payload = </span>
+                <span className="text-emerald-300">await</span>
+                <span className="text-sky-300"> collect_signal</span>
+                <span className="text-slate-300">()</span>
+                {'\n'}
+                <span className="text-slate-300">  score = </span>
+                <span className="text-sky-300">audit_engine</span>
+                <span className="text-slate-300">(payload)</span>
+                {'\n'}
+                <span className="text-fuchsia-300">  return</span>
+                <span className="text-slate-300"> score</span>
+              </code>
+            </pre>
+          </div>
+          <div className="absolute -bottom-6 -right-6 rounded-full border border-teal-300/40 bg-slate-950/90 px-5 py-3 shadow-[0_0_34px_rgba(45,212,191,0.22)]">
+            <p className="bg-gradient-to-r from-emerald-300 to-teal-300 bg-clip-text text-sm font-semibold text-transparent">
+              AI Audit Score: 94/100
+            </p>
           </div>
         </div>
       </section>
