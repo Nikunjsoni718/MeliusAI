@@ -317,7 +317,6 @@ function OrganizationManifestoPageContent() {
         user_id: userId,
         company_name: displayCompanyName,
         name: displayCompanyName,
-        description: normalizedData.missionDesc || null,
         mission_text: normalizedData.missionDesc || null,
         hero_eyebrow: normalizedData.heroEyebrow || null,
         verified_badge_text: normalizedData.verifiedBadgeText || null,
