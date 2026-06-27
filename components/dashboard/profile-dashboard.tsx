@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Mail, Menu, Search } from 'lucide-react';
+import { FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
@@ -1496,7 +1496,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
   const [showRefresh, setShowRefresh] = useState(false);
@@ -1744,10 +1743,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       router.replace('/auth');
     }
   }, [authEnabled, loading, router, targetUsername, user]);
-
-  useEffect(() => {
-    setIsOpen(false);
-  }, [pathname]);
 
   useEffect(() => {
     if (loading) {
@@ -2984,35 +2979,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ) : null}
       </AnimatePresence>
       <div className="relative z-10 flex h-full w-full overflow-hidden">
-          <header className="fixed left-0 right-0 top-0 z-30 flex items-center justify-between border-b border-blue-950/40 bg-[#020617]/70 px-4 py-3 backdrop-blur-xl md:hidden">
-            <button
-              type="button"
-              onClick={() => setIsOpen((value) => !value)}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-950/60 bg-[#071329]/80 text-slate-200 transition hover:border-cyan-500/40 hover:text-cyan-300"
-              aria-label="Toggle sidebar navigation"
-              aria-expanded={isOpen}
-            >
-              <Menu className="h-5 w-5" strokeWidth={1.9} />
-            </button>
-            <Link href="/home" className="flex items-center gap-2 text-sm font-semibold text-white" aria-label="Go to candidate dashboard">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-950/60 bg-blue-950/60 p-1">
-                <Image src={faviconLogo} alt="MeliusAI Logo" width={32} height={32} className="object-contain cursor-pointer" />
-              </span>
-              MeliusAI
-            </Link>
-          </header>
-          {isOpen ? (
-            <div
-              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px] md:hidden"
-              onClick={() => setIsOpen(false)}
-              aria-hidden="true"
-            />
-          ) : null}
           <aside
-            className={cn(
-              'fixed inset-y-0 left-0 z-50 flex h-full w-64 min-w-[16rem] shrink-0 transform flex-col justify-between overflow-hidden border-r border-blue-950/40 bg-[#0a0f24] p-4 transition-transform duration-300 ease-in-out md:static md:translate-x-0',
-              isOpen ? 'translate-x-0' : '-translate-x-full'
-            )}
+            className="z-50 flex h-full w-64 flex-shrink-0 flex-col justify-between overflow-hidden border-r border-blue-950/40 bg-[#0a0f24] p-4"
           >
             <div>
               <Link href="/home" className="mb-8 flex items-center gap-3 px-3 py-2" aria-label="Go to candidate dashboard">
@@ -3044,7 +3012,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           (item.href === profileHref && pathname.startsWith('/profile/'))
                         }
                         icon={item.icon}
-                        onClick={() => setIsOpen(false)}
                       />
                     </motion.div>
                   ))}
@@ -3056,7 +3023,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 active={pathname === profileHref || pathname.startsWith('/profile/')}
                 avatarUrl={avatarUrl}
                 href={profileHref}
-                onClick={() => setIsOpen(false)}
               />
               <Button
                 variant="ghost"
