@@ -14,6 +14,7 @@
     "@next/swc-win32-x64-msvc": "^16.2.1",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.57.4",
+    "@vercel/analytics": "^2.0.1",
     "ai": "^6.0.205",
     "framer-motion": "^12.38.0",
     "jszip": "^3.10.1",
