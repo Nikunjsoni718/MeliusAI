@@ -68,7 +68,7 @@ const roleDescriptors: Record<UserRole, RoleDescriptor> = {
     panelAura: 'bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.12),transparent_35%)]',
     formTitle: 'Sign In as Individual Talent',
     formDescription: 'Launch your independent vault, preserve your work trail, and let MeliusAI help you get the most out of it.',
-    panelNote: 'GitHub opens a live OAuth flow today. Behance is staged as the creative identity connector inside the same secure vault.',
+    panelNote: 'Email sign-in opens your secure individual vault.',
     points: ['Save your projects', 'Get a clear review', 'Grow step by step'],
   },
   recruiter: {
@@ -202,27 +202,6 @@ function ProviderOptionButton({
   );
 }
 
-type IdentityLinkButtonProps = {
-  label: string;
-  mark: string;
-  onClick: () => void;
-  pending?: boolean;
-};
-
-function IdentityLinkButton({ label, mark, onClick, pending = false }: IdentityLinkButtonProps) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-sm font-semibold text-slate-200 transition hover:border-sky-400/35 hover:bg-white/[0.07] hover:text-white"
-    >
-      <span aria-hidden="true">{pending ? '...' : mark}</span>
-    </button>
-  );
-}
-
 function ButtonSpinner() {
   return (
     <span
@@ -245,7 +224,7 @@ export function AuthPage() {
   const [individualPassword, setIndividualPassword] = useState('');
   const [showIndividualPassword, setShowIndividualPassword] = useState(false);
   const [workEmail, setWorkEmail] = useState('');
-  const [pendingAction, setPendingAction] = useState<'github' | 'linkedin' | 'sso' | 'vault' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'linkedin' | 'sso' | 'vault' | null>(null);
   const [pendingSync, setPendingSync] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -353,7 +332,7 @@ export function AuthPage() {
 
     const redirectTo = `${window.location.origin}/auth/login`;
 
-    setPendingAction(provider === 'github' ? 'github' : 'linkedin');
+    setPendingAction('linkedin');
     setError(null);
     setMessage(null);
     saveRoleIntent(selectedRole);
@@ -373,16 +352,6 @@ export function AuthPage() {
       setPendingAction(null);
       setError(oauthFailure instanceof Error ? oauthFailure.message : 'We could not open that sign-in.');
     }
-  }
-
-  function beginBehance() {
-    if (!selectedRole) {
-      return;
-    }
-
-    saveRoleIntent(selectedRole);
-    setError(null);
-    setMessage('Behance sign-in is coming soon.');
   }
 
   async function initializeIndividualVault(event: FormEvent<HTMLFormElement>) {
@@ -653,7 +622,7 @@ export function AuthPage() {
               Individual Talent Sign In
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-              Access your private vault with email, GitHub, or Behance.
+              Access your private vault with your email.
             </p>
             {!authEnabled ? (
               <div className="mx-auto mt-4 max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
@@ -889,9 +858,6 @@ export function AuthPage() {
                                       ? 'Create Account'
                                       : 'Sign In'}
                                 </Button>
-                                <p className="text-center text-xs leading-6 text-slate-500">
-                                  You can link GitHub or Behance later.
-                                </p>
                               </form>
 
                               {error ? (
@@ -904,25 +870,6 @@ export function AuthPage() {
                                   {message}
                                 </div>
                               ) : null}
-
-                              <div className="pt-2 text-center">
-                                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                                  Or use GitHub or Behance
-                                </p>
-                                <div className="mt-4 flex items-center justify-center gap-3">
-                                  <IdentityLinkButton
-                                    label="Sign in with GitHub"
-                                    mark="GH"
-                                    onClick={() => void beginOAuth('github')}
-                                    pending={pendingAction === 'github'}
-                                  />
-                                  <IdentityLinkButton
-                                    label="Sign in with Behance"
-                                    mark="Be"
-                                    onClick={beginBehance}
-                                  />
-                                </div>
-                              </div>
 
                               <button
                                 type="button"
