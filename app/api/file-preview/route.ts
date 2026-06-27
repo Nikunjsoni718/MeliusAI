@@ -6,6 +6,7 @@ import type { FilePreviewResponse, StructuredPreview } from '@/lib/file-preview'
 export const runtime = 'nodejs';
 
 const MAX_FILE_PREVIEW_BYTES = 5 * 1024 * 1024;
+const FORCED_UTF8_CODE_EXTENSIONS = new Set(['js', 'jsx', 'ts', 'tsx']);
 
 function isPreviewPayloadTooLarge(request: Request) {
   const contentLength = request.headers.get('content-length');
@@ -56,6 +57,34 @@ function chunkItems(items: string[], size: number) {
   }
 
   return chunks;
+}
+
+async function readFileAsUtf8Text(file: File) {
+  const buffer = await file.arrayBuffer();
+  return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+}
+
+async function buildCodePreview(file: File, extension: string): Promise<StructuredPreview> {
+  const codeContent = (await readFileAsUtf8Text(file)).trim();
+
+  if (!codeContent) {
+    return buildUnsupportedPreview('Code file', 'We opened this source file, but no readable UTF-8 text was found.');
+  }
+
+  const lines = codeContent.split(/\r?\n/).slice(0, 120);
+
+  return {
+    kind: 'code',
+    summary: `${extension.toUpperCase()} source ready to read`,
+    note: 'This source file is decoded as UTF-8 by extension, regardless of browser MIME type.',
+    sections: [
+      {
+        id: 'code-preview',
+        title: file.name,
+        lines,
+      },
+    ],
+  };
 }
 
 function buildUnsupportedPreview(label: string, note?: string): StructuredPreview {
@@ -244,7 +273,9 @@ export async function POST(request: Request) {
     const extension = getFileExtension(file.name);
     let preview: StructuredPreview;
 
-    if (extension === 'pptx') {
+    if (FORCED_UTF8_CODE_EXTENSIONS.has(extension)) {
+      preview = await buildCodePreview(file, extension);
+    } else if (extension === 'pptx') {
       preview = await buildPptxPreview(file);
     } else if (extension === 'ppt') {
       preview = await buildPptPreview(file);

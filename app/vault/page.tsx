@@ -148,6 +148,16 @@ function getCodeLanguage(extension: string) {
   return codeLanguageMap[extension] ?? null;
 }
 
+async function readRemoteTextAsUtf8(src: string) {
+  const response = await fetch(src);
+
+  if (!response.ok) {
+    throw new Error('Unable to read code preview.');
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(await response.arrayBuffer());
+}
+
 function formatFileSize(bytes?: number | null) {
   if (!Number.isFinite(bytes) || !bytes || bytes <= 0) {
     return null;
@@ -456,13 +466,7 @@ function CodeCardPreview({ src, language }: { src?: string | null; language?: st
 
     let active = true;
 
-    void fetch(src)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Unable to read code preview.');
-        }
-        return response.text();
-      })
+    void readRemoteTextAsUtf8(src)
       .then((text) => {
         if (active) {
           setRemotePreview({ src, code: text.slice(0, 3000) });

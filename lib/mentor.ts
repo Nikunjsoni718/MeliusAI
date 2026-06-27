@@ -28,6 +28,7 @@ const GITHUB_ALLOWED_EXTENSIONS = new Set([
   ".yaml",
   ".yml",
 ]);
+const FORCED_UTF8_CODE_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx"]);
 const GITHUB_IGNORED_SEGMENTS = new Set([
   ".git",
   ".next",
@@ -721,11 +722,19 @@ async function fetchRepoFileContent(input: {
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  if (contentType && !contentType.startsWith("text/") && !contentType.includes("json")) {
+  const extension = `.${input.path.split(".").pop()?.trim().toLowerCase() ?? ""}`;
+  if (
+    contentType &&
+    !FORCED_UTF8_CODE_EXTENSIONS.has(extension) &&
+    !contentType.startsWith("text/") &&
+    !contentType.includes("json")
+  ) {
     return null;
   }
 
-  const text = normalizeRepoFileContent(await response.text());
+  const text = normalizeRepoFileContent(
+    new TextDecoder("utf-8", { fatal: false }).decode(await response.arrayBuffer())
+  );
   return text || null;
 }
 

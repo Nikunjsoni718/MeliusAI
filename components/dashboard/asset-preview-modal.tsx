@@ -8,6 +8,7 @@ const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'do
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
 const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
 const audioExtensions = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
+const forcedUtf8CodeExtensions = new Set(['js', 'jsx', 'ts', 'tsx']);
 
 type PreviewProject = {
   id?: string;
@@ -113,6 +114,20 @@ function getPreviewExtension(previewUrl: string | null, fileName: string | null,
     project?.source_kind?.trim().toLowerCase() ||
     ''
   );
+}
+
+function shouldForceUtf8CodeRead(previewUrl: string | null, fileName: string | null, project?: PreviewProject | null) {
+  return forcedUtf8CodeExtensions.has(getPreviewExtension(previewUrl, fileName, project));
+}
+
+async function readRemoteTextAsUtf8(src: string) {
+  const response = await fetch(src);
+
+  if (!response.ok) {
+    throw new Error('Unable to read code content.');
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(await response.arrayBuffer());
 }
 
 function getScore(project?: PreviewProject | null) {
@@ -249,6 +264,12 @@ export function AssetPreviewModal({
     setIsVerifying(true);
 
     try {
+      const codeContent =
+        activePreviewUrl && shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject)
+          ? await readRemoteTextAsUtf8(activePreviewUrl)
+              .then((text) => text.trim())
+              .catch(() => '')
+          : '';
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
         headers: {
@@ -258,6 +279,7 @@ export function AssetPreviewModal({
           projectId,
           assetName: liveProject.name || liveProject.title || liveProject.file_name || previewName,
           assetTextContent: getProjectAssetText(liveProject, previewName),
+          codeContent,
           userContextDescription: getProjectBio(liveProject),
         }),
       });

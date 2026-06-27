@@ -7,7 +7,7 @@ export type StructuredPreviewSection = {
 };
 
 export type StructuredPreview = {
-  kind: 'presentation' | 'document' | 'spreadsheet' | 'binary';
+  kind: 'presentation' | 'document' | 'spreadsheet' | 'code' | 'binary';
   summary: string;
   note?: string;
   sections: StructuredPreviewSection[];
@@ -17,4 +17,3 @@ export type FilePreviewResponse = {
   data?: StructuredPreview;
   error?: string;
 };
-

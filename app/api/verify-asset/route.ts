@@ -37,6 +37,7 @@ type ProjectRecord = Record<string, unknown>;
 
 const MAX_CODE_CONTENT_BYTES = 5 * 1024 * 1024;
 const STORAGE_BUCKET_NAME = 'vault';
+const FORCED_UTF8_CODE_EXTENSIONS = new Set(['js', 'jsx', 'ts', 'tsx']);
 const CODE_TEXT_EXTENSIONS = new Set([
   'c',
   'cc',
@@ -111,6 +112,14 @@ function getExtensionFromNameOrUrl(value: string) {
   return cleanValue.split('/').pop()?.split('.').pop()?.trim().toLowerCase() ?? '';
 }
 
+function shouldForceUtf8CodeRead(...values: string[]) {
+  return values.some((value) => FORCED_UTF8_CODE_EXTENSIONS.has(getExtensionFromNameOrUrl(value)));
+}
+
+function decodeUtf8Text(buffer: ArrayBuffer) {
+  return new TextDecoder('utf-8', { fatal: false }).decode(buffer).trim();
+}
+
 function isTextLikeContent(filename: string, contentType: string) {
   const normalizedType = contentType.toLowerCase();
   const extension = getExtensionFromNameOrUrl(filename);
@@ -131,7 +140,7 @@ async function readUploadedCodeContent(file: File) {
     throw new Error('Raw code content must be 5 MB or smaller.');
   }
 
-  return (await file.text()).trim();
+  return decodeUtf8Text(await file.arrayBuffer());
 }
 
 function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
@@ -141,13 +150,18 @@ function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
 
   try {
     const url = new URL(fileUrl);
-    const marker = `/storage/v1/object/public/${bucketName}/`;
-    const markerIndex = url.pathname.indexOf(marker);
+    const storageMarkers = [
+      `/storage/v1/object/public/${bucketName}/`,
+      `/storage/v1/object/sign/${bucketName}/`,
+      `/storage/v1/object/authenticated/${bucketName}/`,
+    ];
+    const marker = storageMarkers.find((candidate) => url.pathname.includes(candidate));
 
-    if (markerIndex === -1) {
+    if (!marker) {
       return '';
     }
 
+    const markerIndex = url.pathname.indexOf(marker);
     return decodeURIComponent(url.pathname.slice(markerIndex + marker.length));
   } catch {
     return '';
@@ -178,7 +192,12 @@ async function downloadStoredCodeContent({
   }
 
   const contentType = data.type ?? '';
-  if (!isTextLikeContent(assetName, contentType) && !isTextLikeContent(storagePath, contentType)) {
+  const forceUtf8CodeRead = shouldForceUtf8CodeRead(assetName, storagePath, fileUrl);
+  if (
+    !forceUtf8CodeRead &&
+    !isTextLikeContent(assetName, contentType) &&
+    !isTextLikeContent(storagePath, contentType)
+  ) {
     return '';
   }
 
@@ -186,7 +205,7 @@ async function downloadStoredCodeContent({
     throw new Error('Raw code content must be 5 MB or smaller.');
   }
 
-  return (await data.text()).trim();
+  return decodeUtf8Text(await data.arrayBuffer());
 }
 
 async function readVerificationInput(req: Request): Promise<VerificationInput> {

@@ -338,6 +338,44 @@ function getCodeLanguage(extension: string) {
   return codeLanguageMap[extension] ?? null;
 }
 
+const forcedUtf8CodeExtensions = new Set(['js', 'jsx', 'ts', 'tsx']);
+
+function getFileExtensionFromSource(source?: string | null) {
+  if (!source) {
+    return '';
+  }
+
+  const withoutQuery = source.split('?')[0]?.split('#')[0] ?? source;
+
+  try {
+    return getFileExtension(new URL(withoutQuery).pathname);
+  } catch {
+    return getFileExtension(withoutQuery);
+  }
+}
+
+function shouldForceUtf8CodeRead(...sources: Array<string | null | undefined>) {
+  return sources.some((source) => forcedUtf8CodeExtensions.has(getFileExtensionFromSource(source)));
+}
+
+async function readRemoteTextAsUtf8(src: string) {
+  const response = await fetch(src);
+
+  if (!response.ok) {
+    throw new Error('Unable to read code preview.');
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(await response.arrayBuffer());
+}
+
+function getUploadContentType(file: File) {
+  if (shouldForceUtf8CodeRead(file.name)) {
+    return 'text/plain; charset=utf-8';
+  }
+
+  return file.type || 'application/octet-stream';
+}
+
 function resolvePreviewKind({
   fileName,
   mimeType,
@@ -894,13 +932,7 @@ function CodePreview({
 
     let active = true;
 
-    void fetch(src)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Unable to read code preview.');
-        }
-        return response.text();
-      })
+    void readRemoteTextAsUtf8(src)
       .then((text) => {
         if (active) {
           setRemotePreview({ src, code: text.slice(0, 50000) });
@@ -2524,7 +2556,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     const path = `${userId}/${getStorageFileName(file.name)}`;
     const { error: uploadError } = await supabase.storage.from('vault').upload(path, file, {
       upsert: true,
-      contentType: file.type || 'application/octet-stream',
+      contentType: getUploadContentType(file),
     });
 
     if (uploadError) {
@@ -2682,6 +2714,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     const userContextDescription = projectDescriptions[project.id] ?? '';
+    const projectSourceHref = getProjectDownloadHref(project);
     const assetTextContent = [
       project.text_preview,
       project.ai_summary,
@@ -2708,6 +2741,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
+      const codeContent =
+        projectSourceHref && shouldForceUtf8CodeRead(project.file_name, project.title, projectSourceHref)
+          ? await readRemoteTextAsUtf8(projectSourceHref)
+              .then((text) => text.trim())
+              .catch(() => '')
+          : '';
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
         headers: {
@@ -2717,6 +2756,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           projectId: project.id,
           assetName: project.file_name || project.title,
           assetTextContent,
+          codeContent,
           userContextDescription,
         }),
       });
