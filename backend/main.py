@@ -392,6 +392,83 @@ def secure_filename(filename: str | None) -> str:
     return sanitized_name or "upload"
 
 
+EVALUATION_LANGUAGE_MAP = {
+    ".py": "Python",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript React (TSX)",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript React (JSX)",
+}
+
+EVALUATION_SYSTEM_MESSAGE = (
+    "You are an elite Senior Staff Software Engineer auditing code for MeliusAI. "
+    "Evaluate the code for architectural design, performance, security, and best practices. "
+    "Return EXACTLY this JSON format: {'score': number, 'grade': 'A'|'B'|'C'|'D'|'F', 'pros': [string, string, string], 'cons': [string, string, string], 'recommendations': [string, string, string]}"
+)
+
+
+@app.post("/api/evaluate")
+async def evaluate_code(
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(verify_user),
+):
+    filename = secure_filename(file.filename)
+    _, ext = os.path.splitext(filename.lower())
+    detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Uploaded files must be 5 MB or smaller.",
+        )
+
+    try:
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Uploaded files must be 5 MB or smaller.",
+            )
+
+        try:
+            code_content = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            code_content = file_bytes.decode("utf-8", errors="ignore")
+
+        if not code_content.strip():
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        completion = await async_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
+                {
+                    "role": "user",
+                    "content": (
+                        f"File Name: {filename}\n"
+                        f"Language: {detected_language}\n\n"
+                        f"Raw Code:\n{code_content}"
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+
+        raw_content = completion.choices[0].message.content or "{}"
+        return json.loads(raw_content)
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail="The evaluation model returned malformed JSON.",
+        ) from parse_error
+    except Exception as error:
+        logger.exception("code_evaluation.failed")
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
 # --- POLYGLOT CODE ANALYSIS ENDPOINT ---
 @app.post("/api/analyze-code")
 async def analyze_code(
