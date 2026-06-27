@@ -809,7 +809,7 @@ function OrganizationDashboardContent() {
     router.replace('/');
   }
   return (
-    <div className="min-h-screen w-full bg-[#060b26] flex flex-col md:flex-row overflow-x-hidden text-slate-100">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-[#060b26] text-slate-100 md:flex-row">
       <header className="fixed top-0 left-0 right-0 h-14 bg-[#0a0f29]/90 backdrop-blur-md border-b border-slate-900 flex items-center justify-between px-4 md:hidden z-50">
         <Link
           href="/organization/dashboard"
@@ -854,7 +854,7 @@ function OrganizationDashboardContent() {
         </button>
       </header>
 
-      <aside className="hidden md:flex md:w-64 border-r border-slate-800/60 bg-[#060817] flex-col justify-between p-6 h-screen shrink-0">
+      <aside className="hidden h-full shrink-0 flex-col justify-between overflow-hidden border-r border-slate-800/60 bg-[#060817] p-6 md:flex md:w-64">
         <div>
           <div className="mb-10 rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#191336] via-[#070a1e] to-[#030512] p-4">
             <Link
@@ -927,7 +927,7 @@ function OrganizationDashboardContent() {
       </aside>
 
       <main
-        className="flex-1 w-full p-8 min-h-screen overflow-y-auto space-y-8 CustomScrollbar bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512]"
+        className="min-h-0 flex-1 w-full space-y-8 overflow-y-auto bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512] p-8 CustomScrollbar"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 md:gap-10">

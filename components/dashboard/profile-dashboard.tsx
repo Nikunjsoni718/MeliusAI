@@ -2967,8 +2967,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     <main
       className={
         isOrganizationWorkspace
-          ? 'relative flex min-h-screen overflow-hidden bg-[#030512] text-white'
-          : 'relative flex min-h-screen w-full overflow-x-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
+          ? 'relative flex h-screen overflow-hidden bg-[#030512] text-white'
+          : 'relative flex h-screen w-screen overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
       }
     >
       <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
@@ -3006,8 +3006,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           transition={{ duration: 0.4, ease: 'easeOut' }}
           className={
             isOrganizationWorkspace
-              ? 'relative z-10 flex w-full overflow-hidden'
-              : 'relative z-10 flex min-h-screen w-full'
+              ? 'relative z-10 flex h-full w-full overflow-hidden'
+              : 'relative z-10 flex h-full w-full overflow-hidden'
           }
         >
           <header className="fixed left-0 right-0 top-0 z-30 flex items-center justify-between border-b border-blue-950/40 bg-[#020617]/70 px-4 py-3 backdrop-blur-xl md:hidden">
@@ -3036,9 +3036,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ) : null}
           <aside
             className={cn(
-              'fixed inset-y-0 left-0 z-50 flex w-64 min-w-[16rem] shrink-0 transform flex-col justify-between overflow-y-auto border-r border-blue-950/40 bg-[#0a0f24] p-4 transition-transform duration-300 ease-in-out md:static md:translate-x-0',
-              isOpen ? 'translate-x-0' : '-translate-x-full',
-              isOrganizationWorkspace ? 'h-screen' : 'min-h-screen'
+              'fixed inset-y-0 left-0 z-50 flex h-full w-64 min-w-[16rem] shrink-0 transform flex-col justify-between overflow-hidden border-r border-blue-950/40 bg-[#0a0f24] p-4 transition-transform duration-300 ease-in-out md:static md:translate-x-0',
+              isOpen ? 'translate-x-0' : '-translate-x-full'
             )}
           >
             <div>
@@ -3098,8 +3097,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           <section
             className={
               isOrganizationWorkspace
-                ? 'flex-1 w-full p-8 min-h-screen overflow-y-auto pt-20 md:pt-8'
-                : 'flex flex-1 w-full p-8 min-h-screen flex-col overflow-x-hidden overflow-y-auto pt-20 md:pt-8'
+                ? 'h-full min-h-0 flex-1 w-full overflow-y-auto p-8 pt-20 md:pt-8'
+                : 'flex h-full min-h-0 flex-1 w-full flex-col overflow-x-hidden overflow-y-auto p-8 pt-20 md:pt-8'
             }
           >
             <div
