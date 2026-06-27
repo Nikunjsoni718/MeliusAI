@@ -862,11 +862,6 @@ export function AuthPage() {
                                 </Button>
                               </form>
 
-                              {error ? (
-                                <div className="rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                                  {error}
-                                </div>
-                              ) : null}
                               {message ? (
                                 <div className="rounded-[1.5rem] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
                                   {message}
