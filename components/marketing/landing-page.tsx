@@ -27,9 +27,6 @@ export function LandingPage() {
             <Button variant="outline" size="lg" href="/difference">
               What makes us different
             </Button>
-            <Button variant="outline" size="lg" href="/melius+">
-              Melius+
-            </Button>
             <Button variant="outline" size="lg" href="/about-us">
               About us
             </Button>
