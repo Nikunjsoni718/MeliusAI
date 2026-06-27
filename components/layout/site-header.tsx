@@ -10,7 +10,6 @@ const navItems = [
   { href: '/', label: 'Introduction' },
   { href: '/how-it-works', label: 'How it Works' },
   { href: '/difference', label: 'What makes us different' },
-  { href: '/melius+', label: 'Melius+' },
   { href: '/about-us', label: 'About Us' },
 ];
 
