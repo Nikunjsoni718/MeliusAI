@@ -245,12 +245,10 @@ function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
 }
 
 async function downloadStoredCodeContent({
-  assetName,
   filePath,
   fileUrl,
   supabase,
 }: {
-  assetName: string;
   filePath: string;
   fileUrl: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -267,21 +265,11 @@ async function downloadStoredCodeContent({
     throw new Error('Failed to download file from storage');
   }
 
-  const contentType = data.type ?? '';
-  const forceUtf8CodeRead = shouldForceUtf8CodeRead(assetName, storagePath, fileUrl);
-  if (
-    !forceUtf8CodeRead &&
-    !isTextLikeContent(assetName, contentType) &&
-    !isTextLikeContent(storagePath, contentType)
-  ) {
-    return '';
-  }
-
   if (data.size > MAX_CODE_CONTENT_BYTES) {
     throw new Error('Raw code content must be 5 MB or smaller.');
   }
 
-  return decodeUtf8Text(await data.arrayBuffer());
+  return (await data.text()).trim();
 }
 
 async function readVerificationInput(req: Request, jsonBody?: VerifyAssetPayload): Promise<VerificationInput> {
@@ -394,7 +382,6 @@ export async function POST(req: Request) {
     const storedCodeContent = input.codeContent
       ? ''
       : await downloadStoredCodeContent({
-          assetName,
           filePath,
           fileUrl,
           supabase,

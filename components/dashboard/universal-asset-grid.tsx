@@ -145,7 +145,7 @@ async function readRemoteTextAsUtf8(src: string) {
     throw new Error('Unable to read code preview.');
   }
 
-  return new TextDecoder('utf-8', { fatal: false }).decode(await response.arrayBuffer());
+  return response.text();
 }
 
 function formatFileSize(bytes?: number | null) {
