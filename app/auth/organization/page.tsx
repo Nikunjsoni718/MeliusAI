@@ -4,12 +4,25 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { SessionRouteGuard } from '@/components/auth/session-route-guard';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { persistAuthenticatedRouteState, persistAuthenticatedUser } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
 type AuthTab = 'login' | 'register';
+
+function LogicPrismLogo() {
+  return (
+    <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
+      <div className="absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
+      <div className="absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
+      <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 text-sm font-semibold tracking-[0.32em] text-white">
+        MIQ
+      </div>
+    </div>
+  );
+}
 
 function getAuthErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -168,9 +181,26 @@ export default function CorporateOrganisationAuthPage() {
 
   return (
     <SessionRouteGuard>
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 font-[var(--font-sans)] text-slate-100 select-none sm:px-6 lg:px-8">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
-      <div className="relative w-full max-w-xl overflow-hidden rounded-[2rem] border border-purple-400/25 bg-white/[0.06] shadow-2xl shadow-slate-950/50 backdrop-blur-2xl">
+      <main className="relative isolate min-h-screen overflow-hidden bg-slate-950 px-4 py-12 font-[var(--font-sans)] text-slate-100 select-none sm:px-6 lg:px-8">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
+        <div className="absolute left-1/2 top-20 h-64 w-64 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
+
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center">
+        <div className="mx-auto w-full max-w-5xl">
+          <div className="text-center">
+            <LogicPrismLogo />
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              Welcome
+            </Badge>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
+              Verified Organization Sign In
+            </h1>
+            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
+              Access your corporate dashboard to hire verified talent.
+            </p>
+          </div>
+        </div>
+        <div className="relative mx-auto mt-10 w-full max-w-xl overflow-hidden rounded-[2rem] border border-purple-400/25 bg-white/[0.06] shadow-2xl shadow-slate-950/50 backdrop-blur-2xl">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(147,51,234,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(217,70,239,0.12),transparent_35%)]" />
         <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
         <div className="relative p-6 sm:p-8">
@@ -233,7 +263,7 @@ export default function CorporateOrganisationAuthPage() {
             </div>
 
             <Button
-              className="w-full bg-purple-600 text-white shadow-lg shadow-purple-900/20 hover:bg-purple-500"
+              className="w-full !bg-purple-600 !text-white shadow-lg shadow-purple-900/20 hover:!bg-purple-500"
               size="lg"
               type="submit"
               disabled={isSubmitting}
@@ -316,7 +346,7 @@ export default function CorporateOrganisationAuthPage() {
             </div>
 
             <Button
-              className="w-full bg-purple-600 text-white shadow-lg shadow-purple-900/20 hover:bg-purple-500"
+              className="w-full !bg-purple-600 !text-white shadow-lg shadow-purple-900/20 hover:!bg-purple-500"
               size="lg"
               type="submit"
               disabled={isSubmitting}
@@ -347,8 +377,9 @@ export default function CorporateOrganisationAuthPage() {
           </button>
         </div>
       </div>
-    </div>
-    </div>
+        </div>
+      </div>
+      </main>
     </SessionRouteGuard>
   );
 }
