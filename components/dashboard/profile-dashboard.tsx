@@ -2750,15 +2750,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     const userContextDescription = projectDescriptions[project.id] ?? '';
     const projectSourceHref = getProjectDownloadHref(project);
-    const assetTextContent = [
-      project.text_preview,
-      project.ai_summary,
-      project.description,
-      project.file_name,
-      project.source_kind,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    const filename = project.file_name || project.title;
 
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
@@ -2776,29 +2768,27 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
-      const codeContent =
-        projectSourceHref && shouldForceUtf8CodeRead(project.file_name, project.title, projectSourceHref)
-          ? await readRemoteTextAsUtf8(projectSourceHref)
-              .then((text) => text.trim())
-              .catch(() => '')
-          : '';
+      if (!projectSourceHref) {
+        throw new Error('Verification Failed: This asset does not contain a valid file URL.');
+      }
+
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          projectId: project.id,
-          assetName: project.file_name || project.title,
-          filename: project.file_name || project.title,
-          assetTextContent,
-          codeContent: codeContent || project.text_preview || '',
-          userContextDescription,
+          fileUrl: projectSourceHref,
+          filename,
         }),
       });
 
       const payload = (await response.json()) as {
         error?: string;
+        grade?: string;
+        pros?: string[];
+        cons?: string[];
+        recommendations?: string[];
         project?: ProjectItem;
         reportText?: string;
         score?: number;
@@ -2809,8 +2799,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       const updatedProject = payload.project;
+      const pythonScore = typeof payload.score === 'number' ? payload.score : null;
       const accumulatedReportText =
-        payload.reportText ?? updatedProject?.description ?? updatedProject?.ai_summary ?? '';
+        payload.reportText ??
+        updatedProject?.description ??
+        updatedProject?.ai_summary ??
+        `## Executive Summary
+Grade: ${payload.grade ?? 'N/A'}
+
+## Pros
+${(payload.pros ?? []).map((item) => `- ${item}`).join('\n') || '- No strengths returned.'}
+
+## Cons
+${(payload.cons ?? []).map((item) => `- ${item}`).join('\n') || '- No flaws returned.'}
+
+## Strategic Recommendations
+${(payload.recommendations ?? []).map((item) => `- ${item}`).join('\n') || '- No recommendations returned.'}
+
+## Scorecard
+MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
 
       setLiveStreamText(accumulatedReportText);
       setProjects((currentProjects) =>
@@ -2820,10 +2827,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 ...currentProject,
                 ...(updatedProject ?? {}),
                 has_been_audited: updatedProject?.has_been_audited ?? true,
-                evaluation_score: updatedProject?.evaluation_score ?? payload.score ?? currentProject.evaluation_score,
-                logic_score: updatedProject?.logic_score ?? payload.score ?? currentProject.logic_score,
+                evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentProject.evaluation_score,
+                logic_score: updatedProject?.logic_score ?? pythonScore ?? currentProject.logic_score,
                 ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
                 description: updatedProject?.description ?? accumulatedReportText,
+                pros: payload.pros ?? updatedProject?.pros ?? currentProject.pros,
+                cons: payload.cons ?? updatedProject?.cons ?? currentProject.cons,
+                recommendations: payload.recommendations ?? updatedProject?.recommendations ?? currentProject.recommendations,
               }
             : currentProject
         )
@@ -2838,10 +2848,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               ...currentAsset,
               ...(updatedProject ?? {}),
               has_been_audited: updatedProject?.has_been_audited ?? true,
-              evaluation_score: updatedProject?.evaluation_score ?? payload.score ?? currentAsset.evaluation_score,
-              logic_score: updatedProject?.logic_score ?? payload.score ?? currentAsset.logic_score,
+              evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentAsset.evaluation_score,
+              logic_score: updatedProject?.logic_score ?? pythonScore ?? currentAsset.logic_score,
               ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
               description: updatedProject?.description ?? accumulatedReportText,
+              pros: payload.pros ?? updatedProject?.pros ?? currentAsset.pros,
+              cons: payload.cons ?? updatedProject?.cons ?? currentAsset.cons,
+              recommendations: payload.recommendations ?? updatedProject?.recommendations ?? currentAsset.recommendations,
             }
           : currentAsset
       );

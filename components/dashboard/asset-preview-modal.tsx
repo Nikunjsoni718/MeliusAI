@@ -107,6 +107,10 @@ type VerifyAssetResponse = {
   project?: PreviewProject;
   reportText?: string;
   score?: number;
+  grade?: string;
+  pros?: string[];
+  cons?: string[];
+  recommendations?: string[];
 };
 
 function getFileExtensionFromUrlOrName(previewUrl: string | null, fileName: string | null) {
@@ -312,23 +316,19 @@ export function AssetPreviewModal({
     setIsVerifying(true);
 
     try {
-      const codeContent =
-        activePreviewUrl && shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject)
-          ? await readRemoteTextAsUtf8(activePreviewUrl)
-              .then((text) => text.trim())
-              .catch(() => '')
-          : '';
+      if (!activePreviewUrl) {
+        throw new Error('MeliusAI verification requires a file URL.');
+      }
+
+      const filename = liveProject.name || liveProject.title || liveProject.file_name || previewName;
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          projectId,
-          assetName: liveProject.name || liveProject.title || liveProject.file_name || previewName,
-          assetTextContent: getProjectAssetText(liveProject, previewName),
-          codeContent,
-          userContextDescription: getProjectBio(liveProject),
+          fileUrl: activePreviewUrl,
+          filename,
         }),
       });
       const data = (await response.json()) as VerifyAssetResponse;
@@ -338,19 +338,36 @@ export function AssetPreviewModal({
       }
 
       const report = data.report;
+      const pythonScore = typeof data.score === 'number' ? data.score : undefined;
+      const reportText =
+        data.reportText ??
+        `## Executive Summary
+Grade: ${data.grade ?? 'N/A'}
+
+## Pros
+${(data.pros ?? report?.pros ?? []).map((item) => `- ${item}`).join('\n') || '- No strengths returned.'}
+
+## Cons
+${(data.cons ?? report?.cons ?? []).map((item) => `- ${item}`).join('\n') || '- No flaws returned.'}
+
+## Strategic Recommendations
+${(data.recommendations ?? report?.strategicRecommendations ?? []).map((item) => `- ${item}`).join('\n') || '- No recommendations returned.'}
+
+## Scorecard
+MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/100**`;
       const projectPatch: Partial<PreviewProject> = {
         ...(data.project ?? {}),
-        score: report?.calculatedScore ?? data.score ?? data.project?.score ?? liveProject.score,
+        score: report?.calculatedScore ?? pythonScore ?? data.project?.score ?? liveProject.score,
         evaluation_score:
-          report?.calculatedScore ?? data.score ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
-        logic_score: report?.calculatedScore ?? data.score ?? data.project?.logic_score ?? liveProject.logic_score,
+          report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
+        logic_score: report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
         audit_summary: report?.executiveSummary ?? data.project?.audit_summary ?? liveProject.audit_summary,
-        pros: report?.pros ?? data.project?.pros ?? liveProject.pros,
-        cons: report?.cons ?? data.project?.cons ?? liveProject.cons,
+        pros: report?.pros ?? data.pros ?? data.project?.pros ?? liveProject.pros,
+        cons: report?.cons ?? data.cons ?? data.project?.cons ?? liveProject.cons,
         recommendations:
-          report?.strategicRecommendations ?? data.project?.recommendations ?? liveProject.recommendations,
-        ai_summary: data.reportText ?? data.project?.ai_summary ?? liveProject.ai_summary,
-        description: data.reportText ?? data.project?.description ?? liveProject.description,
+          report?.strategicRecommendations ?? data.recommendations ?? data.project?.recommendations ?? liveProject.recommendations,
+        ai_summary: reportText ?? data.project?.ai_summary ?? liveProject.ai_summary,
+        description: reportText ?? data.project?.description ?? liveProject.description,
       };
 
       setLiveProject((currentProject) => ({

@@ -1,264 +1,29 @@
-import { openai } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const auditReportSchema = z.object({
-  calculatedScore: z.number().min(0).max(100),
-  executiveSummary: z.string(),
-  pros: z.array(z.string()),
-  cons: z.array(z.string()),
-  strategicRecommendations: z.array(z.string()),
-});
-
-type AuditReport = z.infer<typeof auditReportSchema>;
-
-type VerifyAssetPayload = {
-  projectId?: unknown;
+type VerifyAssetProxyPayload = {
+  fileUrl?: unknown;
   filename?: unknown;
-  assetName?: unknown;
-  assetTextContent?: unknown;
-  codeContent?: unknown;
-  userContextDescription?: unknown;
 };
-
-type VerificationInput = {
-  projectId: string;
-  assetName: string;
-  assetTextContent: string;
-  codeContent: string;
-  userContextDescription: string;
-};
-
-type ProjectRecord = Record<string, unknown>;
-
-const MAX_CODE_CONTENT_BYTES = 5 * 1024 * 1024;
-const STORAGE_BUCKET_NAME = 'vault';
 
 function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function isDirectPythonEvaluationPayload(body: VerifyAssetPayload) {
-  return !getString(body.projectId) && Boolean(getString(body.filename)) && Boolean(getString(body.codeContent));
-}
-
-async function proxyCodeContentToPythonBackend({
-  filename,
-  codeContent,
-  accessToken,
-}: {
-  filename: string;
-  codeContent: string;
-  accessToken?: string;
-}) {
-  const encodedSize = new TextEncoder().encode(codeContent).byteLength;
-
-  if (encodedSize > MAX_CODE_CONTENT_BYTES) {
-    return NextResponse.json(
-      { error: 'Raw code content must be 5 MB or smaller.' },
-      { status: 413 }
-    );
-  }
-
-  const backendFormData = new FormData();
-  const blob = new Blob([codeContent], { type: 'text/plain' });
-  backendFormData.append('file', blob, filename);
-
-  const backendRequest: RequestInit = {
-    method: 'POST',
-    body: backendFormData,
-  };
-
-  if (accessToken) {
-    backendRequest.headers = { Authorization: `Bearer ${accessToken}` };
-  }
-
-  const backendUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL?.trim().replace(/\/$/, '');
-
-  if (!backendUrl) {
-    throw new Error('MeliusAI Python evaluation endpoint is not configured.');
-  }
-
-  const backendResponse = await fetch(`${backendUrl}/api/evaluate`, backendRequest);
-
-  const responseContentType = backendResponse.headers.get('content-type') ?? '';
-  const responseText = await backendResponse.text();
-  let responseBody: Record<string, unknown> = { result: responseText };
-
-  if (responseContentType.includes('application/json')) {
-    try {
-      responseBody = JSON.parse(responseText || '{}') as Record<string, unknown>;
-    } catch {
-      responseBody = { result: responseText };
-    }
-  }
-
-  if (!backendResponse.ok) {
-    const detail =
-      typeof responseBody?.detail === 'string'
-        ? responseBody.detail
-        : typeof responseBody?.error === 'string'
-          ? responseBody.error
-          : responseText || `HTTP Status ${backendResponse.status}`;
-
-    return NextResponse.json(
-      {
-        error: detail,
-        backend: responseBody,
-      },
-      { status: backendResponse.status }
-    );
-  }
-
-  return NextResponse.json(responseBody, { status: backendResponse.status });
-}
-
-function getProjectString(project: ProjectRecord | null | undefined, key: string) {
-  return getString(project?.[key]);
-}
-
-function getAssetNameFromProject(project: ProjectRecord | null | undefined, fallback: string) {
-  return (
-    getProjectString(project, 'name') ||
-    getProjectString(project, 'file_name') ||
-    getProjectString(project, 'title') ||
-    fallback ||
-    'Project Asset'
-  );
-}
-
-function getProjectFileUrl(project: ProjectRecord | null | undefined) {
-  return getProjectString(project, 'file_url') || getProjectString(project, 'source_url');
-}
-
-function getProjectFilePath(project: ProjectRecord | null | undefined) {
-  return (
-    getProjectString(project, 'file_path') ||
-    getProjectString(project, 'storage_path') ||
-    getProjectString(project, 'path')
-  );
-}
-
-async function readUploadedCodeContent(file: File) {
-  if (file.size > MAX_CODE_CONTENT_BYTES) {
-    throw new Error('Raw code content must be 5 MB or smaller.');
-  }
-
-  return (await file.text()).trim();
-}
-
-function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
-  if (!fileUrl) {
-    return '';
-  }
-
+export async function POST(request: Request) {
   try {
-    const url = new URL(fileUrl);
-    const storageMarkers = [
-      `/storage/v1/object/public/${bucketName}/`,
-      `/storage/v1/object/sign/${bucketName}/`,
-      `/storage/v1/object/authenticated/${bucketName}/`,
-    ];
-    const marker = storageMarkers.find((candidate) => url.pathname.includes(candidate));
+    const backendUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL?.trim().replace(/\/$/, '');
 
-    if (!marker) {
-      return '';
+    if (!backendUrl) {
+      return NextResponse.json(
+        { error: 'NEXT_PUBLIC_PYTHON_BACKEND_URL is not configured.' },
+        { status: 500 }
+      );
     }
 
-    const markerIndex = url.pathname.indexOf(marker);
-    return decodeURIComponent(url.pathname.slice(markerIndex + marker.length));
-  } catch {
-    return '';
-  }
-}
-
-async function downloadStoredCodeContent({
-  filePath,
-  fileUrl,
-  supabase,
-}: {
-  filePath: string;
-  fileUrl: string;
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-}) {
-  const storagePath = filePath || getStoragePathFromUrl(fileUrl, STORAGE_BUCKET_NAME);
-
-  if (!storagePath) {
-    return '';
-  }
-
-  const { data, error } = await supabase.storage.from(STORAGE_BUCKET_NAME).download(storagePath);
-
-  if (error || !data) {
-    throw new Error('Failed to download file from storage');
-  }
-
-  if (data.size > MAX_CODE_CONTENT_BYTES) {
-    throw new Error('Raw code content must be 5 MB or smaller.');
-  }
-
-  return (await data.text()).trim();
-}
-
-async function readVerificationInput(req: Request, jsonBody?: VerifyAssetPayload): Promise<VerificationInput> {
-  const contentType = req.headers.get('content-type')?.toLowerCase() ?? '';
-
-  if (contentType.includes('multipart/form-data')) {
-    const formData = await req.formData();
-    const file = formData.get('file');
-    const formAssetName = getString(formData.get('assetName'));
-    const uploadedFile = file instanceof File ? file : null;
-
-    return {
-      projectId: getString(formData.get('projectId')),
-      assetName: uploadedFile?.name?.trim() || formAssetName || 'Project Asset',
-      assetTextContent: getString(formData.get('assetTextContent')),
-      codeContent: uploadedFile ? await readUploadedCodeContent(uploadedFile) : getString(formData.get('codeContent')),
-      userContextDescription: getString(formData.get('userContextDescription')),
-    };
-  }
-
-  const body = jsonBody ?? ((await req.json()) as VerifyAssetPayload);
-
-  return {
-    projectId: getString(body.projectId),
-    assetName: getString(body.assetName) || getString(body.filename) || 'Project Asset',
-    assetTextContent: getString(body.assetTextContent),
-    codeContent: getString(body.codeContent),
-    userContextDescription: getString(body.userContextDescription),
-  };
-}
-
-function buildReportMarkdown(assetName: string, report: AuditReport) {
-  const pros = report.pros.map((item) => `- ${item}`).join('\n');
-  const cons = report.cons.map((item) => `- ${item}`).join('\n');
-  const recommendations = report.strategicRecommendations.map((item) => `- ${item}`).join('\n');
-
-  return `## Executive Summary
-${report.executiveSummary}
-
-## Pros
-${pros || '- No explicit strengths were identified from the submitted content.'}
-
-## Cons
-${cons || '- No explicit risks were identified from the submitted content.'}
-
-## Strategic Recommendations
-${recommendations || '- Keep expanding the project context and validation evidence.'}
-
-## Scorecard
-Asset: ${assetName || 'Project Asset'}
-
-MeliusAI Verification Score: **${report.calculatedScore}/100**`;
-}
-
-export async function POST(req: Request) {
-  try {
     const supabase = await createSupabaseServerClient();
     const {
       data: { user },
@@ -266,143 +31,43 @@ export async function POST(req: Request) {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return new Response('Unauthorized', { status: 401 });
-    }
-
-    const requestContentType = req.headers.get('content-type')?.toLowerCase() ?? '';
-    const jsonBody = requestContentType.includes('application/json')
-      ? ((await req.json()) as VerifyAssetPayload)
-      : undefined;
-    const sessionResult = await supabase.auth.getSession();
-
-    if (jsonBody && isDirectPythonEvaluationPayload(jsonBody)) {
-      return proxyCodeContentToPythonBackend({
-        filename: getString(jsonBody.filename),
-        codeContent: getString(jsonBody.codeContent),
-        accessToken: sessionResult.data.session?.access_token,
-      });
-    }
-
-    const input = await readVerificationInput(req, jsonBody);
-    const projectId = input.projectId;
-
-    if (!projectId) {
-      return NextResponse.json(
-        { error: 'projectId is required.' },
-        { status: 400 }
-      );
-    }
-
-    const { data: projectData, error: projectError } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (projectError) {
-      throw new Error(`Supabase project lookup failed: ${projectError.message}`);
-    }
-
-    if (!projectData) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const project = projectData as ProjectRecord;
-    const assetName = getAssetNameFromProject(project, input.assetName);
-    const fileUrl = getProjectFileUrl(project);
-    const filePath = getProjectFilePath(project);
-    const storedCodeContent = input.codeContent
-      ? ''
-      : await downloadStoredCodeContent({
-          filePath,
-          fileUrl,
-          supabase,
-        });
-    const rawCodeContent = input.codeContent || storedCodeContent;
-    const codeContent = rawCodeContent || input.assetTextContent;
-    const userContextDescription = input.userContextDescription;
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (!rawCodeContent) {
+    const body = (await request.json()) as VerifyAssetProxyPayload;
+    const fileUrl = getString(body.fileUrl);
+    const filename = getString(body.filename) || 'asset.txt';
+
+    if (!fileUrl) {
       return NextResponse.json(
-        { error: `Unable to read raw code content for ${assetName}.` },
+        { error: 'fileUrl is required.' },
         { status: 400 }
       );
     }
 
-    if (!codeContent) {
-      return NextResponse.json(
-        { error: 'Unable to verify this asset because no readable file content was provided.' },
-        { status: 400 }
-      );
-    }
-
-    const rawCodeInstruction = `Here is the raw code content for ${assetName}. Analyze this specific code.`;
-    const supplementalContext =
-      input.assetTextContent && input.assetTextContent !== codeContent
-        ? `\n\nSupplemental asset context:\n${input.assetTextContent.slice(0, 8000)}`
-        : '';
-
-    const { object: auditReport } = await generateObject({
-      model: openai('gpt-4o-mini'),
-      schema: auditReportSchema,
-      system:
-        `You are MeliusAI, a production-grade multimodal asset verification engine. ${rawCodeInstruction} Thoroughly audit the submitted asset text against the user-provided intent and context. Calculate an objective score out of 100 based on correctness, completeness, technical clarity, implementation quality, and alignment with the stated criteria. Return only structured data that satisfies the schema. The executiveSummary must be clean Markdown text detailing performance. The pros, cons, and strategicRecommendations arrays must contain specific, actionable observations.`,
-      prompt: `Filename:
-${assetName}
-
-User context / audit criteria:
-${userContextDescription || 'No explicit user criteria were provided. Infer reasonable verification criteria from the asset content.'}
-
-${rawCodeInstruction}
-
-codeContent:
-\`\`\`
-${codeContent.slice(0, 24000)}
-\`\`\`${supplementalContext}`,
+    const pythonResponse = await fetch(`${backendUrl}/api/evaluate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ fileUrl, filename }),
     });
 
-    const reportText = buildReportMarkdown(assetName, auditReport);
-    const updatePayload = {
-      score: auditReport.calculatedScore,
-      audit_summary: auditReport.executiveSummary,
-      pros: auditReport.pros,
-      cons: auditReport.cons,
-      recommendations: auditReport.strategicRecommendations,
-      user_description: userContextDescription,
-      status: 'Verified',
-      evaluation_score: auditReport.calculatedScore,
-      logic_score: auditReport.calculatedScore,
-      has_been_audited: true,
-      ai_summary: reportText,
-      description: reportText,
-    };
+    const responseBody = await pythonResponse.text();
 
-    const { data: updatedProject, error: updateError } = await supabase
-      .from('projects')
-      .update(updatePayload)
-      .eq('id', projectId)
-      .eq('user_id', user.id)
-      .select('*')
-      .single();
-
-    if (updateError?.code === 'PGRST116') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    if (updateError) {
-      throw new Error(`Supabase project audit persistence failed: ${updateError.message}`);
-    }
-
-    return NextResponse.json({
-      success: true,
-      report: auditReport,
-      project: updatedProject,
-      reportText,
-      score: auditReport.calculatedScore,
+    return new Response(responseBody, {
+      status: pythonResponse.status,
+      headers: {
+        'Content-Type': pythonResponse.headers.get('content-type') ?? 'application/json',
+      },
     });
   } catch (error) {
-    console.error('Serverless asset verification failed:', error);
+    console.error('Verify asset proxy failed:', error);
 
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unable to verify asset.' },

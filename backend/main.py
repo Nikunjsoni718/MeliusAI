@@ -12,12 +12,14 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID
+import httpx
 from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 from typing import Any, Dict, List
 
 try:
@@ -73,9 +75,11 @@ async def enforce_cors_origin_whitelist(request: Request, call_next):
     return await call_next(request)
 
 # Initialize OpenAI Client (Guaranteed to read from root .env.local now)
+logging.basicConfig(level=logging.INFO)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
+logger.setLevel(logging.INFO)
 supabase_backend_client = None
 supabase = None
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -393,11 +397,43 @@ def secure_filename(filename: str | None) -> str:
 
 
 EVALUATION_LANGUAGE_MAP = {
+    ".c": "C",
+    ".cc": "C++",
+    ".cpp": "C++",
+    ".cs": "C#",
+    ".css": "CSS",
+    ".cxx": "C++",
+    ".dart": "Dart",
+    ".go": "Go",
+    ".h": "C/C++ Header",
+    ".hpp": "C++ Header",
+    ".html": "HTML",
+    ".java": "Java",
+    ".jsx": "JavaScript React (JSX)",
+    ".js": "JavaScript",
+    ".json": "JSON",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
+    ".lua": "Lua",
+    ".md": "Markdown",
+    ".mjs": "JavaScript",
+    ".php": "PHP",
     ".py": "Python",
+    ".rb": "Ruby",
+    ".rs": "Rust",
+    ".scala": "Scala",
+    ".scss": "SCSS",
+    ".sh": "Shell",
+    ".sql": "SQL",
+    ".svelte": "Svelte",
+    ".swift": "Swift",
+    ".toml": "TOML",
     ".ts": "TypeScript",
     ".tsx": "TypeScript React (TSX)",
-    ".js": "JavaScript",
-    ".jsx": "JavaScript React (JSX)",
+    ".vue": "Vue",
+    ".xml": "XML",
+    ".yaml": "YAML",
+    ".yml": "YAML",
 }
 
 EVALUATION_SYSTEM_MESSAGE = (
@@ -407,37 +443,68 @@ EVALUATION_SYSTEM_MESSAGE = (
 )
 
 
+class EvaluationRequest(BaseModel):
+    fileUrl: str
+    filename: str
+
+
 @app.post("/api/evaluate")
 async def evaluate_code(
-    file: UploadFile = File(...),
+    payload: EvaluationRequest,
     current_user_id: str = Depends(verify_user),
 ):
-    filename = secure_filename(file.filename)
+    file_url = payload.fileUrl.strip()
+    filename = secure_filename(payload.filename)
     _, ext = os.path.splitext(filename.lower())
     detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
 
-    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+    if not file_url:
         raise HTTPException(
-            status_code=413,
-            detail="Uploaded files must be 5 MB or smaller.",
+            status_code=400,
+            detail="fileUrl is required.",
         )
 
+    logger.info(
+        "code_evaluation.start user_id=%s filename=%s language=%s",
+        current_user_id,
+        filename,
+        detected_language,
+    )
+
     try:
-        file_bytes = await file.read()
+        logger.info("code_evaluation.download.start filename=%s", filename)
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        ) as http_client:
+            response = await http_client.get(file_url)
+
+        logger.info(
+            "code_evaluation.download.complete filename=%s status_code=%s byte_count=%s",
+            filename,
+            response.status_code,
+            len(response.content),
+        )
+        response.raise_for_status()
+
+        file_bytes = response.content
         if len(file_bytes) > MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="Uploaded files must be 5 MB or smaller.",
+                detail="Downloaded files must be 5 MB or smaller.",
             )
 
-        try:
-            code_content = file_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            code_content = file_bytes.decode("utf-8", errors="ignore")
+        code_content = file_bytes.decode("utf-8", errors="replace")
+        logger.info(
+            "code_evaluation.decode.complete filename=%s char_count=%s",
+            filename,
+            len(code_content),
+        )
 
         if not code_content.strip():
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+            raise HTTPException(status_code=400, detail="Downloaded file is empty.")
 
+        logger.info("code_evaluation.openai.start filename=%s", filename)
         completion = await async_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -454,12 +521,36 @@ async def evaluate_code(
             response_format={"type": "json_object"},
             temperature=0,
         )
+        logger.info("code_evaluation.openai.complete filename=%s", filename)
 
         raw_content = completion.choices[0].message.content or "{}"
-        return json.loads(raw_content)
+        parsed_content = json.loads(raw_content)
+        logger.info("code_evaluation.success filename=%s", filename)
+        return parsed_content
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as download_error:
+        logger.warning(
+            "code_evaluation.download.bad_status filename=%s status_code=%s",
+            filename,
+            download_error.response.status_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to download file from fileUrl. HTTP {download_error.response.status_code}.",
+        ) from download_error
+    except httpx.RequestError as download_error:
+        logger.warning(
+            "code_evaluation.download.failed filename=%s error=%s",
+            filename,
+            download_error,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to download file from fileUrl.",
+        ) from download_error
     except json.JSONDecodeError as parse_error:
+        logger.exception("code_evaluation.openai.malformed_json filename=%s", filename)
         raise HTTPException(
             status_code=502,
             detail="The evaluation model returned malformed JSON.",
@@ -790,8 +881,6 @@ async def review_portfolio_asset(
 # =====================================================================
 # ENGINE 2: CONVERSATIONAL INTERACTIVE CHAT STATION (Context-Aware)
 # =====================================================================
-from pydantic import BaseModel, Field
-from typing import Any, Dict, List
 
 
 class UniversalAuditReport(BaseModel):
