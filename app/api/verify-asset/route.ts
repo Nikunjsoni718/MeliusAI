@@ -19,6 +19,7 @@ type AuditReport = z.infer<typeof auditReportSchema>;
 
 type VerifyAssetPayload = {
   projectId?: unknown;
+  filename?: unknown;
   assetName?: unknown;
   assetTextContent?: unknown;
   codeContent?: unknown;
@@ -72,6 +73,98 @@ const CODE_TEXT_EXTENSIONS = new Set([
 
 function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function getFastApiEvaluateEndpoint() {
+  const configuredUrl =
+    process.env.FASTAPI_URL?.trim() ||
+    process.env.NEXT_PUBLIC_FASTAPI_URL?.trim() ||
+    process.env.NEXT_PUBLIC_MELIUS_AGENT_URL?.trim();
+
+  if (!configuredUrl) {
+    throw new Error('MeliusAI Python evaluation endpoint is not configured.');
+  }
+
+  const normalizedUrl = configuredUrl.replace(/\/$/, '');
+
+  if (normalizedUrl.endsWith('/api/evaluate')) {
+    return normalizedUrl;
+  }
+
+  if (normalizedUrl.endsWith('/api/review') || normalizedUrl.endsWith('/api/analyze-code')) {
+    return normalizedUrl.replace(/\/api\/(review|analyze-code)$/, '/api/evaluate');
+  }
+
+  return `${normalizedUrl}/api/evaluate`;
+}
+
+function isDirectPythonEvaluationPayload(body: VerifyAssetPayload) {
+  return !getString(body.projectId) && Boolean(getString(body.filename)) && Boolean(getString(body.codeContent));
+}
+
+async function proxyCodeContentToPythonBackend({
+  filename,
+  codeContent,
+  accessToken,
+}: {
+  filename: string;
+  codeContent: string;
+  accessToken?: string;
+}) {
+  const encodedSize = new TextEncoder().encode(codeContent).byteLength;
+
+  if (encodedSize > MAX_CODE_CONTENT_BYTES) {
+    return NextResponse.json(
+      { error: 'Raw code content must be 5 MB or smaller.' },
+      { status: 413 }
+    );
+  }
+
+  const backendFormData = new FormData();
+  const blob = new Blob([codeContent], { type: 'text/plain' });
+  backendFormData.append('file', blob, filename);
+
+  const backendRequest: RequestInit = {
+    method: 'POST',
+    body: backendFormData,
+  };
+
+  if (accessToken) {
+    backendRequest.headers = { Authorization: `Bearer ${accessToken}` };
+  }
+
+  const backendResponse = await fetch(getFastApiEvaluateEndpoint(), backendRequest);
+
+  const responseContentType = backendResponse.headers.get('content-type') ?? '';
+  const responseText = await backendResponse.text();
+  let responseBody: Record<string, unknown> = { result: responseText };
+
+  if (responseContentType.includes('application/json')) {
+    try {
+      responseBody = JSON.parse(responseText || '{}') as Record<string, unknown>;
+    } catch {
+      responseBody = { result: responseText };
+    }
+  }
+
+  if (!backendResponse.ok) {
+    const detail =
+      typeof responseBody?.detail === 'string'
+        ? responseBody.detail
+        : typeof responseBody?.error === 'string'
+          ? responseBody.error
+          : responseText || `HTTP Status ${backendResponse.status}`;
+
+    return NextResponse.json(
+      {
+        error: detail,
+        backend: responseBody,
+      },
+      { status: backendResponse.status }
+    );
+  }
+
+  return NextResponse.json(responseBody, { status: backendResponse.status });
 }
 
 function getProjectString(project: ProjectRecord | null | undefined, key: string) {
@@ -208,7 +301,7 @@ async function downloadStoredCodeContent({
   return decodeUtf8Text(await data.arrayBuffer());
 }
 
-async function readVerificationInput(req: Request): Promise<VerificationInput> {
+async function readVerificationInput(req: Request, jsonBody?: VerifyAssetPayload): Promise<VerificationInput> {
   const contentType = req.headers.get('content-type')?.toLowerCase() ?? '';
 
   if (contentType.includes('multipart/form-data')) {
@@ -226,11 +319,11 @@ async function readVerificationInput(req: Request): Promise<VerificationInput> {
     };
   }
 
-  const body = (await req.json()) as VerifyAssetPayload;
+  const body = jsonBody ?? ((await req.json()) as VerifyAssetPayload);
 
   return {
     projectId: getString(body.projectId),
-    assetName: getString(body.assetName) || 'Project Asset',
+    assetName: getString(body.assetName) || getString(body.filename) || 'Project Asset',
     assetTextContent: getString(body.assetTextContent),
     codeContent: getString(body.codeContent),
     userContextDescription: getString(body.userContextDescription),
@@ -272,7 +365,21 @@ export async function POST(req: Request) {
       return new Response('Unauthorized', { status: 401 });
     }
 
-    const input = await readVerificationInput(req);
+    const requestContentType = req.headers.get('content-type')?.toLowerCase() ?? '';
+    const jsonBody = requestContentType.includes('application/json')
+      ? ((await req.json()) as VerifyAssetPayload)
+      : undefined;
+    const sessionResult = await supabase.auth.getSession();
+
+    if (jsonBody && isDirectPythonEvaluationPayload(jsonBody)) {
+      return proxyCodeContentToPythonBackend({
+        filename: getString(jsonBody.filename),
+        codeContent: getString(jsonBody.codeContent),
+        accessToken: sessionResult.data.session?.access_token,
+      });
+    }
+
+    const input = await readVerificationInput(req, jsonBody);
     const projectId = input.projectId;
 
     if (!projectId) {

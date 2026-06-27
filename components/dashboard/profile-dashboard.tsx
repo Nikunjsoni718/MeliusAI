@@ -358,14 +358,13 @@ function shouldForceUtf8CodeRead(...sources: Array<string | null | undefined>) {
   return sources.some((source) => forcedUtf8CodeExtensions.has(getFileExtensionFromSource(source)));
 }
 
-const extractCodeAsText = (file: File) => {
-  return new Promise<string>((resolve, reject) => {
+const extractCodeAsText = (file: File) =>
+  new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => resolve(String(e.target?.result ?? ''));
-    reader.onerror = () => reject(new Error(`Failed to extract text from ${file.name}`));
+    reader.onerror = () => reject(new Error("Failed"));
     reader.readAsText(file, "UTF-8");
   });
-};
 
 async function readRemoteTextAsUtf8(src: string) {
   const response = await fetch(src);
@@ -2770,8 +2769,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         body: JSON.stringify({
           projectId: project.id,
           assetName: project.file_name || project.title,
+          filename: project.file_name || project.title,
           assetTextContent,
-          codeContent,
+          codeContent: codeContent || project.text_preview || '',
           userContextDescription,
         }),
       });
