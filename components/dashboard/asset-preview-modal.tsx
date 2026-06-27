@@ -8,7 +8,55 @@ const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'do
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
 const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
 const audioExtensions = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
-const forcedUtf8CodeExtensions = new Set(['js', 'jsx', 'ts', 'tsx']);
+const auditTextFileExtensions = new Set([
+  'c',
+  'cc',
+  'cjs',
+  'cpp',
+  'cs',
+  'css',
+  'cxx',
+  'dart',
+  'ex',
+  'exs',
+  'go',
+  'h',
+  'hpp',
+  'hs',
+  'htm',
+  'html',
+  'java',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'kts',
+  'lua',
+  'm',
+  'md',
+  'mjs',
+  'mm',
+  'php',
+  'pl',
+  'py',
+  'r',
+  'rb',
+  'rs',
+  'scala',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'vue',
+  'xml',
+  'yaml',
+  'yml',
+]);
 
 type PreviewProject = {
   id?: string;
@@ -117,7 +165,7 @@ function getPreviewExtension(previewUrl: string | null, fileName: string | null,
 }
 
 function shouldForceUtf8CodeRead(previewUrl: string | null, fileName: string | null, project?: PreviewProject | null) {
-  return forcedUtf8CodeExtensions.has(getPreviewExtension(previewUrl, fileName, project));
+  return auditTextFileExtensions.has(getPreviewExtension(previewUrl, fileName, project));
 }
 
 async function readRemoteTextAsUtf8(src: string) {

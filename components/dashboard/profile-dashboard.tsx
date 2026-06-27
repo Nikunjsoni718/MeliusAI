@@ -298,11 +298,19 @@ function getFileExtension(fileName: string) {
 
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
+  cc: 'cpp',
+  cjs: 'javascript',
   cpp: 'cpp',
+  cs: 'csharp',
   css: 'css',
   csv: 'csv',
+  cxx: 'cpp',
+  dart: 'dart',
+  ex: 'elixir',
+  exs: 'elixir',
   go: 'go',
   h: 'c',
+  hs: 'haskell',
   hpp: 'cpp',
   htm: 'html',
   html: 'html',
@@ -310,17 +318,30 @@ const codeLanguageMap: Record<string, string> = {
   js: 'javascript',
   json: 'json',
   jsx: 'jsx',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  lua: 'lua',
+  m: 'objective-c',
   md: 'markdown',
+  mjs: 'javascript',
+  mm: 'objective-cpp',
   php: 'php',
+  pl: 'perl',
   py: 'python',
+  r: 'r',
   rb: 'ruby',
   rs: 'rust',
+  scala: 'scala',
   scss: 'scss',
   sh: 'bash',
   sql: 'sql',
+  svelte: 'svelte',
+  swift: 'swift',
+  toml: 'toml',
   ts: 'typescript',
   tsx: 'tsx',
   txt: 'text',
+  vue: 'vue',
   xml: 'xml',
   yaml: 'yaml',
   yml: 'yaml',
@@ -338,7 +359,7 @@ function getCodeLanguage(extension: string) {
   return codeLanguageMap[extension] ?? null;
 }
 
-const forcedUtf8CodeExtensions = new Set(['js', 'jsx', 'ts', 'tsx']);
+const auditTextFileExtensions = new Set(Object.keys(codeLanguageMap));
 
 function getFileExtensionFromSource(source?: string | null) {
   if (!source) {
@@ -355,7 +376,7 @@ function getFileExtensionFromSource(source?: string | null) {
 }
 
 function shouldForceUtf8CodeRead(...sources: Array<string | null | undefined>) {
-  return sources.some((source) => forcedUtf8CodeExtensions.has(getFileExtensionFromSource(source)));
+  return sources.some((source) => auditTextFileExtensions.has(getFileExtensionFromSource(source)));
 }
 
 const extractCodeAsText = (file: File) =>

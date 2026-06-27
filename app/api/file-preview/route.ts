@@ -6,7 +6,55 @@ import type { FilePreviewResponse, StructuredPreview } from '@/lib/file-preview'
 export const runtime = 'nodejs';
 
 const MAX_FILE_PREVIEW_BYTES = 5 * 1024 * 1024;
-const FORCED_UTF8_CODE_EXTENSIONS = new Set(['js', 'jsx', 'ts', 'tsx']);
+const FORCED_UTF8_CODE_EXTENSIONS = new Set([
+  'c',
+  'cc',
+  'cjs',
+  'cpp',
+  'cs',
+  'css',
+  'cxx',
+  'dart',
+  'ex',
+  'exs',
+  'go',
+  'h',
+  'hpp',
+  'hs',
+  'htm',
+  'html',
+  'java',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'kts',
+  'lua',
+  'm',
+  'md',
+  'mjs',
+  'mm',
+  'php',
+  'pl',
+  'py',
+  'r',
+  'rb',
+  'rs',
+  'scala',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'vue',
+  'xml',
+  'yaml',
+  'yml',
+]);
 
 function isPreviewPayloadTooLarge(request: Request) {
   const contentLength = request.headers.get('content-length');
@@ -60,8 +108,7 @@ function chunkItems(items: string[], size: number) {
 }
 
 async function readFileAsUtf8Text(file: File) {
-  const buffer = await file.arrayBuffer();
-  return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+  return file.text();
 }
 
 async function buildCodePreview(file: File, extension: string): Promise<StructuredPreview> {

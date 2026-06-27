@@ -38,38 +38,6 @@ type ProjectRecord = Record<string, unknown>;
 
 const MAX_CODE_CONTENT_BYTES = 5 * 1024 * 1024;
 const STORAGE_BUCKET_NAME = 'vault';
-const FORCED_UTF8_CODE_EXTENSIONS = new Set(['js', 'jsx', 'ts', 'tsx']);
-const CODE_TEXT_EXTENSIONS = new Set([
-  'c',
-  'cc',
-  'cpp',
-  'cs',
-  'css',
-  'go',
-  'h',
-  'html',
-  'java',
-  'js',
-  'jsx',
-  'json',
-  'kt',
-  'md',
-  'mjs',
-  'php',
-  'py',
-  'rb',
-  'rs',
-  'sh',
-  'sql',
-  'swift',
-  'toml',
-  'ts',
-  'tsx',
-  'txt',
-  'xml',
-  'yaml',
-  'yml',
-]);
 
 function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -176,47 +144,12 @@ function getProjectFilePath(project: ProjectRecord | null | undefined) {
   );
 }
 
-function getExtensionFromNameOrUrl(value: string) {
-  const withoutQuery = value.split('?')[0]?.split('#')[0] ?? value;
-  const cleanValue = (() => {
-    try {
-      return new URL(withoutQuery).pathname;
-    } catch {
-      return withoutQuery;
-    }
-  })();
-  return cleanValue.split('/').pop()?.split('.').pop()?.trim().toLowerCase() ?? '';
-}
-
-function shouldForceUtf8CodeRead(...values: string[]) {
-  return values.some((value) => FORCED_UTF8_CODE_EXTENSIONS.has(getExtensionFromNameOrUrl(value)));
-}
-
-function decodeUtf8Text(buffer: ArrayBuffer) {
-  return new TextDecoder('utf-8', { fatal: false }).decode(buffer).trim();
-}
-
-function isTextLikeContent(filename: string, contentType: string) {
-  const normalizedType = contentType.toLowerCase();
-  const extension = getExtensionFromNameOrUrl(filename);
-
-  return (
-    CODE_TEXT_EXTENSIONS.has(extension) ||
-    normalizedType.startsWith('text/') ||
-    normalizedType.includes('javascript') ||
-    normalizedType.includes('json') ||
-    normalizedType.includes('typescript') ||
-    normalizedType.includes('xml') ||
-    normalizedType.includes('yaml')
-  );
-}
-
 async function readUploadedCodeContent(file: File) {
   if (file.size > MAX_CODE_CONTENT_BYTES) {
     throw new Error('Raw code content must be 5 MB or smaller.');
   }
 
-  return decodeUtf8Text(await file.arrayBuffer());
+  return (await file.text()).trim();
 }
 
 function getStoragePathFromUrl(fileUrl: string, bucketName: string) {
@@ -389,9 +322,8 @@ export async function POST(req: Request) {
     const rawCodeContent = input.codeContent || storedCodeContent;
     const codeContent = rawCodeContent || input.assetTextContent;
     const userContextDescription = input.userContextDescription;
-    const textAssetExpected = isTextLikeContent(assetName, '') || isTextLikeContent(fileUrl, '');
 
-    if (textAssetExpected && !rawCodeContent) {
+    if (!rawCodeContent) {
       return NextResponse.json(
         { error: `Unable to read raw code content for ${assetName}.` },
         { status: 400 }
