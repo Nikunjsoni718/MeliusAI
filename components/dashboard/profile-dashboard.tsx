@@ -1648,12 +1648,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   );
 
   const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
+  const isUploading = uploadState?.status === 'uploading';
   const isSyncing =
     profileSyncState === 'syncing' ||
     bioSaveState === 'saving' ||
     verifyingAssetId !== null ||
     deletingProjectId !== null ||
-    uploadState?.status === 'uploading';
+    isUploading;
   const allProjects = projects;
   const needsReviewCount = useMemo(() => {
     return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
@@ -2943,46 +2944,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
 
   return (
-    <div
-      className={
-        isOrganizationWorkspace
-          ? 'relative flex h-screen w-full overflow-hidden bg-[#030512] text-white'
-          : 'relative flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
-      }
-    >
-      <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(0,112,243,0.16),transparent_55%)]" />
-      <AnimatePresence>
-        {bioToastMessage ? (
-          <motion.div
-            initial={{ opacity: 0, y: -12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -12, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed right-5 top-5 z-50 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100 shadow-[0_0_30px_rgba(244,63,94,0.16)] backdrop-blur-2xl"
-            role="status"
-          >
-            {bioToastMessage}
-          </motion.div>
-        ) : null}
-        {projectVerifyError ? (
-          <motion.div
-            initial={{ opacity: 0, y: -12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -12, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed right-5 top-20 z-50 rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 shadow-[0_0_30px_rgba(56,189,248,0.16)] backdrop-blur-2xl"
-            role="status"
-          >
-            {projectVerifyError}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-      <div className="relative z-10 flex h-full w-full overflow-hidden">
-          <aside
-            className="z-50 flex h-full w-64 flex-shrink-0 flex-col justify-between overflow-hidden border-r border-blue-950/40 bg-[#0a0f24] p-4"
-          >
-            <div>
+    <div className="flex h-screen w-full overflow-hidden bg-slate-950 text-white">
+          <aside className="w-64 h-full flex-shrink-0 flex flex-col justify-between border-r border-slate-800 bg-slate-900">
+            <div className="p-4">
               <Link href="/home" className="mb-8 flex items-center gap-3 px-3 py-2" aria-label="Go to candidate dashboard">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-950/60 bg-blue-950/60 p-1">
                   <Image src={faviconLogo} alt="MeliusAI Logo" width={36} height={36} className="object-contain cursor-pointer" />
@@ -3018,7 +2982,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </AnimatePresence>
               </nav>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 p-4">
               <SidebarProfileLink
                 active={pathname === profileHref || pathname.startsWith('/profile/')}
                 avatarUrl={avatarUrl}
@@ -3034,14 +2998,45 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
           </aside>
 
-          <main
-            className={
-              isOrganizationWorkspace
-                ? 'h-full min-h-0 flex-1 w-full overflow-y-auto p-8 pt-20 md:pt-8'
-                : 'flex h-full min-h-0 flex-1 w-full flex-col overflow-x-hidden overflow-y-auto p-8 pt-20 md:pt-8'
-            }
-          >
-            {profileLoading ? (
+          <main className="flex-1 h-full overflow-y-auto relative p-8">
+            <AnimatePresence>
+              {bioToastMessage ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="fixed right-5 top-5 z-50 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100 shadow-[0_0_30px_rgba(244,63,94,0.16)] backdrop-blur-2xl"
+                  role="status"
+                >
+                  {bioToastMessage}
+                </motion.div>
+              ) : null}
+              {projectVerifyError ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="fixed right-5 top-20 z-50 rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 shadow-[0_0_30px_rgba(56,189,248,0.16)] backdrop-blur-2xl"
+                  role="status"
+                >
+                  {projectVerifyError}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+            {isUploading ? (
+              <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
+                <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/10 text-sky-100">
+                    <UploadIcon className="h-6 w-6" />
+                  </div>
+                  <p className="mt-4 text-lg font-semibold text-white">Uploading {uploadState?.fileName ?? 'asset'}...</p>
+                  <p className="mt-2 text-sm text-slate-400">Keep this tab open while your vault syncs.</p>
+                  <Progress value={uploadState?.progress ?? 5} className="mt-5 bg-slate-900/90" />
+                </div>
+              </div>
+            ) : profileLoading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
                 <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
                   <div className="mx-auto h-12 w-12 animate-pulse rounded-full border border-white/10 bg-white/5" />
@@ -3054,13 +3049,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
             ) : (
-            <div
-              className={
-                isOrganizationWorkspace
-                  ? 'flex w-full flex-col gap-6'
-                  : 'flex w-full flex-col gap-6'
-              }
-            >
+            <div className="flex w-full flex-col gap-6">
             <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
                 <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
@@ -3626,38 +3615,37 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
             </div>
             )}
+
+            {viewingAuditAsset ? (
+              <AuditReviewModal
+                assetTitle={viewingAuditAsset.title}
+                onClose={() => setViewingAuditAsset(null)}
+                reportText={
+                  verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
+                    ? liveStreamText
+                    : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
+                }
+                auditData={{
+                  audit_summary: viewingAuditAsset.audit_summary,
+                  pros: viewingAuditAsset.pros,
+                  cons: viewingAuditAsset.cons,
+                  recommendations: viewingAuditAsset.recommendations,
+                }}
+              />
+            ) : null}
+
+            <AssetPreviewModal
+              activePreviewName={activePreviewName}
+              activePreviewUrl={activePreviewUrl}
+              previewProject={activePreviewProject}
+              onProjectUpdated={handlePreviewProjectUpdated}
+              onClose={() => {
+                setActivePreviewProjectId(null);
+                setActivePreviewName(null);
+                setActivePreviewUrl(null);
+              }}
+            />
           </main>
-        </div>
-
-        {viewingAuditAsset ? (
-          <AuditReviewModal
-            assetTitle={viewingAuditAsset.title}
-            onClose={() => setViewingAuditAsset(null)}
-            reportText={
-              verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
-                ? liveStreamText
-                : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
-            }
-            auditData={{
-              audit_summary: viewingAuditAsset.audit_summary,
-              pros: viewingAuditAsset.pros,
-              cons: viewingAuditAsset.cons,
-              recommendations: viewingAuditAsset.recommendations,
-            }}
-          />
-        ) : null}
-
-        <AssetPreviewModal
-          activePreviewName={activePreviewName}
-          activePreviewUrl={activePreviewUrl}
-          previewProject={activePreviewProject}
-          onProjectUpdated={handlePreviewProjectUpdated}
-          onClose={() => {
-            setActivePreviewProjectId(null);
-            setActivePreviewName(null);
-            setActivePreviewUrl(null);
-          }}
-        />
     </div>
   );
 }
