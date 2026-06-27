@@ -1388,7 +1388,7 @@ Return Markdown sections for goods, bads, project description, and a final score
 
   return (
     <>
-      <main className="relative flex h-screen w-screen overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
+      <main className="relative flex min-h-screen w-full overflow-x-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
         <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(0,112,243,0.16),transparent_55%)]" />
 
@@ -1396,7 +1396,7 @@ Return Markdown sections for goods, bads, project description, and a final score
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="relative z-10 flex flex-1 w-full p-8 min-h-screen flex-col overflow-x-hidden overflow-y-auto"
+          className="relative z-10 flex min-h-screen flex-1 w-full flex-col overflow-x-hidden p-8"
         >
           <section className="flex w-full flex-col gap-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

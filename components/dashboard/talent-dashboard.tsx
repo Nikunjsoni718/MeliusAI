@@ -26,9 +26,83 @@ type ReviewPayload = PortfolioAssessmentResult & {
   savedProjectId?: string | null;
 };
 
+type ReviewSignal = ReviewPayload['goods'][number];
+
 function getFirstName(name: string) {
   const first = name.trim().split(/\s+/)[0];
   return first || 'there';
+}
+
+function clampScore(value: unknown) {
+  const score = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0;
+}
+
+function normalizeSignal(value: Partial<ReviewSignal> | undefined, fallback: ReviewSignal): ReviewSignal {
+  return {
+    title: typeof value?.title === 'string' && value.title.trim() ? value.title : fallback.title,
+    detail: typeof value?.detail === 'string' && value.detail.trim() ? value.detail : fallback.detail,
+  };
+}
+
+function normalizeStringArray<const T extends readonly string[]>(
+  value: unknown,
+  fallback: T
+): T {
+  const normalized = Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+
+  return (normalized.length > 0 ? normalized : fallback) as unknown as T;
+}
+
+function normalizeReviewPayload(payload: ReviewPayload): ReviewPayload {
+  const fallbackGoods = [
+    { title: 'Project received', detail: 'MeliusAI captured enough signal to keep the dashboard stable.' },
+    { title: 'Review pipeline active', detail: 'The analysis flow completed without requiring a page refresh.' },
+    { title: 'Portfolio context saved', detail: 'Your submitted project can now be used for follow-up review.' },
+  ] satisfies ReviewPayload['goods'];
+  const fallbackBads = [
+    { title: 'More evidence needed', detail: 'Add stronger implementation detail to improve the next review.' },
+    { title: 'Signal still broad', detail: 'Specific architectural decisions will make the audit more useful.' },
+    { title: 'Targeting can improve', detail: 'A clearer target company or role sharpens the readiness score.' },
+  ] satisfies ReviewPayload['bads'];
+
+  return {
+    ...payload,
+    meliusScore: clampScore(payload.meliusScore),
+    readyMeter: payload.readyMeter === null || payload.readyMeter === undefined ? null : clampScore(payload.readyMeter),
+    summary:
+      typeof payload.summary === 'string' && payload.summary.trim()
+        ? payload.summary
+        : 'Your project review completed. Add more project detail for a sharper audit.',
+    verifiedHeadline:
+      typeof payload.verifiedHeadline === 'string' && payload.verifiedHeadline.trim()
+        ? payload.verifiedHeadline
+        : 'Project review complete.',
+    targetRole:
+      typeof payload.targetRole === 'string' && payload.targetRole.trim()
+        ? payload.targetRole
+        : 'Verified Talent',
+    goods: fallbackGoods.map((fallback, index) => normalizeSignal(payload.goods?.[index], fallback)) as ReviewPayload['goods'],
+    bads: fallbackBads.map((fallback, index) => normalizeSignal(payload.bads?.[index], fallback)) as ReviewPayload['bads'],
+    roadmap: normalizeStringArray(payload.roadmap, [
+      'Add a concise architecture note to the project.',
+      'Document the hardest implementation tradeoff.',
+      'Attach measurable outcomes or usage evidence.',
+      'Run another review after tightening the project description.',
+    ] as const) as ReviewPayload['roadmap'],
+    gaps: normalizeStringArray(payload.gaps, [
+      'Add deeper implementation evidence.',
+      'Clarify the target role requirements.',
+      'Show measurable production readiness.',
+    ] as const) as ReviewPayload['gaps'],
+    improvementTips: normalizeStringArray(payload.improvementTips, [
+      'Add implementation details.',
+      'Clarify the target role.',
+      'Include measurable impact.',
+    ] as const) as ReviewPayload['improvementTips'],
+  };
 }
 
 export function TalentDashboard() {
@@ -84,7 +158,7 @@ export function TalentDashboard() {
         throw new Error(body?.error ?? "We couldn't review that project right now.");
       }
 
-      setReviewResult(body.data);
+      setReviewResult(normalizeReviewPayload(body.data));
     } catch (error) {
       setReviewError(error instanceof Error ? error.message : "We couldn't review that project right now.");
     } finally {
@@ -352,6 +426,14 @@ function renderDashboard(input: {
                     </div>
                   </div>
                 </>
+              ) : input.isReviewing ? (
+                <div className="rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4 text-sm leading-6 text-slate-300">
+                  <div className="flex items-center gap-3">
+                    <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-sky-300" />
+                    <p className="font-medium text-sky-100">Reviewing your project...</p>
+                  </div>
+                  <p className="mt-3 text-slate-400">This usually takes a few seconds.</p>
+                </div>
               ) : (
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 text-sm leading-6 text-slate-300">
                   Your first review will show up here.

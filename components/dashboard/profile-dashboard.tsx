@@ -2968,7 +2968,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       className={
         isOrganizationWorkspace
           ? 'relative flex min-h-screen overflow-hidden bg-[#030512] text-white'
-          : 'relative flex h-screen w-screen overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
+          : 'relative flex min-h-screen w-full overflow-x-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
       }
     >
       <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
@@ -3007,7 +3007,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           className={
             isOrganizationWorkspace
               ? 'relative z-10 flex w-full overflow-hidden'
-              : 'relative z-10 flex h-full w-full overflow-hidden'
+              : 'relative z-10 flex min-h-screen w-full'
           }
         >
           <header className="fixed left-0 right-0 top-0 z-30 flex items-center justify-between border-b border-blue-950/40 bg-[#020617]/70 px-4 py-3 backdrop-blur-xl md:hidden">
@@ -3038,7 +3038,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             className={cn(
               'fixed inset-y-0 left-0 z-50 flex w-64 min-w-[16rem] shrink-0 transform flex-col justify-between overflow-y-auto border-r border-blue-950/40 bg-[#0a0f24] p-4 transition-transform duration-300 ease-in-out md:static md:translate-x-0',
               isOpen ? 'translate-x-0' : '-translate-x-full',
-              isOrganizationWorkspace ? 'h-screen' : 'h-full'
+              isOrganizationWorkspace ? 'h-screen' : 'min-h-screen'
             )}
           >
             <div>
