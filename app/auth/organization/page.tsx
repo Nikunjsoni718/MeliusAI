@@ -1,8 +1,10 @@
 "use client";
 
+import Image from 'next/image';
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import faviconLogo from '@/app/favicon.png';
 import { SessionRouteGuard } from '@/components/auth/session-route-guard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,8 +19,8 @@ function LogicPrismLogo() {
     <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
       <div className="absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
       <div className="absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
-      <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 text-sm font-semibold tracking-[0.32em] text-white">
-        MAI
+      <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 p-2">
+        <Image src={faviconLogo} alt="MeliusAI Logo" width={48} height={48} className="object-contain" />
       </div>
     </div>
   );

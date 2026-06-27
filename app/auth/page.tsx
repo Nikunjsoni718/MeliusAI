@@ -1,8 +1,10 @@
 "use client";
 
+import Image from 'next/image';
 import React from 'react';
 import { useRouter } from 'next/navigation';
 
+import faviconLogo from '@/app/favicon.png';
 import { SessionRouteGuard } from '@/components/auth/session-route-guard';
 
 const talentRows = ['Save your projects', 'Get a clear review', 'Grow step by step'];
@@ -20,7 +22,7 @@ export default function MeliusAIWorkspaceSelector() {
       <main className="relative z-10 flex w-full max-w-5xl flex-1 flex-col items-center justify-center">
         <section className="flex flex-col items-center text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#1e293b] bg-gradient-to-b from-[#13162f] to-[#080a1a] shadow-2xl shadow-slate-950/40">
-            <span className="pl-1 text-xs font-black tracking-[0.25em] text-white">M A I</span>
+            <Image src={faviconLogo} alt="MeliusAI Logo" width={40} height={40} className="object-contain" />
           </div>
 
           <span className="mt-5 rounded-full border border-slate-800/80 bg-[#11142e]/40 px-3.5 py-1 text-[10px] font-medium tracking-wide text-slate-400">
