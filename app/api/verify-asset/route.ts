@@ -75,29 +75,6 @@ function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function getFastApiEvaluateEndpoint() {
-  const configuredUrl =
-    process.env.FASTAPI_URL?.trim() ||
-    process.env.NEXT_PUBLIC_FASTAPI_URL?.trim() ||
-    process.env.NEXT_PUBLIC_MELIUS_AGENT_URL?.trim();
-
-  if (!configuredUrl) {
-    throw new Error('MeliusAI Python evaluation endpoint is not configured.');
-  }
-
-  const normalizedUrl = configuredUrl.replace(/\/$/, '');
-
-  if (normalizedUrl.endsWith('/api/evaluate')) {
-    return normalizedUrl;
-  }
-
-  if (normalizedUrl.endsWith('/api/review') || normalizedUrl.endsWith('/api/analyze-code')) {
-    return normalizedUrl.replace(/\/api\/(review|analyze-code)$/, '/api/evaluate');
-  }
-
-  return `${normalizedUrl}/api/evaluate`;
-}
-
 function isDirectPythonEvaluationPayload(body: VerifyAssetPayload) {
   return !getString(body.projectId) && Boolean(getString(body.filename)) && Boolean(getString(body.codeContent));
 }
@@ -133,7 +110,13 @@ async function proxyCodeContentToPythonBackend({
     backendRequest.headers = { Authorization: `Bearer ${accessToken}` };
   }
 
-  const backendResponse = await fetch(getFastApiEvaluateEndpoint(), backendRequest);
+  const backendUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL?.trim().replace(/\/$/, '');
+
+  if (!backendUrl) {
+    throw new Error('MeliusAI Python evaluation endpoint is not configured.');
+  }
+
+  const backendResponse = await fetch(`${backendUrl}/api/evaluate`, backendRequest);
 
   const responseContentType = backendResponse.headers.get('content-type') ?? '';
   const responseText = await backendResponse.text();
