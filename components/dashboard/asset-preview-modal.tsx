@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
@@ -308,7 +308,10 @@ export function AssetPreviewModal({
     return null;
   }
 
-  async function handleRunAIVerification(projectId: string) {
+  async function handleRunAIVerification(projectId: string, event?: MouseEvent<HTMLButtonElement>) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
     if (!liveProject || isVerifying) {
       return;
     }
@@ -470,9 +473,11 @@ MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/10
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => {
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
                 if (liveProject?.id) {
-                  void handleRunAIVerification(liveProject.id);
+                  void handleRunAIVerification(liveProject.id, event);
                 }
               }}
               disabled={!liveProject?.id || isVerifying}

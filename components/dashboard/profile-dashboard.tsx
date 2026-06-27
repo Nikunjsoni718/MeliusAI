@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
@@ -1428,7 +1428,7 @@ function ProjectCard({
   verifyingAssetId: string | null;
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
-  onVerify: (project: ProjectItem) => void;
+  onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
   onOpen: (project: ProjectItem) => void;
   onReadProtocol: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
@@ -1462,7 +1462,11 @@ function ProjectCard({
 
             <button
               type="button"
-              onClick={() => onOpen(project)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpen(project);
+              }}
               className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
               aria-label={`Preview ${project.title}`}
             >
@@ -1482,7 +1486,11 @@ function ProjectCard({
             {!isSpectator && (
               <button
                 type="button"
-                onClick={() => onVerify(project)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onVerify(project, event);
+                }}
                 disabled={verifyingAssetId !== null || isProjectDeleting}
                 aria-busy={isProjectVerifying}
                 className={cn(
@@ -2739,7 +2747,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
   }
 
-  async function handleVerifyWithMeliusAI(project: ProjectItem) {
+  async function handleVerifyWithMeliusAI(project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
     if (!isOwner) {
       return;
     }
@@ -3131,9 +3142,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                   <div className="mx-auto h-12 w-12 animate-pulse rounded-full border border-white/10 bg-white/5" />
                   <p className="mt-4 text-lg">Loading your profile...</p>
                   {showRefresh ? (
-                    <Button className="mt-5" onClick={() => window.location.reload()}>
-                      Try Refreshing Your Vault
-                    </Button>
+                    <p className="mt-5 text-xs text-slate-500">
+                      This is taking longer than expected. Your vault state will stay intact while we keep waiting.
+                    </p>
                   ) : null}
                 </div>
               </div>
@@ -3510,7 +3521,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                         verifyingAssetId={verifyingAssetId}
                         deletingProjectId={deletingProjectId}
                         verifiedAssetId={verifiedAssetId}
-                        onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
+                        onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                         onOpen={handleOpenProject}
                         onReadProtocol={handleReadFullAuditProtocol}
                         onDelete={(projectId) => void handleDeleteProject(projectId)}

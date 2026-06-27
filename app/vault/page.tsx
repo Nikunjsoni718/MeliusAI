@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
@@ -732,14 +732,16 @@ function AuditReportModal({
 
               {assetUrl ? (
                 <div className="flex justify-end">
-                  <a
-                    href={assetUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center rounded-lg border border-blue-950/60 bg-[#071329]/70 px-4 py-2 text-xs font-mono text-zinc-300 transition-colors duration-200 hover:border-cyan-500/30 hover:bg-[#0b1d38]/80"
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    className="inline-flex cursor-pointer items-center rounded-lg border border-blue-950/60 bg-[#071329]/70 px-4 py-2 text-xs font-mono text-zinc-300 transition-colors duration-200 hover:border-cyan-500/30 hover:bg-[#0b1d38]/80"
                   >
                     Launch Raw Asset
-                  </a>
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -766,7 +768,7 @@ function VaultProjectCard({
   deletingAssetId: string | null;
   isVisibilityUpdating: boolean;
   verifyingAssetId: string | null;
-  onVerify: (project: ProjectRow) => void;
+  onVerify: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
   onReadProtocol: (project: ProjectRow) => void;
   onToggleVisibility: (projectId: string, currentVisibilityStatus: boolean) => void;
   onDelete: (projectId: string) => void;
@@ -845,8 +847,9 @@ function VaultProjectCard({
               <button
                 type="button"
                 onClick={(event) => {
+                  event.preventDefault();
                   event.stopPropagation();
-                  onVerify(project);
+                  onVerify(project, event);
                 }}
                 disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
                 aria-busy={isVerifying}
@@ -1269,7 +1272,10 @@ function VaultPageContent() {
     }
   }
 
-  async function handleVerifyWithMeliusAI(project: ProjectRow) {
+  async function handleVerifyWithMeliusAI(project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
     if (isSpectator || !supabase || verifyingAssetId || deletingAssetId) {
       return;
     }
@@ -1474,7 +1480,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}
-                onVerify={(selectedProject) => void handleVerifyWithMeliusAI(selectedProject)}
+                onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                 onReadProtocol={handleReadFullAuditProtocol}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
                   void handleToggleVisibility(projectId, currentVisibilityStatus)

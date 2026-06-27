@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { Badge } from '@/components/ui/badge';
@@ -32,7 +32,7 @@ type UniversalAssetGridProps = {
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReadProtocol?: (project: ProjectRow) => void;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
-  onVerify?: (project: ProjectRow) => void;
+  onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 };
 
 const codeLanguageMap: Record<string, string> = {
@@ -473,7 +473,7 @@ function UniversalAssetCard({
   onPreview: (project: ProjectRow) => void;
   onReadProtocol?: (project: ProjectRow) => void;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
-  onVerify?: (project: ProjectRow) => void;
+  onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const assetName = getUniversalAssetName(project);
   const isDeleting = deletingAssetId === project.id;
@@ -531,13 +531,15 @@ function UniversalAssetCard({
 
             <button
               type="button"
-              onClick={() => {
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
                 if (assetUrl) {
                   onPreview(project);
                 }
               }}
               disabled={!assetUrl}
-              className="group relative mb-4 flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
+              className="group relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
               aria-label={`Preview ${assetName}`}
             >
               <UniversalPreviewSurface project={project} />
@@ -568,8 +570,9 @@ function UniversalAssetCard({
                 <button
                   type="button"
                   onClick={(event) => {
+                    event.preventDefault();
                     event.stopPropagation();
-                    onVerify(project);
+                    onVerify(project, event);
                   }}
                   disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
                   aria-busy={isVerifying}
