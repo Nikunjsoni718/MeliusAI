@@ -91,15 +91,6 @@ const roleDescriptors: Record<UserRole, RoleDescriptor> = {
   },
 };
 
-function readRoleIntent(): UserRole | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const value = window.sessionStorage.getItem(ROLE_STORAGE_KEY);
-  return value === 'talent' || value === 'recruiter' ? value : null;
-}
-
 function saveRoleIntent(role: UserRole) {
   if (typeof window === 'undefined') {
     return;
@@ -244,7 +235,7 @@ function ButtonSpinner() {
 export function AuthPage() {
   const router = useRouter();
   const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
-  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
   const [hasLoadedIntent, setHasLoadedIntent] = useState(false);
   const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>('signin');
   const [individualFullName, setIndividualFullName] = useState('');
@@ -278,7 +269,8 @@ export function AuthPage() {
     (individualMode === 'signup' ? !isIndividualSignUpReady : !isIndividualSignInReady);
 
   useEffect(() => {
-    setSelectedRole(readRoleIntent());
+    setSelectedRole('talent');
+    clearRoleIntent();
     setHasLoadedIntent(true);
   }, []);
 
@@ -332,7 +324,7 @@ export function AuthPage() {
         }
 
         clearRoleIntent();
-        setSelectedRole(null);
+        setSelectedRole('talent');
         setMessage(null);
         setError(syncError instanceof Error ? syncError.message : 'Unable to secure this path.');
       } finally {
@@ -359,7 +351,7 @@ export function AuthPage() {
       return;
     }
 
-    const redirectTo = `${window.location.origin}/auth`;
+    const redirectTo = `${window.location.origin}/auth/login`;
 
     setPendingAction(provider === 'github' ? 'github' : 'linkedin');
     setError(null);
@@ -596,7 +588,7 @@ export function AuthPage() {
 
   function handleResetSelection() {
     clearRoleIntent();
-    setSelectedRole(null);
+    router.push('/auth');
     setPendingAction(null);
     setError(null);
     setMessage(null);
@@ -658,10 +650,10 @@ export function AuthPage() {
             <LogicPrismLogo />
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">Welcome</Badge>
             <h1 className="mt-6 text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
-              Join MeliusIQ
+              Individual Talent Sign In
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-              Choose how you want to sign in.
+              Access your private vault with email, GitHub, or Behance.
             </p>
             {!authEnabled ? (
               <div className="mx-auto mt-4 max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
