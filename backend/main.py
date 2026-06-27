@@ -76,6 +76,8 @@ async def enforce_cors_origin_whitelist(request: Request, call_next):
 
 # Initialize OpenAI Client (Guaranteed to read from root .env.local now)
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
@@ -492,17 +494,21 @@ async def evaluate_code(
             raise HTTPException(
                 status_code=413,
                 detail="Downloaded files must be 5 MB or smaller.",
-            )
+        )
 
         code_content = file_bytes.decode("utf-8", errors="replace")
+        if len(code_content.strip()) == 0:
+            logger.error("code_evaluation.empty_file filename=%s", filename)
+            raise HTTPException(
+                status_code=400,
+                detail="This file is empty. Please delete it and re-upload a non-empty code file.",
+            )
+
         logger.info(
             "code_evaluation.decode.complete filename=%s char_count=%s",
             filename,
             len(code_content),
         )
-
-        if not code_content.strip():
-            raise HTTPException(status_code=400, detail="Downloaded file is empty.")
 
         logger.info("code_evaluation.openai.start filename=%s", filename)
         completion = await async_client.chat.completions.create(
