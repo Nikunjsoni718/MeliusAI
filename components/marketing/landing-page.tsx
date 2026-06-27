@@ -10,7 +10,7 @@ export function LandingPage() {
             Introduction
           </Badge>
           <h1 className="max-w-4xl text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
-            The Standard for Verified Engineering Talent.
+            The Standard for Verified Talent.
           </h1>
           <p className="mt-6 mb-6 max-w-2xl text-lg leading-8 text-slate-300">
             The private workspace where developers prove their technical depth through line-by-line AI audits, and organizations find the top 1% of hires without the resume guesswork.
