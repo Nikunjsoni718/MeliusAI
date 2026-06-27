@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { getDashboardHref, useViewerProfile } from '@/lib/viewer-client';
 import type { UserRole } from '@/types/supabase';
 
-const ROLE_STORAGE_KEY = 'meliusiq-auth-role';
+const ROLE_STORAGE_KEY = 'meliusai-auth-role';
 const GENERIC_ORGANISATION_DOMAINS = new Set([
   'gmail.com',
   'hotmail.com',
@@ -154,7 +154,7 @@ function LogicPrismLogo() {
       <div className="absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
       <div className="absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
       <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 text-sm font-semibold tracking-[0.32em] text-white">
-        MIQ
+        MAI
       </div>
     </div>
   );

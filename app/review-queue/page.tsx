@@ -54,7 +54,7 @@ export default function ReviewQueuePage() {
           <div>
             <Badge variant="accent">Review Queue</Badge>
             <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-              Approve the initial MeliusIQ architecture.
+              Approve the initial MeliusAI architecture.
             </h1>
             <p className="mt-4 max-w-3xl text-base leading-7 text-slate-400">
               This queue captures the cross-thread decisions from UI/UX,

@@ -4,7 +4,7 @@ export async function GET() {
   try {
     return NextResponse.json({
       ok: true,
-      service: 'meliusiq-backend',
+      service: 'meliusai-backend',
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

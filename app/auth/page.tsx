@@ -8,7 +8,7 @@ import { SessionRouteGuard } from '@/components/auth/session-route-guard';
 const talentRows = ['Save your projects', 'Get a clear review', 'Grow step by step'];
 const organisationRows = ['See reviewed talent', 'Keep hiring organized', 'Use your work domain'];
 
-export default function MeliusIQWorkspaceSelector() {
+export default function MeliusAIWorkspaceSelector() {
   const router = useRouter();
 
   return (
@@ -20,14 +20,14 @@ export default function MeliusIQWorkspaceSelector() {
       <main className="relative z-10 flex w-full max-w-5xl flex-1 flex-col items-center justify-center">
         <section className="flex flex-col items-center text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#1e293b] bg-gradient-to-b from-[#13162f] to-[#080a1a] shadow-2xl shadow-slate-950/40">
-            <span className="pl-1 text-xs font-black tracking-[0.25em] text-white">M I Q</span>
+            <span className="pl-1 text-xs font-black tracking-[0.25em] text-white">M A I</span>
           </div>
 
           <span className="mt-5 rounded-full border border-slate-800/80 bg-[#11142e]/40 px-3.5 py-1 text-[10px] font-medium tracking-wide text-slate-400">
             Welcome
           </span>
 
-          <h1 className="mt-6 text-4xl font-extrabold tracking-tight text-white sm:text-5xl">Join MeliusIQ</h1>
+          <h1 className="mt-6 text-4xl font-extrabold tracking-tight text-white sm:text-5xl">Join MeliusAI</h1>
           <p className="mt-4 text-sm font-medium tracking-wide text-slate-400">Choose how you want to sign in.</p>
         </section>
 
@@ -131,7 +131,7 @@ export default function MeliusIQWorkspaceSelector() {
         <div className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-800 bg-[#050714] text-slate-500">
           N
         </div>
-        <span>MeliusIQ Protected Node</span>
+        <span>MELIUSAI PROTECTED NODE</span>
       </footer>
     </div>
     </SessionRouteGuard>

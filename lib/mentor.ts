@@ -185,7 +185,7 @@ export function buildRepoAnalysisPrompt(
     .join("\n\n---\n\n");
 
   return [
-    "You are MeliusIQ's repository scorer.",
+    "You are MeliusAI's repository scorer.",
     `Analyze the repository at ${githubUrl}.`,
     `Default branch: ${snapshot.defaultBranch}.`,
     "Base your answer only on the supplied repository snapshot.",
@@ -752,7 +752,7 @@ async function githubRequest<T>(input: {
 function buildGitHubHeaders(githubToken?: string): HeadersInit {
   return {
     Accept: "application/vnd.github+json",
-    "User-Agent": "MeliusIQ",
+    "User-Agent": "MeliusAI",
     ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
   };
 }

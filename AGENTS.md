@@ -1,4 +1,4 @@
-# MeliusIQ Project Rules
+# MeliusAI Project Rules
 ## Tech Stack
 - Frontend: Next.js 16 (App Router), Tailwind CSS
 - Backend/DB: Supabase (Auth, PostgreSQL)

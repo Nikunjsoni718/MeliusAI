@@ -5,7 +5,7 @@ export function SiteFooter() {
     <footer className="px-4 pb-8 pt-16 sm:px-6 lg:px-8">
       <div className="mx-auto grid w-full max-w-7xl gap-8 rounded-[2rem] border border-slate-800/80 bg-slate-950/70 p-8 shadow-[0_24px_80px_rgba(2,6,23,0.45)] backdrop-blur-xl lg:grid-cols-[1.15fr_0.85fr]">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">MeliusIQ</p>
+          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">MeliusAI</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white">
             A career operating system powered by MeliusAI when intelligence is needed.
           </h2>

@@ -26,7 +26,7 @@ set
     nullif(nullif(pillar2_desc, ''), 'Your description here...')
   ),
   section3_subheading = coalesce(nullif(section3_subheading, ''), 'Benefits'),
-  footer_note = coalesce(nullif(footer_note, ''), 'Verified through MeliusIQ.'),
+  footer_note = coalesce(nullif(footer_note, ''), 'Verified through MeliusAI.'),
   footer_badge_text = coalesce(nullif(footer_badge_text, ''), 'Protected workspace profile'),
   loading_status_text = coalesce(nullif(loading_status_text, ''), 'Synchronizing verified workspace details...')
 where hero_eyebrow is null

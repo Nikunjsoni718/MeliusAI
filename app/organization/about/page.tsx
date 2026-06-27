@@ -653,7 +653,7 @@ function OrganizationManifestoPageContent() {
         </section>
 
         <footer className="flex flex-col gap-4 border-t border-white/10 py-8 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2026 MeliusAI. Verified through MeliusIQ.</p>
+          <p>© 2026 MeliusAI. Verified through MeliusAI.</p>
           <span className="inline-flex items-center gap-2">
             <ShieldCheck className="h-4 w-4" />
             Protected workspace profile
