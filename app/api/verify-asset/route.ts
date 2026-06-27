@@ -7,6 +7,10 @@ export const runtime = 'nodejs';
 type VerifyAssetProxyPayload = {
   fileUrl?: unknown;
   filename?: unknown;
+  projectId?: unknown;
+  project_id?: unknown;
+  fileId?: unknown;
+  file_id?: unknown;
 };
 
 function getString(value: unknown) {
@@ -41,10 +45,22 @@ export async function POST(request: Request) {
     const body = (await request.json()) as VerifyAssetProxyPayload;
     const fileUrl = getString(body.fileUrl);
     const filename = getString(body.filename) || 'asset.txt';
+    const projectId =
+      getString(body.projectId) ||
+      getString(body.project_id) ||
+      getString(body.fileId) ||
+      getString(body.file_id);
 
     if (!fileUrl) {
       return NextResponse.json(
         { error: 'fileUrl is required.' },
+        { status: 400 }
+      );
+    }
+
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'projectId is required.' },
         { status: 400 }
       );
     }
@@ -55,7 +71,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
       },
-      body: JSON.stringify({ fileUrl, filename }),
+      body: JSON.stringify({ fileUrl, filename, projectId }),
     });
 
     const responseBody = await pythonResponse.text();

@@ -185,6 +185,9 @@ function parseAuditReport(rawText: string) {
 
 type StructuredAuditData = {
   audit_summary?: string | null;
+  description?: string | null;
+  executive_summary?: string | null;
+  summary?: string | null;
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
@@ -234,7 +237,12 @@ export function AuditReviewModal({
   auditData?: StructuredAuditData | null;
 }) {
   const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(reportText);
-  const structuredSummary = auditData?.audit_summary?.trim() ?? '';
+  const structuredSummary =
+    auditData?.description?.trim() ||
+    auditData?.executive_summary?.trim() ||
+    auditData?.summary?.trim() ||
+    auditData?.audit_summary?.trim() ||
+    '';
   const structuredPros = getStructuredItems(auditData?.pros);
   const structuredCons = getStructuredItems(auditData?.cons);
   const structuredRecommendations = getStructuredItems(auditData?.recommendations);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
@@ -54,6 +54,8 @@ type ProjectItem = {
   file_url?: string | null;
   code_language?: string | null;
   description?: string | null;
+  executive_summary?: string | null;
+  summary?: string | null;
   user_description?: string | null;
   score?: number | null;
   audit_summary?: string | null;
@@ -1460,18 +1462,26 @@ function ProjectCard({
             </h3>
             <p className="mb-4 truncate text-[11px] text-slate-500">{fileName}</p>
 
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 onOpen(project);
+              }}
+              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpen(project);
+                }
               }}
               className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
               aria-label={`Preview ${project.title}`}
             >
               <ProjectPreviewSurface project={project} />
-            </button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2 mt-auto pt-4 w-full">
@@ -2789,6 +2799,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          projectId: project.id,
           fileUrl: projectSourceHref,
           filename,
         }),
@@ -2802,6 +2813,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         recommendations?: string[];
         project?: ProjectItem;
         reportText?: string;
+        description?: string;
+        executive_summary?: string;
+        summary?: string;
         score?: number;
       };
 
@@ -2811,11 +2825,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       const updatedProject = payload.project;
       const pythonScore = typeof payload.score === 'number' ? payload.score : null;
-      const accumulatedReportText =
-        payload.reportText ??
-        updatedProject?.description ??
-        updatedProject?.ai_summary ??
-        `## Executive Summary
+      const executiveSummary =
+        payload.description?.trim() ||
+        payload.executive_summary?.trim() ||
+        payload.summary?.trim() ||
+        updatedProject?.description?.trim() ||
+        updatedProject?.executive_summary?.trim() ||
+        updatedProject?.summary?.trim() ||
+        updatedProject?.audit_summary?.trim() ||
+        '';
+      const generatedReportText = `## Executive Summary
+${executiveSummary || 'No executive summary has been generated yet.'}
+
 Grade: ${payload.grade ?? 'N/A'}
 
 ## Pros
@@ -2829,6 +2850,7 @@ ${(payload.recommendations ?? []).map((item) => `- ${item}`).join('\n') || '- No
 
 ## Scorecard
 MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
+      const accumulatedReportText = payload.reportText ?? updatedProject?.description ?? updatedProject?.ai_summary ?? generatedReportText;
 
       setLiveStreamText(accumulatedReportText);
       setProjects((currentProjects) =>
@@ -2840,6 +2862,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                 has_been_audited: updatedProject?.has_been_audited ?? true,
                 evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentProject.evaluation_score,
                 logic_score: updatedProject?.logic_score ?? pythonScore ?? currentProject.logic_score,
+                audit_summary: executiveSummary || updatedProject?.audit_summary || currentProject.audit_summary,
+                executive_summary: payload.executive_summary ?? updatedProject?.executive_summary ?? currentProject.executive_summary,
+                summary: payload.summary ?? updatedProject?.summary ?? currentProject.summary,
                 ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
                 description: updatedProject?.description ?? accumulatedReportText,
                 pros: payload.pros ?? updatedProject?.pros ?? currentProject.pros,
@@ -2861,6 +2886,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               has_been_audited: updatedProject?.has_been_audited ?? true,
               evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentAsset.evaluation_score,
               logic_score: updatedProject?.logic_score ?? pythonScore ?? currentAsset.logic_score,
+              audit_summary: executiveSummary || updatedProject?.audit_summary || currentAsset.audit_summary,
+              executive_summary: payload.executive_summary ?? updatedProject?.executive_summary ?? currentAsset.executive_summary,
+              summary: payload.summary ?? updatedProject?.summary ?? currentAsset.summary,
               ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
               description: updatedProject?.description ?? accumulatedReportText,
               pros: payload.pros ?? updatedProject?.pros ?? currentAsset.pros,
@@ -3727,6 +3755,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                 }
                 auditData={{
                   audit_summary: viewingAuditAsset.audit_summary,
+                  description: viewingAuditAsset.description,
+                  executive_summary: viewingAuditAsset.audit_summary,
+                  summary: viewingAuditAsset.ai_summary,
                   pros: viewingAuditAsset.pros,
                   cons: viewingAuditAsset.cons,
                   recommendations: viewingAuditAsset.recommendations,

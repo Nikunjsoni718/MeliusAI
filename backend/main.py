@@ -493,15 +493,27 @@ EVALUATION_RESPONSE_FORMAT = {
 class EvaluationRequest(BaseModel):
     fileUrl: str
     filename: str
+    projectId: str | None = None
+    project_id: str | None = None
+    fileId: str | None = None
+    file_id: str | None = None
 
 
 @app.post("/api/evaluate")
 async def evaluate_code(
+    request: Request,
     payload: EvaluationRequest,
     current_user_id: str = Depends(verify_user),
 ):
     file_url = payload.fileUrl.strip()
     filename = secure_filename(payload.filename)
+    project_id = (
+        payload.projectId
+        or payload.project_id
+        or payload.fileId
+        or payload.file_id
+        or ""
+    ).strip()
     _, ext = os.path.splitext(filename.lower())
     detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
 
@@ -511,9 +523,16 @@ async def evaluate_code(
             detail="fileUrl is required.",
         )
 
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="projectId is required so evaluation metrics can be persisted.",
+        )
+
     logger.info(
-        "code_evaluation.start user_id=%s filename=%s language=%s",
+        "code_evaluation.start user_id=%s project_id=%s filename=%s language=%s",
         current_user_id,
+        project_id,
         filename,
         detected_language,
     )
@@ -589,8 +608,77 @@ async def evaluate_code(
                 detail="AI evaluation response was missing the required code description.",
             )
 
-        logger.info("code_evaluation.success filename=%s", filename)
-        return parsed_content
+        try:
+            score = int(round(float(parsed_content.get("score"))))
+        except (TypeError, ValueError):
+            logger.error("code_evaluation.invalid_score filename=%s project_id=%s", filename, project_id)
+            raise HTTPException(
+                status_code=502,
+                detail="AI evaluation response was missing a valid numeric score.",
+            )
+
+        score = max(0, min(100, score))
+
+        def normalize_text_array(value: Any) -> List[str]:
+            if not isinstance(value, list):
+                return []
+
+            normalized_items: List[str] = []
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    normalized_items.append(item.strip())
+
+            return normalized_items
+
+        update_payload = {
+            "audit_summary": description.strip(),
+            "ai_summary": description.strip(),
+            "description": description.strip(),
+            "pros": normalize_text_array(parsed_content.get("pros")),
+            "cons": normalize_text_array(parsed_content.get("cons")),
+            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
+            "evaluation_score": score,
+            "logic_score": score,
+            "has_been_audited": True,
+            "status": "Verified",
+        }
+
+        logger.info("code_evaluation.database.update.start project_id=%s filename=%s", project_id, filename)
+        supabase_client = get_request_supabase_client(request)
+        update_response = await asyncio.to_thread(
+            lambda: supabase_client.table("projects")
+            .update(update_payload)
+            .eq("id", project_id)
+            .eq("user_id", current_user_id)
+            .select("*")
+            .maybe_single()
+            .execute()
+        )
+
+        updated_project = update_response.data
+        if not updated_project:
+            logger.warning(
+                "code_evaluation.database.update.empty project_id=%s user_id=%s",
+                project_id,
+                current_user_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail="Project was not found or is not owned by the authenticated user.",
+            )
+
+        logger.info("code_evaluation.database.update.complete project_id=%s filename=%s", project_id, filename)
+        logger.info("code_evaluation.success filename=%s project_id=%s", filename, project_id)
+        return {
+            **parsed_content,
+            "score": score,
+            "project": updated_project,
+            "database": {
+                "status": "updated",
+                "project_id": project_id,
+                "has_been_audited": True,
+            },
+        }
     except HTTPException:
         raise
     except httpx.HTTPStatusError as download_error:

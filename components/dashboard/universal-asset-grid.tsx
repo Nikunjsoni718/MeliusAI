@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { Badge } from '@/components/ui/badge';
@@ -529,16 +529,24 @@ function UniversalAssetCard({
               ) : null}
             </div>
 
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
+            <div
+              role="button"
+              tabIndex={assetUrl ? 0 : -1}
+              aria-disabled={!assetUrl}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 if (assetUrl) {
                   onPreview(project);
                 }
               }}
-              disabled={!assetUrl}
+              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                if ((e.key === 'Enter' || e.key === ' ') && assetUrl) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onPreview(project);
+                }
+              }}
               className="group relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
               aria-label={`Preview ${assetName}`}
             >
@@ -548,7 +556,7 @@ function UniversalAssetCard({
                   Full Focus Mode
                 </span>
               ) : null}
-            </button>
+            </div>
           </div>
 
           {onReadProtocol || (!isSpectator && onVerify) ? (

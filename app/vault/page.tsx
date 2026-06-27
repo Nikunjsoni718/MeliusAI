@@ -1529,6 +1529,9 @@ Return Markdown sections for goods, bads, project description, and a final score
           }
           auditData={{
             audit_summary: viewingAuditAsset.audit_summary,
+            description: viewingAuditAsset.description,
+            executive_summary: viewingAuditAsset.audit_summary,
+            summary: viewingAuditAsset.ai_summary,
             pros: viewingAuditAsset.pros,
             cons: viewingAuditAsset.cons,
             recommendations: viewingAuditAsset.recommendations,

@@ -75,6 +75,8 @@ type PreviewProject = {
   raw_text?: string | null;
   text_preview?: string | null;
   description?: string | null;
+  executive_summary?: string | null;
+  summary?: string | null;
   ai_summary?: string | null;
   audit_summary?: string | null;
   score?: number | null;
@@ -106,6 +108,9 @@ type VerifyAssetResponse = {
   };
   project?: PreviewProject;
   reportText?: string;
+  description?: string;
+  executive_summary?: string;
+  summary?: string;
   score?: number;
   grade?: string;
   pros?: string[];
@@ -330,6 +335,7 @@ export function AssetPreviewModal({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          projectId,
           fileUrl: activePreviewUrl,
           filename,
         }),
@@ -342,9 +348,21 @@ export function AssetPreviewModal({
 
       const report = data.report;
       const pythonScore = typeof data.score === 'number' ? data.score : undefined;
+      const executiveSummary =
+        data.description?.trim() ||
+        data.executive_summary?.trim() ||
+        data.summary?.trim() ||
+        report?.executiveSummary?.trim() ||
+        data.project?.description?.trim() ||
+        data.project?.audit_summary?.trim() ||
+        liveProject.description?.trim() ||
+        liveProject.audit_summary?.trim() ||
+        '';
       const reportText =
         data.reportText ??
         `## Executive Summary
+${executiveSummary || 'No executive summary has been generated yet.'}
+
 Grade: ${data.grade ?? 'N/A'}
 
 ## Pros
@@ -364,7 +382,9 @@ MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/10
         evaluation_score:
           report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
         logic_score: report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
-        audit_summary: report?.executiveSummary ?? data.project?.audit_summary ?? liveProject.audit_summary,
+        audit_summary: executiveSummary || report?.executiveSummary || data.project?.audit_summary || liveProject.audit_summary,
+        executive_summary: data.executive_summary ?? data.project?.executive_summary ?? liveProject.executive_summary,
+        summary: data.summary ?? data.project?.summary ?? liveProject.summary,
         pros: report?.pros ?? data.pros ?? data.project?.pros ?? liveProject.pros,
         cons: report?.cons ?? data.cons ?? data.project?.cons ?? liveProject.cons,
         recommendations:
@@ -464,7 +484,10 @@ MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/10
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
             <p className="mt-2 text-sm leading-relaxed text-slate-300">
-              {liveProject?.audit_summary?.trim() ||
+              {liveProject?.description?.trim() ||
+                liveProject?.executive_summary?.trim() ||
+                liveProject?.summary?.trim() ||
+                liveProject?.audit_summary?.trim() ||
                 "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary."}
             </p>
           </div>
