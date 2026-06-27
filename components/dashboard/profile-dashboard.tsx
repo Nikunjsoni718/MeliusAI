@@ -358,6 +358,15 @@ function shouldForceUtf8CodeRead(...sources: Array<string | null | undefined>) {
   return sources.some((source) => forcedUtf8CodeExtensions.has(getFileExtensionFromSource(source)));
 }
 
+const extractCodeAsText = (file: File) => {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(String(e.target?.result ?? ''));
+    reader.onerror = () => reject(new Error(`Failed to extract text from ${file.name}`));
+    reader.readAsText(file, "UTF-8");
+  });
+};
+
 async function readRemoteTextAsUtf8(src: string) {
   const response = await fetch(src);
 
@@ -2644,7 +2653,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     });
 
     try {
+      const extractedCodeContent = shouldForceUtf8CodeRead(file.name)
+        ? await extractCodeAsText(file).then((text) => text.trim())
+        : '';
       const savedProject = await uploadProjectFile(file, projectDescription);
+      const projectWithExtractedCode = extractedCodeContent
+        ? { ...savedProject, text_preview: extractedCodeContent }
+        : savedProject;
       setUploadState({
         fileName: file.name,
         progress: 100,
@@ -2652,11 +2667,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
 
       setProjects((currentProjects) =>
-        savedProject.is_public === false ? currentProjects : [savedProject, ...currentProjects]
+        projectWithExtractedCode.is_public === false ? currentProjects : [projectWithExtractedCode, ...currentProjects]
       );
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
-        [savedProject.id]: savedProject.user_description ?? savedProject.description ?? '',
+        [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
       }));
       setProjectDescription('');
 
