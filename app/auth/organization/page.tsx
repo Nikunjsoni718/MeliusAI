@@ -163,19 +163,19 @@ export default function CorporateOrganisationAuthPage() {
 
   const tabClassName = (tab: AuthTab) =>
     activeTab === tab
-      ? 'rounded-full bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-[0_0_30px_rgba(0,112,243,0.2)]'
+      ? 'rounded-full bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-[0_0_30px_rgba(147,51,234,0.24)]'
       : 'rounded-full px-4 py-2 text-sm font-medium text-slate-300 hover:text-white';
 
   return (
     <SessionRouteGuard>
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 font-[var(--font-sans)] text-slate-100 select-none sm:px-6 lg:px-8">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
-      <div className="relative w-full max-w-xl overflow-hidden rounded-[2rem] border border-sky-400/25 bg-white/[0.06] shadow-2xl shadow-slate-950/50 backdrop-blur-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.12),transparent_35%)]" />
+      <div className="relative w-full max-w-xl overflow-hidden rounded-[2rem] border border-purple-400/25 bg-white/[0.06] shadow-2xl shadow-slate-950/50 backdrop-blur-2xl">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(147,51,234,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(217,70,239,0.12),transparent_35%)]" />
         <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
         <div className="relative p-6 sm:p-8">
         <div className="text-center">
-          <span className="inline-flex rounded-full border border-sky-400/25 bg-sky-500/10 px-3.5 py-1 text-[10px] font-bold tracking-wide text-sky-200">
+          <span className="inline-flex rounded-full border border-purple-800/50 bg-purple-900/30 px-3.5 py-1 text-[10px] font-bold tracking-wide text-purple-400">
             Verified Organisation
           </span>
           <h1 className="mt-5 text-3xl font-extrabold tracking-tight text-white">
@@ -205,7 +205,7 @@ export default function CorporateOrganisationAuthPage() {
                 value={loginEmail}
                 onChange={(event) => setLoginEmail(event.target.value)}
                 placeholder="you@company.com"
-                className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                className="border-white/10 bg-slate-950/60 focus:border-purple-500/60 focus:ring-purple-500/20"
               />
             </div>
 
@@ -220,7 +220,7 @@ export default function CorporateOrganisationAuthPage() {
                   value={loginPassword}
                   onChange={(event) => setLoginPassword(event.target.value)}
                   placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-                  className="border-white/10 bg-slate-950/60 pr-14 focus:border-sky-500/60 focus:ring-sky-500/20"
+                  className="border-white/10 bg-slate-950/60 pr-14 focus:border-purple-500/60 focus:ring-purple-500/20"
                 />
                 <button
                   type="button"
@@ -233,7 +233,7 @@ export default function CorporateOrganisationAuthPage() {
             </div>
 
             <Button
-              className="w-full"
+              className="w-full bg-purple-600 text-white shadow-lg shadow-purple-900/20 hover:bg-purple-500"
               size="lg"
               type="submit"
               disabled={isSubmitting}
@@ -253,7 +253,7 @@ export default function CorporateOrganisationAuthPage() {
                 value={companyName}
                 onChange={(event) => setCompanyName(event.target.value)}
                 placeholder="e.g. Acme Corp"
-                className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                className="border-white/10 bg-slate-950/60 focus:border-purple-500/60 focus:ring-purple-500/20"
               />
             </div>
 
@@ -270,7 +270,7 @@ export default function CorporateOrganisationAuthPage() {
                     setWorkspaceUsername(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
                   }
                   placeholder="acme-engineering"
-                  className="border-white/10 bg-slate-950/60 pr-28 focus:border-sky-500/60 focus:ring-sky-500/20"
+                  className="border-white/10 bg-slate-950/60 pr-28 focus:border-purple-500/60 focus:ring-purple-500/20"
                 />
                 <span className="absolute right-3 border-l border-slate-800/80 pl-3 text-[10px] font-bold tracking-wide text-slate-500">
                   .meliusai.com
@@ -288,7 +288,7 @@ export default function CorporateOrganisationAuthPage() {
                 value={registerEmail}
                 onChange={(event) => setRegisterEmail(event.target.value)}
                 placeholder="name@company.com"
-                className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                className="border-white/10 bg-slate-950/60 focus:border-purple-500/60 focus:ring-purple-500/20"
               />
             </div>
 
@@ -303,7 +303,7 @@ export default function CorporateOrganisationAuthPage() {
                   value={registerPassword}
                   onChange={(event) => setRegisterPassword(event.target.value)}
                   placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-                  className="border-white/10 bg-slate-950/60 pr-14 focus:border-sky-500/60 focus:ring-sky-500/20"
+                  className="border-white/10 bg-slate-950/60 pr-14 focus:border-purple-500/60 focus:ring-purple-500/20"
                 />
                 <button
                   type="button"
@@ -316,7 +316,7 @@ export default function CorporateOrganisationAuthPage() {
             </div>
 
             <Button
-              className="w-full"
+              className="w-full bg-purple-600 text-white shadow-lg shadow-purple-900/20 hover:bg-purple-500"
               size="lg"
               type="submit"
               disabled={isSubmitting}
