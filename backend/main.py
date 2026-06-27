@@ -441,8 +441,53 @@ EVALUATION_LANGUAGE_MAP = {
 EVALUATION_SYSTEM_MESSAGE = (
     "You are an elite Senior Staff Software Engineer auditing code for MeliusAI. "
     "Evaluate the code for architectural design, performance, security, and best practices. "
-    "Return EXACTLY this JSON format: {'score': number, 'grade': 'A'|'B'|'C'|'D'|'F', 'pros': [string, string, string], 'cons': [string, string, string], 'recommendations': [string, string, string]}"
+    "You MUST generate a detailed, non-empty 'description' for every submitted file, regardless "
+    "of programming language. The description must explain the code's apparent purpose, runtime "
+    "role, architectural structure, major components/functions/classes, data flow, and integration "
+    "points. Modern web files such as .ts and .tsx require the exact same deep architectural "
+    "description as backend languages like Java, Python, or Go; never treat TypeScript, TSX, JSX, "
+    "or frontend component files as lightweight snippets. "
+    "Return ONLY a valid JSON object with this exact schema and no markdown: "
+    "{'description': string, 'score': number, 'grade': 'A'|'B'|'C'|'D'|'F', "
+    "'pros': [string, string, string], 'cons': [string, string, string], "
+    "'recommendations': [string, string, string]}. "
+    "The 'description' key is mandatory, must be a string, and must never be null, empty, "
+    "or a generic placeholder."
 )
+
+EVALUATION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "melius_code_evaluation",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Detailed architectural and purpose description of the submitted code. "
+                        "Mandatory for every language, including TypeScript, TSX, JavaScript, and JSX."
+                    ),
+                },
+                "score": {"type": "number"},
+                "grade": {"type": "string", "enum": ["A", "B", "C", "D", "F"]},
+                "pros": {"type": "array", "items": {"type": "string"}},
+                "cons": {"type": "array", "items": {"type": "string"}},
+                "recommendations": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "description",
+                "score",
+                "grade",
+                "pros",
+                "cons",
+                "recommendations",
+            ],
+        },
+    },
+}
 
 
 class EvaluationRequest(BaseModel):
@@ -520,17 +565,30 @@ async def evaluate_code(
                     "content": (
                         f"File Name: {filename}\n"
                         f"Language: {detected_language}\n\n"
+                        "Mandatory output reminder: include a detailed, non-empty JSON "
+                        "'description' explaining this file's architecture and purpose. "
+                        "If this is a TypeScript, TSX, JSX, or JavaScript web file, describe "
+                        "its component/state/data-flow architecture with the same depth you "
+                        "would use for a Java backend service.\n\n"
                         f"Raw Code:\n{code_content}"
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
+            response_format=EVALUATION_RESPONSE_FORMAT,
             temperature=0,
         )
         logger.info("code_evaluation.openai.complete filename=%s", filename)
 
         raw_content = completion.choices[0].message.content or "{}"
         parsed_content = json.loads(raw_content)
+        description = parsed_content.get("description")
+        if not isinstance(description, str) or not description.strip():
+            logger.error("code_evaluation.missing_description filename=%s", filename)
+            raise HTTPException(
+                status_code=502,
+                detail="AI evaluation response was missing the required code description.",
+            )
+
         logger.info("code_evaluation.success filename=%s", filename)
         return parsed_content
     except HTTPException:
