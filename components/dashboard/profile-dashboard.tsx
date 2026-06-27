@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEven
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { FileText, FolderLock, House, Mail, Menu, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
@@ -2947,28 +2947,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }
 
 
-  if (profileLoading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] px-4 text-slate-300">
-        <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
-          <div className="mx-auto h-12 w-12 animate-pulse rounded-full border border-white/10 bg-white/5" />
-          <p className="mt-4 text-lg">Loading your profile...</p>
-          {showRefresh ? (
-            <Button className="mt-5" onClick={() => window.location.reload()}>
-              Try Refreshing Your Vault
-            </Button>
-          ) : null}
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main
+    <div
       className={
         isOrganizationWorkspace
-          ? 'relative flex h-screen overflow-hidden bg-[#030512] text-white'
-          : 'relative flex h-screen w-screen overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
+          ? 'relative flex h-screen w-full overflow-hidden bg-[#030512] text-white'
+          : 'relative flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white'
       }
     >
       <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
@@ -2999,17 +2983,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           </motion.div>
         ) : null}
       </AnimatePresence>
-      <LayoutGroup>
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-          className={
-            isOrganizationWorkspace
-              ? 'relative z-10 flex h-full w-full overflow-hidden'
-              : 'relative z-10 flex h-full w-full overflow-hidden'
-          }
-        >
+      <div className="relative z-10 flex h-full w-full overflow-hidden">
           <header className="fixed left-0 right-0 top-0 z-30 flex items-center justify-between border-b border-blue-950/40 bg-[#020617]/70 px-4 py-3 backdrop-blur-xl md:hidden">
             <button
               type="button"
@@ -3094,13 +3068,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
           </aside>
 
-          <section
+          <main
             className={
               isOrganizationWorkspace
                 ? 'h-full min-h-0 flex-1 w-full overflow-y-auto p-8 pt-20 md:pt-8'
                 : 'flex h-full min-h-0 flex-1 w-full flex-col overflow-x-hidden overflow-y-auto p-8 pt-20 md:pt-8'
             }
           >
+            {profileLoading ? (
+              <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
+                <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
+                  <div className="mx-auto h-12 w-12 animate-pulse rounded-full border border-white/10 bg-white/5" />
+                  <p className="mt-4 text-lg">Loading your profile...</p>
+                  {showRefresh ? (
+                    <Button className="mt-5" onClick={() => window.location.reload()}>
+                      Try Refreshing Your Vault
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
             <div
               className={
                 isOrganizationWorkspace
@@ -3672,8 +3659,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
             </div>
             </div>
-          </section>
-        </motion.div>
+            )}
+          </main>
+        </div>
 
         {viewingAuditAsset ? (
           <AuditReviewModal
@@ -3704,7 +3692,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             setActivePreviewUrl(null);
           }}
         />
-      </LayoutGroup>
-    </main>
+    </div>
   );
 }
