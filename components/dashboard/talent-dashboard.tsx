@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
+import faviconLogo from '@/app/favicon.png';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -205,7 +208,16 @@ function renderDashboard(input: {
       <div className="rounded-[2rem] border border-slate-800/80 bg-slate-950/70 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.6)] backdrop-blur-xl sm:p-6">
         <div className="flex flex-col gap-6 border-b border-slate-800/70 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <Badge variant="accent">Dashboard</Badge>
+            <div className="mb-4 flex items-center gap-3">
+              <Link
+                href="/home"
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-sky-500/20 bg-slate-950/70 p-1"
+                aria-label="Go to candidate dashboard"
+              >
+                <Image src={faviconLogo} alt="MeliusAI Logo" width={40} height={40} className="object-contain cursor-pointer" />
+              </Link>
+              <Badge variant="accent">Dashboard</Badge>
+            </div>
             <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
               Hey {firstName}, welcome back.
             </h1>

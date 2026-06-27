@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import { FileText, FolderLock, House, Mail, Menu, Search } from 'lucide-react';
 
+import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard } from '@/components/dashboard/candidate-opportunity-card';
@@ -3018,12 +3020,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             >
               <Menu className="h-5 w-5" strokeWidth={1.9} />
             </button>
-            <div className="flex items-center gap-2 text-sm font-semibold text-white">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-950/60 text-xs text-cyan-400">
-                M
+            <Link href="/home" className="flex items-center gap-2 text-sm font-semibold text-white" aria-label="Go to candidate dashboard">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-950/60 bg-blue-950/60 p-1">
+                <Image src={faviconLogo} alt="MeliusAI Logo" width={32} height={32} className="object-contain cursor-pointer" />
               </span>
               MeliusAI
-            </div>
+            </Link>
           </header>
           {isOpen ? (
             <div
@@ -3040,15 +3042,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             )}
           >
             <div>
-              <div className="mb-8 flex items-center gap-3 px-3 py-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-950/60 text-cyan-400">
-                  <span className="text-sm font-semibold">M</span>
+              <Link href="/home" className="mb-8 flex items-center gap-3 px-3 py-2" aria-label="Go to candidate dashboard">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-950/60 bg-blue-950/60 p-1">
+                  <Image src={faviconLogo} alt="MeliusAI Logo" width={36} height={36} className="object-contain cursor-pointer" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-white">MeliusAI</p>
                   <p className="text-[11px] tracking-wide text-slate-500">Workspace</p>
                 </div>
-              </div>
+              </Link>
               <nav className="flex flex-col gap-1">
                 <AnimatePresence initial={false}>
                   {dashboardNavigation.map((item) => (

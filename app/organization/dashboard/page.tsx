@@ -1,10 +1,12 @@
 'use client';
 
 import { Suspense, useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BriefcaseBusiness, FileText, LayoutDashboard, MessageSquare, Search, type LucideIcon } from 'lucide-react';
 
+import faviconLogo from '@/app/favicon.png';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
 
@@ -809,14 +811,14 @@ function OrganizationDashboardContent() {
   return (
     <div className="min-h-screen w-full bg-[#060b26] flex flex-col md:flex-row overflow-x-hidden text-slate-100">
       <header className="fixed top-0 left-0 right-0 h-14 bg-[#0a0f29]/90 backdrop-blur-md border-b border-slate-900 flex items-center justify-between px-4 md:hidden z-50">
-        <button
-          type="button"
-          onClick={() => scrollToSection('overview')}
+        <Link
+          href="/organization/dashboard"
+          onClick={() => setActiveTab('overview')}
           className="flex items-center gap-2 text-left"
           aria-label="Go to organization overview"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-purple-500/25 bg-purple-950/30 text-[11px] font-bold tracking-widest text-purple-200">
-            {sidebarCompanyName ? sidebarCompanyName.substring(0, 2).toUpperCase() : 'HQ'}
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-purple-500/25 bg-purple-950/30 p-1">
+            <Image src={faviconLogo} alt="MeliusAI Logo" width={32} height={32} className="object-contain cursor-pointer" />
           </span>
           <span className="min-w-0">
             <span className="block truncate text-xs font-semibold tracking-tight text-white">
@@ -826,7 +828,7 @@ function OrganizationDashboardContent() {
               {sidebarWorkspaceUsername ? `@${sidebarWorkspaceUsername}` : 'Workspace'}
             </span>
           </span>
-        </button>
+        </Link>
 
         <button
           type="button"
@@ -855,9 +857,14 @@ function OrganizationDashboardContent() {
       <aside className="hidden md:flex md:w-64 border-r border-slate-800/60 bg-[#060817] flex-col justify-between p-6 h-screen shrink-0">
         <div>
           <div className="mb-10 rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#191336] via-[#070a1e] to-[#030512] p-4">
-            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-purple-500/30 bg-purple-950/40 text-sm font-bold tracking-widest text-purple-200">
-              {sidebarCompanyName ? sidebarCompanyName.substring(0, 2).toUpperCase() : 'HQ'}
-            </div>
+            <Link
+              href="/organization/dashboard"
+              onClick={() => setActiveTab('overview')}
+              className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-purple-500/30 bg-purple-950/40 p-1"
+              aria-label="Go to organization dashboard"
+            >
+              <Image src={faviconLogo} alt="MeliusAI Logo" width={40} height={40} className="object-contain cursor-pointer" />
+            </Link>
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Workspace Profile</p>
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-purple-300">
               Verified Organisation
