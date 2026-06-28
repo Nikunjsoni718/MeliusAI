@@ -646,13 +646,11 @@ async def evaluate_code(
         logger.info("code_evaluation.database.update.start project_id=%s filename=%s", project_id, filename)
         supabase_client = get_request_supabase_client(request)
         update_response = await asyncio.to_thread(
-            lambda: supabase_client.table("projects")
-            .update(update_payload)
-            .eq("id", project_id)
-            .eq("user_id", current_user_id)
-            .select("*")
-            .maybe_single()
-            .execute()
+    lambda: supabase.table("projects")
+    .update(update_payload)
+    .eq("id", project_id)
+    .execute()       # <--- Just call execute() directly after eq()
+)
         )
 
         updated_project = update_response.data
