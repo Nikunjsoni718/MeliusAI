@@ -485,6 +485,23 @@ function UniversalAssetCard({
   const fileTypeLabel = `${getUniversalAssetFileType(project)} File`;
   const fileName = project.file_name || project.name || assetName;
 
+  function handlePreviewClick(e: MouseEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (assetUrl) {
+      onPreview(project);
+    }
+  }
+
+  function handlePreviewKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if ((e.key === 'Enter' || e.key === ' ') && assetUrl) {
+      e.preventDefault();
+      e.stopPropagation();
+      onPreview(project);
+    }
+  }
+
   return (
     <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
       <CardContent className="p-0">
@@ -533,20 +550,8 @@ function UniversalAssetCard({
               role="button"
               tabIndex={assetUrl ? 0 : -1}
               aria-disabled={!assetUrl}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (assetUrl) {
-                  onPreview(project);
-                }
-              }}
-              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
-                if ((e.key === 'Enter' || e.key === ' ') && assetUrl) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onPreview(project);
-                }
-              }}
+              onClick={handlePreviewClick}
+              onKeyDown={handlePreviewKeyDown}
               className="group relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
               aria-label={`Preview ${assetName}`}
             >

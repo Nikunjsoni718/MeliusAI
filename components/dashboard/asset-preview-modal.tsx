@@ -270,12 +270,27 @@ export function AssetPreviewModal({
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
+  const [textPreview, setTextPreview] = useState<{
+    url: string | null;
+    text: string | null;
+    isLoading: boolean;
+    error: string | null;
+  }>({
+    url: null,
+    text: null,
+    isLoading: false,
+    error: null,
+  });
   const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
   const viewerSrc = useMemo(
     () => getViewerSrc(activePreviewUrl, previewName),
     [activePreviewUrl, previewName]
   );
   const extension = getPreviewExtension(activePreviewUrl, previewName, liveProject);
+  const shouldRenderTextPreview = shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject);
+  const projectTextPreview = liveProject?.raw_text?.trim() || liveProject?.text_preview?.trim() || null;
+  const renderedTextPreview =
+    projectTextPreview || (textPreview.url === activePreviewUrl ? textPreview.text : null);
   const score = getScore(liveProject);
   const pros = getMetricItems(liveProject, 'pros');
   const cons = getMetricItems(liveProject, 'cons');
@@ -290,6 +305,42 @@ export function AssetPreviewModal({
     setLiveProject(previewProject ?? null);
     setIsExpandedViewer(false);
   }, [previewProject?.id, previewProject?.user_description, previewProject?.bio]);
+
+  useEffect(() => {
+    if (!activePreviewUrl || !shouldRenderTextPreview) {
+      setTextPreview({ url: null, text: null, isLoading: false, error: null });
+      return;
+    }
+
+    if (projectTextPreview) {
+      setTextPreview({ url: activePreviewUrl, text: projectTextPreview, isLoading: false, error: null });
+      return;
+    }
+
+    let isActive = true;
+    setTextPreview({ url: activePreviewUrl, text: null, isLoading: true, error: null });
+
+    void readRemoteTextAsUtf8(activePreviewUrl)
+      .then((text) => {
+        if (isActive) {
+          setTextPreview({ url: activePreviewUrl, text, isLoading: false, error: null });
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setTextPreview({
+            url: activePreviewUrl,
+            text: null,
+            isLoading: false,
+            error: 'Preview not available for this file yet.',
+          });
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [activePreviewUrl, projectTextPreview, shouldRenderTextPreview]);
 
   useEffect(() => {
     if (!activePreviewUrl) {
@@ -441,7 +492,20 @@ MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/10
               : 'aspect-video md:h-[45vh] rounded-t-xl border-b border-slate-800'
           } bg-black relative overflow-hidden transition-all duration-300`}
         >
-          {videoExtensions.has(extension) ? (
+          {shouldRenderTextPreview ? (
+            <div className="h-full w-full overflow-auto bg-[#050b17] text-left">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-[#050b17]/95 px-4 py-2 text-xs text-slate-400 backdrop-blur">
+                <span>{extension || 'code'}</span>
+                <span>Text Preview</span>
+              </div>
+              <pre className="m-0 min-h-full p-4 font-mono text-xs leading-6 text-slate-200">
+                <code className="block whitespace-pre-wrap break-words">
+                  {renderedTextPreview ??
+                    (textPreview.isLoading ? 'Loading code preview...' : textPreview.error ?? 'Preview not available.')}
+                </code>
+              </pre>
+            </div>
+          ) : videoExtensions.has(extension) ? (
             <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
           ) : imageExtensions.has(extension) ? (
             <Image

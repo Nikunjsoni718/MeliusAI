@@ -1441,6 +1441,20 @@ function ProjectCard({
   const fileExtension = getProjectExtension(project).toUpperCase() || project.source_kind || 'Asset';
   const fileName = project.file_name || project.title;
 
+  function handlePreviewClick(e: MouseEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    onOpen(project);
+  }
+
+  function handlePreviewKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      onOpen(project);
+    }
+  }
+
   return (
     <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
       <CardContent className="p-0">
@@ -1465,18 +1479,8 @@ function ProjectCard({
             <div
               role="button"
               tabIndex={0}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onOpen(project);
-              }}
-              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onOpen(project);
-                }
-              }}
+              onClick={handlePreviewClick}
+              onKeyDown={handlePreviewKeyDown}
               className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
               aria-label={`Preview ${project.title}`}
             >
