@@ -92,6 +92,8 @@ type SpectatorProfilePayload = {
   username?: string | null;
   full_name?: string | null;
   email?: string | null;
+  bio?: string | null;
+  avatar_url?: string | null;
   age?: number | null;
   current_status?: string | null;
   qualifications?: string[] | null;
@@ -101,8 +103,6 @@ type SpectatorProfilePayload = {
   projects?: ProjectRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
-  bio?: string | null;
-  avatar_url?: string | null;
   birth_date?: string | null;
   avg_project_score?: number | null;
   average_project_score?: number | null;
@@ -299,6 +299,8 @@ function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePaylo
     'username',
     'full_name',
     'email',
+    'bio',
+    'avatar_url',
     'age',
     'current_status',
     'qualifications',
@@ -317,6 +319,8 @@ function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePaylo
     username: nullableString(record.username),
     full_name: nullableString(record.full_name),
     email: nullableString(record.email),
+    bio: nullableString(record.bio),
+    avatar_url: nullableString(record.avatar_url),
     age: nullableNumber(record.age),
     current_status: nullableString(record.current_status),
     qualifications: nullableStringArray(record.qualifications),
@@ -3625,9 +3629,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                     </>
                   ) : (
                     <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5 text-base leading-7 text-slate-300">
-                      {displayBio
-                        ? displayBio
-                        : 'This profile is ready for a stronger public story. When the owner adds a bio, their design methodology, technical focus, and creative direction will appear here.'}
+                      {displayBio || 'No bio provided yet.'}
                     </div>
                   )}
                 </CardContent>
