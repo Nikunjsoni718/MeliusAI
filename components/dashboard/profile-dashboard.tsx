@@ -87,12 +87,33 @@ type LiveOpportunityItem = {
   tech_input: string;
   perks_input: string;
 };
-type SavedProfileItem = Pick<ProfileRow, 'full_name' | 'username' | 'birth_date' | 'bio' | 'avatar_url'> & {
+type SavedProfileItem = Pick<
+  ProfileRow,
+  | 'full_name'
+  | 'username'
+  | 'birth_date'
+  | 'bio'
+  | 'avatar_url'
+  | 'age'
+  | 'current_status'
+  | 'education'
+  | 'qualifications'
+  | 'experience'
+  | 'hobbies'
+  | 'skills'
+  | 'resume_projects'
+  | 'external_links'
+> & {
   id?: string | null;
   email?: string | null;
   avg_project_score?: number | null;
   average_project_score?: number | null;
-  skills?: string[] | null;
+};
+type SpectatorRatingItem = SpectatorScanItem & {
+  project_id?: string | null;
+  score?: number | null;
+  summary?: string | null;
+  improvement_tips?: unknown;
 };
 type SpectatorScanItem = {
   id: string;
@@ -109,8 +130,14 @@ type SpectatorScanItem = {
 type SpectateProfileResponse = {
   success?: boolean;
   profile?: SavedProfileItem | null;
+  resume?: SavedProfileItem | null;
   projects?: ProjectRow[] | null;
+  vault_assets?: ProjectRow[] | null;
+  vaultAssets?: ProjectRow[] | null;
+  ratings?: SpectatorRatingItem[] | null;
+  scores?: SpectatorRatingItem[] | null;
   scans?: SpectatorScanItem[] | null;
+  opportunities?: unknown[] | null;
   detail?: string;
   message?: string;
 };
@@ -214,6 +241,46 @@ function formatScanDate(value: string) {
     return 'Recent scan';
   }
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function normalizeSpectatorRating(value: unknown): SpectatorScanItem | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const rating = value as Record<string, unknown>;
+  const id = typeof rating.id === 'string' && rating.id.trim()
+    ? rating.id.trim()
+    : typeof rating.project_id === 'string'
+      ? `rating-${rating.project_id}`
+      : '';
+
+  if (!id) {
+    return null;
+  }
+
+  const rawScore = Number(rating.logic_score ?? rating.evaluation_score ?? rating.score);
+  const improvementTips = Array.isArray(rating.improvement_tips)
+    ? rating.improvement_tips.map((item) => String(item)).filter(Boolean)
+    : [];
+
+  return {
+    id,
+    project_id: typeof rating.project_id === 'string' ? rating.project_id : null,
+    title: typeof rating.title === 'string' ? rating.title : null,
+    score: Number.isFinite(rawScore) ? rawScore : null,
+    evaluation_score: Number.isFinite(rawScore) ? rawScore : null,
+    logic_score: Number.isFinite(rawScore) ? rawScore : null,
+    summary: typeof rating.summary === 'string' ? rating.summary : null,
+    ai_summary: typeof rating.ai_summary === 'string' ? rating.ai_summary : null,
+    description:
+      typeof rating.description === 'string'
+        ? rating.description
+        : improvementTips.length > 0
+          ? improvementTips.join('\n')
+          : null,
+    created_at: typeof rating.created_at === 'string' ? rating.created_at : null,
+  };
 }
 
 function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
@@ -1876,33 +1943,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       try {
-        if (!supabase) {
-          throw new Error('Profile lookup is unavailable because Supabase is not configured.');
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
+          { cache: 'no-store' }
+        );
+        const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
+
+        if (!response.ok || !spectatorPayload?.profile) {
+          throw new Error(
+            spectatorPayload?.detail ||
+              spectatorPayload?.message ||
+              `Unable to load candidate profile "${targetUsername}".`
+          );
         }
 
-        let sessionUser: typeof user = null;
-
-        const {
-          data: { user: authenticatedUser },
-          error: sessionUserError,
-        } = await supabase.auth.getUser();
-
-        if (sessionUserError) {
-          console.warn('Unable to resolve active profile session:', sessionUserError.message);
-        }
-
-        sessionUser = authenticatedUser ?? null;
-
-        const sessionRawMetadata = (sessionUser as {
-          raw_user_meta_data?: {
-            username?: string;
-            bio?: string;
-            avatar_url?: string;
-            picture?: string;
-            portfolio_links?: Partial<PortfolioLinks>;
-          };
-        } | null)?.raw_user_meta_data;
-        const sessionUserMetadata = (sessionUser?.user_metadata ?? {}) as {
+        const sessionUserMetadata = (user?.user_metadata ?? {}) as {
           username?: string;
           full_name?: string;
           name?: string;
@@ -1911,17 +1966,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           picture?: string;
           portfolio_links?: Partial<PortfolioLinks>;
         };
-        const targetProfileResponse = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('username', targetUsername)
-          .maybeSingle();
-
-        if (targetProfileResponse.error) {
-          throw targetProfileResponse.error;
-        }
-
-        const savedProfile = targetProfileResponse.data as SavedProfileItem | null;
+        const savedProfile = {
+          ...spectatorPayload.profile,
+          ...(spectatorPayload.resume ?? {}),
+          id: spectatorPayload.profile.id,
+          username: spectatorPayload.profile.username ?? spectatorPayload.resume?.username ?? targetUsername,
+        } satisfies SavedProfileItem;
 
         if (!savedProfile?.id) {
           throw new Error(`Target candidate profile "${targetUsername}" not found.`);
@@ -1930,32 +1980,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const authenticatedUsername = savedProfile.username?.trim() ?? null;
         const normalizedTargetIdentity = normalizeRouteIdentity(targetUsername);
         const ownsProfile = Boolean(
-          sessionUser &&
+          user?.id &&
+            savedProfile.id &&
+            user.id === savedProfile.id &&
             normalizedTargetIdentity &&
-            (normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity ||
-              normalizeRouteIdentity(sessionUserMetadata.username) === normalizedTargetIdentity ||
-              normalizeRouteIdentity(sessionRawMetadata?.username) === normalizedTargetIdentity ||
-              normalizeRouteIdentity(sessionUser.id) === normalizedTargetIdentity)
+            normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity
         );
         const isOwnProfile = ownsProfile;
-        const projectResponse = await supabase
-          .from('projects')
-          .select('*')
-          .eq('user_id', savedProfile.id)
-          .order('created_at', { ascending: false });
-
-        if (projectResponse.error) {
-          throw projectResponse.error;
-        }
-
-        const loadedProjects = ((projectResponse.data ?? []) as ProjectRow[])
+        const payloadProjects =
+          spectatorPayload.projects ?? spectatorPayload.vault_assets ?? spectatorPayload.vaultAssets ?? [];
+        const loadedProjects = payloadProjects
           .map(mapProjectRowToProjectItem)
           .filter((project) => isOwnProfile || project.is_public !== false);
+        const payloadRatings = spectatorPayload.ratings ?? spectatorPayload.scores ?? spectatorPayload.scans ?? [];
+        const hydratedScans = payloadRatings
+          .map(normalizeSpectatorRating)
+          .filter((scan): scan is SpectatorScanItem => scan !== null);
+        const hydratedOpportunities = (spectatorPayload.opportunities ?? [])
+          .map(normalizeLiveOpportunity)
+          .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
         if (active) {
           setProfileData(savedProfile);
           setProjects(loadedProjects);
-          setScans([]);
+          setScans(hydratedScans);
+          setLiveJobs(hydratedOpportunities);
+          setLoadingState(false);
           setProjectDescriptions(
             Object.fromEntries(
               loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
@@ -1966,7 +2016,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const fallbackName = isOwnProfile
           ? sessionUserMetadata?.full_name ??
             sessionUserMetadata?.name ??
-            sessionUser?.email?.split('@')[0] ??
+            user?.email?.split('@')[0] ??
             targetUsername
           : targetUsername;
         const fallbackUsername = isOwnProfile
@@ -1977,15 +2027,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const displayName = savedProfile?.full_name ?? fallbackName;
         const usernameValue = savedProfile?.username ?? fallbackUsername;
         const bioValue = savedProfile?.bio ??
-          (isOwnProfile ? sessionUserMetadata?.bio ?? sessionRawMetadata?.bio ?? '' : '');
+          (isOwnProfile ? sessionUserMetadata?.bio ?? '' : '');
         const skillsInputValue = Array.isArray(savedProfile?.skills) ? savedProfile.skills.join(', ') : '';
-        const resolvedProfileIdValue = savedProfile?.id ?? (isOwnProfile ? sessionUser?.id ?? null : null);
+        const resolvedProfileIdValue = savedProfile?.id ?? (isOwnProfile ? user?.id ?? null : null);
         const avatarUrl = savedProfile?.avatar_url ??
           (isOwnProfile
             ? sessionUserMetadata?.avatar_url ??
-              sessionRawMetadata?.avatar_url ??
               sessionUserMetadata?.picture ??
-              sessionRawMetadata?.picture ??
               null
             : null);
         const savedAverageScore = savedProfile?.average_project_score ?? savedProfile?.avg_project_score;
@@ -1999,7 +2047,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         if (active) {
           const storedPortfolioLinks =
-            sessionRawMetadata?.portfolio_links ?? sessionUserMetadata?.portfolio_links ?? undefined;
+            sessionUserMetadata?.portfolio_links ?? undefined;
 
           setIsOwner(ownsProfile);
           if (storedPortfolioLinks && isOwnProfile) {
@@ -2023,7 +2071,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             displayName,
             username: usernameValue,
             birthDate,
-            email: savedProfile?.email?.trim() || (isOwnProfile ? sessionUser?.email ?? '' : ''),
+            email: savedProfile?.email?.trim() || (isOwnProfile ? user?.email ?? '' : ''),
             hasDbProfile,
             avatarUrl,
             avgProjectScore: avgProjectScoreValue,
@@ -2048,7 +2096,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       active = false;
       window.clearTimeout(refreshTimer);
     };
-  }, [loading, supabase, targetUsername]);
+  }, [loading, targetUsername, user]);
 
   useEffect(() => {
     if (!isOwner) {
@@ -2056,57 +2104,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setSettingsOpen(false);
     }
   }, [isOwner]);
-
-  useEffect(() => {
-    if (isSpectator || !authEnabled || !supabase) {
-      return;
-    }
-
-    let active = true;
-
-    const loadProjects = async () => {
-      try {
-        const userId = resolvedProfileId;
-        if (!userId) {
-          if (active) {
-            setProjects([]);
-          }
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('is_public', true)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          throw error;
-        }
-
-        if (active) {
-          const loadedProjects = (data ?? []).map(mapProjectRowToProjectItem);
-          setProjects(loadedProjects);
-          setProjectDescriptions(
-            Object.fromEntries(
-              loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
-            )
-          );
-        }
-      } catch {
-        if (active) {
-          setProjects([]);
-        }
-      }
-    };
-
-    void loadProjects();
-
-    return () => {
-      active = false;
-    };
-  }, [authEnabled, isSpectator, resolvedProfileId, supabase]);
 
   useEffect(() => {
     if (isSpectator || !profileHydrated || !currentUser?.id || !supabase) {
