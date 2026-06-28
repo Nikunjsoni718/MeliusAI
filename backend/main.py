@@ -1999,18 +1999,44 @@ async def organization_opportunities(
     request: Request,
     current_user_id: str = Depends(verify_user),
     recruiter_name: str = "",
+    organization_id: str | None = None,
 ):
     try:
-        supabase = get_request_supabase_client(request)
-        organization = await get_user_organization(request, current_user_id)
-        organization_id = str(organization.get("id") or current_user_id).strip()
+        supabase = get_supabase_service_client() or get_request_supabase_client(request)
+        organization_response = await asyncio.to_thread(
+            lambda: supabase.table("organizations")
+            .select("id")
+            .eq("user_id", current_user_id)
+            .limit(1)
+            .execute()
+        )
+        organization_rows = organization_response.data or []
+        resolved_organization_id = str(
+            (organization_rows[0] if organization_rows else {}).get("id") or current_user_id
+        ).strip()
+        requested_organization_id = str(
+            organization_id or request.headers.get("x-organization-id") or ""
+        ).strip()
+        authorized_organization_ids = {
+            value
+            for value in (resolved_organization_id, current_user_id)
+            if value
+        }
+
+        if requested_organization_id and requested_organization_id not in authorized_organization_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to view opportunities for this organization",
+            )
+
+        scoped_organization_id = requested_organization_id or resolved_organization_id
         opportunities_response = await asyncio.to_thread(
             lambda: apply_opportunity_organization_scope(
                 supabase.table("opportunities").select(
                     "id, organization_id, recruiter_name, role_title, core_skills, "
                     "company_email, status, created_at, description"
                 ),
-                organization_id,
+                scoped_organization_id,
                 current_user_id,
             )
             .order("created_at", desc=True)

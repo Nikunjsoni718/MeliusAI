@@ -40,6 +40,26 @@ type OpportunityMutationResponse = {
   opportunity?: unknown;
 };
 
+type OrganizationLookupRow = {
+  id?: string | null;
+};
+
+type SupabaseOpportunityQueryClient = {
+  from: (table: 'opportunities') => {
+    select: (columns: string) => {
+      or: (filters: string) => {
+        order: (
+          column: string,
+          options: { ascending: boolean }
+        ) => PromiseLike<{
+          data: unknown;
+          error: { message?: string; code?: string; details?: string; hint?: string } | null;
+        }>;
+      };
+    };
+  };
+};
+
 function normalizeHistoryPayload(payload: unknown, organizationName: string) {
   if (!Array.isArray(payload)) {
     throw new Error('Opportunity history returned an invalid response.');
@@ -116,6 +136,37 @@ export function OrganizationJobPostingHub() {
     return session?.access_token ?? null;
   }, [supabase]);
 
+  const resolveOrganizationId = useCallback(
+    async (fallbackUserId?: string | null) => {
+      const currentUserId = user?.id || fallbackUserId || '';
+      let resolvedOrganizationId = organizationId || currentUserId;
+
+      if (supabase && currentUserId) {
+        const { data, error } = await supabase
+          .from('organizations')
+          .select('id')
+          .eq('user_id', currentUserId)
+          .limit(1);
+
+        console.log('[BroadcastHistory] organizations lookup response', {
+          currentUserId,
+          data,
+          error,
+        });
+
+        if (error) {
+          console.warn('[BroadcastHistory] Unable to resolve organization row; falling back to user/profile id.', error);
+        } else {
+          const organizationRows = (data ?? []) as OrganizationLookupRow[];
+          resolvedOrganizationId = organizationRows[0]?.id || resolvedOrganizationId;
+        }
+      }
+
+      return resolvedOrganizationId || currentUserId;
+    },
+    [organizationId, supabase, user?.id]
+  );
+
   const fetchHistory = useCallback(async ({ showLoading = true }: { showLoading?: boolean } = {}) => {
     if (loading) {
       return [];
@@ -134,8 +185,26 @@ export function OrganizationJobPostingHub() {
         throw new Error('Please sign in to view your opportunity archive.');
       }
 
+      const resolvedOrganizationId = await resolveOrganizationId();
+      const scopedOrganizationIds = Array.from(
+        new Set([resolvedOrganizationId, user?.id].map((value) => value?.trim()).filter((value): value is string => Boolean(value)))
+      );
+      console.log('[BroadcastHistory] fetching opportunities history', {
+        organizationName,
+        resolvedOrganizationId,
+        currentUserId: user?.id ?? null,
+        scopedOrganizationIds,
+      });
+
+      const historySearchParams = new URLSearchParams({
+        recruiter_name: organizationName,
+      });
+      if (resolvedOrganizationId) {
+        historySearchParams.set('organization_id', resolvedOrganizationId);
+      }
+
       const response = await fetch(
-        `${OPPORTUNITY_API_BASE}/api/organization-opportunities?recruiter_name=${encodeURIComponent(organizationName)}`,
+        `${OPPORTUNITY_API_BASE}/api/organization-opportunities?${historySearchParams.toString()}`,
         {
           cache: 'no-store',
           headers: {
@@ -144,6 +213,11 @@ export function OrganizationJobPostingHub() {
         }
       );
       const payload = (await response.json().catch(() => null)) as unknown;
+      console.log('[BroadcastHistory] backend opportunities response', {
+        status: response.status,
+        ok: response.ok,
+        data: payload,
+      });
 
       if (!response.ok) {
         const detail =
@@ -153,11 +227,36 @@ export function OrganizationJobPostingHub() {
         throw new Error(detail || `History request failed (HTTP ${response.status}).`);
       }
 
-      const normalizedHistory = normalizeHistoryPayload(payload, organizationName);
+      let normalizedHistory = normalizeHistoryPayload(payload, organizationName);
+
+      if (normalizedHistory.length === 0 && supabase && scopedOrganizationIds.length > 0) {
+        const organizationFilter = scopedOrganizationIds
+          .map((id) => `organization_id.eq.${id}`)
+          .join(',');
+        const { data, error } = await (supabase as unknown as SupabaseOpportunityQueryClient)
+          .from('opportunities')
+          .select('id, organization_id, recruiter_name, role_title, core_skills, company_email, status, created_at, description')
+          .or(organizationFilter)
+          .order('created_at', { ascending: false });
+
+        console.log('[BroadcastHistory] direct Supabase opportunities response', {
+          filter: organizationFilter,
+          data,
+          error,
+        });
+
+        if (error) {
+          throw new Error(error.message || 'Supabase opportunities history query failed.');
+        }
+
+        normalizedHistory = normalizeHistoryPayload(Array.isArray(data) ? data : [], organizationName);
+      }
+
       setHistoryList(normalizedHistory);
       setHistoryError(null);
       return normalizedHistory;
     } catch (error) {
+      console.error('[BroadcastHistory] failed to load opportunities history', error);
       setHistoryError(error instanceof Error ? error.message : 'Unable to load broadcast history.');
       return [];
     } finally {
@@ -165,7 +264,7 @@ export function OrganizationJobPostingHub() {
         setHistoryLoading(false);
       }
     }
-  }, [getSessionAccessToken, loading, organizationName]);
+  }, [getSessionAccessToken, loading, organizationName, resolveOrganizationId, supabase, user?.id]);
 
   useEffect(() => {
     void fetchHistory();
@@ -277,21 +376,7 @@ export function OrganizationJobPostingHub() {
         throw new Error('Unable to identify the authenticated organization account. Please sign in again.');
       }
 
-      let resolvedOrganizationId = organizationId;
-      if (supabase) {
-        const { data: organizationRows, error: organizationError } = await supabase
-          .from('organizations')
-          .select('id')
-          .eq('user_id', loggedInUser.id)
-          .limit(1);
-
-        if (organizationError) {
-          throw organizationError;
-        }
-
-        resolvedOrganizationId = organizationRows?.[0]?.id || resolvedOrganizationId;
-      }
-
+      let resolvedOrganizationId = await resolveOrganizationId(loggedInUser.id);
       resolvedOrganizationId ||= loggedInUser.id;
       const loggedInUserEmail =
         loggedInUser.email?.trim().toLowerCase() ||
