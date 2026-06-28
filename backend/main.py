@@ -1719,7 +1719,6 @@ async def spectate_profile(
 ):
     try:
         target_username = username.strip().lower()
-
         if not target_username:
             raise HTTPException(status_code=404, detail="Profile not found")
 
@@ -1730,69 +1729,39 @@ async def spectate_profile(
                 detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
             )
 
-        profile_query = await asyncio.to_thread(
+        profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
             .select(SPECTATE_PROFILE_PUBLIC_SELECT)
             .eq("username", target_username)
-            .maybe_single()
             .execute()
         )
-        profile_data = profile_query.data
+        profile_rows = profile_response.data or []
 
-        if not profile_data:
+        if not isinstance(profile_rows, list) or len(profile_rows) == 0:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile = dict(profile_rows[0])
+        profile_uuid = profile.get("id") or profile.get("user_id")
+        profile["email"] = None
+
+        if profile_uuid:
             try:
-                UUID(target_username)
-            except ValueError:
-                pass
-            else:
-                profile_by_id_query = await asyncio.to_thread(
-                    lambda: supabase.table("profiles")
-                    .select(SPECTATE_PROFILE_PUBLIC_SELECT)
-                    .eq("id", target_username)
-                    .maybe_single()
-                    .execute()
+                auth_user_response = await asyncio.to_thread(
+                    lambda: supabase.auth.admin.get_user_by_id(str(profile_uuid))
                 )
-                profile_data = profile_by_id_query.data
+                auth_user = getattr(auth_user_response, "user", None)
+                if auth_user is None:
+                    auth_user = getattr(auth_user_response, "data", None)
 
-        if not profile_data:
-            raise HTTPException(status_code=404, detail="Profile not found")
+                if isinstance(auth_user, dict):
+                    profile["email"] = auth_user.get("email")
+                elif auth_user is not None:
+                    profile["email"] = getattr(auth_user, "email", None)
+            except Exception as email_error:
+                logger.warning("Unable to hydrate spectator profile email: %s", email_error)
+                profile["email"] = None
 
-        profile_uuid = profile_data.get("id") or profile_data.get("user_id")
-        if not profile_uuid:
-            raise HTTPException(status_code=404, detail="Profile not found")
-
-        profile_email = await fetch_auth_email_for_profile(supabase, str(profile_uuid))
-        profile_data = {**profile_data, "email": profile_email}
-
-        projects_query = await asyncio.to_thread(
-            lambda: supabase.table("projects")
-            .select("*")
-            .eq("user_id", str(profile_uuid))
-            .execute()
-        )
-        projects = projects_query.data or []
-
-        scan_rows = projects
-        scans = [
-            project
-            for project in scan_rows
-            if project.get("has_been_audited")
-            or project.get("logic_score") is not None
-            or project.get("evaluation_score") is not None
-            or project.get("score") is not None
-        ]
-
-        return {
-            "success": True,
-            "profile": profile_data,
-            "resume": profile_data,
-            "projects": projects,
-            "vault_assets": projects,
-            "vaultAssets": projects,
-            "ratings": scans,
-            "scores": scans,
-            "scans": scans,
-        }
+        return profile
     except HTTPException:
         raise
     except Exception as error:
