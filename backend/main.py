@@ -1617,7 +1617,6 @@ async def verify_member(
 async def spectate_profile(
     username: str,
     request: Request,
-    current_user_id: str = Depends(verify_user),
 ):
     try:
         target_username = username.strip().lower()

@@ -20,7 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProfileRow, ProjectRow } from '@/types/supabase';
+import type { ProjectRow } from '@/types/supabase';
 
 type ResumeStatus = string;
 type SaveState = 'idle' | 'saving' | 'saved';
@@ -34,26 +34,28 @@ type ResumeFormData = {
   skills: string[];
   featuredProjectIds: string[];
 };
-type ResumeFields = Pick<
-  ProfileRow,
-  | 'id'
-  | 'username'
-  | 'full_name'
-  | 'avatar_url'
-  | 'age'
-  | 'current_status'
-  | 'qualifications'
-  | 'experience'
-  | 'hobbies'
-  | 'skills'
-  | 'resume_projects'
-> & {
+type ResumeFields = {
+  id?: string | null;
+  username?: string | null;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  age?: number | string | null;
+  current_status?: string | null;
+  qualifications?: unknown;
+  experience?: unknown;
+  hobbies?: unknown;
+  skills?: unknown;
+  resume_projects?: unknown;
   name?: string | null;
   status?: string | null;
 };
 type SpectatorResumeResponse = {
   profile?: ResumeFields | null;
+  resume?: ResumeFields | null;
   projects?: ProjectRow[] | null;
+  vault_assets?: ProjectRow[] | null;
+  vaultAssets?: ProjectRow[] | null;
+  files?: ProjectRow[] | null;
   detail?: string;
   message?: string;
 };
@@ -107,6 +109,56 @@ function normalizeList(value: unknown) {
   }
 
   return [];
+}
+
+function normalizeAge(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  return '';
+}
+
+function getSpectatorResume(payload: SpectatorResumeResponse | null, targetUsername: string) {
+  const profile = payload?.profile ?? null;
+  const resume = payload?.resume ?? null;
+
+  if (!profile && !resume) {
+    return null;
+  }
+
+  return {
+    ...(profile ?? {}),
+    ...(resume ?? {}),
+    id: profile?.id ?? resume?.id ?? null,
+    username: profile?.username ?? resume?.username ?? targetUsername,
+    full_name: resume?.full_name ?? resume?.name ?? profile?.full_name ?? profile?.name ?? null,
+    avatar_url: resume?.avatar_url ?? profile?.avatar_url ?? null,
+    age: resume?.age ?? profile?.age ?? null,
+    current_status: resume?.current_status ?? resume?.status ?? profile?.current_status ?? profile?.status ?? null,
+    qualifications: resume?.qualifications ?? profile?.qualifications ?? [],
+    skills: resume?.skills ?? profile?.skills ?? [],
+    experience: resume?.experience ?? profile?.experience ?? [],
+    hobbies: resume?.hobbies ?? profile?.hobbies ?? [],
+    resume_projects: resume?.resume_projects ?? profile?.resume_projects ?? null,
+  } satisfies ResumeFields;
+}
+
+function getSpectatorResumeAssets(payload: SpectatorResumeResponse | null) {
+  const projects =
+    payload?.projects ??
+    payload?.vault_assets ??
+    payload?.vaultAssets ??
+    payload?.files ??
+    [];
+
+  return Array.isArray(projects)
+    ? projects.filter((project) => project.is_public !== false)
+    : [];
 }
 
 function createDefaultFormData(): ResumeFormData {
@@ -313,16 +365,15 @@ function DashboardResumePageContent() {
             { cache: 'no-store' }
           );
           const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
+          const spectatorResume = getSpectatorResume(payload, targetUsername);
 
-          if (!response.ok || !payload?.profile) {
+          if (!response.ok || !spectatorResume) {
             throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
           }
 
-          resume = payload.profile;
+          resume = spectatorResume;
           profileUuid = resume?.id ?? null;
-          fallbackAssets = Array.isArray(payload.projects)
-            ? payload.projects.filter((project) => project.is_public !== false)
-            : [];
+          fallbackAssets = getSpectatorResumeAssets(payload);
         } else if (supabase && user) {
           const profileResponse = await supabase
             .from('profiles')
@@ -359,20 +410,18 @@ function DashboardResumePageContent() {
 
         profileUuid = profileUuid ?? resume?.id ?? (!isSpectator ? user?.id ?? null : null);
 
-        if (profileUuid && supabase) {
+        if (!isSpectator && profileUuid && supabase) {
           const { data: assetData, error: assetError } = await supabase
             .from('projects')
             .select('*')
             .eq('user_id', profileUuid);
 
           if (assetError) {
-            console.warn('Resume asset fetch failed; using available spectator asset payload if present.', assetError);
+            console.warn('Resume asset fetch failed; using available payload assets if present.', assetError);
             assets = fallbackAssets;
           } else {
             const queriedAssets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
-            assets = isSpectator && queriedAssets.length === 0 && fallbackAssets.length > 0
-              ? fallbackAssets
-              : queriedAssets;
+            assets = queriedAssets;
           }
         } else {
           assets = fallbackAssets;
@@ -389,16 +438,24 @@ function DashboardResumePageContent() {
         const nextFormData = createDefaultFormData();
         const topProjects = getTopScoringAssets(assets);
         const topProjectIds = topProjects.map((asset) => asset.id);
+        const fallbackName = !isSpectator
+          ? (user?.user_metadata?.full_name as string | undefined) ??
+            (user?.user_metadata?.name as string | undefined) ??
+            ''
+          : '';
+        const fallbackAvatarUrl = !isSpectator
+          ? (user?.user_metadata?.avatar_url as string | undefined) ??
+            (user?.user_metadata?.picture as string | undefined) ??
+            null
+          : null;
 
         setFormData({
           ...nextFormData,
           name:
             resume?.full_name ??
             resume?.name ??
-            (user?.user_metadata?.full_name as string | undefined) ??
-            (user?.user_metadata?.name as string | undefined) ??
-            '',
-          age: typeof resume?.age === 'number' ? String(resume.age) : '',
+            fallbackName,
+          age: normalizeAge(resume?.age),
           status: resume?.current_status ?? resume?.status ?? '',
           qualifications: resume ? normalizeList(resume.qualifications) : nextFormData.qualifications,
           skills: resume ? normalizeList(resume.skills) : nextFormData.skills,
@@ -407,16 +464,15 @@ function DashboardResumePageContent() {
           featuredProjectIds: topProjectIds,
         });
         setTopProjects(topProjects);
-        setAvatarUrl(
-          resume?.avatar_url ??
-            (user?.user_metadata?.avatar_url as string | undefined) ??
-            (user?.user_metadata?.picture as string | undefined) ??
-            null
-        );
+        setAvatarUrl(resume?.avatar_url ?? fallbackAvatarUrl);
       } catch (error) {
         console.error('Failed to load resume intake data', error);
         if (active) {
-          setFormError('Unable to load your resume profile right now.');
+          setFormError(
+            isSpectator
+              ? `Unable to load ${targetUsername ?? 'this candidate'}'s resume right now.`
+              : 'Unable to load your resume profile right now.'
+          );
         }
       } finally {
         if (active) {

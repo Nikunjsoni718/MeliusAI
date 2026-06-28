@@ -29,6 +29,9 @@ type VaultToastState = {
 
 type SpectatorVaultResponse = {
   projects?: ProjectRow[] | null;
+  vault_assets?: ProjectRow[] | null;
+  vaultAssets?: ProjectRow[] | null;
+  files?: ProjectRow[] | null;
   detail?: string;
   message?: string;
 };
@@ -44,6 +47,19 @@ const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   hour: 'numeric',
   minute: '2-digit',
 });
+
+function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
+  const projects =
+    payload?.projects ??
+    payload?.vault_assets ??
+    payload?.vaultAssets ??
+    payload?.files ??
+    [];
+
+  return Array.isArray(projects)
+    ? projects.filter((project) => project.is_public !== false)
+    : [];
+}
 
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
@@ -1014,9 +1030,7 @@ function VaultPageContent() {
         }
 
         if (active) {
-          const spectatorAssets = Array.isArray(payload?.projects)
-            ? payload.projects.filter((project) => project.is_public !== false)
-            : [];
+          const spectatorAssets = getSpectatorVaultProjects(payload);
 
           setVaultAssets(spectatorAssets);
           setDescriptionDrafts(
