@@ -44,11 +44,20 @@ load_dotenv(dotenv_path=env_path)
 app = FastAPI(title="MeliusAI Omnivorous Multimodal Agent")
 
 # Authorized browser origins for the production frontend and local development.
-origins = [
-    "https://www.meliusai.in",
+production_origins = [
     "https://meliusai.in",
-    "http://localhost:3000",
+    "https://www.meliusai.in",
 ]
+local_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+extra_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+origins = list(dict.fromkeys(production_origins + local_origins + extra_origins))
 
 # Enable Cross-Origin Resource Sharing (CORS) for authorized frontend surfaces.
 app.add_middleware(
