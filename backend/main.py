@@ -345,6 +345,46 @@ def is_supabase_rls_error(error: Exception) -> bool:
     return "42501" in error_text or "row-level security" in error_text
 
 
+SPECTATE_PROFILE_PUBLIC_SELECT = (
+    "id, full_name, username, birth_date, bio, skills, internal_keywords, "
+    "extracted_experience, extracted_preferences, avatar_url, age, current_status, "
+    "education, qualifications, experience, hobbies, resume_projects, external_links, "
+    "avg_project_score, created_at, updated_at"
+)
+
+
+def normalize_email(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    return None
+
+
+def get_supabase_auth_user_email(user_response: Any) -> str | None:
+    auth_user = getattr(user_response, "user", None)
+    if auth_user is None:
+        auth_user = getattr(user_response, "data", None)
+    if auth_user is None:
+        auth_user = user_response
+
+    if isinstance(auth_user, dict):
+        return normalize_email(auth_user.get("email"))
+
+    return normalize_email(getattr(auth_user, "email", None))
+
+
+async def fetch_auth_email_for_profile(admin_supabase: Any, profile_id: str) -> str | None:
+    try:
+        user_response = await asyncio.to_thread(
+            lambda: admin_supabase.auth.admin.get_user_by_id(profile_id)
+        )
+    except Exception as auth_email_error:
+        logger.warning("Unable to resolve profile email from Supabase auth admin: %s", auth_email_error)
+        return None
+
+    return get_supabase_auth_user_email(user_response)
+
+
 def apply_opportunity_organization_scope(query: Any, organization_id: str, current_user_id: str):
     scoped_ids = []
     for value in (organization_id, current_user_id):
@@ -1683,10 +1723,10 @@ async def spectate_profile(
         if not target_username:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        supabase = get_supabase_read_client(request)
+        supabase = get_supabase_backend_client()
         profile_query = await asyncio.to_thread(
             lambda: supabase.table("profiles")
-            .select("*")
+            .select(SPECTATE_PROFILE_PUBLIC_SELECT)
             .eq("username", target_username)
             .maybe_single()
             .execute()
@@ -1701,7 +1741,7 @@ async def spectate_profile(
             else:
                 profile_by_id_query = await asyncio.to_thread(
                     lambda: supabase.table("profiles")
-                    .select("*")
+                    .select(SPECTATE_PROFILE_PUBLIC_SELECT)
                     .eq("id", target_username)
                     .maybe_single()
                     .execute()
@@ -1715,7 +1755,13 @@ async def spectate_profile(
         if not profile_id:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        profile_data = {**profile_data, "email": profile_data.get("email")}
+        admin_supabase = get_supabase_service_client()
+        profile_email = (
+            await fetch_auth_email_for_profile(admin_supabase, str(profile_id))
+            if admin_supabase is not None
+            else None
+        )
+        profile_data = {**profile_data, "email": profile_email}
 
         projects_query = await asyncio.to_thread(
             lambda: supabase.table("projects")
