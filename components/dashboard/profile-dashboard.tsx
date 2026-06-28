@@ -1908,33 +1908,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     '';
   const profileAge = typeof profileData?.age === 'number' ? profileData.age : null;
   const profileCurrentStatus = profileData?.current_status?.trim() ?? '';
-  const profileQualifications = useMemo(
-    () => normalizeProfileList(profileData?.qualifications),
-    [profileData?.qualifications]
-  );
-  const profileExperience = useMemo(
-    () => normalizeProfileList(profileData?.experience),
-    [profileData?.experience]
-  );
-  const profileHobbies = useMemo(
-    () => normalizeProfileList(profileData?.hobbies),
-    [profileData?.hobbies]
-  );
-  const profileSkills = useMemo(() => {
-    const savedSkills = normalizeProfileList(profileData?.skills);
-    if (savedSkills.length > 0) {
-      return savedSkills;
-    }
-
-    return rawSkillsInput
-      .split(',')
-      .map((skill) => skill.trim())
-      .filter(Boolean);
-  }, [profileData?.skills, rawSkillsInput]);
+  const displayBio = profileData?.bio?.trim() || bioText.trim();
   const avatarUrl =
+    profileData?.avatar_url ??
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
-    profileData?.avatar_url ??
     (isOwner ? profile?.avatar_url : null) ??
     (isOwner ? (user?.user_metadata?.avatar_url as string | undefined) : null) ??
     (isOwner ? (user?.user_metadata?.picture as string | undefined) : null) ??
@@ -2702,18 +2680,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     setBioText(value);
-
-    if (bioSaveState === 'saved') {
-      setBioSaveState('idle');
-    }
-  }
-
-  function updateRawSkillsInput(value: string) {
-    if (!isOwner) {
-      return;
-    }
-
-    setRawSkillsInput(value);
 
     if (bioSaveState === 'saved') {
       setBioSaveState('idle');
@@ -3641,21 +3607,6 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                         placeholder="Tell the creative community or hiring organizations about your design methodology or building focus..."
                         className="mt-5 min-h-40 resize-none border-transparent bg-[#050b1b]/35 text-base leading-7 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/55"
                       />
-                      <div className="mt-4">
-                        <Label htmlFor="profile-skills" className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                          Skills Matrix
-                        </Label>
-                        <Textarea
-                          id="profile-skills"
-                          value={rawSkillsInput}
-                          onChange={(event) => updateRawSkillsInput(event.target.value)}
-                          placeholder="React, TypeScript, Figma"
-                          className="mt-2 min-h-24 resize-none border-transparent bg-[#050b1b]/35 text-sm leading-6 text-slate-200 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/55"
-                        />
-                        <p className="mt-2 text-xs text-slate-500">
-                          Separate skills with commas. MeliusAI stores them as clean lowercase database tags.
-                        </p>
-                      </div>
                       <div className="mt-5 flex justify-end">
                         <button
                           type="button"
@@ -3674,88 +3625,11 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                     </>
                   ) : (
                     <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5 text-base leading-7 text-slate-300">
-                      {bioText.trim()
-                        ? bioText
+                      {displayBio
+                        ? displayBio
                         : 'This profile is ready for a stronger public story. When the owner adds a bio, their design methodology, technical focus, and creative direction will appear here.'}
-                      {profileSkills.length > 0 ? (
-                        <div className="mt-5 border-t border-blue-950/40 pt-4">
-                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Skills</p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {profileSkills.length > 0 &&
-                              profileSkills.map((skill) => (
-                                <span
-                                  key={`skill-${skill}`}
-                                  className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100"
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {profileHobbies.length > 0 ? (
-                        <div className="mt-5 border-t border-blue-950/40 pt-4">
-                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Hobbies</p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {profileHobbies.length > 0 &&
-                              profileHobbies.map((hobby) => (
-                                <span
-                                  key={`hobby-${hobby}`}
-                                  className="rounded-full border border-violet-400/25 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-100"
-                                >
-                                  {hobby}
-                                </span>
-                              ))}
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
                   )}
-                </CardContent>
-              </Card>
-            </section>
-
-            <section id="resume" className="space-y-4">
-              <div>
-                <h2 className="text-2xl font-semibold text-white">Resume</h2>
-                <p className="mt-1 text-sm text-slate-400">Qualifications and experience from this profile.</p>
-              </div>
-
-              <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                <CardContent className="grid gap-6 p-6 lg:grid-cols-2">
-                  <div className="rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Qualifications</p>
-                    {profileQualifications.length > 0 ? (
-                      <ul className="mt-4 space-y-3 text-sm text-slate-300">
-                        {profileQualifications.length > 0 &&
-                          profileQualifications.map((qualification, index) => (
-                            <li key={`qualification-${qualification}-${index}`} className="flex gap-3">
-                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300" />
-                              <span>{qualification}</span>
-                            </li>
-                          ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-4 text-sm text-slate-500">No qualifications added yet.</p>
-                    )}
-                  </div>
-
-                  <div className="rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Experience</p>
-                    {profileExperience.length > 0 ? (
-                      <ul className="mt-4 space-y-3 text-sm text-slate-300">
-                        {profileExperience.length > 0 &&
-                          profileExperience.map((experienceItem, index) => (
-                            <li key={`experience-${experienceItem}-${index}`} className="flex gap-3">
-                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
-                              <span>{experienceItem}</span>
-                            </li>
-                          ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-4 text-sm text-slate-500">No experience added yet.</p>
-                    )}
-                  </div>
                 </CardContent>
               </Card>
             </section>
