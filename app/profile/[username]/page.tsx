@@ -1,5 +1,7 @@
 import { ProfileDashboard } from '@/components/dashboard/profile-dashboard';
 
-export default function ProfilePage({ params }: { params: { username: string } }) {
-  return <ProfileDashboard profileUsername={params.username} />;
+export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
+  const { username } = await params;
+
+  return <ProfileDashboard profileUsername={decodeURIComponent(username)} />;
 }

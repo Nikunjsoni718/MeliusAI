@@ -1876,38 +1876,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       try {
-        let sessionUser: typeof user = null;
-        let authenticatedProfile: SavedProfileItem | null = null;
-
-        if (supabase) {
-          const {
-            data: { user: authenticatedUser },
-            error: sessionUserError,
-          } = await supabase.auth.getUser();
-
-          if (sessionUserError) {
-            console.warn('Unable to resolve active profile session:', sessionUserError.message);
-          }
-
-          sessionUser = authenticatedUser ?? null;
-
-          if (sessionUser) {
-            const authenticatedProfileResponse = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', sessionUser.id)
-              .maybeSingle();
-
-            authenticatedProfile = authenticatedProfileResponse.data as SavedProfileItem | null;
-
-            if (authenticatedProfileResponse.error) {
-              console.warn(
-                `Unable to resolve the authenticated profile row for "${sessionUser.id}":`,
-                authenticatedProfileResponse.error.message
-              );
-            }
-          }
+        if (!supabase) {
+          throw new Error('Profile lookup is unavailable because Supabase is not configured.');
         }
+
+        let sessionUser: typeof user = null;
+
+        const {
+          data: { user: authenticatedUser },
+          error: sessionUserError,
+        } = await supabase.auth.getUser();
+
+        if (sessionUserError) {
+          console.warn('Unable to resolve active profile session:', sessionUserError.message);
+        }
+
+        sessionUser = authenticatedUser ?? null;
 
         const sessionRawMetadata = (sessionUser as {
           raw_user_meta_data?: {
@@ -1927,52 +1911,56 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           picture?: string;
           portfolio_links?: Partial<PortfolioLinks>;
         };
-        const authenticatedUsername = authenticatedProfile?.username?.trim() ?? null;
+        const targetProfileResponse = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('username', targetUsername)
+          .maybeSingle();
+
+        if (targetProfileResponse.error) {
+          throw targetProfileResponse.error;
+        }
+
+        const savedProfile = targetProfileResponse.data as SavedProfileItem | null;
+
+        if (!savedProfile?.id) {
+          throw new Error(`Target candidate profile "${targetUsername}" not found.`);
+        }
+
+        const authenticatedUsername = savedProfile.username?.trim() ?? null;
         const normalizedTargetIdentity = normalizeRouteIdentity(targetUsername);
         const ownsProfile = Boolean(
           sessionUser &&
             normalizedTargetIdentity &&
             (normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity ||
+              normalizeRouteIdentity(sessionUserMetadata.username) === normalizedTargetIdentity ||
+              normalizeRouteIdentity(sessionRawMetadata?.username) === normalizedTargetIdentity ||
               normalizeRouteIdentity(sessionUser.id) === normalizedTargetIdentity)
         );
         const isOwnProfile = ownsProfile;
-        let savedProfile: SavedProfileItem | null = null;
+        const projectResponse = await supabase
+          .from('projects')
+          .select('*')
+          .eq('user_id', savedProfile.id)
+          .order('created_at', { ascending: false });
 
-        if (isOwnProfile) {
-          savedProfile = authenticatedProfile;
-          if (active) {
-            setProfileData(authenticatedProfile);
-            setScans([]);
-          }
-        } else {
-          const spectatorResponse = await fetch(
-            `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-            { cache: 'no-store' }
+        if (projectResponse.error) {
+          throw projectResponse.error;
+        }
+
+        const loadedProjects = ((projectResponse.data ?? []) as ProjectRow[])
+          .map(mapProjectRowToProjectItem)
+          .filter((project) => isOwnProfile || project.is_public !== false);
+
+        if (active) {
+          setProfileData(savedProfile);
+          setProjects(loadedProjects);
+          setScans([]);
+          setProjectDescriptions(
+            Object.fromEntries(
+              loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
+            )
           );
-          const spectatorPayload = (await spectatorResponse.json()) as SpectateProfileResponse;
-
-          if (!spectatorResponse.ok || !spectatorPayload.profile) {
-            throw new Error(
-              spectatorPayload.detail || spectatorPayload.message || 'Target candidate profile not found.'
-            );
-          }
-
-          savedProfile = spectatorPayload.profile;
-          if (active) {
-            const spectatorProjects = (spectatorPayload.projects ?? []).map(mapProjectRowToProjectItem);
-
-            setProfileData(spectatorPayload.profile);
-            setProjects(spectatorProjects);
-            setScans(spectatorPayload.scans ?? []);
-            setProjectDescriptions(
-              Object.fromEntries(
-                spectatorProjects.map((project) => [
-                  project.id,
-                  project.user_description ?? project.description ?? '',
-                ])
-              )
-            );
-          }
         }
 
         const fallbackName = isOwnProfile
