@@ -645,13 +645,12 @@ async def evaluate_code(
 
         logger.info("code_evaluation.database.update.start project_id=%s filename=%s", project_id, filename)
         supabase_client = get_request_supabase_client(request)
+        
+        # Execute the mutation to persist the data
         update_response = await asyncio.to_thread(
-    lambda: supabase.table("projects")
-    .update(update_payload)
-    .eq("id", project_id)
-    .execute()       # <--- Just call execute() directly after eq()
-)
+            lambda: supabase_client.table("projects").update(update_payload).eq("id", project_id).execute()
         )
+        
 
         updated_project = update_response.data
         if not updated_project:
