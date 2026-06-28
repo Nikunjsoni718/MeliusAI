@@ -1717,56 +1717,71 @@ async def spectate_profile(
     username: str,
     request: Request,
 ):
-    try:
-        target_username = username.strip().lower()
-        if not target_username:
-            raise HTTPException(status_code=404, detail="Profile not found")
+    target_username = username.strip().lower()
+    if not target_username:
+        print("--- SPECTATE PROFILE FAILED: empty username parameter ---")
+        raise HTTPException(status_code=404, detail="Profile not found")
 
-        supabase = get_supabase_service_client()
-        if supabase is None:
-            raise HTTPException(
-                status_code=500,
-                detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
-            )
-
-        profile_response = await asyncio.to_thread(
-            lambda: supabase.table("profiles")
-            .select(SPECTATE_PROFILE_PUBLIC_SELECT)
-            .eq("username", target_username)
-            .execute()
+    supabase = get_supabase_service_client()
+    if supabase is None:
+        print(
+            "--- SPECTATE PROFILE FAILED: SUPABASE_SERVICE_ROLE_KEY is not configured, "
+            "so the service-role client could not be initialized ---"
         )
-        profile_rows = profile_response.data or []
+        raise HTTPException(
+            status_code=500,
+            detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
+        )
 
-        if not isinstance(profile_rows, list) or len(profile_rows) == 0:
-            raise HTTPException(status_code=404, detail="Profile not found")
+    profile_response = await asyncio.to_thread(
+        lambda: supabase.table("profiles")
+        .select(SPECTATE_PROFILE_PUBLIC_SELECT)
+        .eq("username", target_username)
+        .execute()
+    )
+    profile_rows = profile_response.data or []
 
-        profile = dict(profile_rows[0])
-        profile_uuid = profile.get("id") or profile.get("user_id")
-        profile["email"] = None
+    if not isinstance(profile_rows, list):
+        print(
+            "--- SPECTATE PROFILE FAILED: Supabase profiles query returned an unexpected "
+            f"data shape for username '{target_username}': {type(profile_rows).__name__} ---"
+        )
+        raise HTTPException(status_code=404, detail="Profile not found")
 
-        if profile_uuid:
-            try:
-                auth_user_response = await asyncio.to_thread(
-                    lambda: supabase.auth.admin.get_user_by_id(str(profile_uuid))
-                )
-                auth_user = getattr(auth_user_response, "user", None)
-                if auth_user is None:
-                    auth_user = getattr(auth_user_response, "data", None)
+    if len(profile_rows) == 0:
+        print(
+            "--- SPECTATE PROFILE FAILED: no profile row found for username "
+            f"'{target_username}' using service-role client ---"
+        )
+        raise HTTPException(status_code=404, detail="Profile not found")
 
-                if isinstance(auth_user, dict):
-                    profile["email"] = auth_user.get("email")
-                elif auth_user is not None:
-                    profile["email"] = getattr(auth_user, "email", None)
-            except Exception as email_error:
-                logger.warning("Unable to hydrate spectator profile email: %s", email_error)
-                profile["email"] = None
+    profile = dict(profile_rows[0])
+    profile_uuid = profile.get("id") or profile.get("user_id")
+    profile["email"] = None
 
-        return profile
-    except HTTPException:
-        raise
-    except Exception as error:
-        print(f"--- SPECTATE PROFILE ERROR: {str(error)} ---")
-        raise HTTPException(status_code=500, detail="Unable to load the spectator profile")
+    if profile_uuid:
+        try:
+            auth_user_response = await asyncio.to_thread(
+                lambda: supabase.auth.admin.get_user_by_id(str(profile_uuid))
+            )
+            auth_user = getattr(auth_user_response, "user", None)
+            if auth_user is None:
+                auth_user = getattr(auth_user_response, "data", None)
+
+            if isinstance(auth_user, dict):
+                profile["email"] = auth_user.get("email")
+            elif auth_user is not None:
+                profile["email"] = getattr(auth_user, "email", None)
+        except Exception as email_error:
+            logger.warning("Unable to hydrate spectator profile email: %s", email_error)
+            profile["email"] = None
+    else:
+        print(
+            "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
+            f"'{target_username}' has no id or user_id value ---"
+        )
+
+    return profile
 
 
 @app.get("/api/talent-discovery")
