@@ -2282,32 +2282,12 @@ async def get_opportunities(
             dismissals_response = await asyncio.to_thread(
                 lambda: supabase.table("candidate_opportunity_dismissals")
                 .select("opportunity_id")
-                .eq("user_id", resolved_candidate_id)
+                .eq("candidate_id", resolved_candidate_id)
                 .execute()
             )
         except Exception as dismissal_lookup_error:
             dismissal_error_text = str(dismissal_lookup_error)
-            missing_user_id_column = (
-                "user_id" in dismissal_error_text
-                and (
-                    "PGRST204" in dismissal_error_text
-                    or "42703" in dismissal_error_text
-                    or "could not find" in dismissal_error_text.lower()
-                    or "does not exist" in dismissal_error_text.lower()
-                )
-            )
-
-            if missing_user_id_column:
-                logger.warning(
-                    "Dismissals table does not expose user_id; falling back to legacy candidate_id."
-                )
-                dismissals_response = await asyncio.to_thread(
-                    lambda: supabase.table("candidate_opportunity_dismissals")
-                    .select("opportunity_id")
-                    .eq("candidate_id", resolved_candidate_id)
-                    .execute()
-                )
-            elif "PGRST205" in dismissal_error_text:
+            if "PGRST205" in dismissal_error_text:
                 logger.warning(
                     "Opportunity dismissal table is not in the PostgREST schema cache yet."
                 )

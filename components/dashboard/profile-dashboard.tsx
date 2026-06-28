@@ -90,7 +90,7 @@ type LiveOpportunityItem = {
 
 type CandidateOpportunityDismissalsClient = {
   from: (table: 'candidate_opportunity_dismissals') => {
-    insert: (row: { user_id: string; opportunity_id: string }) => PromiseLike<{
+    insert: (row: { candidate_id: string; opportunity_id: string }) => PromiseLike<{
       error: { message?: string; code?: string; details?: string; hint?: string } | null;
     }>;
   };
@@ -2392,12 +2392,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const { error } = await (supabase as unknown as CandidateOpportunityDismissalsClient)
         .from('candidate_opportunity_dismissals')
         .insert({
-          user_id: currentUser.id,
+          candidate_id: currentUser.id,
           opportunity_id: opportunityId,
         });
 
       console.log('[Opportunities] dismissal insert response', {
-        user_id: currentUser.id,
+        candidate_id: currentUser.id,
         opportunity_id: opportunityId,
         error,
       });
