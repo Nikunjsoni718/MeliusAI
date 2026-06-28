@@ -1794,6 +1794,7 @@ async def talent_discovery(
         ) from error
 
 
+@app.post("/api/create-oppurtunity", status_code=201)
 @app.post("/api/create-opportunity", status_code=201)
 async def create_opportunity(
     payload: CreateOpportunityRequest,
@@ -1816,7 +1817,13 @@ async def create_opportunity(
         request.state.supabase = authenticated_supabase
 
         service_supabase = get_supabase_service_client()
-        validation_supabase = service_supabase or authenticated_supabase
+        if service_supabase is None:
+            raise HTTPException(
+                status_code=500,
+                detail="SUPABASE_SERVICE_ROLE_KEY is required for opportunity creation writes.",
+            )
+
+        validation_supabase = service_supabase
         organization_response = await asyncio.to_thread(
             lambda: validation_supabase.table("organizations")
             .select("*")
@@ -1850,11 +1857,9 @@ async def create_opportunity(
             "status": "active",
         }
 
-        insert_supabase = service_supabase or authenticated_supabase
-
         try:
             opportunity_response = await asyncio.to_thread(
-                lambda: insert_supabase.table("opportunities")
+                lambda: service_supabase.table("opportunities")
                 .insert(insert_data)
                 .execute()
             )
