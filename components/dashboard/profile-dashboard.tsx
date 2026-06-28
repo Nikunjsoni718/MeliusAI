@@ -92,18 +92,19 @@ type SpectatorProfilePayload = {
   username?: string | null;
   full_name?: string | null;
   email?: string | null;
-  bio?: string | null;
-  avatar_url?: string | null;
+  age?: number | null;
   current_status?: string | null;
   qualifications?: string[] | null;
-  experience?: string[] | null;
+  experience?: string[] | string | null;
   hobbies?: string[] | null;
   skills?: string[] | null;
-  avg_project_score?: number | null;
+  projects?: ProjectRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
+  bio?: string | null;
+  avatar_url?: string | null;
   birth_date?: string | null;
-  age?: number | null;
+  avg_project_score?: number | null;
   average_project_score?: number | null;
 };
 type SpectatorRatingItem = SpectatorScanItem & {
@@ -256,8 +257,34 @@ function nullableStringArray(value: unknown) {
     : null;
 }
 
+function nullableStringArrayOrString(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+
+  return typeof value === 'string' ? value : null;
+}
+
 function nullableNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function nullableProjects(value: unknown) {
+  return Array.isArray(value) ? (value as ProjectRow[]) : null;
+}
+
+function normalizeProfileList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return [value.trim()];
+  }
+
+  return [];
 }
 
 function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePayload | null {
@@ -271,14 +298,13 @@ function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePaylo
     'username',
     'full_name',
     'email',
-    'bio',
-    'avatar_url',
+    'age',
     'current_status',
     'qualifications',
     'experience',
     'hobbies',
     'skills',
-    'avg_project_score',
+    'projects',
   ].some((key) => key in record);
 
   if (!hasProfileShape) {
@@ -290,14 +316,13 @@ function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePaylo
     username: nullableString(record.username),
     full_name: nullableString(record.full_name),
     email: nullableString(record.email),
-    bio: nullableString(record.bio),
-    avatar_url: nullableString(record.avatar_url),
+    age: nullableNumber(record.age),
     current_status: nullableString(record.current_status),
     qualifications: nullableStringArray(record.qualifications),
-    experience: nullableStringArray(record.experience),
+    experience: nullableStringArrayOrString(record.experience),
     hobbies: nullableStringArray(record.hobbies),
     skills: nullableStringArray(record.skills),
-    avg_project_score: nullableNumber(record.avg_project_score),
+    projects: nullableProjects(record.projects),
   };
 }
 
@@ -325,11 +350,13 @@ function normalizeSpectateProfileResponse(
       : null,
     projects: Array.isArray(payloadRecord?.projects)
       ? (payloadRecord.projects as ProjectRow[])
-      : Array.isArray(payloadRecord?.vault_assets)
-        ? (payloadRecord.vault_assets as ProjectRow[])
-        : Array.isArray(payloadRecord?.vaultAssets)
-          ? (payloadRecord.vaultAssets as ProjectRow[])
-          : [],
+      : Array.isArray(profile?.projects)
+        ? profile.projects
+        : Array.isArray(payloadRecord?.vault_assets)
+          ? (payloadRecord.vault_assets as ProjectRow[])
+          : Array.isArray(payloadRecord?.vaultAssets)
+            ? (payloadRecord.vaultAssets as ProjectRow[])
+            : [],
     ratings: Array.isArray(payloadRecord?.ratings)
       ? payloadRecord.ratings
       : Array.isArray(payloadRecord?.scores)
@@ -1890,6 +1917,31 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     profileFallback?.email?.trim() ||
     (isOwner ? user?.email?.trim() : '') ||
     '';
+  const profileAge = typeof profileData?.age === 'number' ? profileData.age : null;
+  const profileCurrentStatus = profileData?.current_status?.trim() ?? '';
+  const profileQualifications = useMemo(
+    () => normalizeProfileList(profileData?.qualifications),
+    [profileData?.qualifications]
+  );
+  const profileExperience = useMemo(
+    () => normalizeProfileList(profileData?.experience),
+    [profileData?.experience]
+  );
+  const profileHobbies = useMemo(
+    () => normalizeProfileList(profileData?.hobbies),
+    [profileData?.hobbies]
+  );
+  const profileSkills = useMemo(() => {
+    const savedSkills = normalizeProfileList(profileData?.skills);
+    if (savedSkills.length > 0) {
+      return savedSkills;
+    }
+
+    return rawSkillsInput
+      .split(',')
+      .map((skill) => skill.trim())
+      .filter(Boolean);
+  }, [profileData?.skills, rawSkillsInput]);
   const avatarUrl =
     avatarPreviewUrl ??
     profileFallback?.avatarUrl ??
@@ -2147,9 +2199,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         );
         const isOwnProfile = ownsProfile;
         const payloadProjects = normalizedSpectatorPayload.projects;
-        const loadedProjects = payloadProjects
-          .map(mapProjectRowToProjectItem)
-          .filter((project) => isOwnProfile || project.is_public !== false);
+        const loadedProjects = payloadProjects.length > 0
+          ? payloadProjects
+              .map(mapProjectRowToProjectItem)
+              .filter((project) => isOwnProfile || project.is_public !== false)
+          : [];
         const payloadRatings = normalizedSpectatorPayload.ratings;
         const hydratedScans = payloadRatings
           .map(normalizeSpectatorRating)
@@ -3345,7 +3399,12 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                       </p>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Individual</span>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Status: Active</span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                          Age: {profileAge ?? 'Not set'}
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                          Status: {profileCurrentStatus || 'Not set'}
+                        </span>
                         {isSyncing ? (
                           <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-3 py-1 text-sky-100">
                             Syncing...
@@ -3631,24 +3690,85 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                       {bioText.trim()
                         ? bioText
                         : 'This profile is ready for a stronger public story. When the owner adds a bio, their design methodology, technical focus, and creative direction will appear here.'}
-                      {rawSkillsInput.trim() ? (
-                        <div className="mt-5 flex flex-wrap gap-2 border-t border-blue-950/40 pt-4">
-                          {rawSkillsInput
-                            .split(',')
-                            .map((skill) => skill.trim())
-                            .filter(Boolean)
-                            .map((skill) => (
-                              <span
-                                key={skill}
-                                className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100"
-                              >
-                                {skill}
-                              </span>
-                            ))}
+                      {profileSkills.length > 0 ? (
+                        <div className="mt-5 border-t border-blue-950/40 pt-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Skills</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {profileSkills.length > 0 &&
+                              profileSkills.map((skill) => (
+                                <span
+                                  key={`skill-${skill}`}
+                                  className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {profileHobbies.length > 0 ? (
+                        <div className="mt-5 border-t border-blue-950/40 pt-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Hobbies</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {profileHobbies.length > 0 &&
+                              profileHobbies.map((hobby) => (
+                                <span
+                                  key={`hobby-${hobby}`}
+                                  className="rounded-full border border-violet-400/25 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-100"
+                                >
+                                  {hobby}
+                                </span>
+                              ))}
+                          </div>
                         </div>
                       ) : null}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            </section>
+
+            <section id="resume" className="space-y-4">
+              <div>
+                <h2 className="text-2xl font-semibold text-white">Resume</h2>
+                <p className="mt-1 text-sm text-slate-400">Qualifications and experience from this profile.</p>
+              </div>
+
+              <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                <CardContent className="grid gap-6 p-6 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Qualifications</p>
+                    {profileQualifications.length > 0 ? (
+                      <ul className="mt-4 space-y-3 text-sm text-slate-300">
+                        {profileQualifications.length > 0 &&
+                          profileQualifications.map((qualification, index) => (
+                            <li key={`qualification-${qualification}-${index}`} className="flex gap-3">
+                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300" />
+                              <span>{qualification}</span>
+                            </li>
+                          ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-4 text-sm text-slate-500">No qualifications added yet.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Experience</p>
+                    {profileExperience.length > 0 ? (
+                      <ul className="mt-4 space-y-3 text-sm text-slate-300">
+                        {profileExperience.length > 0 &&
+                          profileExperience.map((experienceItem, index) => (
+                            <li key={`experience-${experienceItem}-${index}`} className="flex gap-3">
+                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
+                              <span>{experienceItem}</span>
+                            </li>
+                          ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-4 text-sm text-slate-500">No experience added yet.</p>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </section>
@@ -3692,20 +3812,21 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               ) : (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
-                    {visibleProjects.map((project) => (
-                      <ProjectCard
-                        key={project.id}
-                        project={project}
-                        isSpectator={isSpectating}
-                        verifyingAssetId={verifyingAssetId}
-                        deletingProjectId={deletingProjectId}
-                        verifiedAssetId={verifiedAssetId}
-                        onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                        onOpen={handleOpenProject}
-                        onReadProtocol={handleReadFullAuditProtocol}
-                        onDelete={(projectId) => void handleDeleteProject(projectId)}
-                      />
-                    ))}
+                    {visibleProjects.length > 0 &&
+                      visibleProjects.map((project) => (
+                        <ProjectCard
+                          key={project.id}
+                          project={project}
+                          isSpectator={isSpectating}
+                          verifyingAssetId={verifyingAssetId}
+                          deletingProjectId={deletingProjectId}
+                          verifiedAssetId={verifiedAssetId}
+                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                          onOpen={handleOpenProject}
+                          onReadProtocol={handleReadFullAuditProtocol}
+                          onDelete={(projectId) => void handleDeleteProject(projectId)}
+                        />
+                      ))}
 
                     {!isSpectating && (
                       <ProjectDropzone

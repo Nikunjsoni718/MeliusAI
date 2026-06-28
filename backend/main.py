@@ -355,8 +355,8 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
-    "id, username, full_name, bio, avatar_url, current_status, "
-    "qualifications, experience, hobbies, skills, avg_project_score"
+    "id, username, full_name, age, current_status, "
+    "qualifications, experience, hobbies, skills"
 )
 
 
@@ -1787,6 +1787,18 @@ async def spectate_profile(
             "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
             f"'{target_username}' has no id or user_id value ---"
         )
+
+    try:
+        projects_response = await asyncio.to_thread(
+            lambda: supabase.table("projects")
+            .select("*")
+            .eq("user_id", profile.get("id"))
+            .execute()
+        )
+        profile["projects"] = projects_response.data or []
+    except Exception as projects_error:
+        logger.warning("Unable to hydrate spectator profile projects: %s", projects_error)
+        profile["projects"] = []
 
     return profile
 
