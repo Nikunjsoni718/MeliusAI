@@ -21,7 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProfileRow, ProjectRow, UserRow } from '@/types/supabase';
+import type { ProjectRow, UserRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
   | 'image'
@@ -87,26 +87,23 @@ type LiveOpportunityItem = {
   tech_input: string;
   perks_input: string;
 };
-type SavedProfileItem = Pick<
-  ProfileRow,
-  | 'full_name'
-  | 'username'
-  | 'birth_date'
-  | 'bio'
-  | 'avatar_url'
-  | 'age'
-  | 'current_status'
-  | 'education'
-  | 'qualifications'
-  | 'experience'
-  | 'hobbies'
-  | 'skills'
-  | 'resume_projects'
-  | 'external_links'
-> & {
+type SpectatorProfilePayload = {
   id?: string | null;
+  username?: string | null;
+  full_name?: string | null;
   email?: string | null;
+  bio?: string | null;
+  avatar_url?: string | null;
+  current_status?: string | null;
+  qualifications?: string[] | null;
+  experience?: string[] | null;
+  hobbies?: string[] | null;
+  skills?: string[] | null;
   avg_project_score?: number | null;
+};
+type SavedProfileItem = SpectatorProfilePayload & {
+  birth_date?: string | null;
+  age?: number | null;
   average_project_score?: number | null;
 };
 type SpectatorRatingItem = SpectatorScanItem & {
@@ -129,8 +126,8 @@ type SpectatorScanItem = {
 };
 type SpectateProfileResponse = {
   success?: boolean;
-  profile?: SavedProfileItem | null;
-  resume?: SavedProfileItem | null;
+  profile?: SpectatorProfilePayload | null;
+  resume?: Partial<SpectatorProfilePayload> | null;
   projects?: ProjectRow[] | null;
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
@@ -140,6 +137,14 @@ type SpectateProfileResponse = {
   opportunities?: unknown[] | null;
   detail?: string;
   message?: string;
+} | SpectatorProfilePayload;
+type NormalizedSpectateProfileResponse = {
+  detail: string | null;
+  message: string | null;
+  profile: SavedProfileItem | null;
+  projects: ProjectRow[];
+  ratings: unknown[];
+  opportunities: unknown[];
 };
 type DashboardNavigationItem = {
   href: string;
@@ -233,6 +238,107 @@ function normalizeRouteIdentity(value: string | null | undefined) {
 function getProfileUsernameFromPathname(pathname: string) {
   const profilePathMatch = pathname.match(/^\/profile\/([^/?#]+)/);
   return normalizeProfileUsername(profilePathMatch?.[1]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nullableString(value: unknown) {
+  return typeof value === 'string' ? value : null;
+}
+
+function nullableStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : null;
+}
+
+function nullableNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePayload | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const hasProfileShape = [
+    'id',
+    'username',
+    'full_name',
+    'email',
+    'bio',
+    'avatar_url',
+    'current_status',
+    'qualifications',
+    'experience',
+    'hobbies',
+    'skills',
+    'avg_project_score',
+  ].some((key) => key in record);
+
+  if (!hasProfileShape) {
+    return null;
+  }
+
+  return {
+    id: nullableString(record.id),
+    username: nullableString(record.username),
+    full_name: nullableString(record.full_name),
+    email: nullableString(record.email),
+    bio: nullableString(record.bio),
+    avatar_url: nullableString(record.avatar_url),
+    current_status: nullableString(record.current_status),
+    qualifications: nullableStringArray(record.qualifications),
+    experience: nullableStringArray(record.experience),
+    hobbies: nullableStringArray(record.hobbies),
+    skills: nullableStringArray(record.skills),
+    avg_project_score: nullableNumber(record.avg_project_score),
+  };
+}
+
+function normalizeSpectateProfileResponse(
+  payload: unknown,
+  targetUsername: string
+): NormalizedSpectateProfileResponse {
+  const payloadRecord = asRecord(payload);
+  const directProfile = normalizeSpectatorProfilePayload(payload);
+  const wrappedProfile = normalizeSpectatorProfilePayload(payloadRecord?.profile);
+  const wrappedResume = normalizeSpectatorProfilePayload(payloadRecord?.resume);
+  const profile = wrappedProfile ?? directProfile;
+
+  return {
+    detail: nullableString(payloadRecord?.detail),
+    message: nullableString(payloadRecord?.message),
+    profile: profile
+      ? ({
+          ...profile,
+          ...(wrappedResume ?? {}),
+          id: profile.id ?? wrappedResume?.id ?? null,
+          username: profile.username ?? wrappedResume?.username ?? targetUsername,
+          email: profile.email ?? wrappedResume?.email ?? null,
+        } satisfies SavedProfileItem)
+      : null,
+    projects: Array.isArray(payloadRecord?.projects)
+      ? (payloadRecord.projects as ProjectRow[])
+      : Array.isArray(payloadRecord?.vault_assets)
+        ? (payloadRecord.vault_assets as ProjectRow[])
+        : Array.isArray(payloadRecord?.vaultAssets)
+          ? (payloadRecord.vaultAssets as ProjectRow[])
+          : [],
+    ratings: Array.isArray(payloadRecord?.ratings)
+      ? payloadRecord.ratings
+      : Array.isArray(payloadRecord?.scores)
+        ? payloadRecord.scores
+        : Array.isArray(payloadRecord?.scans)
+          ? payloadRecord.scans
+          : [],
+    opportunities: Array.isArray(payloadRecord?.opportunities) ? payloadRecord.opportunities : [],
+  };
 }
 
 function formatScanDate(value: string) {
@@ -2000,11 +2106,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           { cache: 'no-store', headers: requestHeaders }
         );
         const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
+        const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
 
-        if (!response.ok || !spectatorPayload?.profile) {
+        if (!response.ok || !normalizedSpectatorPayload.profile) {
           throw new Error(
-            spectatorPayload?.detail ||
-              spectatorPayload?.message ||
+            normalizedSpectatorPayload.detail ||
+              normalizedSpectatorPayload.message ||
               `Unable to load candidate profile "${targetUsername}".`
           );
         }
@@ -2018,13 +2125,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           picture?: string;
           portfolio_links?: Partial<PortfolioLinks>;
         };
-        const savedProfile = {
-          ...spectatorPayload.profile,
-          ...(spectatorPayload.resume ?? {}),
-          id: spectatorPayload.profile.id,
-          username: spectatorPayload.profile.username ?? spectatorPayload.resume?.username ?? targetUsername,
-          email: spectatorPayload.profile.email ?? spectatorPayload.resume?.email ?? null,
-        } satisfies SavedProfileItem;
+        const savedProfile = normalizedSpectatorPayload.profile;
 
         if (!savedProfile?.id) {
           throw new Error(`Target candidate profile "${targetUsername}" not found.`);
@@ -2045,16 +2146,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity
         );
         const isOwnProfile = ownsProfile;
-        const payloadProjects =
-          spectatorPayload.projects ?? spectatorPayload.vault_assets ?? spectatorPayload.vaultAssets ?? [];
+        const payloadProjects = normalizedSpectatorPayload.projects;
         const loadedProjects = payloadProjects
           .map(mapProjectRowToProjectItem)
           .filter((project) => isOwnProfile || project.is_public !== false);
-        const payloadRatings = spectatorPayload.ratings ?? spectatorPayload.scores ?? spectatorPayload.scans ?? [];
+        const payloadRatings = normalizedSpectatorPayload.ratings;
         const hydratedScans = payloadRatings
           .map(normalizeSpectatorRating)
           .filter((scan): scan is SpectatorScanItem => scan !== null);
-        const hydratedOpportunities = (spectatorPayload.opportunities ?? [])
+        const hydratedOpportunities = normalizedSpectatorPayload.opportunities
           .map(normalizeLiveOpportunity)
           .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
