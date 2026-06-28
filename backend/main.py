@@ -1723,7 +1723,13 @@ async def spectate_profile(
         if not target_username:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        supabase = get_supabase_backend_client()
+        supabase = get_supabase_service_client()
+        if supabase is None:
+            raise HTTPException(
+                status_code=500,
+                detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
+            )
+
         profile_query = await asyncio.to_thread(
             lambda: supabase.table("profiles")
             .select(SPECTATE_PROFILE_PUBLIC_SELECT)
@@ -1751,33 +1757,22 @@ async def spectate_profile(
         if not profile_data:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        profile_id = profile_data.get("id")
-        if not profile_id:
+        profile_uuid = profile_data.get("id") or profile_data.get("user_id")
+        if not profile_uuid:
             raise HTTPException(status_code=404, detail="Profile not found")
 
-        admin_supabase = get_supabase_service_client()
-        profile_email = (
-            await fetch_auth_email_for_profile(admin_supabase, str(profile_id))
-            if admin_supabase is not None
-            else None
-        )
+        profile_email = await fetch_auth_email_for_profile(supabase, str(profile_uuid))
         profile_data = {**profile_data, "email": profile_email}
 
         projects_query = await asyncio.to_thread(
             lambda: supabase.table("projects")
             .select("*")
-            .eq("user_id", str(profile_id))
+            .eq("user_id", str(profile_uuid))
             .execute()
         )
         projects = projects_query.data or []
 
-        scans_query = await asyncio.to_thread(
-            lambda: supabase.table("projects")
-            .select("*")
-            .eq("user_id", str(profile_id))
-            .execute()
-        )
-        scan_rows = scans_query.data or []
+        scan_rows = projects
         scans = [
             project
             for project in scan_rows
@@ -1788,8 +1783,14 @@ async def spectate_profile(
         ]
 
         return {
+            "success": True,
             "profile": profile_data,
+            "resume": profile_data,
             "projects": projects,
+            "vault_assets": projects,
+            "vaultAssets": projects,
+            "ratings": scans,
+            "scores": scans,
             "scans": scans,
         }
     except HTTPException:
