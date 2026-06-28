@@ -10,7 +10,7 @@ import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lu
 import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
-import { CandidateOpportunityCard } from '@/components/dashboard/candidate-opportunity-card';
+import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -1038,6 +1038,137 @@ function SilhouetteIcon({ className }: { className?: string }) {
   );
 }
 
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={cn('animate-pulse rounded-full bg-slate-800/70', className)} />;
+}
+
+function ProfileDashboardSkeleton() {
+  return (
+    <div className="flex w-full flex-col gap-6 opacity-100 transition-opacity duration-500">
+      <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
+            <div className="h-16 w-16 shrink-0 animate-pulse rounded-full border border-slate-800 bg-slate-800/70" />
+            <div className="min-w-0 flex-1 space-y-4">
+              <SkeletonBlock className="h-3 w-44" />
+              <div className="flex flex-wrap gap-2">
+                <SkeletonBlock className="h-6 w-20" />
+                <SkeletonBlock className="h-6 w-24" />
+                <SkeletonBlock className="h-6 w-28" />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <SkeletonBlock className="h-9 w-56 rounded-xl" />
+                <SkeletonBlock className="h-7 w-24" />
+                <SkeletonBlock className="h-7 w-32" />
+              </div>
+              <SkeletonBlock className="h-4 w-28" />
+              <SkeletonBlock className="h-9 w-64" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <SkeletonBlock className="h-9 w-28 rounded-lg" />
+            <SkeletonBlock className="h-9 w-9 rounded-lg" />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-10">
+        <section className="space-y-4">
+          <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+            <CardContent className="p-6">
+              <SkeletonBlock className="h-3 w-12" />
+              <SkeletonBlock className="mt-3 h-7 w-36 rounded-lg" />
+              <div className="mt-5 space-y-3 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
+                <SkeletonBlock className="h-4 w-full rounded-lg" />
+                <SkeletonBlock className="h-4 w-11/12 rounded-lg" />
+                <SkeletonBlock className="h-4 w-3/4 rounded-lg" />
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-3">
+              <SkeletonBlock className="h-7 w-44 rounded-lg" />
+              <SkeletonBlock className="h-4 w-32 rounded-lg" />
+            </div>
+            <SkeletonBlock className="h-7 w-24" />
+          </div>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((item) => (
+              <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                <CardContent className="p-5">
+                  <SkeletonBlock className="h-4 w-2/3 rounded-lg" />
+                  <SkeletonBlock className="mt-4 h-32 w-full rounded-2xl" />
+                  <SkeletonBlock className="mt-4 h-4 w-full rounded-lg" />
+                  <SkeletonBlock className="mt-2 h-4 w-4/5 rounded-lg" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        <section id="my-ratings" className="space-y-4">
+          <div className="space-y-3">
+            <SkeletonBlock className="h-7 w-36 rounded-lg" />
+            <SkeletonBlock className="h-4 w-52 rounded-lg" />
+          </div>
+          <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+            <CardContent className="grid gap-8 p-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+              <div className="space-y-6">
+                <div className="flex items-center gap-5">
+                  <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
+                    <div className="absolute inset-0 animate-pulse rounded-full border border-slate-800 bg-slate-800/70" />
+                    <div className="relative h-24 w-24 animate-pulse rounded-full border border-slate-700 bg-slate-900/80" />
+                  </div>
+                  <div className="space-y-3">
+                    <SkeletonBlock className="h-4 w-24 rounded-lg" />
+                    <SkeletonBlock className="h-7 w-36 rounded-lg" />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
+                    <SkeletonBlock className="h-3 w-20 rounded-lg" />
+                    <SkeletonBlock className="mt-4 h-8 w-14 rounded-lg" />
+                  </div>
+                  <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
+                    <SkeletonBlock className="h-3 w-28 rounded-lg" />
+                    <SkeletonBlock className="mt-4 h-8 w-14 rounded-lg" />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <SkeletonBlock className="h-6 w-56 rounded-lg" />
+                  <SkeletonBlock className="h-7 w-20" />
+                </div>
+                <div className="mt-4 space-y-3">
+                  {[0, 1, 2].map((item) => (
+                    <div
+                      key={item}
+                      className="flex items-center justify-between gap-4 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4"
+                    >
+                      <div className="flex-1 space-y-3">
+                        <SkeletonBlock className="h-4 w-2/5 rounded-lg" />
+                        <SkeletonBlock className="h-3 w-1/4 rounded-lg" />
+                        <SkeletonBlock className="h-3 w-4/5 rounded-lg" />
+                      </div>
+                      <SkeletonBlock className="h-7 w-16" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function ProfilePhoto({
   fallbackLabel,
   sizeClass,
@@ -1796,7 +1927,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
-  const [showRefresh, setShowRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -2090,7 +2220,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     if (shouldBlockForInitialProfileLoad) {
       setProfileLoading(true);
-      setShowRefresh(false);
       setIsOwner(false);
       setIsEditing(false);
       setSettingsOpen(false);
@@ -2116,17 +2245,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setAvatarPreviewUrl(null);
     } else {
       setProfileLoading(false);
-      setShowRefresh(false);
       setFetchError(null);
     }
-
-    const refreshTimer = shouldBlockForInitialProfileLoad
-      ? window.setTimeout(() => {
-          if (active) {
-            setShowRefresh(true);
-          }
-        }, 3000)
-      : null;
 
     const loadProfile = async () => {
       if (!targetUsername) {
@@ -2304,9 +2424,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       active = false;
-      if (refreshTimer) {
-        window.clearTimeout(refreshTimer);
-      }
     };
   }, [loading, profile?.username, supabase, targetUsername, user, viewerMetadataUsername]);
 
@@ -3351,19 +3468,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                 </div>
               </div>
             ) : profileLoading ? (
-              <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
-                <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
-                  <div className="mx-auto h-12 w-12 animate-pulse rounded-full border border-white/10 bg-white/5" />
-                  <p className="mt-4 text-lg">Loading your profile...</p>
-                  {showRefresh ? (
-                    <p className="mt-5 text-xs text-slate-500">
-                      This is taking longer than expected. Your vault state will stay intact while we keep waiting.
-                    </p>
-                  ) : null}
-                </div>
-              </div>
+              <ProfileDashboardSkeleton />
             ) : (
-            <div className="flex w-full flex-col gap-6">
+            <div className="flex w-full flex-col gap-6 opacity-100 transition-opacity duration-500">
             <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
                 <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
@@ -3856,18 +3963,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               {loadingState ? (
                 <div className="space-y-4">
                   {[0, 1, 2].map((item) => (
-                    <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                      <CardContent className="p-5">
-                        <div className="animate-pulse space-y-4">
-                          <div className="h-3 w-28 rounded-full bg-cyan-400/10" />
-                          <div className="h-6 w-2/3 rounded-full bg-white/10" />
-                          <div className="space-y-2">
-                            <div className="h-3 w-full rounded-full bg-white/5" />
-                            <div className="h-3 w-5/6 rounded-full bg-white/5" />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <CandidateOpportunitySkeleton key={item} />
                   ))}
                 </div>
               ) : fetchError ? (
@@ -3878,14 +3974,16 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                 </Card>
               ) : liveJobs.length > 0 ? (
                 <div className="space-y-4">
-                  {liveJobs.map((item, index) => (
-                    <CandidateOpportunityCard
-                      key={item.id || `${item.recruiter_name}-${item.role_title}-${index}`}
-                      item={item}
-                      displayName={displayName}
-                      onDismiss={handleDismiss}
-                    />
-                  ))}
+                  <AnimatePresence initial={false}>
+                    {liveJobs.map((item, index) => (
+                      <CandidateOpportunityCard
+                        key={item.id || `${item.recruiter_name}-${item.role_title}-${index}`}
+                        item={item}
+                        displayName={displayName}
+                        onDismiss={handleDismiss}
+                      />
+                    ))}
+                  </AnimatePresence>
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
