@@ -87,6 +87,15 @@ type LiveOpportunityItem = {
   tech_input: string;
   perks_input: string;
 };
+
+type CandidateOpportunityDismissalsClient = {
+  from: (table: 'candidate_opportunity_dismissals') => {
+    insert: (row: { user_id: string; opportunity_id: string }) => PromiseLike<{
+      error: { message?: string; code?: string; details?: string; hint?: string } | null;
+    }>;
+  };
+};
+
 type SpectatorProfilePayload = {
   id?: string | null;
   username?: string | null;
@@ -2358,8 +2367,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [currentUser?.id, isSpectator, profileHydrated, supabase]);
 
   async function handleDismiss(opportunityId: string) {
-    const dismissedOpportunity = liveJobs.find((opportunity) => opportunity.id === opportunityId);
-    if (!dismissedOpportunity) return;
+    const previousOpportunities = liveJobs;
+    const dismissedOpportunity = previousOpportunities.find((opportunity) => opportunity.id === opportunityId);
+    if (!dismissedOpportunity) {
+      return;
+    }
 
     setLiveJobs((currentOpportunities) =>
       currentOpportunities.filter((opportunity) => opportunity.id !== opportunityId)
@@ -2367,11 +2379,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setFetchError(null);
 
     if (!currentUser?.id) {
-      setLiveJobs((currentOpportunities) =>
-        [...currentOpportunities, dismissedOpportunity].sort(
-          (left, right) => right.match_score - left.match_score
-        )
-      );
+      setLiveJobs(previousOpportunities);
       setFetchError('Unable to persist this dismissal. Please sign in again.');
       return;
     }
@@ -2381,40 +2389,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('Unable to persist this dismissal. Please sign in again.');
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error('Unable to persist this dismissal. Please sign in again.');
-      }
-
-      const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/dismiss-opportunity`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      const { error } = await (supabase as unknown as CandidateOpportunityDismissalsClient)
+        .from('candidate_opportunity_dismissals')
+        .insert({
+          user_id: currentUser.id,
           opportunity_id: opportunityId,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+        });
 
-      if (!response.ok) {
-        throw new Error(
-          typeof payload?.detail === 'string'
-            ? payload.detail
-            : `Dismissal service returned HTTP ${response.status}.`
-        );
+      console.log('[Opportunities] dismissal insert response', {
+        user_id: currentUser.id,
+        opportunity_id: opportunityId,
+        error,
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Unable to save this dismissal.');
       }
     } catch (error) {
-      setLiveJobs((currentOpportunities) =>
-        [...currentOpportunities, dismissedOpportunity].sort(
-          (left, right) => right.match_score - left.match_score
-        )
-      );
+      console.error('[Opportunities] failed to dismiss opportunity', error);
+      setLiveJobs(previousOpportunities);
       setFetchError(
         error instanceof Error
           ? `${error.message} The opportunity has been restored.`

@@ -2282,27 +2282,61 @@ async def get_opportunities(
             dismissals_response = await asyncio.to_thread(
                 lambda: supabase.table("candidate_opportunity_dismissals")
                 .select("opportunity_id")
-                .eq("candidate_id", resolved_candidate_id)
+                .eq("user_id", resolved_candidate_id)
                 .execute()
             )
         except Exception as dismissal_lookup_error:
-            if "PGRST205" not in str(dismissal_lookup_error):
+            dismissal_error_text = str(dismissal_lookup_error)
+            missing_user_id_column = (
+                "user_id" in dismissal_error_text
+                and (
+                    "PGRST204" in dismissal_error_text
+                    or "42703" in dismissal_error_text
+                    or "could not find" in dismissal_error_text.lower()
+                    or "does not exist" in dismissal_error_text.lower()
+                )
+            )
+
+            if missing_user_id_column:
+                logger.warning(
+                    "Dismissals table does not expose user_id; falling back to legacy candidate_id."
+                )
+                dismissals_response = await asyncio.to_thread(
+                    lambda: supabase.table("candidate_opportunity_dismissals")
+                    .select("opportunity_id")
+                    .eq("candidate_id", resolved_candidate_id)
+                    .execute()
+                )
+            elif "PGRST205" in dismissal_error_text:
+                logger.warning(
+                    "Opportunity dismissal table is not in the PostgREST schema cache yet."
+                )
+                dismissals_response = None
+            else:
                 raise
 
-            logger.warning(
-                "Opportunity dismissal table is not in the PostgREST schema cache yet."
-            )
-            dismissals_response = None
-
-        dismissed_opportunity_ids = {
-            str(dismissal.get("opportunity_id") or "")
+        dismissed_opportunity_ids = [
+            str(dismissal.get("opportunity_id") or "").strip()
             for dismissal in ((dismissals_response.data or []) if dismissals_response else [])
             if dismissal.get("opportunity_id")
-        }
-        opportunities_response = await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
+        ]
+
+        opportunities_query = (
+            supabase.table("opportunities")
             .select("*, organization_id")
             .eq("status", "active")
+        )
+
+        if dismissed_opportunity_ids:
+            dismissed_ids_filter = ",".join(dismissed_opportunity_ids)
+            opportunities_query = opportunities_query.filter(
+                "id",
+                "not.in",
+                f"({dismissed_ids_filter})",
+            )
+
+        opportunities_response = await asyncio.to_thread(
+            lambda: opportunities_query
             .order("created_at", desc=True)
             .execute()
         )
@@ -2310,9 +2344,6 @@ async def get_opportunities(
         matched_alerts = []
         manifesto_by_recruiter = {}
         for opportunity in opportunities_response.data or []:
-            if str(opportunity.get("id") or "") in dismissed_opportunity_ids:
-                continue
-
             role_title = str(opportunity.get("role_title") or "").lower()
             required_skills = list(
                 dict.fromkeys(
