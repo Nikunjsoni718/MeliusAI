@@ -290,6 +290,19 @@ def get_supabase_authenticated_client(access_token: str):
     return create_client(supabase_url, supabase_key, options)
 
 
+def get_request_access_token(request: Request) -> str:
+    state_token = getattr(request.state, "access_token", None)
+    if isinstance(state_token, str) and state_token.strip():
+        return state_token.strip()
+
+    authorization = request.headers.get("authorization", "")
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not credentials.strip():
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    return credentials.strip()
+
+
 def get_request_supabase_client(request: Request):
     authenticated_client = getattr(request.state, "supabase", None)
 
@@ -297,6 +310,19 @@ def get_request_supabase_client(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     return authenticated_client
+
+
+def get_request_scoped_supabase_client(request: Request):
+    authenticated_client = getattr(request.state, "supabase", None)
+    if authenticated_client is not None:
+        return authenticated_client
+
+    return get_supabase_authenticated_client(get_request_access_token(request))
+
+
+def is_supabase_rls_error(error: Exception) -> bool:
+    error_text = str(error).lower()
+    return "42501" in error_text or "row-level security" in error_text
 
 
 def get_supabase_user_id(user_response: Any) -> str | None:
@@ -1785,9 +1811,30 @@ async def create_opportunity(
         raise HTTPException(status_code=400, detail="A valid company email is required")
 
     try:
-        supabase = get_request_supabase_client(request)
-        organization = await get_user_organization(request, current_user_id)
+        access_token = get_request_access_token(request)
+        authenticated_supabase = get_supabase_authenticated_client(access_token)
+        request.state.supabase = authenticated_supabase
+
+        service_supabase = get_supabase_service_client()
+        validation_supabase = service_supabase or authenticated_supabase
+        organization_response = await asyncio.to_thread(
+            lambda: validation_supabase.table("organizations")
+            .select("*")
+            .eq("user_id", current_user_id)
+            .limit(1)
+            .execute()
+        )
+        organization_rows = organization_response.data or []
+        organization = organization_rows[0] if organization_rows else {}
         organization_id = str(organization.get("id") or current_user_id).strip()
+        requested_organization_id = str(payload.organization_id or "").strip()
+
+        if requested_organization_id and requested_organization_id != organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to create opportunities for this organization",
+            )
+
         organization_name = (
             str(organization.get("company_name") or "").strip()
             or unquote(request.headers.get("x-company-name", "").strip())
@@ -1802,11 +1849,26 @@ async def create_opportunity(
             "company_email": company_email,
             "status": "active",
         }
-        opportunity_response = await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
-            .insert(insert_data)
-            .execute()
-        )
+
+        insert_supabase = service_supabase or authenticated_supabase
+
+        try:
+            opportunity_response = await asyncio.to_thread(
+                lambda: insert_supabase.table("opportunities")
+                .insert(insert_data)
+                .execute()
+            )
+        except Exception as insert_error:
+            if is_supabase_rls_error(insert_error):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Opportunity insert was blocked by Supabase RLS. "
+                        "Set SUPABASE_SERVICE_ROLE_KEY on the backend or add an authenticated insert policy "
+                        "for organization opportunity creation."
+                    ),
+                ) from insert_error
+            raise
 
         created_rows = (
             opportunity_response.data
