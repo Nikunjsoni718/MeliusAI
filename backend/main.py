@@ -303,6 +303,26 @@ def get_request_access_token(request: Request) -> str:
     return credentials.strip()
 
 
+def decode_supabase_jwt_sub(access_token: str) -> str:
+    try:
+        parts = access_token.split(".")
+        if len(parts) < 2:
+            raise ValueError("Malformed JWT")
+
+        payload_segment = parts[1]
+        padded_payload = payload_segment + "=" * (-len(payload_segment) % 4)
+        decoded_payload = base64.urlsafe_b64decode(padded_payload.encode("utf-8"))
+        payload = json.loads(decoded_payload.decode("utf-8"))
+        subject = str(payload.get("sub") or "").strip()
+    except Exception as decode_error:
+        raise HTTPException(status_code=401, detail="Invalid bearer token") from decode_error
+
+    if not subject:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+    return subject
+
+
 def get_request_supabase_client(request: Request):
     authenticated_client = getattr(request.state, "supabase", None)
 
@@ -1813,6 +1833,10 @@ async def create_opportunity(
 
     try:
         access_token = get_request_access_token(request)
+        jwt_user_id = decode_supabase_jwt_sub(access_token)
+        if jwt_user_id != current_user_id:
+            raise HTTPException(status_code=401, detail="Invalid bearer token")
+
         authenticated_supabase = get_supabase_authenticated_client(access_token)
         request.state.supabase = authenticated_supabase
 
@@ -1849,6 +1873,7 @@ async def create_opportunity(
         )
         insert_data = {
             "organization_id": organization_id,
+            "user_id": jwt_user_id,
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements_text,
@@ -1912,10 +1937,10 @@ async def organization_opportunities(
         opportunities_response = await asyncio.to_thread(
             lambda: supabase.table("opportunities")
             .select(
-                "id, organization_id, recruiter_name, role_title, core_skills, "
+                "id, organization_id, user_id, recruiter_name, role_title, core_skills, "
                 "company_email, status, created_at, description"
             )
-            .eq("organization_id", organization_id)
+            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
             .order("created_at", desc=True)
             .execute()
         )
@@ -1960,7 +1985,7 @@ async def update_opportunity(
                 }
             )
             .eq("id", opportunity_id)
-            .eq("organization_id", organization_id)
+            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
             .execute()
         )
         updated_rows = opportunity_response.data or []
@@ -2008,7 +2033,7 @@ async def delete_opportunity(
             lambda: supabase.table("opportunities")
             .delete()
             .eq("id", opportunity_id)
-            .eq("organization_id", organization_id)
+            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
             .execute()
         )
         return JSONResponse(

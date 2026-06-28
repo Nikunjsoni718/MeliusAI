@@ -34,6 +34,44 @@ type OpportunityHistoryItem = {
   created_at: string | null;
 };
 
+type OpportunityMutationResponse = {
+  success?: boolean;
+  detail?: string;
+  opportunity?: unknown;
+};
+
+function normalizeHistoryPayload(payload: unknown, organizationName: string) {
+  if (!Array.isArray(payload)) {
+    throw new Error('Opportunity history returned an invalid response.');
+  }
+
+  return payload
+    .map((value): OpportunityHistoryItem | null => {
+      if (!value || typeof value !== 'object') {
+        return null;
+      }
+
+      const row = value as Record<string, unknown>;
+      const id = typeof row.id === 'string' ? row.id.trim() : '';
+      const roleTitle = typeof row.role_title === 'string' ? row.role_title.trim() : '';
+      if (!id || !roleTitle) {
+        return null;
+      }
+
+      const descriptionSource = row.description ?? row.job_description ?? row.core_requirements;
+      return {
+        id,
+        recruiter_name:
+          typeof row.recruiter_name === 'string' ? row.recruiter_name.trim() : organizationName,
+        role_title: roleTitle,
+        description: typeof descriptionSource === 'string' ? descriptionSource.trim() : '',
+        core_skills: typeof row.core_skills === 'string' ? row.core_skills.trim() : '',
+        created_at: typeof row.created_at === 'string' ? row.created_at : null,
+      };
+    })
+    .filter((item): item is OpportunityHistoryItem => item !== null);
+}
+
 export function OrganizationJobPostingHub() {
   const { loading, profile, supabase, user } = useViewerProfile();
   const [formData, setFormData] = useState<OpportunityForm>({
@@ -78,12 +116,14 @@ export function OrganizationJobPostingHub() {
     return session?.access_token ?? null;
   }, [supabase]);
 
-  const fetchHistory = useCallback(async () => {
+  const fetchHistory = useCallback(async ({ showLoading = true }: { showLoading?: boolean } = {}) => {
     if (loading) {
-      return;
+      return [];
     }
 
-    setHistoryLoading(true);
+    if (showLoading) {
+      setHistoryLoading(true);
+    }
     setHistoryError(null);
 
     try {
@@ -112,42 +152,18 @@ export function OrganizationJobPostingHub() {
             : '';
         throw new Error(detail || `History request failed (HTTP ${response.status}).`);
       }
-      if (!Array.isArray(payload)) {
-        throw new Error('Opportunity history returned an invalid response.');
-      }
 
-      const normalizedHistory = payload
-        .map((value): OpportunityHistoryItem | null => {
-          if (!value || typeof value !== 'object') {
-            return null;
-          }
-
-          const row = value as Record<string, unknown>;
-          const id = typeof row.id === 'string' ? row.id.trim() : '';
-          const roleTitle = typeof row.role_title === 'string' ? row.role_title.trim() : '';
-          if (!id || !roleTitle) {
-            return null;
-          }
-
-          const descriptionSource = row.description ?? row.job_description ?? row.core_requirements;
-          return {
-            id,
-            recruiter_name:
-              typeof row.recruiter_name === 'string' ? row.recruiter_name.trim() : organizationName,
-            role_title: roleTitle,
-            description: typeof descriptionSource === 'string' ? descriptionSource.trim() : '',
-            core_skills: typeof row.core_skills === 'string' ? row.core_skills.trim() : '',
-            created_at: typeof row.created_at === 'string' ? row.created_at : null,
-          };
-        })
-        .filter((item): item is OpportunityHistoryItem => item !== null);
-
+      const normalizedHistory = normalizeHistoryPayload(payload, organizationName);
       setHistoryList(normalizedHistory);
       setHistoryError(null);
+      return normalizedHistory;
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : 'Unable to load broadcast history.');
+      return [];
     } finally {
-      setHistoryLoading(false);
+      if (showLoading) {
+        setHistoryLoading(false);
+      }
     }
   }, [getSessionAccessToken, loading, organizationName]);
 
@@ -311,11 +327,27 @@ export function OrganizationJobPostingHub() {
         }
       );
       const payload = (await response.json().catch(() => null)) as
-        | { success?: boolean; detail?: string }
+        | OpportunityMutationResponse
         | null;
 
       if (!response.ok || !payload?.success) {
         throw new Error(payload?.detail || `Opportunity broadcast failed (HTTP ${response.status}).`);
+      }
+
+      const refreshedHistory = await fetchHistory({ showLoading: false });
+      const returnedHistoryItem = payload.opportunity
+        ? normalizeHistoryPayload([payload.opportunity], organizationName)[0]
+        : null;
+
+      if (
+        returnedHistoryItem &&
+        !refreshedHistory.some((historyItem) => historyItem.id === returnedHistoryItem.id)
+      ) {
+        setHistoryList((currentHistory) => [
+          returnedHistoryItem,
+          ...currentHistory.filter((historyItem) => historyItem.id !== returnedHistoryItem.id),
+        ]);
+        setHistoryError(null);
       }
 
       setFormData({
@@ -329,7 +361,6 @@ export function OrganizationJobPostingHub() {
           ? 'Opportunity broadcast updated successfully!'
           : 'Opportunity successfully broadcasted to the candidate network!'
       );
-      await fetchHistory();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
