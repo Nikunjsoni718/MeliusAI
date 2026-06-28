@@ -21,6 +21,9 @@ export const metadata: Metadata = {
   title: 'MeliusAI | Verify Your Value',
   description:
     'Judgment-free project analysis, verified portfolios, and an AI career agent that turns readiness into action.',
+  icons: {
+    icon: '/favicon.png',
+  },
 };
 
 export default function RootLayout({
