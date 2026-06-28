@@ -345,6 +345,19 @@ def is_supabase_rls_error(error: Exception) -> bool:
     return "42501" in error_text or "row-level security" in error_text
 
 
+def apply_opportunity_organization_scope(query: Any, organization_id: str, current_user_id: str):
+    scoped_ids = []
+    for value in (organization_id, current_user_id):
+        normalized_value = str(value or "").strip()
+        if normalized_value and normalized_value not in scoped_ids:
+            scoped_ids.append(normalized_value)
+
+    if len(scoped_ids) == 1:
+        return query.eq("organization_id", scoped_ids[0])
+
+    return query.or_(",".join(f"organization_id.eq.{scoped_id}" for scoped_id in scoped_ids))
+
+
 def get_supabase_user_id(user_response: Any) -> str | None:
     auth_user = getattr(user_response, "user", None)
 
@@ -1857,15 +1870,21 @@ async def create_opportunity(
         )
         organization_rows = organization_response.data or []
         organization = organization_rows[0] if organization_rows else {}
-        organization_id = str(organization.get("id") or current_user_id).strip()
+        resolved_organization_id = str(organization.get("id") or "").strip()
         requested_organization_id = str(payload.organization_id or "").strip()
+        authorized_organization_ids = {
+            organization_id
+            for organization_id in (resolved_organization_id, jwt_user_id)
+            if organization_id
+        }
 
-        if requested_organization_id and requested_organization_id != organization_id:
+        if requested_organization_id and requested_organization_id not in authorized_organization_ids:
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to create opportunities for this organization",
             )
 
+        organization_id = requested_organization_id or jwt_user_id
         organization_name = (
             str(organization.get("company_name") or "").strip()
             or unquote(request.headers.get("x-company-name", "").strip())
@@ -1873,7 +1892,6 @@ async def create_opportunity(
         )
         insert_data = {
             "organization_id": organization_id,
-            "user_id": jwt_user_id,
             "recruiter_name": organization_name,
             "role_title": job_title,
             "description": core_requirements_text,
@@ -1935,12 +1953,14 @@ async def organization_opportunities(
         organization = await get_user_organization(request, current_user_id)
         organization_id = str(organization.get("id") or current_user_id).strip()
         opportunities_response = await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
-            .select(
-                "id, organization_id, user_id, recruiter_name, role_title, core_skills, "
-                "company_email, status, created_at, description"
+            lambda: apply_opportunity_organization_scope(
+                supabase.table("opportunities").select(
+                    "id, organization_id, recruiter_name, role_title, core_skills, "
+                    "company_email, status, created_at, description"
+                ),
+                organization_id,
+                current_user_id,
             )
-            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
             .order("created_at", desc=True)
             .execute()
         )
@@ -1976,16 +1996,19 @@ async def update_opportunity(
         organization = await get_user_organization(request, current_user_id)
         organization_id = str(organization.get("id") or current_user_id).strip()
         opportunity_response = await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
-            .update(
-                {
-                    "role_title": job_title,
-                    "description": core_requirements,
-                    "core_skills": core_skills,
-                }
+            lambda: apply_opportunity_organization_scope(
+                supabase.table("opportunities")
+                .update(
+                    {
+                        "role_title": job_title,
+                        "description": core_requirements,
+                        "core_skills": core_skills,
+                    }
+                )
+                .eq("id", opportunity_id),
+                organization_id,
+                current_user_id,
             )
-            .eq("id", opportunity_id)
-            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
             .execute()
         )
         updated_rows = opportunity_response.data or []
@@ -2030,10 +2053,13 @@ async def delete_opportunity(
         organization = await get_user_organization(request, current_user_id)
         organization_id = str(organization.get("id") or current_user_id).strip()
         await asyncio.to_thread(
-            lambda: supabase.table("opportunities")
-            .delete()
-            .eq("id", opportunity_id)
-            .or_(f"organization_id.eq.{organization_id},user_id.eq.{current_user_id}")
+            lambda: apply_opportunity_organization_scope(
+                supabase.table("opportunities")
+                .delete()
+                .eq("id", opportunity_id),
+                organization_id,
+                current_user_id,
+            )
             .execute()
         )
         return JSONResponse(
