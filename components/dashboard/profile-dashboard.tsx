@@ -1943,9 +1943,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       try {
+        let requestHeaders: HeadersInit | undefined;
+
+        if (supabase) {
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          const accessToken = session?.access_token;
+
+          if (accessToken) {
+            requestHeaders = {
+              Authorization: `Bearer ${accessToken}`,
+            };
+          }
+        }
+
         const response = await fetch(
           `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-          { cache: 'no-store' }
+          { cache: 'no-store', headers: requestHeaders }
         );
         const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
 
@@ -2096,7 +2111,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       active = false;
       window.clearTimeout(refreshTimer);
     };
-  }, [loading, targetUsername, user]);
+  }, [loading, supabase, targetUsername, user]);
 
   useEffect(() => {
     if (!isOwner) {

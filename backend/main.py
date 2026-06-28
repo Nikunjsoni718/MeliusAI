@@ -83,6 +83,7 @@ async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
+supabase_service_client = None
 supabase = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -225,6 +226,52 @@ def get_supabase_backend_client():
         supabase_backend_client = create_client(supabase_url, supabase_key)
 
     return supabase_backend_client
+
+
+def get_supabase_service_client():
+    global supabase_service_client
+
+    if create_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="The supabase-py package is not installed in the Python backend environment.",
+        )
+
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SERVICE_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE")
+    )
+
+    if not service_role_key:
+        return None
+
+    if supabase_service_client is None:
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        if not supabase_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Supabase URL environment variable is not configured.",
+            )
+        supabase_service_client = create_client(supabase_url, service_role_key)
+
+    return supabase_service_client
+
+
+def get_supabase_read_client(request: Request | None = None):
+    service_client = get_supabase_service_client()
+    if service_client is not None:
+        return service_client
+
+    authenticated_client = getattr(request.state, "supabase", None) if request is not None else None
+    if authenticated_client is not None:
+        return authenticated_client
+
+    logger.warning(
+        "SUPABASE_SERVICE_ROLE_KEY is not configured; falling back to anon Supabase client. "
+        "Ensure RLS policies allow public reads for profiles/projects/opportunities used by read endpoints."
+    )
+    return get_supabase_backend_client()
 
 
 def get_supabase_authenticated_client(access_token: str):
@@ -1576,19 +1623,17 @@ async def spectate_profile(
         target_username = username.strip().lower()
 
         if not target_username:
-            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+            raise HTTPException(status_code=404, detail="Profile not found")
 
-        supabase = get_request_supabase_client(request)
-        profile_query = (
-            supabase.table("profiles")
+        supabase = get_supabase_read_client(request)
+        profile_query = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
             .select("*")
             .eq("username", target_username)
-            .limit(1)
+            .maybe_single()
             .execute()
         )
-
-        profile_rows = profile_query.data or []
-        profile_data = profile_rows[0] if profile_rows else None
+        profile_data = profile_query.data
 
         if not profile_data:
             try:
@@ -1596,35 +1641,34 @@ async def spectate_profile(
             except ValueError:
                 pass
             else:
-                profile_by_id_query = (
-                    supabase.table("profiles")
+                profile_by_id_query = await asyncio.to_thread(
+                    lambda: supabase.table("profiles")
                     .select("*")
                     .eq("id", target_username)
-                    .limit(1)
+                    .maybe_single()
                     .execute()
                 )
-                profile_by_id_rows = profile_by_id_query.data or []
-                profile_data = profile_by_id_rows[0] if profile_by_id_rows else None
+                profile_data = profile_by_id_query.data
 
         if not profile_data:
-            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+            raise HTTPException(status_code=404, detail="Profile not found")
 
         profile_id = profile_data.get("id")
         if not profile_id:
-            raise HTTPException(status_code=404, detail="Target candidate profile not found")
+            raise HTTPException(status_code=404, detail="Profile not found")
 
         profile_data = {**profile_data, "email": profile_data.get("email")}
 
-        projects_query = (
-            supabase.table("projects")
+        projects_query = await asyncio.to_thread(
+            lambda: supabase.table("projects")
             .select("*")
             .eq("user_id", str(profile_id))
             .execute()
         )
         projects = projects_query.data or []
 
-        scans_query = (
-            supabase.table("projects")
+        scans_query = await asyncio.to_thread(
+            lambda: supabase.table("projects")
             .select("*")
             .eq("user_id", str(profile_id))
             .execute()
@@ -2017,18 +2061,18 @@ async def get_opportunities(
         raise HTTPException(status_code=400, detail="Candidate profile id is required")
 
     try:
-        supabase = get_request_supabase_client(request)
+        supabase = get_supabase_read_client(request)
 
         profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
             .select("skills")
             .eq("id", resolved_candidate_id)
-            .single()
+            .maybe_single()
             .execute()
         )
-        candidate_profile = profile_response.data or {}
+        candidate_profile = profile_response.data
         if not isinstance(candidate_profile, dict) or not candidate_profile:
-            raise HTTPException(status_code=404, detail="Candidate profile not found")
+            raise HTTPException(status_code=404, detail="Profile not found")
 
         raw_skills = candidate_profile.get("skills")
         if isinstance(raw_skills, list):
