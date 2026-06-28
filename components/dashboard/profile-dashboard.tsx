@@ -1827,6 +1827,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
   const verifiedAssetTimerRef = useRef<number | null>(null);
+  const hydratedProfileKeyRef = useRef<string | null>(null);
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
   const profileSaveSequenceRef = useRef(0);
   const bioSaveSequenceRef = useRef(0);
@@ -1965,7 +1966,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
         },
         {
-          href: '#opportunities',
+          href: `${profileHref}#opportunities`,
           label: 'Opportunities',
           icon: <BriefcaseBusiness className="h-5 w-5" strokeWidth={1.8} />,
           ownerOnly: true,
@@ -2081,37 +2082,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     let active = true;
-    setProfileLoading(true);
-    setShowRefresh(false);
-    setIsOwner(false);
-    setIsEditing(false);
-    setSettingsOpen(false);
-    setResolvedProfileId(null);
-    setProfileData(null);
-    setProjects([]);
-    setScans([]);
-    setProjectDescriptions({});
-    setProjectDescription('');
-    setLiveJobs([]);
-    setLoadingState(true);
-    setFetchError(null);
-    setViewingAuditAsset(null);
-    setActivePreviewProjectId(null);
-    setActivePreviewName(null);
-    setActivePreviewUrl(null);
-    setShowAllWork(false);
-    setShowAllRatings(false);
-    setProfileDraft({ displayName: '', username: '', birthDate: '' });
-    setProfileFallback(null);
-    setBioText('');
-    setRawSkillsInput('');
-    setAvatarPreviewUrl(null);
+    const profileKey = targetUsername ?? null;
+    const hasHydratedCurrentProfile = Boolean(profileKey) && hydratedProfileKeyRef.current === profileKey;
+    const shouldBlockForInitialProfileLoad = profileKey
+      ? !hasHydratedCurrentProfile
+      : !hydratedProfileKeyRef.current;
 
-    const refreshTimer = window.setTimeout(() => {
-      if (active) {
-        setShowRefresh(true);
-      }
-    }, 3000);
+    if (shouldBlockForInitialProfileLoad) {
+      setProfileLoading(true);
+      setShowRefresh(false);
+      setIsOwner(false);
+      setIsEditing(false);
+      setSettingsOpen(false);
+      setResolvedProfileId(null);
+      setProfileData(null);
+      setProjects([]);
+      setScans([]);
+      setProjectDescriptions({});
+      setProjectDescription('');
+      setLiveJobs([]);
+      setLoadingState(true);
+      setFetchError(null);
+      setViewingAuditAsset(null);
+      setActivePreviewProjectId(null);
+      setActivePreviewName(null);
+      setActivePreviewUrl(null);
+      setShowAllWork(false);
+      setShowAllRatings(false);
+      setProfileDraft({ displayName: '', username: '', birthDate: '' });
+      setProfileFallback(null);
+      setBioText('');
+      setRawSkillsInput('');
+      setAvatarPreviewUrl(null);
+    } else {
+      setProfileLoading(false);
+      setShowRefresh(false);
+      setFetchError(null);
+    }
+
+    const refreshTimer = shouldBlockForInitialProfileLoad
+      ? window.setTimeout(() => {
+          if (active) {
+            setShowRefresh(true);
+          }
+        }, 3000)
+      : null;
 
     const loadProfile = async () => {
       if (!targetUsername) {
@@ -2194,7 +2209,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           setProfileData(savedProfile);
           setProjects(loadedProjects);
           setScans(hydratedScans);
-          setLiveJobs(hydratedOpportunities);
+          if (!isOwnProfile || hydratedOpportunities.length > 0) {
+            setLiveJobs(hydratedOpportunities);
+          }
           setLoadingState(false);
           setProjectDescriptions(
             Object.fromEntries(
@@ -2257,6 +2274,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           setBioText(bioValue);
           setRawSkillsInput(skillsInputValue);
           setProfileHydrated(true);
+          hydratedProfileKeyRef.current = targetUsername;
           setProfileFallback({
             displayName,
             username: usernameValue,
@@ -2274,7 +2292,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       } catch (err) {
         console.error('Error running security guard verification:', err);
         if (active) {
-          setIsOwner(false);
+          if (shouldBlockForInitialProfileLoad) {
+            setIsOwner(false);
+          }
           setProfileLoading(false);
         }
       }
@@ -2284,7 +2304,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       active = false;
-      window.clearTimeout(refreshTimer);
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
     };
   }, [loading, profile?.username, supabase, targetUsername, user, viewerMetadataUsername]);
 

@@ -1,7 +1,7 @@
 'use client';
 
 import type { User } from '@supabase/supabase-js';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   clearPersistedAuthState,
@@ -45,6 +45,8 @@ export function useViewerProfile() {
   const [profile, setProfile] = useState<ViewerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [persistedRole, setPersistedRole] = useState<PersistedUserRole | null>(null);
+  const authRefreshTimerRef = useRef<number | null>(null);
+  const hasLoadedViewerRef = useRef(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -58,8 +60,10 @@ export function useViewerProfile() {
 
     let active = true;
 
-    const loadViewer = async () => {
-      setLoading(true);
+    const loadViewer = async ({ showLoading = !hasLoadedViewerRef.current }: { showLoading?: boolean } = {}) => {
+      if (showLoading) {
+        setLoading(true);
+      }
 
       const {
         data: { user: currentUser },
@@ -72,6 +76,7 @@ export function useViewerProfile() {
 
       if (userError) {
         setError(userError.message);
+        hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
@@ -83,6 +88,7 @@ export function useViewerProfile() {
         setPersistedRole(null);
         setProfile(null);
         setError(null);
+        hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
@@ -100,18 +106,21 @@ export function useViewerProfile() {
       if (response.status === 401) {
         setProfile(null);
         setError(null);
+        hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
 
       if (!response.ok) {
         setError(body?.error ?? 'Unable to load profile.');
+        hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
 
       setProfile(body?.data ?? null);
       setError(null);
+      hasLoadedViewerRef.current = true;
       setLoading(false);
     };
 
@@ -119,12 +128,22 @@ export function useViewerProfile() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      void loadViewer();
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (authRefreshTimerRef.current) {
+        window.clearTimeout(authRefreshTimerRef.current);
+      }
+
+      const refreshDelay = event === 'SIGNED_IN' || event === 'SIGNED_OUT' ? 0 : 350;
+      authRefreshTimerRef.current = window.setTimeout(() => {
+        void loadViewer({ showLoading: false });
+      }, refreshDelay);
     });
 
     return () => {
       active = false;
+      if (authRefreshTimerRef.current) {
+        window.clearTimeout(authRefreshTimerRef.current);
+      }
       subscription.unsubscribe();
     };
   }, [supabase]);
