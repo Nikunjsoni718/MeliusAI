@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { LoaderCircle, Search, UserRound } from 'lucide-react';
 
+import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+
 type CandidateSearchResult = {
   id: string;
   full_name: string;
@@ -116,27 +118,82 @@ function CandidateCard({ candidate }: { candidate: CandidateSearchResult }) {
 }
 
 export default function OrganizationSearchPage() {
+  const [supabase] = useState(() => {
+    if (!hasSupabaseBrowserEnv()) {
+      return null;
+    }
+
+    try {
+      return createSupabaseBrowserClient();
+    } catch (error) {
+      console.error('Unable to initialize Supabase search client:', error);
+      return null;
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CandidateSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [requiresLogin, setRequiresLogin] = useState(false);
 
   useEffect(() => {
+    const query = searchQuery.trim();
+
+    if (!query) {
+      setSearchResults([]);
+      setIsSearching(false);
+      setErrorMessage('');
+      setRequiresLogin(false);
+      return;
+    }
+
     let active = true;
     const controller = new AbortController();
     const timeoutId = window.setTimeout(async () => {
       setIsSearching(true);
       setErrorMessage('');
+      setRequiresLogin(false);
 
       try {
+        if (!supabase) {
+          throw new Error('Candidate search is unavailable because authentication is not configured.');
+        }
+
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+        const accessToken = session?.access_token;
+
+        if (sessionError || !accessToken) {
+          if (active) {
+            setSearchResults([]);
+            setRequiresLogin(true);
+            setErrorMessage('Please log in to search verified candidates.');
+          }
+          return;
+        }
+
         const response = await fetch(`${PYTHON_API_URL}/api/search-talent`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: searchQuery }),
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ query }),
           signal: controller.signal,
         });
 
         if (!response.ok) {
+          if (response.status === 401) {
+            if (active) {
+              setSearchResults([]);
+              setRequiresLogin(true);
+              setErrorMessage('Your session expired. Please log in again to search verified candidates.');
+            }
+            return;
+          }
+
           throw new Error(`Search server responded with status ${response.status}.`);
         }
 
@@ -150,6 +207,7 @@ export default function OrganizationSearchPage() {
       } catch (error) {
         if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
           setSearchResults([]);
+          setRequiresLogin(false);
           setErrorMessage(error instanceof Error ? error.message : 'Unable to search candidates.');
         }
       } finally {
@@ -162,7 +220,7 @@ export default function OrganizationSearchPage() {
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [searchQuery]);
+  }, [searchQuery, supabase]);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] px-5 py-10 text-white sm:px-8">
@@ -201,7 +259,15 @@ export default function OrganizationSearchPage() {
         <div className="mt-7">
           {errorMessage ? (
             <div className="rounded-2xl border border-rose-400/20 bg-rose-500/[0.07] px-6 py-5 text-sm text-rose-100">
-              {errorMessage}
+              <p>{errorMessage}</p>
+              {requiresLogin ? (
+                <Link
+                  href="/auth"
+                  className="mt-3 inline-flex rounded-xl border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-rose-50 transition hover:border-rose-200/60 hover:bg-rose-300/15"
+                >
+                  Log in
+                </Link>
+              ) : null}
             </div>
           ) : searchResults.length ? (
             <div className="grid gap-5 lg:grid-cols-2">
