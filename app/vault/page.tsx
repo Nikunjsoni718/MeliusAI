@@ -28,6 +28,12 @@ type VaultToastState = {
 };
 
 type SpectatorVaultResponse = {
+  id?: string | null;
+  username?: string | null;
+  profile?: {
+    id?: string | null;
+    username?: string | null;
+  } | null;
   projects?: ProjectRow[] | null;
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
@@ -59,6 +65,14 @@ function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
   return Array.isArray(projects)
     ? projects.filter((project) => project.is_public !== false)
     : [];
+}
+
+function normalizeVaultIdentity(value: unknown) {
+  return typeof value === 'string' ? value.trim().replace(/^@+/, '').toLowerCase() : null;
+}
+
+function getSpectatorVaultProfileId(payload: SpectatorVaultResponse | null) {
+  return payload?.id ?? payload?.profile?.id ?? null;
 }
 
 const codeLanguageMap: Record<string, string> = {
@@ -770,7 +784,7 @@ function AuditReportModal({
 
 function VaultProjectCard({
   project,
-  isSpectator,
+  isOwner,
   deletingAssetId,
   isVisibilityUpdating,
   verifyingAssetId,
@@ -780,7 +794,7 @@ function VaultProjectCard({
   onDelete,
 }: {
   project: ProjectRow;
-  isSpectator: boolean;
+  isOwner: boolean;
   deletingAssetId: string | null;
   isVisibilityUpdating: boolean;
   verifyingAssetId: string | null;
@@ -821,7 +835,7 @@ function VaultProjectCard({
                 </h3>
                 <p className="truncate text-[11px] text-slate-500">{fileName}</p>
               </div>
-              {!isSpectator && (
+              {isOwner && (
                 <button
                   type="button"
                   onClick={(event) => {
@@ -859,7 +873,7 @@ function VaultProjectCard({
               Read Full Audit Protocol
             </button>
 
-            {!isSpectator && (
+            {isOwner && (
               <button
                 type="button"
                 onClick={(event) => {
@@ -876,7 +890,7 @@ function VaultProjectCard({
             )}
           </div>
 
-          {!isSpectator && (
+          {isOwner && (
           <div className="mt-2 flex w-full justify-end">
             <button
               type="button"
@@ -902,7 +916,7 @@ function VaultPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
-  const isSpectator = Boolean(targetUsername);
+  const normalizedTargetUsername = normalizeVaultIdentity(targetUsername);
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState(() => {
     if (!authEnabled) {
@@ -918,6 +932,8 @@ function VaultPageContent() {
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
+  const [viewerUsername, setViewerUsername] = useState<string | null>(null);
+  const [viewedProfileId, setViewedProfileId] = useState<string | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [syncToken, setSyncToken] = useState(0);
@@ -928,19 +944,23 @@ function VaultPageContent() {
   const [visibilityToast, setVisibilityToast] = useState<VaultToastState | null>(null);
   const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
+  const isOwner = Boolean(
+    viewerId &&
+      (!normalizedTargetUsername ||
+        viewedProfileId === viewerId ||
+        (viewerUsername && viewerUsername === normalizedTargetUsername))
+  );
+  const isSpectator = Boolean(targetUsername && !isOwner);
 
   useEffect(() => {
-    if (isSpectator) {
-      setViewerId(null);
-      setVaultError(null);
-      return;
-    }
-
     if (!authEnabled || !supabase) {
-      setLoading(false);
       setViewerId(null);
-      setVaultAssets([]);
-      setVaultError('Vault sync is unavailable until Supabase browser credentials are configured.');
+      setViewerUsername(null);
+      if (!targetUsername) {
+        setLoading(false);
+        setVaultAssets([]);
+        setVaultError('Vault sync is unavailable until Supabase browser credentials are configured.');
+      }
       return;
     }
 
@@ -963,21 +983,31 @@ function VaultPageContent() {
 
         if (!user?.id) {
           setViewerId(null);
-          setVaultAssets([]);
-          setLoading(false);
-          router.replace('/auth');
+          setViewerUsername(null);
+          if (!targetUsername) {
+            setVaultAssets([]);
+            setLoading(false);
+            router.replace('/auth');
+          }
           return;
         }
 
         setViewerId(user.id);
+        setViewerUsername(
+          normalizeVaultIdentity(user.user_metadata?.username) ??
+            normalizeVaultIdentity(user.user_metadata?.preferred_username)
+        );
       } catch (error) {
         console.error('Failed to verify vault viewer', error);
 
         if (active) {
           setViewerId(null);
-          setVaultAssets([]);
-          setLoading(false);
-          setVaultError('Unable to verify your secure session.');
+          setViewerUsername(null);
+          if (!targetUsername) {
+            setVaultAssets([]);
+            setLoading(false);
+            setVaultError('Unable to verify your secure session.');
+          }
         }
       }
     };
@@ -993,8 +1023,12 @@ function VaultPageContent() {
 
       const nextViewerId = session?.user?.id ?? null;
       setViewerId(nextViewerId);
+      setViewerUsername(
+        normalizeVaultIdentity(session?.user?.user_metadata?.username) ??
+          normalizeVaultIdentity(session?.user?.user_metadata?.preferred_username)
+      );
 
-      if (!nextViewerId) {
+      if (!nextViewerId && !targetUsername) {
         setVaultAssets([]);
         setLoading(false);
         router.replace('/auth');
@@ -1005,7 +1039,7 @@ function VaultPageContent() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [authEnabled, isSpectator, router, supabase]);
+  }, [authEnabled, router, supabase, targetUsername]);
 
   useEffect(() => {
     if (!isSpectator || !targetUsername) {
@@ -1031,7 +1065,9 @@ function VaultPageContent() {
 
         if (active) {
           const spectatorAssets = getSpectatorVaultProjects(payload);
+          const spectatorProfileId = getSpectatorVaultProfileId(payload);
 
+          setViewedProfileId(spectatorProfileId);
           setVaultAssets(spectatorAssets);
           setDescriptionDrafts(
             Object.fromEntries(
@@ -1060,7 +1096,7 @@ function VaultPageContent() {
   }, [isSpectator, targetUsername]);
 
   useEffect(() => {
-    if (isSpectator || !supabase || !viewerId) {
+    if (!isOwner || !supabase || !viewerId) {
       if (!viewerId) {
         setLoading(false);
       }
@@ -1106,6 +1142,7 @@ function VaultPageContent() {
         if (active) {
           const loadedAssets = Array.isArray(data) ? data : [];
           setViewerId(user.id);
+          setViewedProfileId(user.id);
           setVaultError(null);
           setVaultAssets(loadedAssets);
           setDescriptionDrafts((currentDrafts) =>
@@ -1133,10 +1170,10 @@ function VaultPageContent() {
     return () => {
       active = false;
     };
-  }, [isSpectator, router, supabase, syncToken, viewerId]);
+  }, [isOwner, router, supabase, syncToken, viewerId]);
 
   useEffect(() => {
-    if (isSpectator || !supabase || !viewerId) {
+    if (!isOwner || !supabase || !viewerId) {
       return;
     }
 
@@ -1150,7 +1187,7 @@ function VaultPageContent() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [isSpectator, supabase, viewerId]);
+  }, [isOwner, supabase, viewerId]);
 
   useEffect(() => {
     if (!visibilityToast) {
@@ -1175,7 +1212,7 @@ function VaultPageContent() {
   }, []);
 
   function handleDescriptionChange(projectId: string, textValue: string) {
-    if (isSpectator) {
+    if (!isOwner) {
       return;
     }
 
@@ -1215,7 +1252,7 @@ function VaultPageContent() {
   }
 
   async function handleToggleVisibility(projectId: string, currentVisibilityStatus: boolean) {
-    if (isSpectator || !supabase || visibilityUpdatingIds.includes(projectId)) {
+    if (!isOwner || !supabase || visibilityUpdatingIds.includes(projectId)) {
       return;
     }
 
@@ -1290,7 +1327,7 @@ function VaultPageContent() {
     event?.preventDefault();
     event?.stopPropagation();
 
-    if (isSpectator || !supabase || verifyingAssetId || deletingAssetId) {
+    if (!isOwner || !supabase || verifyingAssetId || deletingAssetId) {
       return;
     }
 
@@ -1383,7 +1420,7 @@ Return Markdown sections for goods, bads, project description, and a final score
   }
 
   async function handleDeleteVaultAsset(id: string) {
-    if (isSpectator) {
+    if (!isOwner) {
       return;
     }
 
@@ -1490,7 +1527,7 @@ Return Markdown sections for goods, bads, project description, and a final score
             ) : (
               <UniversalAssetGrid
                 assets={vaultAssets}
-                isSpectator={isSpectator}
+                isSpectator={!isOwner}
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}

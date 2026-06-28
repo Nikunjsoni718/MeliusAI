@@ -37,6 +37,7 @@ type ResumeFormData = {
 type ResumeFields = {
   id?: string | null;
   username?: string | null;
+  email?: string | null;
   full_name?: string | null;
   avatar_url?: string | null;
   age?: number | string | null;
@@ -45,11 +46,27 @@ type ResumeFields = {
   experience?: unknown;
   hobbies?: unknown;
   skills?: unknown;
-  resume_projects?: unknown;
+  projects?: ProjectRow[] | null;
   name?: string | null;
   status?: string | null;
 };
-type SpectatorResumeResponse = {
+type SpectatorResumePayload = {
+  id?: string | null;
+  username?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
+  age?: number | string | null;
+  current_status?: string | null;
+  qualifications?: string[] | null;
+  experience?: string[] | string | null;
+  hobbies?: string[] | null;
+  skills?: string[] | null;
+  projects?: ProjectRow[] | null;
+  detail?: string;
+  message?: string;
+};
+type WrappedSpectatorResumeResponse = {
   profile?: ResumeFields | null;
   resume?: ResumeFields | null;
   projects?: ProjectRow[] | null;
@@ -59,10 +76,10 @@ type SpectatorResumeResponse = {
   detail?: string;
   message?: string;
 };
+type SpectatorResumeResponse = SpectatorResumePayload | WrappedSpectatorResumeResponse;
 
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
-const EXTENDED_RESUME_SELECT = `${BASE_RESUME_SELECT}, resume_projects`;
 const PROFILE_SPECTATOR_BASE_URL = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
@@ -72,7 +89,6 @@ const navigationItems = [
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Resume', icon: FileText },
 ];
-const fallbackSkills = ['React', 'Next.js', 'Python', 'UI/UX'];
 
 function SidebarLink({
   active,
@@ -123,37 +139,100 @@ function normalizeAge(value: unknown) {
   return '';
 }
 
-function getSpectatorResume(payload: SpectatorResumeResponse | null, targetUsername: string) {
-  const profile = payload?.profile ?? null;
-  const resume = payload?.resume ?? null;
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
 
-  if (!profile && !resume) {
+function nullableString(value: unknown) {
+  return typeof value === 'string' ? value : null;
+}
+
+function nullableProjects(value: unknown) {
+  return Array.isArray(value) ? (value as ProjectRow[]) : null;
+}
+
+function normalizeSpectatorResumeFields(value: unknown, targetUsername: string): ResumeFields | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const hasResumeShape = [
+    'id',
+    'username',
+    'full_name',
+    'email',
+    'avatar_url',
+    'age',
+    'current_status',
+    'qualifications',
+    'experience',
+    'hobbies',
+    'skills',
+    'projects',
+  ].some((key) => key in record);
+
+  if (!hasResumeShape) {
     return null;
   }
 
   return {
-    ...(profile ?? {}),
-    ...(resume ?? {}),
-    id: profile?.id ?? resume?.id ?? null,
-    username: profile?.username ?? resume?.username ?? targetUsername,
-    full_name: resume?.full_name ?? resume?.name ?? profile?.full_name ?? profile?.name ?? null,
-    avatar_url: resume?.avatar_url ?? profile?.avatar_url ?? null,
-    age: resume?.age ?? profile?.age ?? null,
-    current_status: resume?.current_status ?? resume?.status ?? profile?.current_status ?? profile?.status ?? null,
-    qualifications: resume?.qualifications ?? profile?.qualifications ?? [],
-    skills: resume?.skills ?? profile?.skills ?? [],
-    experience: resume?.experience ?? profile?.experience ?? [],
-    hobbies: resume?.hobbies ?? profile?.hobbies ?? [],
-    resume_projects: resume?.resume_projects ?? profile?.resume_projects ?? null,
+    id: nullableString(record.id),
+    username: nullableString(record.username) ?? targetUsername,
+    email: nullableString(record.email),
+    full_name: nullableString(record.full_name),
+    avatar_url: nullableString(record.avatar_url),
+    age: typeof record.age === 'number' || typeof record.age === 'string' ? record.age : null,
+    current_status: nullableString(record.current_status),
+    qualifications: normalizeList(record.qualifications),
+    skills: normalizeList(record.skills),
+    experience: normalizeList(record.experience),
+    hobbies: normalizeList(record.hobbies),
+    projects: nullableProjects(record.projects),
+  };
+}
+
+function getSpectatorResume(payload: SpectatorResumeResponse | null, targetUsername: string) {
+  const payloadRecord = asRecord(payload);
+  const directProfile = normalizeSpectatorResumeFields(payload, targetUsername);
+  const wrappedProfile = normalizeSpectatorResumeFields(payloadRecord?.profile, targetUsername);
+  const wrappedResume = normalizeSpectatorResumeFields(payloadRecord?.resume, targetUsername);
+  const profile = wrappedProfile ?? directProfile;
+
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    ...profile,
+    ...(wrappedResume ?? {}),
+    id: profile.id ?? wrappedResume?.id ?? null,
+    username: profile.username ?? wrappedResume?.username ?? targetUsername,
+    full_name: wrappedResume?.full_name ?? wrappedResume?.name ?? profile.full_name ?? profile.name ?? null,
+    avatar_url: wrappedResume?.avatar_url ?? profile.avatar_url ?? null,
+    age: wrappedResume?.age ?? profile.age ?? null,
+    current_status: wrappedResume?.current_status ?? wrappedResume?.status ?? profile.current_status ?? profile.status ?? null,
+    qualifications: wrappedResume?.qualifications ?? profile.qualifications ?? [],
+    skills: wrappedResume?.skills ?? profile.skills ?? [],
+    experience: wrappedResume?.experience ?? profile.experience ?? [],
+    hobbies: wrappedResume?.hobbies ?? profile.hobbies ?? [],
+    projects: wrappedResume?.projects ?? profile.projects ?? null,
   } satisfies ResumeFields;
 }
 
 function getSpectatorResumeAssets(payload: SpectatorResumeResponse | null) {
+  const payloadRecord = asRecord(payload);
+  const profileRecord = asRecord(payloadRecord?.profile);
+  const resumeRecord = asRecord(payloadRecord?.resume);
   const projects =
-    payload?.projects ??
-    payload?.vault_assets ??
-    payload?.vaultAssets ??
-    payload?.files ??
+    nullableProjects(payloadRecord?.projects) ??
+    nullableProjects(profileRecord?.projects) ??
+    nullableProjects(resumeRecord?.projects) ??
+    nullableProjects(payloadRecord?.vault_assets) ??
+    nullableProjects(payloadRecord?.vaultAssets) ??
+    nullableProjects(payloadRecord?.files) ??
     [];
 
   return Array.isArray(projects)
@@ -169,7 +248,7 @@ function createDefaultFormData(): ResumeFormData {
     qualifications: [],
     experience: [],
     hobbies: [],
-    skills: fallbackSkills,
+    skills: [],
     featuredProjectIds: [],
   };
 }
@@ -210,19 +289,10 @@ function getTopScoringAssets(assets: ProjectRow[]) {
     .slice(0, 4);
 }
 
-function isMissingOptionalProfileColumn(error: { code?: string; message?: string } | null) {
-  const message = error?.message?.toLowerCase() ?? '';
-
-  return (
-    error?.code === 'PGRST204' ||
-    message.includes('resume_projects') ||
-    message.includes('could not find')
-  );
-}
-
 function EditableStringListSection({
   addLabel,
   emptyLabel,
+  isOwner,
   isEditing,
   items,
   label,
@@ -234,6 +304,7 @@ function EditableStringListSection({
 }: {
   addLabel: string;
   emptyLabel: string;
+  isOwner: boolean;
   isEditing: boolean;
   items: string[];
   label: string;
@@ -248,7 +319,7 @@ function EditableStringListSection({
   return (
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
       <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</p>
-      {isEditing ? (
+      {isOwner && isEditing ? (
         <div className="space-y-3">
           {items.map((item, index) => (
             <div key={`${label}-${index}`} className="flex items-center gap-2">
@@ -310,12 +381,28 @@ function DashboardResumePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
-  const isSpectator = Boolean(targetUsername);
-  const visibleNavigationItems = useMemo(
-    () => (isSpectator ? navigationItems.filter((item) => item.label !== 'Search') : navigationItems),
-    [isSpectator]
-  );
+  const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
   const { authEnabled, loading, supabase, user } = useViewerProfile();
+  const viewerUsername = (
+    (user?.user_metadata?.username as string | undefined) ??
+    (user?.user_metadata?.preferred_username as string | undefined) ??
+    ''
+  )
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase();
+  const [viewedProfileId, setViewedProfileId] = useState<string | null>(null);
+  const isOwner = Boolean(
+    user?.id &&
+      (!normalizedTargetUsername ||
+        viewedProfileId === user.id ||
+        (viewerUsername && viewerUsername === normalizedTargetUsername))
+  );
+  const isSpectator = Boolean(targetUsername && !isOwner);
+  const visibleNavigationItems = useMemo(
+    () => (isOwner ? navigationItems : navigationItems.filter((item) => item.label !== 'Search')),
+    [isOwner]
+  );
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const successTimerRef = useRef<number | null>(null);
   const [formData, setFormData] = useState<ResumeFormData>(() => createDefaultFormData());
@@ -327,8 +414,7 @@ function DashboardResumePageContent() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [hasCreatorProfileColumns, setHasCreatorProfileColumns] = useState(true);
-  const canEdit = !isSpectator && isEditing;
+  const canEdit = isOwner && isEditing;
 
   useEffect(() => {
     if (!isSpectator && !loading && authEnabled && !user) {
@@ -377,34 +463,15 @@ function DashboardResumePageContent() {
         } else if (supabase && user) {
           const profileResponse = await supabase
             .from('profiles')
-            .select(EXTENDED_RESUME_SELECT)
+            .select(BASE_RESUME_SELECT)
             .eq('id', user.id)
             .maybeSingle();
 
-          if (profileResponse.error && isMissingOptionalProfileColumn(profileResponse.error)) {
-            console.warn('Resume optional profile columns are unavailable; loading base profile fields only.');
-            if (active) {
-              setHasCreatorProfileColumns(false);
-            }
-            const fallbackProfileResponse = await supabase
-              .from('profiles')
-              .select(BASE_RESUME_SELECT)
-              .eq('id', user.id)
-              .maybeSingle();
-
-            if (fallbackProfileResponse.error) {
-              throw fallbackProfileResponse.error;
-            }
-
-            resume = fallbackProfileResponse.data as ResumeFields | null;
-          } else if (profileResponse.error) {
+          if (profileResponse.error) {
             throw profileResponse.error;
-          } else {
-            if (active) {
-              setHasCreatorProfileColumns(true);
-            }
-            resume = profileResponse.data as ResumeFields | null;
           }
+
+          resume = profileResponse.data as ResumeFields | null;
           profileUuid = resume?.id ?? user.id;
         }
 
@@ -436,7 +503,7 @@ function DashboardResumePageContent() {
         }
 
         const nextFormData = createDefaultFormData();
-        const topProjects = getTopScoringAssets(assets);
+        const topProjects = targetUsername ? assets.slice(0, 4) : getTopScoringAssets(assets);
         const topProjectIds = topProjects.map((asset) => asset.id);
         const fallbackName = !isSpectator
           ? (user?.user_metadata?.full_name as string | undefined) ??
@@ -465,6 +532,7 @@ function DashboardResumePageContent() {
         });
         setTopProjects(topProjects);
         setAvatarUrl(resume?.avatar_url ?? fallbackAvatarUrl);
+        setViewedProfileId(profileUuid);
       } catch (error) {
         console.error('Failed to load resume intake data', error);
         if (active) {
@@ -525,7 +593,7 @@ function DashboardResumePageContent() {
   }
 
   async function handleSave() {
-    if (isSpectator || !supabase || !user || saveState === 'saving') {
+    if (!isOwner || !supabase || !user || saveState === 'saving') {
       return;
     }
 
@@ -554,49 +622,19 @@ function DashboardResumePageContent() {
         skills: nextFormData.skills,
       };
 
-      if (hasCreatorProfileColumns) {
-        updatePayload.resume_projects = nextFormData.featuredProjectIds;
-      }
-
-      let savedCreatorColumns = hasCreatorProfileColumns;
       const { error } = await supabase
         .from('profiles')
         .update(updatePayload)
         .eq('id', user.id);
 
       if (error) {
-        if (isMissingOptionalProfileColumn(error)) {
-          savedCreatorColumns = false;
-          setHasCreatorProfileColumns(false);
-          const { error: fallbackError } = await supabase
-            .from('profiles')
-            .update({
-              full_name: nextFormData.name || null,
-              age: Number.isFinite(parsedAge) ? parsedAge : null,
-              current_status: nextFormData.status || null,
-              qualifications: nextFormData.qualifications,
-              experience: nextFormData.experience,
-              hobbies: nextFormData.hobbies,
-              skills: nextFormData.skills,
-            })
-            .eq('id', user.id);
-
-          if (fallbackError) {
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
+        throw error;
       }
 
       setFormData(nextFormData);
       setSaveState('saved');
       setIsEditing(false);
-      setSuccessMessage(
-        savedCreatorColumns
-          ? 'Resume changes saved.'
-          : 'Core resume saved. Apply the latest migration to persist featured pins.'
-      );
+      setSuccessMessage('Resume changes saved.');
       if (successTimerRef.current) {
         window.clearTimeout(successTimerRef.current);
       }
@@ -615,7 +653,7 @@ function DashboardResumePageContent() {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = '';
 
-    if (isSpectator || !file || !supabase || !user) {
+    if (!isOwner || !file || !supabase || !user) {
       return;
     }
 
@@ -688,7 +726,7 @@ function DashboardResumePageContent() {
                 {visibleNavigationItems.map((item) => {
                   const Icon = item.icon;
                   const href =
-                    isSpectator && targetUsername
+                    targetUsername
                       ? item.label === 'Home'
                         ? `/profile/${encodeURIComponent(targetUsername)}`
                         : item.label === 'Vault' || item.label === 'Resume'
@@ -732,7 +770,7 @@ function DashboardResumePageContent() {
                   Build a focused technical profile for career matching and MeliusAI context.
                 </p>
               </div>
-              {!isSpectator ? (
+              {isOwner ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -777,7 +815,7 @@ function DashboardResumePageContent() {
                         <UserRound className="h-9 w-9" strokeWidth={1.4} />
                       )}
                     </div>
-                    {!isSpectator && (
+                    {isOwner && (
                       <>
                         <button
                           type="button"
@@ -864,6 +902,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Qualification"
                 emptyLabel="No qualifications added yet."
+                isOwner={isOwner}
                 isEditing={canEdit}
                 items={formData.qualifications}
                 label="Qualifications"
@@ -876,6 +915,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Skill"
                 emptyLabel="No skills added yet."
+                isOwner={isOwner}
                 isEditing={canEdit}
                 items={formData.skills}
                 label="Skills"
@@ -889,6 +929,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Experience"
                 emptyLabel="No professional experience added yet."
+                isOwner={isOwner}
                 isEditing={canEdit}
                 items={formData.experience}
                 label="Professional Experience"
@@ -900,14 +941,14 @@ function DashboardResumePageContent() {
 
               <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
                 <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
-                {canEdit ? (
+                {isOwner && isEditing ? (
                   <p className="mb-4 text-sm leading-6 text-slate-400">
                     Your top 4 highest-scoring projects are automatically featured on your public profile.
                   </p>
                 ) : null}
                 <UniversalAssetGrid
                   assets={topProjects}
-                  isSpectator={isSpectator}
+                  isSpectator={!isOwner}
                   gridClassName="gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-4"
                   emptyMessage="No verified Vault assets found yet."
                 />
@@ -916,6 +957,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Hobby"
                 emptyLabel="No hobbies added yet."
+                isOwner={isOwner}
                 isEditing={canEdit}
                 items={formData.hobbies}
                 label="Hobbies"

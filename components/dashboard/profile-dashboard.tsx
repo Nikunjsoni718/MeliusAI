@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
@@ -151,6 +151,7 @@ type DashboardNavigationItem = {
   href: string;
   label: string;
   icon: ReactNode;
+  ownerOnly?: boolean;
 };
 type ProfileDraft = {
   displayName: string;
@@ -947,8 +948,8 @@ function SidebarProfileLink({
   return (
     <Link
       href={href}
-      aria-label="Profile"
-      title="Profile"
+      aria-label="Account Settings"
+      title="Account Settings"
       onClick={onClick}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-slate-300 transition-all duration-200 hover:bg-blue-950/30 hover:text-white',
@@ -963,7 +964,7 @@ function SidebarProfileLink({
           <SilhouetteIcon className="h-6 w-6" />
         )}
       </span>
-      <span className="font-sans text-sm tracking-wide">Account</span>
+      <span className="font-sans text-sm tracking-wide">Account Settings</span>
     </Link>
   );
 }
@@ -1845,18 +1846,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const routeProfileUsername = useMemo(() => getProfileUsernameFromPathname(pathname), [pathname]);
   const viewerMetadataUsername =
     typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
-  const viewerRouteIdentifiers = useMemo(() => {
-    return new Set(
-      [profile?.username, profile?.id, user?.id, viewerMetadataUsername]
-        .map((value) => normalizeRouteIdentity(value))
-        .filter((value): value is string => Boolean(value))
-    );
-  }, [profile?.id, profile?.username, user?.id, viewerMetadataUsername]);
-  const isSpectatingProfileRoute = Boolean(
-    routeProfileUsername &&
-      !isOwner &&
-      !viewerRouteIdentifiers.has(normalizeRouteIdentity(routeProfileUsername) ?? '')
-  );
 
   const displayName =
     profileDraft.displayName ||
@@ -1909,7 +1898,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       viewedProfileIdentities.size > 0 &&
       [...viewedProfileIdentities].some((identity) => currentViewerIdentities.has(identity))
   );
-  const isSpectating = Boolean(searchParams.get('profile')) || !isViewingOwnProfile;
+  const isSpectating = !isOwner && (Boolean(searchParams.get('profile')) || !isViewingOwnProfile);
   const profileHandle = targetUsername || username;
   const profileHref = `/profile/${encodeURIComponent(profileHandle)}`;
   const email =
@@ -1966,6 +1955,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           href: '/search',
           label: 'Search',
           icon: <Search className="h-5 w-5" strokeWidth={1.8} />,
+          ownerOnly: true,
         },
         {
           href:
@@ -1983,13 +1973,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           label: 'Resume',
           icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
         },
+        {
+          href: '#opportunities',
+          label: 'Opportunities',
+          icon: <BriefcaseBusiness className="h-5 w-5" strokeWidth={1.8} />,
+          ownerOnly: true,
+        },
       ];
 
-      return isSpectatingProfileRoute
-        ? items.filter((item) => item.label !== 'Search')
-        : items;
+      return items.filter((item) => !item.ownerOnly || isOwner);
     },
-    [isSpectatingProfileRoute, isSpectator, profileHref, targetUsername]
+    [isOwner, isSpectator, profileHref, targetUsername]
   );
 
   const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
@@ -2189,14 +2183,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           (typeof user?.user_metadata?.preferred_username === 'string'
             ? user.user_metadata.preferred_username.trim()
             : null);
-        const normalizedTargetIdentity = normalizeRouteIdentity(targetUsername);
-        const ownsProfile = Boolean(
-          user?.id &&
-            savedProfile.id &&
-            user.id === savedProfile.id &&
-            normalizedTargetIdentity &&
-            normalizeRouteIdentity(authenticatedUsername) === normalizedTargetIdentity
-        );
+        const ownsProfile = Boolean(user?.id && savedProfile.id && user.id === savedProfile.id);
         const isOwnProfile = ownsProfile;
         const payloadProjects = normalizedSpectatorPayload.projects;
         const loadedProjects = payloadProjects.length > 0
@@ -3312,7 +3299,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               </nav>
             </div>
             <div className="space-y-2 p-4">
-              {!isSpectating ? (
+              {isOwner ? (
                 <>
                   <SidebarProfileLink
                     active={pathname === profileHref || pathname.startsWith('/profile/')}
@@ -3391,11 +3378,11 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                       sizeClass="h-16 w-16"
                       src={avatarUrl}
                       uploading={avatarUploading}
-                      onSelect={!isSpectating && isEditing ? handleAvatarSelect : undefined}
+                      onSelect={isOwner && isEditing ? handleAvatarSelect : undefined}
                     />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-slate-400">
-                        {!isSpectating ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
+                        {isOwner ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
                       </p>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Individual</span>
@@ -3410,7 +3397,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                             Syncing...
                           </span>
                         ) : null}
-                        {!isSpectating && profileSyncState === 'error' ? (
+                        {isOwner && profileSyncState === 'error' ? (
                           <button
                             type="button"
                             onClick={() => void saveProfileDraft()}
@@ -3471,7 +3458,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                   </div>
 
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
-                    {!isSpectating && (
+                    {isOwner && (
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
@@ -3500,7 +3487,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               </div>
 
               <AnimatePresence>
-                {settingsOpen && !isSpectating && isEditing ? (
+                {settingsOpen && isOwner && isEditing ? (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.98, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -3646,7 +3633,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                     </div>
                   </div>
 
-                  {isEditing ? (
+                  {isOwner && isEditing ? (
                     <>
                       <Textarea
                         value={bioText}
@@ -3789,7 +3776,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               {allProjects.length === 0 ? (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                   <CardContent className="p-8">
-                    {!isSpectating ? (
+                    {isOwner ? (
                       <ProjectDropzone
                         upload={uploadState}
                         onFileSelect={(file) => void handleProjectFile(file)}
@@ -3828,7 +3815,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                         />
                       ))}
 
-                    {!isSpectating && (
+                    {isOwner && (
                       <ProjectDropzone
                         upload={uploadState}
                         onFileSelect={(file) => void handleProjectFile(file)}
@@ -3959,8 +3946,8 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
               </Card>
             </section>
 
-            {!isSpectating && (
-              <section className="space-y-4">
+            {isOwner && (
+              <section id="opportunities" className="space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">Opportunities</h2>
                 <p className="mt-1 text-sm text-slate-400">Open roles for your next step.</p>
