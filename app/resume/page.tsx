@@ -95,15 +95,18 @@ function SidebarLink({
   href,
   icon,
   label,
+  onClick,
 }: {
   active: boolean;
   href: string;
   icon: ReactNode;
   label: string;
+  onClick?: () => void;
 }) {
   return (
     <Link
       href={href}
+      onClick={onClick}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         active ? 'bg-blue-950/35 text-white' : null
@@ -399,6 +402,7 @@ function DashboardResumePageContent() {
         (viewerUsername && viewerUsername === normalizedTargetUsername))
   );
   const isSpectator = Boolean(targetUsername && !isOwner);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const visibleNavigationItems = useMemo(
     () => (isOwner ? navigationItems : navigationItems.filter((item) => item.label !== 'Search')),
     [isOwner]
@@ -710,7 +714,20 @@ function DashboardResumePageContent() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(0,112,243,0.16),transparent_55%)]" />
 
       <div className="relative z-10 flex h-full w-full overflow-hidden">
-        <aside className="w-64 min-w-[16rem] h-full sticky top-0 bg-[#060b1e] border-r border-blue-950/40 p-4 flex flex-col justify-between z-40">
+        {isSidebarOpen ? (
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        ) : null}
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-blue-950/40 bg-slate-950 p-4 transition-transform duration-300 ease-in-out md:relative md:z-40 md:h-full md:min-w-[16rem] md:translate-x-0 md:bg-[#060b1e]',
+            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          )}
+        >
           <div>
             <div className="mb-8 flex items-center gap-3 px-3 py-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-950/60 text-cyan-400">
@@ -748,6 +765,7 @@ function DashboardResumePageContent() {
                         label={item.label}
                         active={pathname === item.href}
                         icon={<Icon className="h-5 w-5" strokeWidth={1.8} />}
+                        onClick={() => setIsSidebarOpen(false)}
                       />
                     </motion.div>
                   );
@@ -760,8 +778,29 @@ function DashboardResumePageContent() {
           </div>
         </aside>
 
-        <section className="flex h-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+        <section className="relative flex h-full w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto">
+          <button
+            type="button"
+            aria-label="Toggle sidebar"
+            aria-expanded={isSidebarOpen}
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="fixed left-4 top-4 z-30 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-950/60 bg-slate-950/90 text-slate-100 shadow-lg shadow-black/20 backdrop-blur transition hover:border-cyan-500/40 hover:text-cyan-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 md:hidden"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 7h16" />
+              <path d="M4 12h16" />
+              <path d="M4 17h16" />
+            </svg>
+          </button>
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8">
             <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-cyan-400">Profile Intake Terminal</p>

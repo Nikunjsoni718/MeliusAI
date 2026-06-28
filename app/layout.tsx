@@ -6,6 +6,7 @@ import { Geist_Mono, Inter } from 'next/font/google';
 import { AppShell } from '@/components/layout/app-shell';
 
 import './globals.css';
+import favicon from './favicon.png';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
   description:
     'Judgment-free project analysis, verified portfolios, and an AI career agent that turns readiness into action.',
   icons: {
-    icon: '/favicon.png',
+    icon: favicon.src,
   },
 };
 

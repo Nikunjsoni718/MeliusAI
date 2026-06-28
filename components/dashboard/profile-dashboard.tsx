@@ -1941,6 +1941,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const isSpectator = !isOwner;
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [bioText, setBioText] = useState('');
   const [rawSkillsInput, setRawSkillsInput] = useState('');
@@ -3362,10 +3363,28 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
 
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-950 text-white">
-          <aside className="w-64 h-full flex-shrink-0 flex flex-col justify-between border-r border-slate-800 bg-slate-900">
+    <div className="relative flex h-screen w-full overflow-hidden bg-slate-950 text-white">
+          {isSidebarOpen ? (
+            <button
+              type="button"
+              aria-label="Close sidebar"
+              className="fixed inset-0 z-40 bg-black/50 md:hidden"
+              onClick={() => setIsSidebarOpen(false)}
+            />
+          ) : null}
+          <aside
+            className={cn(
+              'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:flex-shrink-0 md:translate-x-0 md:bg-slate-900',
+              isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+            )}
+          >
             <div className="p-4">
-              <Link href="/home" className="mb-8 flex items-center gap-3 px-3 py-2" aria-label="Go to candidate dashboard">
+              <Link
+                href="/home"
+                className="mb-8 flex items-center gap-3 px-3 py-2"
+                aria-label="Go to candidate dashboard"
+                onClick={() => setIsSidebarOpen(false)}
+              >
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-950/60 bg-blue-950/60 p-1">
                   <Image src={faviconLogo} alt="MeliusAI Logo" width={36} height={36} className="object-contain cursor-pointer" />
                 </div>
@@ -3400,8 +3419,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                                 event.preventDefault();
                                 const opportunitiesHref = `${profileHref}#opportunities`;
                                 router.replace(opportunitiesHref);
+                                setIsSidebarOpen(false);
                               }
-                            : undefined
+                            : () => setIsSidebarOpen(false)
                         }
                       />
                     </motion.div>
@@ -3416,6 +3436,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                     active={pathname === profileHref || pathname.startsWith('/profile/')}
                     avatarUrl={avatarUrl}
                     href={profileHref}
+                    onClick={() => setIsSidebarOpen(false)}
                   />
                   <Button
                     variant="ghost"
@@ -3429,7 +3450,28 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
             </div>
           </aside>
 
-          <main className="flex-1 h-full overflow-y-auto relative p-8">
+          <main className="relative h-full w-full flex-1 overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
+            <button
+              type="button"
+              aria-label="Toggle sidebar"
+              aria-expanded={isSidebarOpen}
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="fixed left-4 top-4 z-30 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/90 text-slate-100 shadow-lg shadow-black/20 backdrop-blur transition hover:border-cyan-500/40 hover:text-cyan-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 md:hidden"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M4 7h16" />
+                <path d="M4 12h16" />
+                <path d="M4 17h16" />
+              </svg>
+            </button>
             <AnimatePresence>
               {bioToastMessage ? (
                 <motion.div

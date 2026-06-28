@@ -290,6 +290,7 @@ function OrganizationDashboardContent() {
   const [searchError, setSearchError] = useState<string>('');
   const [hasRunMatcher, setHasRunMatcher] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [messageDraft, setMessageDraft] = useState('');
   const [messageThreads, setMessageThreads] = useState<Record<string, OrganizationMessage[]>>({});
   const sidebarCompanyName = activeWorkspace.title || companyName;
@@ -830,36 +831,75 @@ function OrganizationDashboardContent() {
           </span>
         </Link>
 
-        <button
-          type="button"
-          onClick={() => scrollToSection('talent-discovery')}
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800/80 bg-slate-950/50 text-slate-300 transition-all hover:border-purple-400/40 hover:text-white"
-          aria-label="Open talent discovery"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width={20}
-            height={20}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.75}
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800/80 bg-slate-950/50 text-slate-300 transition-all hover:border-purple-400/40 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 md:hidden"
+            aria-label="Toggle sidebar"
+            aria-expanded={isSidebarOpen}
           >
-            <path d="M9.5 9.5a4 4 0 1 0 5 5L20 20" />
-            <path d="M14 5h6v6" />
-            <path d="M20 5l-6.5 6.5" />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 7h16" />
+              <path d="M4 12h16" />
+              <path d="M4 17h16" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollToSection('talent-discovery')}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800/80 bg-slate-950/50 text-slate-300 transition-all hover:border-purple-400/40 hover:text-white"
+            aria-label="Open talent discovery"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width={20}
+              height={20}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.75}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9.5 9.5a4 4 0 1 0 5 5L20 20" />
+              <path d="M14 5h6v6" />
+              <path d="M20 5l-6.5 6.5" />
+            </svg>
+          </button>
+        </div>
       </header>
 
-      <aside className="hidden h-full shrink-0 flex-col justify-between overflow-hidden border-r border-slate-800/60 bg-[#060817] p-6 md:flex md:w-64">
+      {isSidebarOpen ? (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      ) : null}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between overflow-hidden border-r border-slate-800/60 bg-slate-950 p-6 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:shrink-0 md:translate-x-0 md:bg-[#060817] ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
         <div>
           <div className="mb-10 rounded-2xl border border-slate-800/60 bg-gradient-to-br from-[#191336] via-[#070a1e] to-[#030512] p-4">
             <Link
               href="/organization/dashboard"
-              onClick={() => setActiveTab('overview')}
+              onClick={() => {
+                setActiveTab('overview');
+                setIsSidebarOpen(false);
+              }}
               className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-purple-500/30 bg-purple-950/40 p-1"
               aria-label="Go to organization dashboard"
             >
@@ -896,6 +936,7 @@ function OrganizationDashboardContent() {
                     if (item.targetId) {
                       setActiveTab(item.targetId);
                     }
+                    setIsSidebarOpen(false);
                   }}
                   className={`group flex items-center gap-3 rounded-xl p-3 text-left text-sm transition-all hover:bg-slate-800/40 hover:text-white ${
                     isActive ? 'bg-slate-800/60 text-white font-medium' : 'text-slate-400'
@@ -927,7 +968,7 @@ function OrganizationDashboardContent() {
       </aside>
 
       <main
-        className="min-h-0 flex-1 w-full space-y-8 overflow-y-auto bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512] p-8 CustomScrollbar"
+        className="min-h-0 w-full flex-1 space-y-8 overflow-y-auto bg-gradient-to-br from-[#0a0c24] via-[#030512] to-[#030512] p-4 pt-20 md:p-8 CustomScrollbar"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 md:gap-10">
