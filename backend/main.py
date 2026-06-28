@@ -355,10 +355,8 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
-    "id, full_name, username, birth_date, bio, skills, internal_keywords, "
-    "extracted_experience, extracted_preferences, avatar_url, age, current_status, "
-    "qualifications, experience, hobbies, external_links, "
-    "avg_project_score, created_at, updated_at"
+    "id, username, full_name, bio, avatar_url, current_status, "
+    "qualifications, experience, hobbies, skills, avg_project_score"
 )
 
 
