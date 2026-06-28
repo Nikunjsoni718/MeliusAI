@@ -61,6 +61,23 @@ export function OrganizationJobPostingHub() {
   const organizationName =
     userMetadata.company_name || profile?.company_name || profile?.display_name || 'Verified Organisation';
 
+  const getSessionAccessToken = useCallback(async () => {
+    if (!supabase) {
+      return null;
+    }
+
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+
+    if (error) {
+      throw error;
+    }
+
+    return session?.access_token ?? null;
+  }, [supabase]);
+
   const fetchHistory = useCallback(async () => {
     if (loading) {
       return;
@@ -70,9 +87,21 @@ export function OrganizationJobPostingHub() {
     setHistoryError(null);
 
     try {
+      const accessToken = await getSessionAccessToken();
+
+      if (!accessToken) {
+        setHistoryList([]);
+        throw new Error('Please sign in to view your opportunity archive.');
+      }
+
       const response = await fetch(
         `${OPPORTUNITY_API_BASE}/api/organization-opportunities?recruiter_name=${encodeURIComponent(organizationName)}`,
-        { cache: 'no-store' }
+        {
+          cache: 'no-store',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
       );
       const payload = (await response.json().catch(() => null)) as unknown;
 
@@ -114,12 +143,13 @@ export function OrganizationJobPostingHub() {
         .filter((item): item is OpportunityHistoryItem => item !== null);
 
       setHistoryList(normalizedHistory);
+      setHistoryError(null);
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : 'Unable to load broadcast history.');
     } finally {
       setHistoryLoading(false);
     }
-  }, [loading, organizationName]);
+  }, [getSessionAccessToken, loading, organizationName]);
 
   useEffect(() => {
     void fetchHistory();
@@ -152,9 +182,20 @@ export function OrganizationJobPostingHub() {
     setSuccessMessage(null);
 
     try {
+      const accessToken = await getSessionAccessToken();
+
+      if (!accessToken) {
+        throw new Error('Please sign in to delete this opportunity.');
+      }
+
       const response = await fetch(
         `${OPPORTUNITY_API_BASE}/api/delete-opportunity?id=${encodeURIComponent(id)}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
       );
       const payload = (await response.json().catch(() => null)) as
         | { success?: boolean; detail?: string }
@@ -239,9 +280,13 @@ export function OrganizationJobPostingHub() {
       const loggedInUserEmail =
         loggedInUser.email?.trim().toLowerCase() ||
         '';
+      const accessToken = await getSessionAccessToken();
 
       if (!isEditing && !loggedInUserEmail) {
         throw new Error('Unable to resolve the authenticated organization email. Please sign in again.');
+      }
+      if (!accessToken) {
+        throw new Error('Your session expired. Please sign in again before broadcasting.');
       }
 
       const response = await fetch(
@@ -250,6 +295,7 @@ export function OrganizationJobPostingHub() {
           method: isEditing ? 'PUT' : 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
             'X-Organization-Id': resolvedOrganizationId,
             'X-Company-Name': encodeURIComponent(organizationName),
             'X-Company-Email': loggedInUserEmail,
