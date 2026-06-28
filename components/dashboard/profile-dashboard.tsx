@@ -925,7 +925,7 @@ function SidebarNavButton({
   active?: boolean;
   href: string;
   icon: ReactNode;
-  onClick?: () => void;
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   return (
     <Link
@@ -3277,6 +3277,15 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                           (item.href === profileHref && pathname.startsWith('/profile/'))
                         }
                         icon={item.icon}
+                        onClick={
+                          item.label === 'Opportunities'
+                            ? (event) => {
+                                event.preventDefault();
+                                const opportunitiesHref = `${profileHref}#opportunities`;
+                                router.replace(opportunitiesHref);
+                              }
+                            : undefined
+                        }
                       />
                     </motion.div>
                   ))}
