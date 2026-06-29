@@ -67,6 +67,7 @@ type ProjectItem = {
   logic_score?: number | null;
   ai_summary?: string | null;
   created_at?: string | null;
+  asset_data_url?: string | null;
   is_local?: boolean;
 };
 
@@ -601,6 +602,14 @@ const extractCodeAsText = (file: File) =>
     reader.onload = (e) => resolve(String(e.target?.result ?? ''));
     reader.onerror = () => reject(new Error("Failed"));
     reader.readAsText(file, "UTF-8");
+  });
+
+const readAssetAsDataURL = (asset: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read asset.'));
+    reader.readAsDataURL(asset);
   });
 
 async function readRemoteTextAsUtf8(src: string) {
@@ -2982,13 +2991,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     });
 
     try {
+      const assetDataUrl = await readAssetAsDataURL(file);
       const extractedCodeContent = shouldForceUtf8CodeRead(file.name)
         ? await extractCodeAsText(file).then((text) => text.trim())
         : '';
       const savedProject = await uploadProjectFile(file, projectDescription);
-      const projectWithExtractedCode = extractedCodeContent
-        ? { ...savedProject, text_preview: extractedCodeContent }
-        : savedProject;
+      const projectWithExtractedCode = {
+        ...savedProject,
+        asset_data_url: assetDataUrl,
+        ...(extractedCodeContent ? { text_preview: extractedCodeContent } : {}),
+      };
       setUploadState({
         fileName: file.name,
         progress: 100,
@@ -3084,6 +3096,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('Verification Failed: This asset does not contain a valid file URL.');
       }
 
+      const shouldReadAssetAsText = shouldForceUtf8CodeRead(filename) || project.mime_type?.startsWith('text/');
+      let assetTextContent = shouldReadAssetAsText ? project.text_preview || '' : project.asset_data_url || '';
+
+      if (!assetTextContent) {
+        const assetResponse = await fetch(projectSourceHref);
+
+        if (!assetResponse.ok) {
+          throw new Error('Verification Failed: This asset could not be downloaded for review.');
+        }
+
+        assetTextContent = shouldReadAssetAsText ? await assetResponse.text() : await readAssetAsDataURL(await assetResponse.blob());
+      }
+
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
         headers: {
@@ -3091,8 +3116,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         },
         body: JSON.stringify({
           projectId: project.id,
-          fileUrl: projectSourceHref,
-          filename,
+          assetName: filename,
+          assetTextContent,
+          userContextDescription,
         }),
       });
 

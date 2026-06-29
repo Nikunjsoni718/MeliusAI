@@ -7,6 +7,9 @@ export const runtime = 'nodejs';
 type VerifyAssetProxyPayload = {
   fileUrl?: unknown;
   filename?: unknown;
+  assetName?: unknown;
+  assetTextContent?: unknown;
+  userContextDescription?: unknown;
   projectId?: unknown;
   project_id?: unknown;
   fileId?: unknown;
@@ -45,22 +48,45 @@ export async function POST(request: Request) {
     const body = (await request.json()) as VerifyAssetProxyPayload;
     const fileUrl = getString(body.fileUrl);
     const filename = getString(body.filename) || 'asset.txt';
+    const assetName = getString(body.assetName) || filename;
+    const assetTextContent = getString(body.assetTextContent);
+    const userContextDescription = getString(body.userContextDescription);
     const projectId =
       getString(body.projectId) ||
       getString(body.project_id) ||
       getString(body.fileId) ||
       getString(body.file_id);
 
-    if (!fileUrl) {
+    if (!projectId) {
       return NextResponse.json(
-        { error: 'fileUrl is required.' },
+        { error: 'projectId is required.' },
         { status: 400 }
       );
     }
 
-    if (!projectId) {
+    if (assetTextContent) {
+      const pythonResponse = await fetch(`${backendUrl}/api/verify-asset`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ projectId, assetName, assetTextContent, userContextDescription }),
+      });
+
+      const responseBody = await pythonResponse.text();
+
+      return new Response(responseBody, {
+        status: pythonResponse.status,
+        headers: {
+          'Content-Type': pythonResponse.headers.get('content-type') ?? 'application/json',
+        },
+      });
+    }
+
+    if (!fileUrl) {
       return NextResponse.json(
-        { error: 'projectId is required.' },
+        { error: 'fileUrl is required.' },
         { status: 400 }
       );
     }
