@@ -1,68 +1,61 @@
-'use client';
-
-import Image from 'next/image';
-import Link from 'next/link';
-
-import faviconLogo from '@/app/favicon.png';
-import { Button } from '@/components/ui/button';
+import React, { useEffect } from 'react';
 
 export function Navbar() {
-  const scrollToSection = (id: string) => {
+  // Automatically strip hashes like #about-us out of the URL bar if they exist on mount
+  useEffect(() => {
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleScroll = (e: React.MouseEvent, id: string) => {
+    e.preventDefault(); // 👈 Prevents the browser from appending #id to the URL bar
+    
+    // Smoothly scroll to the target container
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth' });
+    } else if (id === 'top') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   return (
-    <header className="sticky top-0 z-40 px-4 pt-6 sm:px-6 lg:px-8">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 rounded-full border border-slate-800/80 bg-slate-950/75 px-5 py-4 shadow-[0_24px_80px_rgba(2,6,23,0.45)] backdrop-blur-xl">
-        <Link href="/" className="flex items-center" aria-label="Go to MeliusAI home">
-          <Image
-            src={faviconLogo}
-            alt="MeliusAI Logo"
-            width={40}
-            height={40}
-            priority
-            className="object-contain cursor-pointer"
-          />
-        </Link>
+    <div className="w-full fixed top-4 left-0 right-0 z-50 px-4 md:px-8 pointer-events-none">
+      <header className="max-w-7xl mx-auto h-16 rounded-full border border-slate-850 bg-slate-950/80 backdrop-blur-md flex items-center justify-between px-6 shadow-xl pointer-events-auto">
+        
+        {/* Left: Branding */}
+        <div 
+          onClick={(e) => handleScroll(e, 'top')}
+          className="flex items-center gap-3 cursor-pointer select-none"
+        >
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
+            <span className="text-xs font-black text-white tracking-tighter">M</span>
+          </div>
+          <span className="text-lg font-bold tracking-tight text-slate-50">
+            Melius<span className="text-blue-500">AI</span>
+          </span>
+        </div>
 
-        <nav className="hidden items-center gap-5 text-sm text-slate-300 lg:flex">
-          <button
-            type="button"
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="transition hover:text-white"
-          >
-            Introduction
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollToSection('how-it-works')}
-            className="transition hover:text-white"
-          >
-            How it Works
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollToSection('differentiation')}
-            className="transition hover:text-white"
-          >
-            What makes us different
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollToSection('about-us')}
-            className="transition hover:text-white"
-          >
-            About Us
-          </button>
+        {/* Center: Interactive Scroll Triggers */}
+        <nav className="hidden md:flex items-center gap-8">
+          <button onClick={(e) => handleScroll(e, 'top')} className="text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">Introduction</button>
+          <button onClick={(e) => handleScroll(e, 'how-it-works')} className="text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">How it Works</button>
+          <button onClick={(e) => handleScroll(e, 'differentiation')} className="text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">What makes us different</button>
+          <button onClick={(e) => handleScroll(e, 'about-us')} className="text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">About Us</button>
         </nav>
 
-        <Button size="sm" href="/auth">
-          Sign In
-        </Button>
-      </div>
-    </header>
+        {/* Right: CTA Link */}
+        <div>
+          <button 
+            onClick={() => window.location.href = '/login'}
+            className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-slate-50 transition-all hover:bg-blue-500"
+          >
+            Sign In
+          </button>
+        </div>
+
+      </header>
+    </div>
   );
 }

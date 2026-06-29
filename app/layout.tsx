@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css' 
-
+import { Navbar } from '@/components/Navbar';
 // 1. 🔄 IMPORT THE ICON: Forces Next.js to compile the file right from your app folder
 import faviconImage from './favicon.png'
 
@@ -69,6 +69,7 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased bg-slate-950 text-slate-50">
+        <Navbar />
         {children}
       </body>
     </html>
