@@ -847,7 +847,7 @@ export function AuthPage() {
                                           onChange={(event) => setIndividualBirthDate(event.target.value)}
                                         />
                                         <p className="text-xs leading-5 text-slate-500">
-                                          We use this to confirm your age.
+                                          Your age should be above 18.
                                         </p>
                                       </div>
                                     </div>
