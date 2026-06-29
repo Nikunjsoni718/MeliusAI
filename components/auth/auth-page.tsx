@@ -150,6 +150,20 @@ function getAuthErrorMessage(authError: unknown) {
   return String(authError);
 }
 
+function getSupabaseAuthNotificationMessage(authError: unknown) {
+  const message = getAuthErrorMessage(authError);
+
+  if (message.includes('Email not confirmed')) {
+    return '📧 Please verify your email link in your inbox first!';
+  }
+
+  if (message.includes('Invalid login credentials')) {
+    return '❌ Invalid email or password. Please try again.';
+  }
+
+  return `❌ ${message}`;
+}
+
 function LogicPrismLogo() {
   return (
     <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
@@ -230,6 +244,7 @@ export function AuthPage() {
   const [pendingSync, setPendingSync] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [authMessage, setAuthMessage] = useState({ text: '', isError: false });
 
   const existingDestination = profile?.role_selected_at ? getDashboardHref(profile.role) : null;
   const activeRole = selectedRole ? roleDescriptors[selectedRole] : null;
@@ -358,6 +373,7 @@ export function AuthPage() {
 
   async function initializeIndividualVault(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAuthMessage({ text: '', isError: false });
 
     if (!selectedRole) {
       return;
@@ -441,7 +457,11 @@ export function AuthPage() {
         if (!signUpData.session) {
           setPendingAction(null);
           clearPersistedAuthState();
-          setMessage('We sent you a quick email. Just click the link inside to verify your account and get started.');
+          setMessage(null);
+          setAuthMessage({
+            text: '📩 Account created! Check your email to confirm registration.',
+            isError: false,
+          });
           return;
         }
 
@@ -487,6 +507,11 @@ export function AuthPage() {
     } catch (vaultError) {
       setPendingAction(null);
       setError(getAuthErrorMessage(vaultError));
+      setMessage(null);
+      setAuthMessage({
+        text: getSupabaseAuthNotificationMessage(vaultError),
+        isError: true,
+      });
     }
   }
 
@@ -547,6 +572,7 @@ export function AuthPage() {
     setPendingAction(null);
     setError(null);
     setMessage(null);
+    setAuthMessage({ text: '', isError: false });
     setIndividualMode('signin');
     setIndividualFullName('');
     setIndividualUsername('');
@@ -563,6 +589,7 @@ export function AuthPage() {
     setPendingAction(null);
     setError(null);
     setMessage(null);
+    setAuthMessage({ text: '', isError: false });
     setIndividualMode('signin');
     setIndividualFullName('');
     setIndividualUsername('');
@@ -745,7 +772,12 @@ export function AuthPage() {
                               <div className="grid grid-cols-2 gap-2 rounded-full border border-white/10 bg-slate-950/60 p-1">
                                 <button
                                   type="button"
-                                  onClick={() => { setIndividualMode('signin'); setError(null); setMessage(null); }}
+                                  onClick={() => {
+                                    setIndividualMode('signin');
+                                    setError(null);
+                                    setMessage(null);
+                                    setAuthMessage({ text: '', isError: false });
+                                  }}
                                   className={cn(
                                     'rounded-full px-4 py-2 text-sm font-medium transition',
                                     individualMode === 'signin'
@@ -757,7 +789,12 @@ export function AuthPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => { setIndividualMode('signup'); setError(null); setMessage(null); }}
+                                  onClick={() => {
+                                    setIndividualMode('signup');
+                                    setError(null);
+                                    setMessage(null);
+                                    setAuthMessage({ text: '', isError: false });
+                                  }}
                                   className={cn(
                                     'rounded-full px-4 py-2 text-sm font-medium transition',
                                     individualMode === 'signup'
@@ -850,6 +887,20 @@ export function AuthPage() {
                                     </button>
                                   </div>
                                 </div>
+                                {authMessage.text && (
+                                  <div style={{
+                                    padding: '12px',
+                                    borderRadius: '8px',
+                                    marginBottom: '16px',
+                                    fontSize: '14px',
+                                    textAlign: 'center',
+                                    backgroundColor: authMessage.isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
+                                    color: authMessage.isError ? '#ef4444' : '#22c55e',
+                                    border: `1px solid ${authMessage.isError ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`
+                                  }}>
+                                    {authMessage.text}
+                                  </div>
+                                )}
                                 <Button className="w-full" size="lg" type="submit" disabled={isIndividualVaultDisabled}>
                                   {isVaultPending ? <ButtonSpinner /> : null}
                                   {isVaultPending
