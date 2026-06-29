@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import useSWR from 'swr';
 
 import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
@@ -381,6 +382,30 @@ function normalizeSpectateProfileResponse(
           : [],
     opportunities: Array.isArray(payloadRecord?.opportunities) ? payloadRecord.opportunities : [],
   };
+}
+
+type SpectatorProfileCacheKey = readonly ['spectate-profile', string];
+
+async function fetchSpectatorProfile([
+  ,
+  targetUsername,
+]: SpectatorProfileCacheKey): Promise<NormalizedSpectateProfileResponse> {
+  const response = await fetch(
+    `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
+    { cache: 'no-store' }
+  );
+  const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
+  const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
+
+  if (!response.ok || !normalizedSpectatorPayload.profile) {
+    throw new Error(
+      normalizedSpectatorPayload.detail ||
+        normalizedSpectatorPayload.message ||
+        `Unable to load candidate profile "${targetUsername}".`
+    );
+  }
+
+  return normalizedSpectatorPayload;
 }
 
 function formatScanDate(value: string) {
@@ -1997,6 +2022,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       normalizeProfileUsername(profileId)
     );
   }, [pathname, profileId, profileUsername, routeParams]);
+  const spectatorProfileKey = useMemo(
+    () => (targetUsername ? (['spectate-profile', targetUsername] as const) : null),
+    [targetUsername]
+  );
+  const {
+    data: spectatorProfilePayload,
+    error: spectatorProfileError,
+    isLoading: spectatorProfileLoading,
+  } = useSWR(spectatorProfileKey, fetchSpectatorProfile, {
+    dedupingInterval: 120_000,
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+  });
   const routeProfileUsername = useMemo(() => getProfileUsernameFromPathname(pathname), [pathname]);
   const viewerMetadataUsername =
     typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
@@ -2226,16 +2264,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
-    if (loading) {
-      return;
-    }
-
-    let active = true;
     const profileKey = targetUsername ?? null;
     const hasHydratedCurrentProfile = Boolean(profileKey) && hydratedProfileKeyRef.current === profileKey;
     const shouldBlockForInitialProfileLoad = profileKey
       ? !hasHydratedCurrentProfile
       : !hydratedProfileKeyRef.current;
+
+    if (!profileKey) {
+      setProfileLoading(false);
+      return;
+    }
 
     if (shouldBlockForInitialProfileLoad) {
       setProfileLoading(true);
@@ -2266,185 +2304,165 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProfileLoading(false);
       setFetchError(null);
     }
+  }, [targetUsername]);
 
-    const loadProfile = async () => {
-      if (!targetUsername) {
-        console.warn('MeliusAI Hydration Guard: Aborting premature API call. Parameters not settled.');
-        if (active) {
-          setProfileLoading(false);
-        }
-        return;
+  useEffect(() => {
+    if (!targetUsername) {
+      console.warn('MeliusAI Hydration Guard: Aborting premature API call. Parameters not settled.');
+      setProfileLoading(false);
+      return;
+    }
+
+    if (spectatorProfileError) {
+      console.error('Error running security guard verification:', spectatorProfileError);
+      setIsOwner(false);
+      setLoadingState(false);
+      setProfileLoading(false);
+      setFetchError(spectatorProfileError instanceof Error ? spectatorProfileError.message : 'Unable to load profile.');
+      return;
+    }
+
+    if (spectatorProfileLoading || !spectatorProfilePayload) {
+      if (hydratedProfileKeyRef.current !== targetUsername) {
+        setProfileLoading(true);
+      }
+      return;
+    }
+
+    try {
+      const sessionUserMetadata = (user?.user_metadata ?? {}) as {
+        username?: string;
+        full_name?: string;
+        name?: string;
+        bio?: string;
+        avatar_url?: string;
+        picture?: string;
+        portfolio_links?: Partial<PortfolioLinks>;
+      };
+      const savedProfile = spectatorProfilePayload.profile;
+
+      if (!savedProfile?.id) {
+        throw new Error(`Target candidate profile "${targetUsername}" not found.`);
       }
 
-      try {
-        let requestHeaders: HeadersInit | undefined;
+      const authenticatedUsername =
+        profile?.username?.trim() ??
+        viewerMetadataUsername?.trim() ??
+        (typeof user?.user_metadata?.preferred_username === 'string'
+          ? user.user_metadata.preferred_username.trim()
+          : null);
+      const ownsProfile = Boolean(user?.id && savedProfile.id && user.id === savedProfile.id);
+      const isOwnProfile = ownsProfile;
+      const payloadProjects = spectatorProfilePayload.projects;
+      const loadedProjects = payloadProjects.length > 0
+        ? payloadProjects
+            .map(mapProjectRowToProjectItem)
+            .filter((project) => isOwnProfile || project.is_public !== false)
+        : [];
+      const payloadRatings = spectatorProfilePayload.ratings;
+      const hydratedScans = payloadRatings
+        .map(normalizeSpectatorRating)
+        .filter((scan): scan is SpectatorScanItem => scan !== null);
+      const hydratedOpportunities = spectatorProfilePayload.opportunities
+        .map(normalizeLiveOpportunity)
+        .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
-        if (supabase) {
-          const {
-            data: { session },
-          } = await supabase.auth.getSession();
-          const accessToken = session?.access_token;
-
-          if (accessToken) {
-            requestHeaders = {
-              Authorization: `Bearer ${accessToken}`,
-            };
-          }
-        }
-
-        const response = await fetch(
-          `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-          { cache: 'no-store', headers: requestHeaders }
-        );
-        const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
-        const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
-
-        if (!response.ok || !normalizedSpectatorPayload.profile) {
-          throw new Error(
-            normalizedSpectatorPayload.detail ||
-              normalizedSpectatorPayload.message ||
-              `Unable to load candidate profile "${targetUsername}".`
-          );
-        }
-
-        const sessionUserMetadata = (user?.user_metadata ?? {}) as {
-          username?: string;
-          full_name?: string;
-          name?: string;
-          bio?: string;
-          avatar_url?: string;
-          picture?: string;
-          portfolio_links?: Partial<PortfolioLinks>;
-        };
-        const savedProfile = normalizedSpectatorPayload.profile;
-
-        if (!savedProfile?.id) {
-          throw new Error(`Target candidate profile "${targetUsername}" not found.`);
-        }
-
-        const authenticatedUsername =
-          profile?.username?.trim() ??
-          viewerMetadataUsername?.trim() ??
-          (typeof user?.user_metadata?.preferred_username === 'string'
-            ? user.user_metadata.preferred_username.trim()
-            : null);
-        const ownsProfile = Boolean(user?.id && savedProfile.id && user.id === savedProfile.id);
-        const isOwnProfile = ownsProfile;
-        const payloadProjects = normalizedSpectatorPayload.projects;
-        const loadedProjects = payloadProjects.length > 0
-          ? payloadProjects
-              .map(mapProjectRowToProjectItem)
-              .filter((project) => isOwnProfile || project.is_public !== false)
-          : [];
-        const payloadRatings = normalizedSpectatorPayload.ratings;
-        const hydratedScans = payloadRatings
-          .map(normalizeSpectatorRating)
-          .filter((scan): scan is SpectatorScanItem => scan !== null);
-        const hydratedOpportunities = normalizedSpectatorPayload.opportunities
-          .map(normalizeLiveOpportunity)
-          .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
-
-        if (active) {
-          setProfileData(savedProfile);
-          setProjects(loadedProjects);
-          setScans(hydratedScans);
-          if (!isOwnProfile || hydratedOpportunities.length > 0) {
-            setLiveJobs(hydratedOpportunities);
-          }
-          setLoadingState(false);
-          setProjectDescriptions(
-            Object.fromEntries(
-              loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
-            )
-          );
-        }
-
-        const fallbackName = isOwnProfile
-          ? sessionUserMetadata?.full_name ??
-            sessionUserMetadata?.name ??
-            user?.email?.split('@')[0] ??
-            targetUsername
-          : targetUsername;
-        const fallbackUsername = isOwnProfile
-          ? authenticatedUsername ?? targetUsername
-          : targetUsername;
-        const hasDbProfile = Boolean(savedProfile);
-        const birthDate = savedProfile?.birth_date ?? null;
-        const displayName = savedProfile?.full_name ?? fallbackName;
-        const usernameValue = savedProfile?.username ?? fallbackUsername;
-        const bioValue = savedProfile?.bio ??
-          (isOwnProfile ? sessionUserMetadata?.bio ?? '' : '');
-        const skillsInputValue = Array.isArray(savedProfile?.skills) ? savedProfile.skills.join(', ') : '';
-        const resolvedProfileIdValue = savedProfile?.id ?? (isOwnProfile ? user?.id ?? null : null);
-        const avatarUrl = savedProfile?.avatar_url ??
-          (isOwnProfile
-            ? sessionUserMetadata?.avatar_url ??
-              sessionUserMetadata?.picture ??
-              null
-            : null);
-        const savedAverageScore = savedProfile?.average_project_score ?? savedProfile?.avg_project_score;
-        const avgProjectScoreValue = typeof savedAverageScore === 'number' ? savedAverageScore : null;
-
-        const hydratedDraft = {
-          displayName,
-          username: usernameValue,
-          birthDate: birthDate ?? '',
-        };
-
-        if (active) {
-          const storedPortfolioLinks =
-            sessionUserMetadata?.portfolio_links ?? undefined;
-
-          setIsOwner(ownsProfile);
-          if (storedPortfolioLinks && isOwnProfile) {
-            setPortfolioLinks((currentLinks) => ({
-              ...currentLinks,
-              artstation: storedPortfolioLinks.artstation ?? currentLinks.artstation,
-              behance: storedPortfolioLinks.behance ?? currentLinks.behance,
-              github: storedPortfolioLinks.github ?? currentLinks.github,
-              linkedin: storedPortfolioLinks.linkedin ?? currentLinks.linkedin,
-            }));
-          }
-          lastSavedProfileRef.current = hydratedDraft;
-          lastSavedBioRef.current = bioValue;
-          lastSavedSkillsInputRef.current = skillsInputValue;
-          setResolvedProfileId(resolvedProfileIdValue);
-          setProfileDraft(hydratedDraft);
-          setBioText(bioValue);
-          setRawSkillsInput(skillsInputValue);
-          setProfileHydrated(true);
-          hydratedProfileKeyRef.current = targetUsername;
-          setProfileFallback({
-            displayName,
-            username: usernameValue,
-            birthDate,
-            email: savedProfile?.email?.trim() || (isOwnProfile ? user?.email ?? '' : ''),
-            hasDbProfile,
-            avatarUrl,
-            avgProjectScore: avgProjectScoreValue,
-          });
-          setProfileSaveError(null);
-          setProfileSyncState('idle');
-          setBioSaveState('idle');
-          setProfileLoading(false);
-        }
-      } catch (err) {
-        console.error('Error running security guard verification:', err);
-        if (active) {
-          if (shouldBlockForInitialProfileLoad) {
-            setIsOwner(false);
-          }
-          setProfileLoading(false);
-        }
+      setProfileData(savedProfile);
+      setProjects(loadedProjects);
+      setScans(hydratedScans);
+      if (!isOwnProfile || hydratedOpportunities.length > 0) {
+        setLiveJobs(hydratedOpportunities);
       }
-    };
+      setLoadingState(false);
+      setProjectDescriptions(
+        Object.fromEntries(
+          loadedProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
+        )
+      );
 
-    void loadProfile();
+      const fallbackName = isOwnProfile
+        ? sessionUserMetadata?.full_name ??
+          sessionUserMetadata?.name ??
+          user?.email?.split('@')[0] ??
+          targetUsername
+        : targetUsername;
+      const fallbackUsername = isOwnProfile
+        ? authenticatedUsername ?? targetUsername
+        : targetUsername;
+      const hasDbProfile = Boolean(savedProfile);
+      const birthDate = savedProfile?.birth_date ?? null;
+      const displayName = savedProfile?.full_name ?? fallbackName;
+      const usernameValue = savedProfile?.username ?? fallbackUsername;
+      const bioValue = savedProfile?.bio ??
+        (isOwnProfile ? sessionUserMetadata?.bio ?? '' : '');
+      const skillsInputValue = Array.isArray(savedProfile?.skills) ? savedProfile.skills.join(', ') : '';
+      const resolvedProfileIdValue = savedProfile?.id ?? (isOwnProfile ? user?.id ?? null : null);
+      const avatarUrl = savedProfile?.avatar_url ??
+        (isOwnProfile
+          ? sessionUserMetadata?.avatar_url ??
+            sessionUserMetadata?.picture ??
+            null
+          : null);
+      const savedAverageScore = savedProfile?.average_project_score ?? savedProfile?.avg_project_score;
+      const avgProjectScoreValue = typeof savedAverageScore === 'number' ? savedAverageScore : null;
 
-    return () => {
-      active = false;
-    };
-  }, [loading, profile?.username, supabase, targetUsername, user, viewerMetadataUsername]);
+      const hydratedDraft = {
+        displayName,
+        username: usernameValue,
+        birthDate: birthDate ?? '',
+      };
+      const storedPortfolioLinks =
+        sessionUserMetadata?.portfolio_links ?? undefined;
+
+      setIsOwner(ownsProfile);
+      if (storedPortfolioLinks && isOwnProfile) {
+        setPortfolioLinks((currentLinks) => ({
+          ...currentLinks,
+          artstation: storedPortfolioLinks.artstation ?? currentLinks.artstation,
+          behance: storedPortfolioLinks.behance ?? currentLinks.behance,
+          github: storedPortfolioLinks.github ?? currentLinks.github,
+          linkedin: storedPortfolioLinks.linkedin ?? currentLinks.linkedin,
+        }));
+      }
+      lastSavedProfileRef.current = hydratedDraft;
+      lastSavedBioRef.current = bioValue;
+      lastSavedSkillsInputRef.current = skillsInputValue;
+      setResolvedProfileId(resolvedProfileIdValue);
+      setProfileDraft(hydratedDraft);
+      setBioText(bioValue);
+      setRawSkillsInput(skillsInputValue);
+      setProfileHydrated(true);
+      hydratedProfileKeyRef.current = targetUsername;
+      setProfileFallback({
+        displayName,
+        username: usernameValue,
+        birthDate,
+        email: savedProfile?.email?.trim() || (isOwnProfile ? user?.email ?? '' : ''),
+        hasDbProfile,
+        avatarUrl,
+        avgProjectScore: avgProjectScoreValue,
+      });
+      setFetchError(null);
+      setProfileSaveError(null);
+      setProfileSyncState('idle');
+      setBioSaveState('idle');
+      setProfileLoading(false);
+    } catch (err) {
+      console.error('Error running security guard verification:', err);
+      setIsOwner(false);
+      setLoadingState(false);
+      setProfileLoading(false);
+      setFetchError(err instanceof Error ? err.message : 'Unable to load profile.');
+    }
+  }, [
+    profile?.username,
+    spectatorProfileError,
+    spectatorProfileLoading,
+    spectatorProfilePayload,
+    targetUsername,
+    user,
+    viewerMetadataUsername,
+  ]);
 
   useEffect(() => {
     if (isSpectating) {

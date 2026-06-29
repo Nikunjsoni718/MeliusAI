@@ -360,6 +360,13 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, bio, avatar_url, age, current_status, "
     "qualifications, experience, hobbies, skills"
 )
+SPECTATE_PROJECT_PUBLIC_SELECT = (
+    "id, user_id, owner_id, is_public, name, title, source_url, file_name, "
+    "file_type, file_url, file_size, description, user_description, score, "
+    "audit_summary, pros, cons, recommendations, evaluation_score, "
+    "has_been_audited, logic_score, ai_summary, source_kind, target_company, "
+    "status, created_at"
+)
 
 
 def normalize_email(value: Any) -> str | None:
@@ -1769,41 +1776,36 @@ async def spectate_profile(
     profile["email"] = None
 
     if profile_uuid:
-        try:
-            auth_user_response = await asyncio.to_thread(
-                lambda: supabase.auth.admin.get_user_by_id(str(profile_uuid))
-            )
-            auth_user = getattr(auth_user_response, "user", None)
-            if auth_user is None:
-                auth_user = getattr(auth_user_response, "data", None)
+        profile_uuid_text = str(profile_uuid)
+        email_result, projects_result = await asyncio.gather(
+            fetch_auth_email_for_profile(supabase, profile_uuid_text),
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                .eq("user_id", profile_uuid_text)
+                .order("created_at", desc=True)
+                .execute()
+            ),
+            return_exceptions=True,
+        )
 
-            if isinstance(auth_user, dict):
-                profile["email"] = auth_user.get("email")
-            elif auth_user is not None:
-                profile["email"] = getattr(auth_user, "email", None)
-        except Exception as email_error:
-            logger.warning("Unable to hydrate spectator profile email: %s", email_error)
+        if isinstance(email_result, Exception):
+            logger.warning("Unable to hydrate spectator profile email: %s", email_result)
             profile["email"] = None
+        else:
+            profile["email"] = email_result
+
+        if isinstance(projects_result, Exception):
+            logger.warning("Unable to hydrate spectator profile projects: %s", projects_result)
+            profile["projects"] = []
+        else:
+            profile["projects"] = projects_result.data or []
     else:
         print(
             "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
             f"'{target_username}' has no id or user_id value ---"
         )
-
-    profile["projects"] = []
-    if profile_uuid:
-        try:
-            projects_response = await asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select("*")
-                .eq("user_id", str(profile_uuid))
-                .order("created_at", desc=True)
-                .execute()
-            )
-            profile["projects"] = projects_response.data or []
-        except Exception as projects_error:
-            logger.warning("Unable to hydrate spectator profile projects: %s", projects_error)
-            profile["projects"] = []
+        profile["projects"] = []
 
     return profile
 
