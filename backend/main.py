@@ -2551,6 +2551,11 @@ async def verify_asset(
                         "Metric A: Structural Completeness & Technical Accuracy. "
                         "Metric B: Practical Real-World Execution relative to the user's project description intent. "
                         "Metric C: Optimization, Corporate Standards, and Delivery Quality. "
+                        "Strict scoring rubric: 95-100 means flawless, production-grade masterclass with zero structural defects, exceptional execution, and industry-leading optimization. "
+                        "85-94 means strong, highly competent delivery with only minor technical optimizations or formatting polishes needed, but highly competitive. "
+                        "70-84 means mediocre or average execution with clear gaps, weak evidence, structural layout inconsistencies, or unoptimized data patterns. "
+                        "50-69 means critical gaps are present, including foundational element omissions, structural breakdowns, or severe delivery flaws. "
+                        "Below 50 means non-functional, plarigiarized, empty, or fundamentally broken asset. "
                         "Return a strict structured JSON object matching the provided schema. "
                         "executiveSummary must be clean professional Markdown and MUST be an elegant high-level overview, "
                         "strictly limited to 3 to 4 short lines maximum. It must not detail specific bullet points, pros, cons, fixes, or score metrics. "
@@ -2559,7 +2564,11 @@ async def verify_asset(
                         "strategicRecommendations must ONLY contain actionable fixes such as 'Add a clear title' or 'Fix inconsistent formatting'. Never put action verbs or fix instructions in pros. "
                         "Zero duplication rule: a single insight cannot exist in more than one array. If something is missing, place the gap in cons and the fix in strategicRecommendations; it must never touch pros. "
                         "Keep every section unique, punchy, non-wordy, and short. "
-                        "calculatedScore must be an integer from 0 to 100."
+                        "calculatedScore must be an integer from 0 to 100. "
+                        "CRITICAL SCORING MANDATE: Do not cluster scores around safe averages like 80 or 85. Be highly critical and utilize the entire 0-100 mathematical spectrum. "
+                        "If a presentation or document lacks deep metrics, has weak formatting, or lacks concrete real-world evidence relative to the project description, penalize it heavily and score it down into the 50s or 60s. "
+                        "Base your final integer score strictly on the volume and severity of the points listed in your 'cons' array versus your 'pros' array. "
+                        "Your score must be a brutal, completely honest reflection of true execution quality."
                     ),
                 },
                 {
