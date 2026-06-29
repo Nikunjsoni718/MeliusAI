@@ -1,6 +1,7 @@
 import os
 import asyncio
 import base64
+import io
 import json
 import logging
 import math
@@ -13,6 +14,7 @@ from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID
 import httpx
+import pypdf
 from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -2442,6 +2444,30 @@ async def verify_asset(
                 status_code=400,
                 detail="projectId and assetTextContent are required.",
             )
+
+        if asset_name.lower().endswith(".pdf") or asset_text_content.startswith(
+            "data:application/pdf;base64,"
+        ):
+            pdf_base64_content = asset_text_content
+            if pdf_base64_content.startswith("data:application/pdf;base64,"):
+                pdf_base64_content = pdf_base64_content.split(",", 1)[1]
+
+            pdf_binary_content = base64.b64decode(pdf_base64_content)
+            pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_binary_content))
+            extracted_text_pages = []
+
+            for page in pdf_reader.pages:
+                page_text = page.extract_text(extraction_mode="layout") or ""
+                if page_text.strip():
+                    extracted_text_pages.append(page_text.strip())
+
+            asset_text_content = "\n\n".join(extracted_text_pages).strip()
+
+            if not asset_text_content:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Unable to extract text from the uploaded PDF asset.",
+                )
 
         completion = client.beta.chat.completions.parse(
             model="gpt-4o-mini",

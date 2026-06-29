@@ -4,7 +4,7 @@ import './globals.css' // Crucial: Injects your Tailwind utility styles globally
 // 1. High-Density SEO Metadata targeting the Indian Verification Market
 export const metadata: Metadata = {
   // Catchy, targeted blue link for the Indian tech market (Under 60 chars)
-  title: "MeliusAI | Tech Skill Verification & Talent Finding India", 
+  title: "MeliusAI | Skill Verification & Talent Finding Platform", 
   
   // Double-sided value proposition strictly under the 160-character limit (156 characters)
   description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
