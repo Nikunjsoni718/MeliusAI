@@ -6,7 +6,7 @@ import faviconImage from './favicon.png'
 
 // High-Density SEO Metadata with your compiled favicon assets
 export const metadata: Metadata = {
-  title: "MeliusAI | Tech Skill Verification & Talent Finding India", 
+  title: "MeliusAI | Skill Verification & Talent Finding Platform", 
   description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
   
   // 🎯 MAP THE COMPILED SOURCE: Inject the framework-generated asset path
