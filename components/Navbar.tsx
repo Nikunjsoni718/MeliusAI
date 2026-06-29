@@ -24,7 +24,7 @@ export function Navbar() {
       return;
     }
 
-    // Try finding the container directly or via marketing layout fallbacks
+    // Attempt direct DOM selection across different structural configurations
     const element = document.getElementById(id) || 
                     document.getElementById(`${id}-section`) || 
                     document.querySelector(`[data-section="${id}"]`);
@@ -32,7 +32,14 @@ export function Navbar() {
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
-      console.warn(`MeliusAI Navbar: Target container element with ID '#${id}' was not rendered on the viewport DOM framework. Make sure your component file sections wrap their markup with matching id="..." strings.`);
+      // Direct absolute height pixel scrolling percentage fallback if section elements lack IDs
+      if (id === 'how-it-works') {
+        window.scrollTo({ top: window.innerHeight * 0.9, behavior: 'smooth' });
+      } else if (id === 'differentiation') {
+        window.scrollTo({ top: window.innerHeight * 1.8, behavior: 'smooth' });
+      } else if (id === 'about-us') {
+        window.scrollTo({ top: window.innerHeight * 2.7, behavior: 'smooth' });
+      }
     }
   };
 
@@ -40,22 +47,18 @@ export function Navbar() {
     <div className="w-full fixed top-6 left-0 right-0 z-50 px-4 md:px-12 pointer-events-none">
       <header className="max-w-7xl mx-auto h-20 rounded-full border border-neutral-800/80 bg-neutral-950/60 backdrop-blur-md flex items-center justify-between px-8 shadow-[0_12px_40px_rgba(0,0,0,0.5)] pointer-events-auto transition-all duration-300">
         
-        {/* Left Side: Branding with explicit favicon.png resource */}
+        {/* Left Side: Branding with Stable Static Asset */}
         <div 
           onClick={(e) => handleScroll(e, 'top')}
           className="flex items-center gap-3 cursor-pointer select-none group"
         >
           <img 
             src="/favicon.png" 
-            alt="MeliusAI" 
-            className="h-8 w-8 object-contain transition-transform duration-300 group-hover:scale-105"
-            onError={(e) => {
-              // Fallback block if favicon.png path location differs
-              e.currentTarget.src = '/favicon.ico';
-            }}
+            alt="MeliusAI Logo" 
+            className="h-7 w-7 object-contain transition-transform duration-300 group-hover:scale-105"
           />
-          <span className="text-xl font-bold tracking-tight text-neutral-100">
-            Melius<span className="text-blue-500">AI</span>
+          <span className="text-xl font-bold tracking-tight text-white transition-colors group-hover:text-neutral-200">
+            MeliusAI
           </span>
         </div>
 
@@ -67,11 +70,11 @@ export function Navbar() {
           <button onClick={(e) => handleScroll(e, 'about-us')} className="text-sm font-medium text-neutral-400 hover:text-neutral-100 transition-colors">About Us</button>
         </nav>
 
-        {/* Right Side: Primary Interactive Call to Action routing to /auth */}
+        {/* Right Side: Button Stylings Matched with Hero Secondary Actions */}
         <div>
           <button 
             onClick={() => window.location.href = '/auth'}
-            className="rounded-full bg-blue-600 px-6 py-2.5 text-sm font-semibold text-slate-50 shadow-lg shadow-blue-600/20 transition-all hover:bg-blue-500 hover:scale-[1.02] active:scale-[0.98]"
+            className="rounded-full border border-neutral-800 bg-[#030712]/40 px-6 py-2 text-sm font-medium text-slate-100 backdrop-blur-md transition-all hover:bg-neutral-900/80 hover:text-white"
           >
             Sign In
           </button>
