@@ -9,6 +9,13 @@ export const metadata: Metadata = {
   // Double-sided value proposition strictly under the 160-character limit (156 characters)
   description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
   
+  // 🔄 THE FIX: Explicitly direct the browser engine to your custom favicon image
+  icons: {
+    icon: '/favicon.png', // Targets public/favicon.png cleanly
+    shortcut: '/favicon.png',
+    apple: '/favicon.png',
+  },
+  
   // OpenGraph tags manage how the link renders when posted on social channels like LinkedIn or X
   openGraph: {
     title: 'MeliusAI | Skill Verification & Talent Finding',
