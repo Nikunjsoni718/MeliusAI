@@ -2530,7 +2530,7 @@ async def verify_asset(
             lambda: supabase.table("projects")
             .update(update_payload)
             .eq("id", project_id_filter)
-            .or_(f"owner_id.eq.{current_user_id},user_id.eq.{current_user_id}")
+            .or_(f"user_id.eq.{current_user_id}")
             .execute()
         )
 
