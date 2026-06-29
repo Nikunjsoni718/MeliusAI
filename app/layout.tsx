@@ -1,12 +1,15 @@
 import type { Metadata } from 'next'
+import './globals.css' // Crucial: Injects your Tailwind utility styles globally
 
+// 1. High-Density SEO Metadata targeting the Indian Verification Market
 export const metadata: Metadata = {
-  // Bold, exact title targeting the Indian ecosystem (57 characters)
-  title: 'MeliusAI | Tech Skill Verification & Talent Finding India', 
+  // Catchy, targeted blue link for the Indian tech market (Under 60 chars)
+  title: "MeliusAI | Tech Skill Verification & Talent Finding India", 
   
   // Double-sided value proposition strictly under the 160-character limit (156 characters)
-  description: 'India\'s premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.',
+  description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
   
+  // OpenGraph tags manage how the link renders when posted on social channels like LinkedIn or X
   openGraph: {
     title: 'MeliusAI | Skill Verification & Talent Finding',
     description: 'The objective data layer for Indian engineering capabilities. Verifying developer code assets, discovering tech talent.',
@@ -20,34 +23,44 @@ export const metadata: Metadata = {
         alt: 'MeliusAI Verification & Discovery Hub'
       },
     ],
-    locale: 'en_IN',
+    locale: 'en_IN', // Explicitly signals regional search context to crawlers
     type: 'website',
   },
-} 
+}
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// 2. Root Layout Component Wrapping the Interface Shell
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  
+  // Structured JSON-LD Data Schema to maximize local search positioning
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     'name': 'MeliusAI',
     'url': 'https://meliusai.in',
     'logo': 'https://meliusai.in/icon.png',
-    'description': 'Automated skill verification and talent finding platform for the Indian developer ecosystem.',
+    'description': 'Automated tech skill verification and talent finding platform for the Indian developer ecosystem.',
     'address': {
       '@type': 'PostalAddress',
-      'addressCountry': 'IN' // Locks in local credibility with search engines
+      'addressCountry': 'IN' // Establishes regional domain authority
     }
   }
 
   return (
-    <html lang="en-IN"> {/* Sets the primary document language locale to India */}
+    <html lang="en-IN"> {/* Declares the specific language dialect for indexers */}
       <head>
+        {/* Injecting the structured metadata schema right into the HTML head container */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body>{children}</body>
+      <body className="antialiased bg-slate-950 text-slate-50">
+        {children}
+      </body>
     </html>
   )
 }
