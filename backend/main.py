@@ -1797,6 +1797,7 @@ async def spectate_profile(
                 lambda: supabase.table("projects")
                 .select("*")
                 .eq("user_id", str(profile_uuid))
+                .order("created_at", desc=True)
                 .execute()
             )
             profile["projects"] = projects_response.data or []

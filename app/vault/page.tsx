@@ -63,7 +63,13 @@ function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
     [];
 
   return Array.isArray(projects)
-    ? projects.filter((project) => project.is_public !== false)
+    ? projects
+        .filter((project) => project.is_public !== false)
+        .sort((a, b) => {
+          const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+          const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+          return rightDate - leftDate;
+        })
     : [];
 }
 

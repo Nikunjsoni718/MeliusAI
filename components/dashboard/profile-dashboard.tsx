@@ -2126,7 +2126,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     verifyingAssetId !== null ||
     deletingProjectId !== null ||
     isUploading;
-  const allProjects = projects;
+  const sortedProjects = useMemo(
+    () =>
+      [...projects].sort((a, b) => {
+        const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      }),
+    [projects]
+  );
+  const allProjects = sortedProjects;
   const needsReviewCount = useMemo(() => {
     return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
   }, [allProjects]);

@@ -637,7 +637,14 @@ export function UniversalAssetGrid({
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [localProjectPatches, setLocalProjectPatches] = useState<Record<string, Partial<ProjectRow>>>({});
   const patchedAssets = useMemo(
-    () => assets.map((asset) => ({ ...asset, ...(localProjectPatches[asset.id] ?? {}) })),
+    () =>
+      assets
+        .map((asset) => ({ ...asset, ...(localProjectPatches[asset.id] ?? {}) }))
+        .sort((a, b) => {
+          const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+          const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+          return rightDate - leftDate;
+        }),
     [assets, localProjectPatches]
   );
   const activePreviewProject = activePreviewProjectId
