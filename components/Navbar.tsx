@@ -24,19 +24,24 @@ export function Navbar() {
     <div className="pointer-events-none fixed left-0 right-0 top-6 z-50 w-full px-4 md:px-12">
       <header className="pointer-events-auto mx-auto flex h-20 max-w-7xl items-center justify-between rounded-full border border-neutral-800/80 bg-neutral-950/60 px-8 shadow-[0_12px_40px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-300">
         <Link href="/" className="group flex items-center gap-3 select-none" aria-label="Go to MeliusAI introduction">
-          {logoFailed ? (
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-xs font-black tracking-tighter text-white">
-              M
-            </span>
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src="/favicon.png"
-              alt="MeliusAI Logo"
-              className="h-7 w-7 object-contain transition-transform duration-300 group-hover:scale-105"
-              onError={() => setLogoFailed(true)}
-            />
-          )}
+          <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-md bg-transparent">
+            {logoFailed ? (
+              <span className="flex h-full w-full items-center justify-center rounded-md border border-neutral-800 bg-neutral-900 text-xs font-black tracking-tighter text-white">
+                M
+              </span>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src="/favicon.png"
+                alt=""
+                className="h-full w-full object-contain"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  setLogoFailed(true);
+                }}
+              />
+            )}
+          </div>
           <span className="text-xl font-bold tracking-tight text-white transition-colors group-hover:text-neutral-200">
             MeliusAI
           </span>
