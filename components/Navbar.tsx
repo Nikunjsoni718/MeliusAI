@@ -42,7 +42,7 @@ export function Navbar() {
               />
             )}
           </div>
-          <span className="text-xl font-bold tracking-tight text-white transition-colors group-hover:text-neutral-200">
+          <span className="font-sans text-xl font-bold tracking-tight text-white transition-colors group-hover:text-neutral-200">
             MeliusAI
           </span>
         </Link>
@@ -63,7 +63,7 @@ export function Navbar() {
           href="/auth"
           className="rounded-full bg-[#00a3ff] px-6 py-2.5 text-sm font-semibold text-black transition-all hover:bg-opacity-90"
         >
-          Sign In
+          Sign In &amp; Get Started
         </Link>
       </header>
     </div>
