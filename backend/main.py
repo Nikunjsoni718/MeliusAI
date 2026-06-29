@@ -360,12 +360,10 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, bio, avatar_url, age, current_status, "
     "qualifications, experience, hobbies, skills"
 )
-SPECTATE_PROJECT_PUBLIC_SELECT = (
-    "id, user_id, owner_id, is_public, name, title, source_url, file_name, "
-    "file_type, file_url, file_size, description, user_description, score, "
-    "audit_summary, pros, cons, recommendations, evaluation_score, "
-    "has_been_audited, logic_score, ai_summary, source_kind, target_company, "
-    "status, created_at"
+SPECTATE_PROJECT_PUBLIC_SELECT = "*"
+SPECTATE_SCORE_PUBLIC_SELECT = (
+    "id, project_id, scored_by, source, score, summary, improvement_tips, "
+    "created_at, updated_at"
 )
 
 
@@ -399,6 +397,124 @@ async def fetch_auth_email_for_profile(admin_supabase: Any, profile_id: str) -> 
         return None
 
     return get_supabase_auth_user_email(user_response)
+
+
+def dedupe_rows_by_id(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped_rows: Dict[str, Dict[str, Any]] = {}
+    fallback_rows: List[Dict[str, Any]] = []
+
+    for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        if row_id:
+            deduped_rows[row_id] = row
+        else:
+            fallback_rows.append(row)
+
+    return list(deduped_rows.values()) + fallback_rows
+
+
+async def fetch_project_rows_for_profile(supabase: Any, profile_id: str) -> List[Dict[str, Any]]:
+    project_rows: List[Dict[str, Any]] = []
+
+    for ownership_column in ("user_id", "owner_id"):
+        try:
+            projects_response = await asyncio.to_thread(
+                lambda column=ownership_column: supabase.table("projects")
+                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                .eq(column, profile_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            if isinstance(projects_response.data, list):
+                project_rows.extend(projects_response.data)
+        except Exception as projects_error:
+            logger.warning(
+                "Unable to hydrate spectator profile projects via %s: %s",
+                ownership_column,
+                projects_error,
+            )
+
+    return sorted(
+        dedupe_rows_by_id(project_rows),
+        key=lambda row: str(row.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+async def fetch_score_rows_for_projects(supabase: Any, project_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    project_ids = [
+        str(project.get("id") or "").strip()
+        for project in project_rows
+        if str(project.get("id") or "").strip()
+    ]
+    if not project_ids:
+        return []
+
+    try:
+        scores_response = await asyncio.to_thread(
+            lambda: supabase.table("scores")
+            .select(SPECTATE_SCORE_PUBLIC_SELECT)
+            .in_("project_id", project_ids)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as scores_error:
+        logger.warning("Unable to hydrate spectator profile score rows: %s", scores_error)
+        return []
+
+    return scores_response.data or []
+
+
+def get_project_score(project: Dict[str, Any]) -> int | float | None:
+    for field_name in ("logic_score", "evaluation_score", "score"):
+        value = project.get(field_name)
+        if isinstance(value, (int, float)):
+            return value
+
+    return None
+
+
+def build_project_scan_rows(project_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    scan_rows: List[Dict[str, Any]] = []
+
+    for project in project_rows:
+        project_id = str(project.get("id") or "").strip()
+        if not project_id:
+            continue
+
+        score = get_project_score(project)
+        if score is None:
+            continue
+
+        title = (
+            project.get("name")
+            or project.get("title")
+            or project.get("file_name")
+            or "Portfolio asset"
+        )
+        summary = (
+            project.get("audit_summary")
+            or project.get("ai_summary")
+            or project.get("summary")
+            or project.get("description")
+        )
+
+        scan_rows.append(
+            {
+                "id": f"project-scan-{project_id}",
+                "project_id": project_id,
+                "title": title,
+                "score": score,
+                "evaluation_score": score,
+                "logic_score": score,
+                "summary": summary,
+                "ai_summary": project.get("ai_summary") or summary,
+                "description": project.get("description") or summary,
+                "created_at": project.get("updated_at") or project.get("created_at"),
+            }
+        )
+
+    return scan_rows
 
 
 def apply_opportunity_organization_scope(query: Any, organization_id: str, current_user_id: str):
@@ -1779,13 +1895,7 @@ async def spectate_profile(
         profile_uuid_text = str(profile_uuid)
         email_result, projects_result = await asyncio.gather(
             fetch_auth_email_for_profile(supabase, profile_uuid_text),
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                .eq("user_id", profile_uuid_text)
-                .order("created_at", desc=True)
-                .execute()
-            ),
+            fetch_project_rows_for_profile(supabase, profile_uuid_text),
             return_exceptions=True,
         )
 
@@ -1799,13 +1909,19 @@ async def spectate_profile(
             logger.warning("Unable to hydrate spectator profile projects: %s", projects_result)
             profile["projects"] = []
         else:
-            profile["projects"] = projects_result.data or []
+            profile["projects"] = projects_result
     else:
         print(
             "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
             f"'{target_username}' has no id or user_id value ---"
         )
         profile["projects"] = []
+
+    score_rows = await fetch_score_rows_for_projects(supabase, profile["projects"])
+    scan_rows = dedupe_rows_by_id(score_rows + build_project_scan_rows(profile["projects"]))
+    profile["ratings"] = scan_rows
+    profile["scores"] = scan_rows
+    profile["scans"] = scan_rows
 
     return profile
 
