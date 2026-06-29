@@ -2581,16 +2581,26 @@ async def verify_asset(
             raise RuntimeError("OpenAI structured parser returned an empty audit report.")
 
         audit_payload = serialize_pydantic_model(audit_report)
+        calculated_score = audit_report.calculatedScore
+        executive_summary = audit_report.executiveSummary.strip()
+        pros = list(audit_report.pros)
+        cons = list(audit_report.cons)
+        recommendations = list(audit_report.strategicRecommendations)
         project_id_filter = str(project_id)
         supabase = get_request_supabase_client(request)
 
         update_payload = {
-            "score": audit_report.calculatedScore,
-            "audit_summary": audit_report.executiveSummary,
-            "pros": list(audit_report.pros),
-            "cons": list(audit_report.cons),
-            "recommendations": list(audit_report.strategicRecommendations),
+            "score": calculated_score,
+            "evaluation_score": calculated_score,
+            "logic_score": calculated_score,
+            "audit_summary": executive_summary,
+            "ai_summary": executive_summary,
+            "description": executive_summary,
+            "pros": pros,
+            "cons": cons,
+            "recommendations": recommendations,
             "user_description": user_context_description,
+            "has_been_audited": True,
             "status": "Verified",
         }
 
@@ -2602,7 +2612,22 @@ async def verify_asset(
             .execute()
         )
 
-        return {"success": True, "report": audit_payload}
+        return {
+            "success": True,
+            "report": audit_payload,
+            "score": calculated_score,
+            "description": executive_summary,
+            "executive_summary": executive_summary,
+            "summary": executive_summary,
+            "audit_summary": executive_summary,
+            "pros": pros,
+            "cons": cons,
+            "recommendations": recommendations,
+            "project": {
+                "id": project_id_filter,
+                **update_payload,
+            },
+        }
 
     except HTTPException:
         raise
