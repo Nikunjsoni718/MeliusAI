@@ -15,6 +15,7 @@ from urllib.parse import unquote
 from uuid import UUID
 import httpx
 import pypdf
+from pptx import Presentation
 from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -32,7 +33,6 @@ except ImportError:
 
 # --- MULTIMODAL PARSER EXTENSIONS ---
 import fitz  # PyMuPDF
-from pptx import Presentation
 import docx  # python-docx
 import pandas as pd  # pandas for Excel automation
 
@@ -2445,29 +2445,96 @@ async def verify_asset(
                 detail="projectId and assetTextContent are required.",
             )
 
-        if asset_name.lower().endswith(".pdf") or asset_text_content.startswith(
-            "data:application/pdf;base64,"
-        ):
-            pdf_base64_content = asset_text_content
-            if pdf_base64_content.startswith("data:application/pdf;base64,"):
-                pdf_base64_content = pdf_base64_content.split(",", 1)[1]
+        asset_name_lower = asset_name.lower()
 
-            pdf_binary_content = base64.b64decode(pdf_base64_content)
-            pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_binary_content))
-            extracted_text_pages = []
+        def decode_asset_bytes(encoded_asset: str) -> bytes:
+            base64_payload = (
+                encoded_asset.split(",", 1)[1]
+                if encoded_asset.startswith("data:") and "," in encoded_asset
+                else encoded_asset
+            )
+            return base64.b64decode("".join(base64_payload.split()), validate=True)
 
-            for page in pdf_reader.pages:
+        if asset_name_lower.endswith(".pdf") or asset_text_content.startswith("data:application/pdf;base64,"):
+            pdf_reader = pypdf.PdfReader(io.BytesIO(decode_asset_bytes(asset_text_content)))
+            extracted_page_blocks = []
+            extracted_page_text = []
+
+            for page_index, page in enumerate(pdf_reader.pages, start=1):
                 page_text = page.extract_text(extraction_mode="layout") or ""
-                if page_text.strip():
-                    extracted_text_pages.append(page_text.strip())
+                extracted_page_text.append(page_text)
+                extracted_page_blocks.append(f"--- [DOCUMENT PAGE {page_index}] ---\n{page_text.strip()}")
 
-            asset_text_content = "\n\n".join(extracted_text_pages).strip()
-
-            if not asset_text_content:
+            if not "\n".join(extracted_page_text).strip():
                 raise HTTPException(
                     status_code=422,
                     detail="Unable to extract text from the uploaded PDF asset.",
                 )
+
+            asset_text_content = "\n\n".join(extracted_page_blocks).strip()
+
+        elif asset_name_lower.endswith(".pptx") or asset_text_content.startswith(
+            "data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,"
+        ):
+            presentation = Presentation(io.BytesIO(decode_asset_bytes(asset_text_content)))
+            extracted_slide_blocks = []
+            extracted_slide_text = []
+
+            for slide_index, slide in enumerate(presentation.slides, start=1):
+                slide_lines = [f"--- [PRESENTATION SLIDE {slide_index}] ---"]
+                title_shape = slide.shapes.title
+
+                if title_shape is not None:
+                    title_text = (getattr(title_shape, "text", "") or "").strip()
+                    if title_text:
+                        slide_lines.append(f"[TITLE]\n{title_text}")
+                        extracted_slide_text.append(title_text)
+
+                for shape in slide.shapes:
+                    if title_shape is not None and shape == title_shape:
+                        continue
+
+                    if getattr(shape, "has_table", False):
+                        table_rows = []
+                        for row in shape.table.rows:
+                            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                            if cells:
+                                table_rows.append(" | ".join(cells))
+
+                        if table_rows:
+                            table_text = "\n".join(table_rows)
+                            slide_lines.append(f"[TABLE]\n{table_text}")
+                            extracted_slide_text.append(table_text)
+
+                    if getattr(shape, "has_text_frame", False):
+                        shape_text = (getattr(shape, "text", "") or "").strip()
+                        if shape_text:
+                            slide_lines.append(shape_text)
+                            extracted_slide_text.append(shape_text)
+
+                extracted_slide_blocks.append("\n".join(slide_lines))
+
+            if not "\n".join(extracted_slide_text).strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail="Unable to extract text from the uploaded PPTX asset.",
+                )
+
+            asset_text_content = "\n\n".join(extracted_slide_blocks).strip()
+
+        elif asset_text_content.startswith("data:"):
+            try:
+                asset_text_content = decode_asset_bytes(asset_text_content).decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+
+        else:
+            try:
+                decoded_text_content = decode_asset_bytes(asset_text_content).decode("utf-8")
+                if decoded_text_content.strip():
+                    asset_text_content = decoded_text_content.strip()
+            except Exception:
+                pass
 
         completion = client.beta.chat.completions.parse(
             model="gpt-4o-mini",
