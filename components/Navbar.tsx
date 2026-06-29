@@ -1,4 +1,6 @@
+"use client";
 import React, { useEffect } from 'react';
+
 
 export function Navbar() {
   // Automatically strip hashes like #about-us out of the URL bar if they exist on mount
