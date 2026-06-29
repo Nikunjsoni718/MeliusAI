@@ -1,22 +1,25 @@
 import type { Metadata } from 'next'
-import './globals.css' // Crucial: Injects your Tailwind utility styles globally
+import './globals.css' 
 
-// 1. High-Density SEO Metadata targeting the Indian Verification Market
+// 1. 🔄 IMPORT THE ICON: Forces Next.js to compile the file right from your app folder
+import faviconImage from './favicon.png'
+
+// High-Density SEO Metadata with your compiled favicon assets
 export const metadata: Metadata = {
-  // Catchy, targeted blue link for the Indian tech market (Under 60 chars)
-  title: "MeliusAI | Skill Verification & Talent Finding Platform", 
-  
-  // Double-sided value proposition strictly under the 160-character limit (156 characters)
+  title: "MeliusAI | Tech Skill Verification & Talent Finding India", 
   description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
   
-  // 🔄 THE FIX: Explicitly direct the browser engine to your custom favicon image
+  // 🎯 MAP THE COMPILED SOURCE: Inject the framework-generated asset path
   icons: {
-    icon: '/favicon.png', // Targets public/favicon.png cleanly
-    shortcut: '/favicon.png',
-    apple: '/favicon.png',
+    icon: [
+      { url: faviconImage.src, type: 'image/png' }
+    ],
+    shortcut: [faviconImage.src],
+    apple: [
+      { url: faviconImage.src, type: 'image/png' }
+    ],
   },
-  
-  // OpenGraph tags manage how the link renders when posted on social channels like LinkedIn or X
+
   openGraph: {
     title: 'MeliusAI | Skill Verification & Talent Finding',
     description: 'The objective data layer for Indian engineering capabilities. Verifying developer code assets, discovering tech talent.',
@@ -30,12 +33,12 @@ export const metadata: Metadata = {
         alt: 'MeliusAI Verification & Discovery Hub'
       },
     ],
-    locale: 'en_IN', // Explicitly signals regional search context to crawlers
+    locale: 'en_IN',
     type: 'website',
   },
 }
 
-// 2. Root Layout Component Wrapping the Interface Shell
+// 2. Single Unified Root Layout Component
 export default function RootLayout({
   children,
 }: {
