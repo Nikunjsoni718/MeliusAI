@@ -73,7 +73,7 @@ function VerifiedProfileMockup() {
 
 export default function Page() {
   return (
-    <main className="min-h-screen px-4 pt-24 text-white sm:px-6 lg:px-8">
+    <main className="min-h-screen px-4 pt-32 text-white sm:px-6 lg:px-8">
       <h1 className="text-center text-4xl font-semibold tracking-tight sm:text-5xl">
         One Vault. Two Sides. Zero Guesswork.
       </h1>

@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 const navItems = [
   { href: '/', label: 'Introduction' },
@@ -9,9 +10,15 @@ const navItems = [
   { href: '/difference', label: 'What makes us different' },
   { href: '/about-us', label: 'About Us' },
 ];
+const publicMarketingRoutes = ['/', '/how-it-works', '/difference', '/about-us'];
 
 export function Navbar() {
   const [logoFailed, setLogoFailed] = useState(false);
+  const pathname = usePathname();
+
+  if (!publicMarketingRoutes.includes(pathname)) {
+    return null;
+  }
 
   return (
     <div className="pointer-events-none fixed left-0 right-0 top-6 z-50 w-full px-4 md:px-12">
