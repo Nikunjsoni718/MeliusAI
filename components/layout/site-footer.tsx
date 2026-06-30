@@ -19,7 +19,6 @@ export function SiteFooter() {
             <div className="mt-3 flex flex-col gap-2 text-sm text-slate-300">
               <Link href="/how-it-works" className="transition hover:text-white">How it Works</Link>
               <Link href="/difference" className="transition hover:text-white">Difference</Link>
-              <Link href="/melius+" className="transition hover:text-white">Melius+</Link>
             </div>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">

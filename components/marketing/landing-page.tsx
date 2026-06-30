@@ -92,14 +92,14 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="grid gap-3 border-y border-neutral-900 py-6 sm:grid-cols-3">
+      <section className="grid gap-3 border-y border-slate-900/80 py-6 sm:grid-cols-3">
         {betaMetrics.map((metric) => (
           <div
             key={metric.label}
-            className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-5 py-5 text-center backdrop-blur-md"
+            className="rounded-xl border border-blue-950/60 bg-[#090d1f]/45 px-5 py-5 text-center shadow-[0_0_32px_rgba(14,165,233,0.06)] backdrop-blur-md"
           >
-            <p className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{metric.value}</p>
-            <p className="mt-2 text-sm font-medium text-neutral-400">{metric.label}</p>
+            <p className="text-2xl font-semibold tracking-tight text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.18)] sm:text-3xl">{metric.value}</p>
+            <p className="mt-2 text-sm font-medium text-slate-400">{metric.label}</p>
           </div>
         ))}
       </section>
@@ -111,49 +111,49 @@ export function LandingPage() {
             <h2 className="mt-5 max-w-xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
               See the exact review signal recruiters and builders can trust.
             </h2>
-            <p className="mt-4 max-w-xl text-base leading-7 text-neutral-400">
+            <p className="mt-4 max-w-xl text-base leading-7 text-slate-400">
               MeliusAI turns uploaded work into a structured technical audit: strengths, weaknesses, scoring, and practical recommendations without vague resume claims.
             </p>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-neutral-800 bg-[#050814]/85 shadow-[0_24px_90px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-            <div className="flex flex-col gap-4 border-b border-neutral-800 bg-neutral-950/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="overflow-hidden rounded-2xl border border-blue-950/60 bg-[#050814]/95 shadow-[0_24px_90px_rgba(2,6,23,0.62)] backdrop-blur-xl">
+            <div className="flex flex-col gap-4 border-b border-blue-950/60 bg-[#071020]/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-500">repository</p>
-                <p className="mt-1 truncate font-mono text-sm text-neutral-200">e-commerce-backend-api</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">repository</p>
+                <p className="mt-1 truncate font-mono text-sm text-slate-200">e-commerce-backend-api</p>
               </div>
-              <div className="w-fit rounded-full border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200">
+              <div className="w-fit rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.12)]">
                 89/100
               </div>
             </div>
 
             <div className="grid gap-5 p-5 lg:grid-cols-2">
-              <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/[0.04] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Strengths</p>
+              <div className="rounded-xl border border-cyan-400/15 bg-cyan-500/[0.035] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300/80">Strengths</p>
                 <div className="mt-4 space-y-4">
                   {auditStrengths.map(([title, description]) => (
                     <div key={title}>
                       <p className="text-sm font-semibold text-white">✅ {title}</p>
-                      <p className="mt-1 text-sm leading-6 text-neutral-400">{description}</p>
+                      <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-xl border border-rose-400/20 bg-rose-500/[0.04] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-300">Weaknesses</p>
+              <div className="rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200/75">Weaknesses</p>
                 <div className="mt-4 space-y-4">
                   {auditWeaknesses.map(([title, description]) => (
                     <div key={title}>
                       <p className="text-sm font-semibold text-white">❌ {title}</p>
-                      <p className="mt-1 text-sm leading-6 text-neutral-400">{description}</p>
+                      <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div className="border-t border-neutral-800 bg-sky-500/[0.06] px-5 py-5">
+            <div className="border-t border-blue-950/60 bg-sky-500/[0.055] px-5 py-5">
               <p className="text-sm leading-7 text-sky-100">
                 <span className="font-semibold text-white">Recommendation:</span> Strengthen token authentication layer variables and handle specific edge cases in route handlers.
               </p>
@@ -163,11 +163,11 @@ export function LandingPage() {
       </section>
 
       <section className="pb-4 pt-6">
-        <div className="rounded-[2rem] border border-neutral-800 bg-neutral-950/70 px-6 py-12 text-center shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:px-10 sm:py-16">
+        <div className="rounded-[2rem] border border-blue-950/60 bg-[linear-gradient(135deg,rgba(9,13,31,0.92),rgba(3,7,18,0.96)_52%,rgba(8,20,38,0.92))] px-6 py-12 text-center shadow-[0_24px_80px_rgba(2,6,23,0.5)] backdrop-blur-xl sm:px-10 sm:py-16">
           <h2 className="mx-auto max-w-3xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">
             Ready to back up your resume with real, audited code?
           </h2>
-          <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-neutral-400 sm:text-lg">
+          <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
             Join our active beta. Start running instant AI audits and build your verified technical capability profile today.
           </p>
           <Button
