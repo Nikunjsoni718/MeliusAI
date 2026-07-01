@@ -304,7 +304,7 @@ export function AssetPreviewModal({
   useEffect(() => {
     setLiveProject(previewProject ?? null);
     setIsExpandedViewer(false);
-  }, [previewProject?.id, previewProject?.user_description, previewProject?.bio]);
+  }, [previewProject]);
 
   useEffect(() => {
     if (!activePreviewUrl || !shouldRenderTextPreview) {

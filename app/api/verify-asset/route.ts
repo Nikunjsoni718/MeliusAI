@@ -71,7 +71,13 @@ export async function POST(request: Request) {
           'Content-Type': 'application/json',
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({ projectId, assetName, assetTextContent, userContextDescription }),
+        body: JSON.stringify({
+          projectId,
+          assetName,
+          code: assetTextContent,
+          assetTextContent,
+          userContextDescription,
+        }),
       });
 
       const responseBody = await pythonResponse.text();

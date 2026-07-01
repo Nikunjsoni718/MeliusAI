@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import Any, Dict, List
 
 try:
@@ -1319,10 +1319,106 @@ class UniversalAuditReport(BaseModel):
 
 
 class VerifyRequest(BaseModel):
-    projectId: str
-    assetName: str
-    assetTextContent: str
-    userContextDescription: str
+    code: str
+    projectId: str | None = None
+    assetName: str | None = None
+    assetTextContent: str | None = None
+    userContextDescription: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def hydrate_code_from_legacy_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized_data = dict(data)
+        code_value = normalized_data.get("code")
+        legacy_asset_content = normalized_data.get("assetTextContent")
+
+        if (code_value is None or not str(code_value).strip()) and legacy_asset_content is not None:
+            normalized_data["code"] = legacy_asset_content
+        elif code_value is None:
+            normalized_data["code"] = ""
+
+        return normalized_data
+
+
+class AuditResponse(BaseModel):
+    executiveSummary: str
+    score: int
+    pros: List[str]
+    cons: List[str]
+    recommendations: List[str]
+
+
+ENHANCED_AUDIT_SYSTEM_PROMPT = """
+You are an Elite Principal Reviewer conducting an automated project audit for MeliusAI.
+
+Evaluate the uploaded content intelligently, fairly, and contextually. The content may be code, HTML, PDF text, presentation text, documentation, or another project artifact. Do not act like a basic linter.
+
+- Contextual Intent: First deduce what the uploaded content is intended to be. Grade it based on the standards required for that specific artifact type, such as a quick script, production backend, frontend page, portfolio document, school project, presentation, or business document.
+
+- Relevant Criteria Only: Do not apply irrelevant standards. Do not ask a PowerPoint for unit tests. Do not judge a simple HTML page like a production backend. Do not over-penalize missing project descriptions unless the artifact depends on explanation.
+
+- Severity Classification: Evaluate flaws using strict tiers:
+Critical: security vulnerabilities, crashes, broken logic, unsafe handling, unusable output.
+Structural: poor architecture, missing error handling, inefficient design, weak organization.
+Best-Practices: formatting, naming, comments, documentation, minor presentation polish.
+
+- Holistic Scoring from 0 to 100:
+Start from 100. Deduct based on severity and relevance. Reward strong architecture, clarity, completeness, usability, originality, and practical readiness. A score above 90 means the artifact is highly polished and close to production/professional ready. Minor polish issues should not heavily reduce the score.
+
+- High Signal, Low Noise:
+Return only the top 2 to 4 highest-priority pros, cons, and recommendations. Avoid generic filler. Every point must be specific to the uploaded content.
+
+Output ONLY a valid JSON object with these exact keys:
+executiveSummary, score, pros, cons, recommendations.
+
+Do not include markdown blocks like ```json.
+"""
+
+
+def normalize_audit_list(value: List[str]) -> List[str]:
+    normalized_items = []
+
+    for item in value:
+        normalized_item = str(item).strip()
+        if normalized_item:
+            normalized_items.append(normalized_item)
+
+    return normalized_items[:4]
+
+
+def parse_audit_response(raw_content: str | None) -> AuditResponse:
+    if not raw_content or not raw_content.strip():
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response was empty.",
+        )
+
+    try:
+        parsed_content = json.loads(raw_content)
+    except json.JSONDecodeError as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response was not valid JSON.",
+        ) from parse_error
+
+    try:
+        audit_response = AuditResponse.model_validate(parsed_content)
+    except ValidationError as validation_error:
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response did not match the required schema.",
+        ) from validation_error
+
+    audit_response.score = max(0, min(100, int(audit_response.score)))
+    audit_response.executiveSummary = audit_response.executiveSummary.strip()
+    audit_response.pros = normalize_audit_list(audit_response.pros)
+    audit_response.cons = normalize_audit_list(audit_response.cons)
+    audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
+
+    return audit_response
 
 
 class MatchTalentRequest(BaseModel):
@@ -2553,15 +2649,15 @@ async def verify_asset(
     current_user_id: str = Depends(verify_user),
 ):
     try:
-        project_id = payload.projectId.strip()
-        asset_name = payload.assetName.strip() or "Project Asset"
-        asset_text_content = payload.assetTextContent.strip()
-        user_context_description = payload.userContextDescription.strip()
+        project_id = (payload.projectId or "").strip()
+        asset_name = (payload.assetName or "Project Asset").strip() or "Project Asset"
+        asset_text_content = payload.code.strip()
+        user_context_description = (payload.userContextDescription or "").strip()
 
-        if not project_id or not asset_text_content:
+        if not asset_text_content:
             raise HTTPException(
                 status_code=400,
-                detail="projectId and assetTextContent are required.",
+                detail="Uploaded content cannot be empty.",
             )
 
         asset_name_lower = asset_name.lower()
@@ -2655,67 +2751,36 @@ async def verify_asset(
             except Exception:
                 pass
 
-        completion = client.beta.chat.completions.parse(
+        completion = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format=UniversalAuditReport,
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are MeliusAI's Principal Smart Asset Verification Engine. "
-                        "You must evaluate every submitted asset against ONE unified industry-standard benchmark "
-                        "regardless of file format, whether the source is a DOCX document, XLSX spreadsheet, "
-                        "source code file, image, presentation, or MP4/video transcript. "
-                        "Metric A: Structural Completeness & Technical Accuracy. "
-                        "Metric B: Practical Real-World Execution relative to the user's project description intent. "
-                        "Metric C: Optimization, Corporate Standards, and Delivery Quality. "
-                        "Strict scoring rubric: 95-100 means flawless, production-grade masterclass with zero structural defects, exceptional execution, and industry-leading optimization. "
-                        "85-94 means strong, highly competent delivery with only minor technical optimizations or formatting polishes needed, but highly competitive. "
-                        "70-84 means mediocre or average execution with clear gaps, weak evidence, structural layout inconsistencies, or unoptimized data patterns. "
-                        "50-69 means critical gaps are present, including foundational element omissions, structural breakdowns, or severe delivery flaws. "
-                        "Below 50 means non-functional, plarigiarized, empty, or fundamentally broken asset. "
-                        "Return a strict structured JSON object matching the provided schema. "
-                        "executiveSummary must be clean professional Markdown and MUST be an elegant high-level overview, "
-                        "strictly limited to 3 to 4 short lines maximum. It must not detail specific bullet points, pros, cons, fixes, or score metrics. "
-                        "pros must ONLY contain absolute positive strengths currently present in the file. Never include missing items, flaws, or suggestions to add/fix/change anything in pros. "
-                        "cons must ONLY contain specific existing flaws, errors, missing information, weak evidence, or structural failures. "
-                        "strategicRecommendations must ONLY contain actionable fixes such as 'Add a clear title' or 'Fix inconsistent formatting'. Never put action verbs or fix instructions in pros. "
-                        "Zero duplication rule: a single insight cannot exist in more than one array. If something is missing, place the gap in cons and the fix in strategicRecommendations; it must never touch pros. "
-                        "Keep every section unique, punchy, non-wordy, and short. "
-                        "calculatedScore must be an integer from 0 to 100. "
-                        "CRITICAL SCORING MANDATE: Do not cluster scores around safe averages like 80 or 85. Be highly critical and utilize the entire 0-100 mathematical spectrum. "
-                        "If a presentation or document lacks deep metrics, has weak formatting, or lacks concrete real-world evidence relative to the project description, penalize it heavily and score it down into the 50s or 60s. "
-                        "Base your final integer score strictly on the volume and severity of the points listed in your 'cons' array versus your 'pros' array. "
-                        "Your score must be a brutal, completely honest reflection of true execution quality."
-                    ),
+                    "content": ENHANCED_AUDIT_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Asset Name:\n{asset_name}\n\n"
-                        f"User Project Description / Intent:\n"
+                        "Uploaded Artifact Metadata:\n"
+                        f"- Asset name: {asset_name}\n"
+                        f"- User-provided project context: "
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
-                        f"Raw Asset Text Content:\n{asset_text_content[:24000]}"
+                        "Uploaded Content To Audit:\n"
+                        f"{asset_text_content[:24000]}"
                     ),
                 },
             ],
+            response_format={"type": "json_object"},
             temperature=0.1,
         )
 
-        audit_report = completion.choices[0].message.parsed
-
-        if audit_report is None:
-            raise RuntimeError("OpenAI structured parser returned an empty audit report.")
-
-        audit_payload = serialize_pydantic_model(audit_report)
-        calculated_score = audit_report.calculatedScore
-        executive_summary = audit_report.executiveSummary.strip()
-        pros = list(audit_report.pros)
-        cons = list(audit_report.cons)
-        recommendations = list(audit_report.strategicRecommendations)
-        project_id_filter = str(project_id)
-        supabase = get_request_supabase_client(request)
-
+        audit_response = parse_audit_response(completion.choices[0].message.content)
+        audit_payload = audit_response.model_dump()
+        calculated_score = audit_response.score
+        executive_summary = audit_response.executiveSummary
+        pros = audit_response.pros
+        cons = audit_response.cons
+        recommendations = audit_response.recommendations
         update_payload = {
             "score": calculated_score,
             "evaluation_score": calculated_score,
@@ -2730,17 +2795,28 @@ async def verify_asset(
             "has_been_audited": True,
             "status": "Verified",
         }
+        project_payload = None
 
-        await asyncio.to_thread(
-            lambda: supabase.table("projects")
-            .update(update_payload)
-            .eq("id", project_id_filter)
-            .or_(f"user_id.eq.{current_user_id}")
-            .execute()
-        )
+        if project_id:
+            project_id_filter = str(project_id)
+            supabase = get_request_supabase_client(request)
 
-        return {
+            await asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .update(update_payload)
+                .eq("id", project_id_filter)
+                .or_(f"user_id.eq.{current_user_id}")
+                .execute()
+            )
+
+            project_payload = {
+                "id": project_id_filter,
+                **update_payload,
+            }
+
+        response_payload = {
             "success": True,
+            "executiveSummary": executive_summary,
             "report": audit_payload,
             "score": calculated_score,
             "description": executive_summary,
@@ -2750,11 +2826,12 @@ async def verify_asset(
             "pros": pros,
             "cons": cons,
             "recommendations": recommendations,
-            "project": {
-                "id": project_id_filter,
-                **update_payload,
-            },
         }
+
+        if project_payload is not None:
+            response_payload["project"] = project_payload
+
+        return response_payload
 
     except HTTPException:
         raise
