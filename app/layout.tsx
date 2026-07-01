@@ -10,16 +10,11 @@ export const metadata: Metadata = {
   description: "India's premier tech skill verification and talent finding platform. Developers verify code assets and match scores; companies instantly find vetted talent.",
   
   // 🎯 MAP THE COMPILED SOURCE: Inject the framework-generated asset path
-  icons: {
-    icon: [
-      { url: faviconImage.src, type: 'image/png' }
-    ],
-    shortcut: [faviconImage.src],
-    apple: [
-      { url: faviconImage.src, type: 'image/png' }
-    ],
+icons: {
+    icon: '/favicon.png',
+    shortcut: '/favicon.png',
+    apple: '/favicon.png',
   },
-
   openGraph: {
     title: 'MeliusAI | Skill Verification & Talent Finding',
     description: 'The objective data layer for Indian engineering capabilities. Verifying developer code assets, discovering tech talent.',
