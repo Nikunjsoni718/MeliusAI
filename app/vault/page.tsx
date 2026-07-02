@@ -813,6 +813,7 @@ function VaultProjectCard({
   const isDeleting = deletingAssetId === project.id;
   const isPublic = project.is_public ?? true;
   const isVerifying = verifyingAssetId === project.id;
+  const hasCompletedAudit = Boolean(project.has_been_audited);
   const assetUrl = getVaultAssetUrl(project);
   const arePrimaryActionsDisabled = isDeleting;
   const fileTypeLabel = `${getVaultAssetFileType(project)} File`;
@@ -891,7 +892,7 @@ function VaultProjectCard({
                 aria-busy={isVerifying}
                 className="w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
               >
-                {isVerifying ? 'Auditing Asset...' : 'Verify with MeliusAI'}
+                {isVerifying ? 'Auditing Asset...' : hasCompletedAudit ? 'AI Audit Completed' : 'Verify with MeliusAI'}
               </button>
             )}
           </div>

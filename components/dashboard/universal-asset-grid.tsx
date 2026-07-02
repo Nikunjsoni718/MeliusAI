@@ -479,6 +479,7 @@ function UniversalAssetCard({
   const isDeleting = deletingAssetId === project.id;
   const isPublic = project.is_public ?? true;
   const isVerifying = verifyingAssetId === project.id;
+  const hasCompletedAudit = Boolean(project.has_been_audited);
   const assetUrl = getUniversalAssetUrl(project);
   const score = getAssetScore(project);
   const arePrimaryActionsDisabled = isDeleting;
@@ -591,7 +592,7 @@ function UniversalAssetCard({
                   aria-busy={isVerifying}
                   className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:bg-slate-950/20 disabled:text-slate-700"
                 >
-                  {isVerifying ? 'Auditing Asset...' : 'Verify with MeliusAI'}
+                  {isVerifying ? 'Auditing Asset...' : hasCompletedAudit ? 'AI Audit Completed' : 'Verify with MeliusAI'}
                 </button>
               ) : null}
             </div>

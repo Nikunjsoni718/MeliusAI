@@ -727,6 +727,10 @@ function getProjectDownloadHref(project: ProjectItem) {
 }
 
 function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
+  const rowWithAuditAliases = row as ProjectRow & {
+    executive_summary?: string | null;
+    summary?: string | null;
+  };
   const fileName = row.file_name ?? row.name ?? row.title ?? 'Project';
   const fileUrl = row.file_url ?? row.source_url ?? null;
   const fileType = row.file_type ?? null;
@@ -752,6 +756,8 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     file_url: fileUrl,
     code_language: getCodeLanguage(fileExtension),
     description: row.description ?? null,
+    executive_summary: rowWithAuditAliases.executive_summary ?? null,
+    summary: rowWithAuditAliases.summary ?? null,
     user_description: row.user_description ?? null,
     score: typeof row.score === 'number' ? row.score : null,
     audit_summary: row.audit_summary ?? null,
@@ -764,6 +770,55 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     ai_summary: row.ai_summary ?? null,
     created_at: row.created_at ?? null,
     is_local: false,
+  };
+}
+
+function mergeProjectLists(currentProjects: ProjectItem[], incomingProjects: ProjectItem[]) {
+  const incomingById = new Map(incomingProjects.map((project) => [project.id, project]));
+  const currentById = new Map(currentProjects.map((project) => [project.id, project]));
+  const mergedProjects = incomingProjects.map((incomingProject) => {
+    const currentProject = currentById.get(incomingProject.id);
+
+    if (!currentProject) {
+      return incomingProject;
+    }
+
+    if (currentProject.has_been_audited && !incomingProject.has_been_audited) {
+      return { ...incomingProject, ...currentProject };
+    }
+
+    return { ...currentProject, ...incomingProject };
+  });
+
+  currentProjects.forEach((currentProject) => {
+    if (!incomingById.has(currentProject.id)) {
+      mergedProjects.push(currentProject);
+    }
+  });
+
+  return mergedProjects;
+}
+
+function mergeVerifiedProject(
+  currentProject: ProjectItem,
+  projectPatch: Partial<ProjectItem>,
+  fallbackReportText: string
+) {
+  return {
+    ...currentProject,
+    ...projectPatch,
+    has_been_audited: projectPatch.has_been_audited ?? true,
+    evaluation_score: projectPatch.evaluation_score ?? projectPatch.score ?? currentProject.evaluation_score,
+    logic_score: projectPatch.logic_score ?? projectPatch.score ?? currentProject.logic_score,
+    score: projectPatch.score ?? projectPatch.logic_score ?? projectPatch.evaluation_score ?? currentProject.score,
+    audit_summary: projectPatch.audit_summary ?? projectPatch.executive_summary ?? projectPatch.summary ?? currentProject.audit_summary,
+    executive_summary: projectPatch.executive_summary ?? projectPatch.audit_summary ?? currentProject.executive_summary,
+    summary: projectPatch.summary ?? projectPatch.audit_summary ?? currentProject.summary,
+    ai_summary: projectPatch.ai_summary ?? fallbackReportText,
+    description: projectPatch.description ?? fallbackReportText,
+    pros: projectPatch.pros ?? currentProject.pros,
+    cons: projectPatch.cons ?? currentProject.cons,
+    recommendations: projectPatch.recommendations ?? currentProject.recommendations,
   };
 }
 
@@ -1817,6 +1872,7 @@ function ProjectCard({
   const isProjectVerifying = verifyingAssetId === project.id;
   const isProjectDeleting = deletingProjectId === project.id;
   const isProjectVerified = verifiedAssetId === project.id;
+  const hasCompletedAudit = Boolean(project.has_been_audited);
   const fileExtension = getProjectExtension(project).toUpperCase() || project.source_kind || 'Asset';
   const fileName = project.file_name || project.title;
 
@@ -1889,13 +1945,13 @@ function ProjectCard({
                 className={cn(
                   'w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer',
                   isProjectVerifying && 'animate-pulse border-cyan-500/40 text-cyan-300',
-                  isProjectVerified && !isProjectVerifying && 'border-emerald-500/30 text-emerald-300'
+                  (isProjectVerified || hasCompletedAudit) && !isProjectVerifying && 'border-emerald-500/30 text-emerald-300'
                 )}
               >
                 {isProjectVerifying
                   ? 'Auditing via GPT Engine...'
-                  : isProjectVerified
-                    ? 'Verified ✓'
+                  : hasCompletedAudit || isProjectVerified
+                    ? 'AI Audit Completed'
                     : 'Verify with MeliusAI'}
               </button>
             )}
@@ -2368,7 +2424,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
       setProfileData(savedProfile);
-      setProjects(loadedProjects);
+      setProjects((currentProjects) =>
+        hydratedProfileKeyRef.current === targetUsername
+          ? mergeProjectLists(currentProjects, loadedProjects)
+          : loadedProjects
+      );
       setScans(hydratedScans);
       if (!isOwnProfile || hydratedOpportunities.length > 0) {
         setLiveJobs(hydratedOpportunities);
@@ -3197,48 +3257,41 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
       const accumulatedReportText = payload.reportText ?? updatedProject?.description ?? updatedProject?.ai_summary ?? generatedReportText;
 
       setLiveStreamText(accumulatedReportText);
-      setProjects((currentProjects) =>
-        currentProjects.map((currentProject) =>
-          currentProject.id === project.id
-            ? {
-                ...currentProject,
-                ...(updatedProject ?? {}),
-                has_been_audited: updatedProject?.has_been_audited ?? true,
-                evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentProject.evaluation_score,
-                logic_score: updatedProject?.logic_score ?? pythonScore ?? currentProject.logic_score,
-                audit_summary: executiveSummary || updatedProject?.audit_summary || currentProject.audit_summary,
-                executive_summary: payload.executive_summary ?? updatedProject?.executive_summary ?? currentProject.executive_summary,
-                summary: payload.summary ?? updatedProject?.summary ?? currentProject.summary,
-                ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
-                description: updatedProject?.description ?? accumulatedReportText,
-                pros: payload.pros ?? updatedProject?.pros ?? currentProject.pros,
-                cons: payload.cons ?? updatedProject?.cons ?? currentProject.cons,
-                recommendations: payload.recommendations ?? updatedProject?.recommendations ?? currentProject.recommendations,
-              }
-            : currentProject
-        )
-      );
+      const verifiedProjectPatch: Partial<ProjectItem> = {
+        ...(updatedProject ?? {}),
+        has_been_audited: updatedProject?.has_been_audited ?? true,
+        evaluation_score: updatedProject?.evaluation_score ?? pythonScore,
+        logic_score: updatedProject?.logic_score ?? pythonScore,
+        score: updatedProject?.score ?? pythonScore,
+        audit_summary: executiveSummary || updatedProject?.audit_summary,
+        executive_summary: payload.executive_summary ?? updatedProject?.executive_summary,
+        summary: payload.summary ?? updatedProject?.summary,
+        ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
+        description: updatedProject?.description ?? accumulatedReportText,
+        pros: payload.pros ?? updatedProject?.pros,
+        cons: payload.cons ?? updatedProject?.cons,
+        recommendations: payload.recommendations ?? updatedProject?.recommendations,
+      };
+
+      setProjects((currentProjects) => {
+        const projectExists = currentProjects.some((currentProject) => currentProject.id === project.id);
+        const nextProjects = projectExists
+          ? currentProjects.map((currentProject) =>
+              currentProject.id === project.id
+                ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
+                : currentProject
+            )
+          : [mergeVerifiedProject(project, verifiedProjectPatch, accumulatedReportText), ...currentProjects];
+
+        return nextProjects;
+      });
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
         [project.id]: userContextDescription,
       }));
       setViewingAuditAsset((currentAsset) =>
         currentAsset?.id === project.id
-          ? {
-              ...currentAsset,
-              ...(updatedProject ?? {}),
-              has_been_audited: updatedProject?.has_been_audited ?? true,
-              evaluation_score: updatedProject?.evaluation_score ?? pythonScore ?? currentAsset.evaluation_score,
-              logic_score: updatedProject?.logic_score ?? pythonScore ?? currentAsset.logic_score,
-              audit_summary: executiveSummary || updatedProject?.audit_summary || currentAsset.audit_summary,
-              executive_summary: payload.executive_summary ?? updatedProject?.executive_summary ?? currentAsset.executive_summary,
-              summary: payload.summary ?? updatedProject?.summary ?? currentAsset.summary,
-              ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
-              description: updatedProject?.description ?? accumulatedReportText,
-              pros: payload.pros ?? updatedProject?.pros ?? currentAsset.pros,
-              cons: payload.cons ?? updatedProject?.cons ?? currentAsset.cons,
-              recommendations: payload.recommendations ?? updatedProject?.recommendations ?? currentAsset.recommendations,
-            }
+          ? mergeVerifiedProject(currentAsset, verifiedProjectPatch, accumulatedReportText)
           : currentAsset
       );
       setVerifiedAssetId(project.id);
