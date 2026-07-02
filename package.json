@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.71",
     "@ai-sdk/react": "^3.0.193",
+    "@microsoft/clarity": "^1.0.2",
     "@next/swc-win32-x64-msvc": "^16.2.1",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.57.4",
