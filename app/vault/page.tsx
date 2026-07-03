@@ -9,6 +9,7 @@ import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid'
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
+import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import type { ProjectRow } from '@/types/supabase';
@@ -33,18 +34,17 @@ type SpectatorVaultResponse = {
   profile?: {
     id?: string | null;
     username?: string | null;
+    isOwner?: boolean;
   } | null;
   projects?: ProjectRow[] | null;
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
   files?: ProjectRow[] | null;
+  isOwner?: boolean;
+  viewerType?: string;
   detail?: string;
   message?: string;
 };
-
-const PROFILE_SPECTATOR_BASE_URL = (
-  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
-).replace(/\/$/, '');
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -75,10 +75,6 @@ function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
 
 function normalizeVaultIdentity(value: unknown) {
   return typeof value === 'string' ? value.trim().replace(/^@+/, '').toLowerCase() : null;
-}
-
-function getSpectatorVaultProfileId(payload: SpectatorVaultResponse | null) {
-  return payload?.id ?? payload?.profile?.id ?? null;
 }
 
 const codeLanguageMap: Record<string, string> = {
@@ -939,8 +935,10 @@ function VaultPageContent() {
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
-  const [viewerUsername, setViewerUsername] = useState<string | null>(null);
-  const [viewedProfileId, setViewedProfileId] = useState<string | null>(null);
+  const [spectatedOwnership, setSpectatedOwnership] = useState<{
+    isOwner: boolean;
+    username: string;
+  } | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [syncToken, setSyncToken] = useState(0);
@@ -951,18 +949,18 @@ function VaultPageContent() {
   const [visibilityToast, setVisibilityToast] = useState<VaultToastState | null>(null);
   const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
-  const isOwner = Boolean(
-    viewerId &&
-      (!normalizedTargetUsername ||
-        viewedProfileId === viewerId ||
-        (viewerUsername && viewerUsername === normalizedTargetUsername))
+  const hasOwnershipForTarget = Boolean(
+    normalizedTargetUsername && spectatedOwnership?.username === normalizedTargetUsername
   );
+  const isOwner = normalizedTargetUsername
+    ? Boolean(hasOwnershipForTarget && spectatedOwnership?.isOwner)
+    : Boolean(viewerId);
   const isSpectator = Boolean(targetUsername && !isOwner);
 
   useEffect(() => {
     if (!authEnabled || !supabase) {
       setViewerId(null);
-      setViewerUsername(null);
+      setSpectatedOwnership(null);
       if (!targetUsername) {
         setLoading(false);
         setVaultAssets([]);
@@ -990,7 +988,7 @@ function VaultPageContent() {
 
         if (!user?.id) {
           setViewerId(null);
-          setViewerUsername(null);
+          setSpectatedOwnership(null);
           if (!targetUsername) {
             setVaultAssets([]);
             setLoading(false);
@@ -1000,16 +998,11 @@ function VaultPageContent() {
         }
 
         setViewerId(user.id);
-        setViewerUsername(
-          normalizeVaultIdentity(user.user_metadata?.username) ??
-            normalizeVaultIdentity(user.user_metadata?.preferred_username)
-        );
       } catch (error) {
         console.error('Failed to verify vault viewer', error);
 
         if (active) {
           setViewerId(null);
-          setViewerUsername(null);
           if (!targetUsername) {
             setVaultAssets([]);
             setLoading(false);
@@ -1030,10 +1023,7 @@ function VaultPageContent() {
 
       const nextViewerId = session?.user?.id ?? null;
       setViewerId(nextViewerId);
-      setViewerUsername(
-        normalizeVaultIdentity(session?.user?.user_metadata?.username) ??
-          normalizeVaultIdentity(session?.user?.user_metadata?.preferred_username)
-      );
+      setSpectatedOwnership(null);
 
       if (!nextViewerId && !targetUsername) {
         setVaultAssets([]);
@@ -1060,10 +1050,7 @@ function VaultPageContent() {
       setVaultError(null);
 
       try {
-        const response = await fetch(
-          `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-          { cache: 'no-store' }
-        );
+        const response = await fetchSpectateProfileResponse(targetUsername, { supabase });
         const payload = (await response.json().catch(() => null)) as SpectatorVaultResponse | null;
 
         if (!response.ok) {
@@ -1072,9 +1059,12 @@ function VaultPageContent() {
 
         if (active) {
           const spectatorAssets = getSpectatorVaultProjects(payload);
-          const spectatorProfileId = getSpectatorVaultProfileId(payload);
+          const ownershipUsername = normalizeVaultIdentity(targetUsername) ?? targetUsername.toLowerCase();
 
-          setViewedProfileId(spectatorProfileId);
+          setSpectatedOwnership({
+            username: ownershipUsername,
+            isOwner: payload?.isOwner === true || payload?.profile?.isOwner === true,
+          });
           setVaultAssets(spectatorAssets);
           setDescriptionDrafts(
             Object.fromEntries(
@@ -1100,7 +1090,7 @@ function VaultPageContent() {
     return () => {
       active = false;
     };
-  }, [isSpectator, targetUsername]);
+  }, [isSpectator, supabase, targetUsername]);
 
   useEffect(() => {
     if (!isOwner || !supabase || !viewerId) {
@@ -1149,7 +1139,6 @@ function VaultPageContent() {
         if (active) {
           const loadedAssets = Array.isArray(data) ? data : [];
           setViewerId(user.id);
-          setViewedProfileId(user.id);
           setVaultError(null);
           setVaultAssets(loadedAssets);
           setDescriptionDrafts((currentDrafts) =>

@@ -1,5 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 
+import { supabaseAuthCookieOptions } from '@/lib/supabase/cookie-options';
+
 export function hasSupabaseBrowserEnv() {
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -14,5 +16,7 @@ export function createSupabaseBrowserClient() {
     throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.');
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  return createBrowserClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: supabaseAuthCookieOptions,
+  });
 }

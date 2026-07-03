@@ -18,6 +18,7 @@ import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid'
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProjectRow } from '@/types/supabase';
@@ -49,6 +50,7 @@ type ResumeFields = {
   projects?: ProjectRow[] | null;
   name?: string | null;
   status?: string | null;
+  isOwner?: boolean;
 };
 type SpectatorResumePayload = {
   id?: string | null;
@@ -73,6 +75,8 @@ type WrappedSpectatorResumeResponse = {
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
   files?: ProjectRow[] | null;
+  isOwner?: boolean;
+  viewerType?: string;
   detail?: string;
   message?: string;
 };
@@ -80,9 +84,6 @@ type SpectatorResumeResponse = SpectatorResumePayload | WrappedSpectatorResumeRe
 
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
-const PROFILE_SPECTATOR_BASE_URL = (
-  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
-).replace(/\/$/, '');
 const navigationItems = [
   { href: '/profile', label: 'Home', icon: House },
   { href: '/search', label: 'Search', icon: Search },
@@ -386,21 +387,16 @@ function DashboardResumePageContent() {
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
   const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
   const { authEnabled, loading, supabase, user } = useViewerProfile();
-  const viewerUsername = (
-    (user?.user_metadata?.username as string | undefined) ??
-    (user?.user_metadata?.preferred_username as string | undefined) ??
-    ''
-  )
-    .trim()
-    .replace(/^@+/, '')
-    .toLowerCase();
-  const [viewedProfileId, setViewedProfileId] = useState<string | null>(null);
-  const isOwner = Boolean(
-    user?.id &&
-      (!normalizedTargetUsername ||
-        viewedProfileId === user.id ||
-        (viewerUsername && viewerUsername === normalizedTargetUsername))
+  const [spectatedOwnership, setSpectatedOwnership] = useState<{
+    isOwner: boolean;
+    username: string;
+  } | null>(null);
+  const hasOwnershipForTarget = Boolean(
+    normalizedTargetUsername && spectatedOwnership?.username === normalizedTargetUsername
   );
+  const isOwner = normalizedTargetUsername
+    ? Boolean(hasOwnershipForTarget && spectatedOwnership?.isOwner)
+    : Boolean(user?.id);
   const isSpectator = Boolean(targetUsername && !isOwner);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const visibleNavigationItems = useMemo(
@@ -419,6 +415,10 @@ function DashboardResumePageContent() {
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const canEdit = isOwner && isEditing;
+
+  useEffect(() => {
+    setSpectatedOwnership(null);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!isSpectator && !loading && authEnabled && !user) {
@@ -448,19 +448,23 @@ function DashboardResumePageContent() {
         let assets: ProjectRow[] = [];
         let fallbackAssets: ProjectRow[] = [];
         let profileUuid: string | null = null;
+        let nextSpectatedOwnership: { isOwner: boolean; username: string } | null = null;
 
         if (isSpectator && targetUsername) {
-          const response = await fetch(
-            `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-            { cache: 'no-store' }
-          );
+          const response = await fetchSpectateProfileResponse(targetUsername, { supabase });
           const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
           const spectatorResume = getSpectatorResume(payload, targetUsername);
+          const payloadRecord = asRecord(payload);
+          const profileRecord = asRecord(payloadRecord?.profile);
 
           if (!response.ok || !spectatorResume) {
             throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
           }
 
+          nextSpectatedOwnership = {
+            username: normalizedTargetUsername ?? targetUsername.toLowerCase(),
+            isOwner: payloadRecord?.isOwner === true || profileRecord?.isOwner === true,
+          };
           resume = spectatorResume;
           profileUuid = resume?.id ?? null;
           fallbackAssets = getSpectatorResumeAssets(payload);
@@ -506,8 +510,12 @@ function DashboardResumePageContent() {
           return;
         }
 
+        if (nextSpectatedOwnership) {
+          setSpectatedOwnership(nextSpectatedOwnership);
+        }
+
         const nextFormData = createDefaultFormData();
-        const topProjects = targetUsername ? assets.slice(0, 4) : getTopScoringAssets(assets);
+        const topProjects = isSpectator ? assets.slice(0, 4) : getTopScoringAssets(assets);
         const topProjectIds = topProjects.map((asset) => asset.id);
         const fallbackName = !isSpectator
           ? (user?.user_metadata?.full_name as string | undefined) ??
@@ -536,7 +544,6 @@ function DashboardResumePageContent() {
         });
         setTopProjects(topProjects);
         setAvatarUrl(resume?.avatar_url ?? fallbackAvatarUrl);
-        setViewedProfileId(profileUuid);
       } catch (error) {
         console.error('Failed to load resume intake data', error);
         if (active) {
@@ -558,7 +565,7 @@ function DashboardResumePageContent() {
     return () => {
       active = false;
     };
-  }, [isSpectator, supabase, targetUsername, user]);
+  }, [isSpectator, normalizedTargetUsername, supabase, targetUsername, user]);
 
   useEffect(() => {
     if (isSpectator) {

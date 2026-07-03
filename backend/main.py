@@ -564,12 +564,16 @@ def get_supabase_user_roles(user_response: Any) -> List[str]:
     return normalized_roles
 
 
-async def verify_user(
+async def resolve_request_user(
     request: Request,
-    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-) -> str:
+    token: HTTPAuthorizationCredentials | None,
+    *,
+    required: bool,
+) -> tuple[str | None, str]:
     if token is None or token.scheme.lower() != "bearer" or not token.credentials:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
+        if required:
+            raise HTTPException(status_code=401, detail="Missing bearer token")
+        return None, "anonymous"
 
     supabase_client = get_supabase_backend_client()
 
@@ -579,16 +583,31 @@ async def verify_user(
         )
     except Exception as auth_error:
         logger.warning("Supabase JWT verification failed: %s", auth_error)
-        raise HTTPException(status_code=401, detail="Invalid bearer token") from auth_error
+        if required:
+            raise HTTPException(status_code=401, detail="Invalid bearer token") from auth_error
+        return None, "invalid"
 
     user_id = get_supabase_user_id(user_response)
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid bearer token")
+        if required:
+            raise HTTPException(status_code=401, detail="Invalid bearer token")
+        return None, "invalid"
 
     request.state.user_id = user_id
     request.state.access_token = token.credentials
     request.state.user_roles = get_supabase_user_roles(user_response)
     request.state.supabase = get_supabase_authenticated_client(token.credentials)
+
+    return user_id, "authenticated"
+
+
+async def verify_user(
+    request: Request,
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> str:
+    user_id, _ = await resolve_request_user(request, token, required=True)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
 
     return user_id
 
@@ -1944,6 +1963,7 @@ async def verify_member(
 async def spectate_profile(
     username: str,
     request: Request,
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
     target_username = username.strip().lower()
     if not target_username:
@@ -1985,6 +2005,18 @@ async def spectate_profile(
 
     profile = dict(profile_rows[0])
     profile_uuid = profile.get("id") or profile.get("user_id")
+    current_user_id, authentication_status = await resolve_request_user(
+        request,
+        token,
+        required=False,
+    )
+    profile_owner_id = str(profile_uuid or "").strip() or None
+    is_owner = bool(
+        current_user_id
+        and profile_owner_id
+        and current_user_id == profile_owner_id
+    )
+    viewer_type = "owner" if is_owner else "visitor"
     profile["email"] = None
 
     if profile_uuid:
@@ -2005,7 +2037,15 @@ async def spectate_profile(
             logger.warning("Unable to hydrate spectator profile projects: %s", projects_result)
             profile["projects"] = []
         else:
-            profile["projects"] = projects_result
+            profile["projects"] = (
+                projects_result
+                if is_owner
+                else [
+                    project
+                    for project in projects_result
+                    if project.get("is_public") is not False
+                ]
+            )
     else:
         print(
             "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
@@ -2019,7 +2059,42 @@ async def spectate_profile(
     profile["scores"] = scan_rows
     profile["scans"] = scan_rows
 
-    return profile
+    profile["isOwner"] = is_owner
+    profile["viewerType"] = viewer_type
+    profile["authenticationStatus"] = authentication_status
+
+    runtime_environment = (
+        os.getenv("ENVIRONMENT")
+        or os.getenv("APP_ENV")
+        or os.getenv("NODE_ENV")
+        or "development"
+    ).strip().lower()
+    if runtime_environment not in {"prod", "production"}:
+        logger.info(
+            "Spectate profile owner detection: username=%s auth_status=%s "
+            "authenticated_user_id=%s profile_owner_id=%s is_owner=%s",
+            target_username,
+            authentication_status,
+            current_user_id,
+            profile_owner_id,
+            is_owner,
+        )
+
+    return {
+        **profile,
+        "success": True,
+        "profile": profile,
+        "resume": profile,
+        "projects": profile["projects"],
+        "vault_assets": profile["projects"],
+        "vaultAssets": profile["projects"],
+        "ratings": scan_rows,
+        "scores": scan_rows,
+        "scans": scan_rows,
+        "isOwner": is_owner,
+        "viewerType": viewer_type,
+        "authenticationStatus": authentication_status,
+    }
 
 
 @app.get("/api/talent-discovery")

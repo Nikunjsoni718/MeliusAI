@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 import useSWR from 'swr';
@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
+import { PROFILE_SPECTATOR_BASE_URL, fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProjectRow, UserRow } from '@/types/supabase';
@@ -147,16 +148,21 @@ type SpectateProfileResponse = {
   scores?: SpectatorRatingItem[] | null;
   scans?: SpectatorScanItem[] | null;
   opportunities?: unknown[] | null;
+  isOwner?: boolean;
+  viewerType?: string;
+  authenticationStatus?: string;
   detail?: string;
   message?: string;
 } | SpectatorProfilePayload;
 type NormalizedSpectateProfileResponse = {
   detail: string | null;
+  isOwner: boolean;
   message: string | null;
   profile: SavedProfileItem | null;
   projects: ProjectRow[];
   ratings: unknown[];
   opportunities: unknown[];
+  viewerType: string | null;
 };
 type DashboardNavigationItem = {
   href: string;
@@ -174,10 +180,6 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
-const PROFILE_SPECTATOR_BASE_URL = (
-  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
-).replace(/\/$/, '');
-
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
     console.warn('Profile vector sync skipped: NEXT_PUBLIC_API_URL is not configured.');
@@ -242,10 +244,6 @@ function normalizeProfileUsername(value: string | null | undefined) {
   } catch {
     return null;
   }
-}
-
-function normalizeRouteIdentity(value: string | null | undefined) {
-  return normalizeProfileUsername(value)?.toLowerCase() ?? null;
 }
 
 function getProfileUsernameFromPathname(pathname: string) {
@@ -347,13 +345,15 @@ function normalizeSpectateProfileResponse(
   targetUsername: string
 ): NormalizedSpectateProfileResponse {
   const payloadRecord = asRecord(payload);
+  const profileRecord = asRecord(payloadRecord?.profile);
   const directProfile = normalizeSpectatorProfilePayload(payload);
-  const wrappedProfile = normalizeSpectatorProfilePayload(payloadRecord?.profile);
+  const wrappedProfile = normalizeSpectatorProfilePayload(profileRecord);
   const wrappedResume = normalizeSpectatorProfilePayload(payloadRecord?.resume);
   const profile = wrappedProfile ?? directProfile;
 
   return {
     detail: nullableString(payloadRecord?.detail),
+    isOwner: payloadRecord?.isOwner === true || profileRecord?.isOwner === true,
     message: nullableString(payloadRecord?.message),
     profile: profile
       ? ({
@@ -381,19 +381,17 @@ function normalizeSpectateProfileResponse(
           ? payloadRecord.scans
           : [],
     opportunities: Array.isArray(payloadRecord?.opportunities) ? payloadRecord.opportunities : [],
+    viewerType: nullableString(payloadRecord?.viewerType ?? profileRecord?.viewerType),
   };
 }
 
-type SpectatorProfileCacheKey = readonly ['spectate-profile', string];
+type SpectatorProfileCacheKey = readonly ['spectate-profile', string, string];
 
 async function fetchSpectatorProfile([
   ,
   targetUsername,
 ]: SpectatorProfileCacheKey): Promise<NormalizedSpectateProfileResponse> {
-  const response = await fetch(
-    `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-    { cache: 'no-store' }
-  );
+  const response = await fetchSpectateProfileResponse(targetUsername);
   const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
   const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
 
@@ -1989,7 +1987,6 @@ type ProfileDashboardProps = {
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const routeParams = useParams<{ username?: string | string[] }>();
   const isOrganizationWorkspace = variant === 'organization';
   const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
@@ -2079,8 +2076,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
   }, [pathname, profileId, profileUsername, routeParams]);
   const spectatorProfileKey = useMemo(
-    () => (targetUsername ? (['spectate-profile', targetUsername] as const) : null),
-    [targetUsername]
+    () => {
+      if (!targetUsername) {
+        return null;
+      }
+
+      if (authEnabled && loading) {
+        return null;
+      }
+
+      return ['spectate-profile', targetUsername, user?.id ?? 'anonymous'] as const;
+    },
+    [authEnabled, loading, targetUsername, user?.id]
   );
   const {
     data: spectatorProfilePayload,
@@ -2091,7 +2098,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
   });
-  const routeProfileUsername = useMemo(() => getProfileUsernameFromPathname(pathname), [pathname]);
   const viewerMetadataUsername =
     typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
 
@@ -2111,42 +2117,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     (isOwner ? user?.user_metadata?.username : null) ||
     targetUsername ||
     'member';
-  const currentViewerIdentities = useMemo(() => {
-    return new Set(
-      [user?.id, profile?.id, profile?.username, viewerMetadataUsername]
-        .map((value) => normalizeRouteIdentity(value))
-        .filter((value): value is string => Boolean(value))
-    );
-  }, [profile?.id, profile?.username, user?.id, viewerMetadataUsername]);
-  const viewedProfileIdentities = useMemo(() => {
-    return new Set(
-      [
-        profileData?.id,
-        profileData?.username,
-        profileFallback?.username,
-        targetUsername,
-        routeProfileUsername,
-        profileUsername,
-        profileId,
-      ]
-        .map((value) => normalizeRouteIdentity(value))
-        .filter((value): value is string => Boolean(value))
-    );
-  }, [
-    profileData?.id,
-    profileData?.username,
-    profileFallback?.username,
-    profileId,
-    profileUsername,
-    routeProfileUsername,
-    targetUsername,
-  ]);
-  const isViewingOwnProfile = Boolean(
-    currentViewerIdentities.size > 0 &&
-      viewedProfileIdentities.size > 0 &&
-      [...viewedProfileIdentities].some((identity) => currentViewerIdentities.has(identity))
-  );
-  const isSpectating = !isOwner && (Boolean(searchParams.get('profile')) || !isViewingOwnProfile);
+  const isSpectating = !isOwner && Boolean(targetUsername);
   const profileHandle = targetUsername || username;
   const profileHref = `/profile/${encodeURIComponent(profileHandle)}`;
   const email =
@@ -2407,8 +2378,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         (typeof user?.user_metadata?.preferred_username === 'string'
           ? user.user_metadata.preferred_username.trim()
           : null);
-      const ownsProfile = Boolean(user?.id && savedProfile.id && user.id === savedProfile.id);
-      const isOwnProfile = ownsProfile;
+      const isOwnProfile = spectatorProfilePayload.isOwner;
       const payloadProjects = spectatorProfilePayload.projects;
       const loadedProjects = payloadProjects.length > 0
         ? payloadProjects
@@ -2474,7 +2444,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const storedPortfolioLinks =
         sessionUserMetadata?.portfolio_links ?? undefined;
 
-      setIsOwner(ownsProfile);
+      setIsOwner(isOwnProfile);
       if (storedPortfolioLinks && isOwnProfile) {
         setPortfolioLinks((currentLinks) => ({
           ...currentLinks,
