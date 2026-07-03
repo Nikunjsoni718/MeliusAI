@@ -20,6 +20,14 @@ type AuthPanelProps = {
   title?: string;
 };
 
+type ProfileBootstrapResponse = {
+  error?: string;
+  profile?: {
+    id: string;
+  };
+  success?: boolean;
+};
+
 export function AuthPanel({
   authEnabled,
   className,
@@ -57,6 +65,31 @@ export function AuthPanel({
     setError(null);
     setMessage(null);
 
+    async function ensureProfile(accessToken?: string | null) {
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+      });
+
+      if (accessToken) {
+        headers.set('Authorization', `Bearer ${accessToken}`);
+      }
+
+      const response = await fetch('/api/auth/profile', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({
+          role: 'talent',
+          full_name: fullName.trim() || email.trim().split('@')[0],
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
+
+      if (!response.ok || !body?.success || !body.profile?.id) {
+        throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
+      }
+    }
+
     try {
       if (mode === 'signup') {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -64,6 +97,8 @@ export function AuthPanel({
           password,
           options: {
             data: {
+              role: 'talent',
+              full_name: fullName.trim() || email.trim().split('@')[0],
               display_name: fullName.trim() || email.trim().split('@')[0],
             },
           },
@@ -74,6 +109,7 @@ export function AuthPanel({
         }
 
         if (data.session) {
+          await ensureProfile(data.session.access_token);
           window.location.assign('/choose-path');
           return;
         }
@@ -90,6 +126,7 @@ export function AuthPanel({
         }
 
         if (data.user) {
+          await ensureProfile(data.session?.access_token);
           window.location.assign('/choose-path');
         }
       }

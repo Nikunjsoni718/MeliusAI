@@ -166,6 +166,15 @@ export async function POST(request: Request) {
       throw error;
     }
 
+    if (!data?.id) {
+      return NextResponse.json(
+        {
+          error: 'Your MeliusAI profile row is missing. Please retry signup/profile setup before saving.',
+        },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
       {
         success: true,

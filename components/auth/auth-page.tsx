@@ -261,6 +261,7 @@ function ButtonSpinner() {
   );
 }
 
+<<<<<<< Updated upstream
 type AuthInputFieldProps = InputHTMLAttributes<HTMLInputElement> & {
   fieldName: string;
   helperText?: string;
@@ -337,6 +338,22 @@ type AuthPageProps = {
 };
 
 export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
+=======
+type ProfileBootstrapResponse = {
+  data?: {
+    id?: string;
+    username?: string | null;
+  };
+  error?: string;
+  profile?: {
+    id: string;
+    username?: string | null;
+  };
+  success?: boolean;
+};
+
+export function AuthPage() {
+>>>>>>> Stashed changes
   const router = useRouter();
   const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
@@ -554,6 +571,47 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     setMessage(null);
     saveRoleIntent(selectedRole);
 
+    const ensureIndividualProfile = async ({
+      accessToken,
+      birthDate,
+      fullName,
+      username,
+    }: {
+      accessToken?: string | null;
+      birthDate?: string | null;
+      fullName?: string | null;
+      username?: string | null;
+    }) => {
+      setMessage('Creating your MeliusAI profile...');
+
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+      });
+
+      if (accessToken) {
+        headers.set('Authorization', `Bearer ${accessToken}`);
+      }
+
+      const response = await fetch('/api/auth/profile', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({
+          role: 'talent',
+          full_name: fullName,
+          username,
+          birth_date: birthDate,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
+
+      if (!response.ok || !body?.success || !body.profile?.id) {
+        throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
+      }
+
+      return body.profile.username ?? body.data?.username ?? username ?? body.profile.id;
+    };
+
     try {
       if (individualMode === 'signup') {
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
@@ -586,14 +644,26 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
           return;
         }
 
+        const profileHandle = await ensureIndividualProfile({
+          accessToken: signUpData.session.access_token,
+          birthDate: birthDateValue,
+          fullName: individualFullName.trim(),
+          username: normalizedUsername,
+        });
+
         if (signUpData.user) {
           persistAuthenticatedUser(signUpData.user);
         } else {
           persistAuthenticatedRouteState('individual');
         }
+<<<<<<< Updated upstream
         emitSignupDebugEvent('talent_signup_success', { hasSession: true });
         setMessage('Your account is ready.');
         router.replace(`/profile/${encodeURIComponent(normalizedUsername || signUpData.user?.id || 'member')}`);
+=======
+        setMessage('Your MeliusAI profile is ready.');
+        router.replace(`/profile/${encodeURIComponent(profileHandle)}`);
+>>>>>>> Stashed changes
         return;
       }
 
@@ -615,9 +685,18 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
           ((data.user as { raw_user_meta_data?: { username?: string } } | null)?.raw_user_meta_data?.username) ||
           (data.user.user_metadata?.username as string | undefined) ||
           data.user.id;
+        const verifiedProfileHandle = await ensureIndividualProfile({
+          accessToken: data.session?.access_token,
+          birthDate: (data.user.user_metadata?.birth_date as string | undefined) ?? null,
+          fullName:
+            (data.user.user_metadata?.full_name as string | undefined) ??
+            (data.user.user_metadata?.display_name as string | undefined) ??
+            null,
+          username: profileHandle,
+        });
         persistAuthenticatedUser(data.user);
         setMessage('Welcome back.');
-        router.replace(`/profile/${encodeURIComponent(profileHandle)}`);
+        router.replace(`/profile/${encodeURIComponent(verifiedProfileHandle)}`);
         return;
       }
 
@@ -631,10 +710,15 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
         emitSignupDebugEvent('talent_signup_error', { reason: getAuthErrorMessage(vaultError) });
       }
       setPendingAction(null);
-      setError(getAuthErrorMessage(vaultError));
+      const errorMessage = getAuthErrorMessage(vaultError);
+      const visibleError =
+        individualMode === 'signup' && /profile|upsert|verification/i.test(errorMessage)
+          ? `Auth succeeded, but profile creation failed. ${errorMessage}`
+          : errorMessage;
+      setError(visibleError);
       setMessage(null);
       setAuthMessage({
-        text: getSupabaseAuthNotificationMessage(vaultError),
+        text: visibleError === errorMessage ? getSupabaseAuthNotificationMessage(vaultError) : `❌ ${visibleError}`,
         isError: true,
       });
     }
