@@ -60,10 +60,10 @@ export function Navbar() {
         </nav>
 
         <Link
-          href="/auth"
+          href="/auth/talent/signup"
           className="rounded-full bg-[#00a3ff] px-6 py-2.5 text-sm font-semibold text-black transition-all hover:bg-opacity-90"
         >
-          Sign In &amp; Get Started
+          Create Talent Account
         </Link>
       </header>
     </div>

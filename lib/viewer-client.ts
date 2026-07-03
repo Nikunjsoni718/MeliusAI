@@ -35,6 +35,8 @@ type ProfileResponse = {
   error?: string;
 } & Partial<ViewerProfile>;
 
+const VIEWER_SESSION_CHECK_TIMEOUT_MS = 3500;
+
 function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerProfile | null {
   const candidate = body?.data ?? body?.user ?? body;
 
@@ -91,14 +93,35 @@ export function useViewerProfile() {
         setLoading(true);
       }
 
-      let {
-        data: { session: currentSession },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+      const readSession = () =>
+        Promise.race([
+          supabase.auth.getSession(),
+          new Promise<'timeout'>((resolve) =>
+            window.setTimeout(() => resolve('timeout'), VIEWER_SESSION_CHECK_TIMEOUT_MS)
+          ),
+        ]);
+
+      let sessionResult = await readSession();
 
       if (!active) {
         return;
       }
+
+      if (sessionResult === 'timeout') {
+        console.warn('Viewer session check timed out; showing public auth content.');
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setError(null);
+        hasLoadedViewerRef.current = true;
+        setLoading(false);
+        return;
+      }
+
+      let {
+        data: { session: currentSession },
+        error: sessionError,
+      } = sessionResult;
 
       const persistedState = readPersistedAuthState();
       if (!currentSession?.user && persistedState.loginStatus === 'loggedIn' && !hasLoadedViewerRef.current) {
@@ -108,7 +131,23 @@ export function useViewerProfile() {
           return;
         }
 
-        const retryResult = await supabase.auth.getSession();
+        const retryResult = await readSession();
+
+        if (!active) {
+          return;
+        }
+
+        if (retryResult === 'timeout') {
+          console.warn('Viewer session retry timed out; showing public auth content.');
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setError(null);
+          hasLoadedViewerRef.current = true;
+          setLoading(false);
+          return;
+        }
+
         currentSession = retryResult.data.session;
         sessionError = retryResult.error;
       }

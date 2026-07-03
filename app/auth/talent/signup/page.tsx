@@ -33,5 +33,5 @@ export default async function Page() {
     redirect(getAuthenticatedDestination(user));
   }
 
-  return <AuthPage initialMode="signin" />;
+  return <AuthPage initialMode="signup" />;
 }

@@ -17,8 +17,8 @@ type AuthTab = 'login' | 'register';
 function LogicPrismLogo() {
   return (
     <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
-      <div className="absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
-      <div className="absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
+      <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
+      <div className="pointer-events-none absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
       <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 p-2">
         <Image src={faviconLogo} alt="MeliusAI Logo" width={48} height={48} className="object-contain" />
       </div>
@@ -184,8 +184,8 @@ export default function CorporateOrganisationAuthPage() {
   return (
     <SessionRouteGuard>
       <main className="relative isolate min-h-screen overflow-hidden bg-slate-950 px-4 py-12 font-[var(--font-sans)] text-slate-100 select-none sm:px-6 lg:px-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
-        <div className="absolute left-1/2 top-20 h-64 w-64 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
+        <div className="pointer-events-none absolute left-1/2 top-20 h-64 w-64 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center">
         <div className="mx-auto w-full max-w-5xl">
@@ -203,8 +203,8 @@ export default function CorporateOrganisationAuthPage() {
           </div>
         </div>
         <div className="relative mx-auto mt-10 w-full max-w-xl overflow-hidden rounded-[2rem] border border-purple-400/25 bg-white/[0.06] shadow-2xl shadow-slate-950/50 backdrop-blur-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(147,51,234,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(217,70,239,0.12),transparent_35%)]" />
-        <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(147,51,234,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(217,70,239,0.12),transparent_35%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
         <div className="relative p-6 sm:p-8">
         <div className="text-center">
           <span className="inline-flex rounded-full border border-purple-800/50 bg-purple-900/30 px-3.5 py-1 text-[10px] font-bold tracking-wide text-purple-400">

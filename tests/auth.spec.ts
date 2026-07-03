@@ -2,16 +2,47 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 
 test.describe('MeliusAI Full Platform Lifecycle', () => {
+  test.describe.configure({ mode: 'serial', timeout: 60000 });
+
+  test('Talent signup route: clear copy and clickable fields', async ({ page }) => {
+    await page.goto('http://localhost:3000/auth/talent/signup', { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Create your free MeliusAI Talent account.' }).first()).toBeVisible({
+      timeout: 30000,
+    });
+    await expect(page.getByText('Upload a project and get an AI review with score, strengths, weaknesses, and recommendations.').first()).toBeVisible();
+
+    const fullName = page.getByLabel('Full Name');
+    await fullName.click();
+    await expect(fullName).toBeFocused();
+    await fullName.fill('LinkedIn Tester');
+
+    await page.getByLabel('Username').fill('linkedin_tester');
+    await page.getByLabel('Birth Date').fill('1999-01-01');
+    await page.getByLabel('Email').fill('linkedin.tester@example.com');
+    await page.getByLabel('Password').fill('TalentPassword123!');
+    await expect(page.getByRole('button', { name: 'Create Account' }).last()).toBeEnabled();
+  });
+
+  test('Talent signup route: mobile fast-tap keeps inputs interactive', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('http://localhost:3000/auth/talent/signup', { waitUntil: 'domcontentloaded' });
+
+    const email = page.getByLabel('Email');
+    await email.click();
+    await email.click();
+    await email.fill('fast.tap@example.com');
+
+    await expect(email).toBeFocused();
+    await expect(email).toHaveValue('fast.tap@example.com');
+  });
 
   // ==========================================
   // TRACK 1: INDIVIDUAL / TALENT LIFECYCLE
   // ==========================================
   test('Individual Flow: Login and Upload Real Project', async ({ page }) => {
-    // 1. Navigate to the main auth portal selector
-    await page.goto('http://localhost:3000/auth');
-    
-    // 2. Navigate to the Individual Login page
-    await page.click('text=Individual Talent'); // Change this text if your card says something else
+    // 1. Navigate to the existing Individual Login page
+    await page.goto('http://localhost:3000/auth/login');
     await expect(page).toHaveURL('http://localhost:3000/auth/login');
 
     // 3. Complete individual authentication form

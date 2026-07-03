@@ -30,13 +30,13 @@ export default function MeliusAIWorkspaceSelector() {
           </span>
 
           <h1 className="mt-6 text-4xl font-extrabold tracking-tight text-white sm:text-5xl">Join MeliusAI</h1>
-          <p className="mt-4 text-sm font-medium tracking-wide text-slate-400">Choose how you want to sign in.</p>
+          <p className="mt-4 text-sm font-medium tracking-wide text-slate-400">Create a Talent account or use the organization console.</p>
         </section>
 
         <section className="mt-10 grid w-full max-w-4xl grid-cols-1 gap-6 md:grid-cols-2">
           <button
             type="button"
-            onClick={() => router.push('/auth/login')}
+            onClick={() => router.push('/auth/talent/signup')}
             className="group relative flex min-h-[430px] flex-col justify-between overflow-hidden rounded-[24px] border border-slate-800/50 bg-gradient-to-br from-[#0f1e36] via-[#070b1e] to-[#030512] p-6 text-left shadow-2xl shadow-slate-950/40 transition-all duration-300 hover:-translate-y-1 hover:scale-[1.01] hover:border-cyan-500/40 md:p-7"
           >
             <div className="absolute inset-x-0 top-0 h-px bg-cyan-400/10" />
@@ -51,9 +51,9 @@ export default function MeliusAIWorkspaceSelector() {
             </div>
 
             <div>
-              <h2 className="text-2xl font-bold tracking-tight text-white">Individual Talent</h2>
+              <h2 className="text-2xl font-bold tracking-tight text-white">Create your free Talent account</h2>
               <p className="mt-3 text-sm font-medium leading-relaxed tracking-wide text-slate-400">
-                Save your work. Get clear feedback. Grow faster.
+                Upload a project and get an AI review with score, strengths, weaknesses, and recommendations.
               </p>
             </div>
 
@@ -70,7 +70,7 @@ export default function MeliusAIWorkspaceSelector() {
 
             <div className="flex items-center justify-between border-t border-slate-800/45 pt-4 text-xs font-bold">
               <span className="text-cyan-400">For your work</span>
-              <span className="text-slate-500">Choose this path</span>
+              <span className="text-slate-500">Start signup</span>
             </div>
           </button>
 

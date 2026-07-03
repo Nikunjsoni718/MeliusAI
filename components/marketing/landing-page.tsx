@@ -35,8 +35,8 @@ export function LandingPage() {
             The private workspace where developers prove their technical depth through line-by-line AI audits, and organizations find the top 1% of hires without the resume guesswork.
           </p>
           <div className="flex flex-row justify-start gap-4 mb-4">
-            <Button size="lg" href="/auth">
-              Sign In &amp; Get Started
+            <Button size="lg" href="/auth/talent/signup">
+              Create Free Talent Account
             </Button>
             <Button variant="outline" size="lg" href="/how-it-works">
               How it Works
@@ -171,11 +171,11 @@ export function LandingPage() {
             Join our active beta. Start running instant AI audits and build your verified technical capability profile today.
           </p>
           <Button
-            href="/auth"
+            href="/auth/talent/signup"
             size="lg"
             className="group mt-8 bg-[#00a3ff] px-7 font-semibold text-black hover:bg-[#38bdf8]"
           >
-            Start Free Audits
+            Start Free Talent Signup
             <span className="transition-transform duration-200 group-hover:translate-x-1">→</span>
           </Button>
         </div>

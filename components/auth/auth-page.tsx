@@ -4,7 +4,7 @@ import type { Provider } from '@supabase/supabase-js';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 
 import faviconLogo from '@/app/favicon.png';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,9 @@ const AUTH_NETWORK_ERROR =
 const SUPABASE_PUBLIC_CONFIG_READY = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
+const TALENT_SIGNUP_HEADING = 'Create your free MeliusAI Talent account.';
+const TALENT_SIGNUP_HELPER =
+  'Upload a project and get an AI review with score, strengths, weaknesses, and recommendations.';
 
 type RoleDescriptor = {
   role: UserRole;
@@ -68,8 +71,8 @@ const roleDescriptors: Record<UserRole, RoleDescriptor> = {
     entryLabel: 'For your work',
     panelBorder: 'border-sky-400/25',
     panelAura: 'bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.18),transparent_45%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.12),transparent_35%)]',
-    formTitle: 'Sign In as Individual Talent',
-    formDescription: 'Launch your independent vault, preserve your work trail, and let MeliusAI help you get the most out of it.',
+    formTitle: TALENT_SIGNUP_HEADING,
+    formDescription: TALENT_SIGNUP_HELPER,
     panelNote: 'Email sign-in opens your secure individual vault.',
     points: ['Save your projects', 'Get a clear review', 'Grow step by step'],
   },
@@ -164,11 +167,42 @@ function getSupabaseAuthNotificationMessage(authError: unknown) {
   return `❌ ${message}`;
 }
 
+type SignupDebugEventName =
+  | 'talent_signup_input_click'
+  | 'talent_signup_input_focus'
+  | 'talent_signup_input_blur'
+  | 'talent_signup_create_account_click'
+  | 'talent_signup_success'
+  | 'talent_signup_error';
+
+function emitSignupDebugEvent(name: SignupDebugEventName, details: Record<string, unknown> = {}) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const detail = {
+    ...details,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.info(`[MeliusAI signup] ${name}`, detail);
+  window.dispatchEvent(new CustomEvent('meliusai:signup-debug', { detail: { name, ...detail } }));
+
+  const clarity = (window as Window & { clarity?: (...args: unknown[]) => void }).clarity;
+  if (typeof clarity === 'function') {
+    try {
+      clarity('event', name);
+    } catch {
+      // Debug telemetry must never block signup.
+    }
+  }
+}
+
 function LogicPrismLogo() {
   return (
     <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
-      <div className="absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
-      <div className="absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
+      <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-[0_24px_80px_rgba(15,23,42,0.5)] backdrop-blur-2xl" />
+      <div className="pointer-events-none absolute inset-[18px] rotate-45 rounded-[1.35rem] bg-gradient-to-br from-sky-400/70 via-cyan-400/15 to-fuchsia-500/70 blur-[1px]" />
       <div className="relative flex h-16 w-16 items-center justify-center rounded-[1.35rem] border border-white/15 bg-slate-950/80 p-2">
         <Image src={faviconLogo} alt="MeliusAI Logo" width={48} height={48} className="object-contain" />
       </div>
@@ -204,7 +238,7 @@ function ProviderOptionButton({
         disabled && 'cursor-not-allowed opacity-60'
       )}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-white/8 via-transparent to-transparent opacity-80" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/8 via-transparent to-transparent opacity-80" />
       <div className="relative flex items-start justify-between gap-4">
         <div>
           <p className="text-base font-semibold text-white">{pending ? 'Redirecting...' : label}</p>
@@ -227,12 +261,87 @@ function ButtonSpinner() {
   );
 }
 
-export function AuthPage() {
+type AuthInputFieldProps = InputHTMLAttributes<HTMLInputElement> & {
+  fieldName: string;
+  helperText?: string;
+  inputClassName?: string;
+  label: string;
+  trailing?: ReactNode;
+  wrapperClassName?: string;
+};
+
+function AuthInputField({
+  fieldName,
+  helperText,
+  inputClassName,
+  label,
+  trailing,
+  wrapperClassName,
+  className,
+  id,
+  onBlur,
+  onClick,
+  onFocus,
+  ...props
+}: AuthInputFieldProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const inputId = id ?? `talent-${fieldName}`;
+
+  function focusInput() {
+    inputRef.current?.focus();
+  }
+
+  return (
+    <div className={cn('space-y-2', wrapperClassName)}>
+      <Label htmlFor={inputId}>{label}</Label>
+      <div
+        className={cn('relative cursor-text', className)}
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest('button')) {
+            return;
+          }
+
+          focusInput();
+        }}
+      >
+        <Input
+          {...props}
+          ref={inputRef}
+          id={inputId}
+          className={cn(
+            'min-h-12 focus-visible:ring-2 focus-visible:ring-sky-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
+            inputClassName
+          )}
+          onBlur={(event) => {
+            emitSignupDebugEvent('talent_signup_input_blur', { field: fieldName });
+            onBlur?.(event);
+          }}
+          onClick={(event) => {
+            emitSignupDebugEvent('talent_signup_input_click', { field: fieldName });
+            onClick?.(event);
+          }}
+          onFocus={(event) => {
+            emitSignupDebugEvent('talent_signup_input_focus', { field: fieldName });
+            onFocus?.(event);
+          }}
+        />
+        {trailing}
+      </div>
+      {helperText ? <p className="text-xs leading-5 text-slate-500">{helperText}</p> : null}
+    </div>
+  );
+}
+
+type AuthPageProps = {
+  initialMode?: 'signin' | 'signup';
+};
+
+export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const router = useRouter();
   const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
   const [hasLoadedIntent, setHasLoadedIntent] = useState(false);
-  const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>('signin');
+  const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>(initialMode);
   const [individualFullName, setIndividualFullName] = useState('');
   const [individualUsername, setIndividualUsername] = useState('');
   const [individualBirthDate, setIndividualBirthDate] = useState('');
@@ -258,6 +367,9 @@ export function AuthPage() {
       individualPassword
   );
   const isVaultPending = pendingAction === 'vault';
+  const isTalentSignup = selectedRole === 'talent' && individualMode === 'signup';
+  const pageTitle = isTalentSignup ? TALENT_SIGNUP_HEADING : 'Individual Talent Sign In';
+  const pageDescription = isTalentSignup ? TALENT_SIGNUP_HELPER : 'Access your private vault with your email.';
   const isIndividualVaultDisabled =
     pendingAction === 'vault' ||
     !authEnabled ||
@@ -267,8 +379,9 @@ export function AuthPage() {
   useEffect(() => {
     setSelectedRole('talent');
     clearRoleIntent();
+    setIndividualMode(initialMode);
     setHasLoadedIntent(true);
-  }, []);
+  }, [initialMode]);
 
   useEffect(() => {
     if (viewerError) {
@@ -385,12 +498,14 @@ export function AuthPage() {
 
     if (individualMode === 'signup') {
       if (!individualFullName.trim() || !normalizedUsername || !birthDateValue || !email || !individualPassword) {
+        emitSignupDebugEvent('talent_signup_error', { reason: 'missing_fields' });
         setError('Fill in every field first.');
         setMessage(null);
         return;
       }
 
       if (!/^[a-z0-9_]{3,24}$/i.test(normalizedUsername)) {
+        emitSignupDebugEvent('talent_signup_error', { reason: 'invalid_username' });
         setError('Use 3 to 24 letters, numbers, or underscores.');
         setMessage(null);
         return;
@@ -401,6 +516,7 @@ export function AuthPage() {
       today.setHours(0, 0, 0, 0);
 
       if (Number.isNaN(parsedBirthDate.getTime()) || parsedBirthDate > today) {
+        emitSignupDebugEvent('talent_signup_error', { reason: 'invalid_birth_date' });
         setError('Enter a valid birth date.');
         setMessage(null);
         return;
@@ -413,6 +529,7 @@ export function AuthPage() {
       }
 
       if (age < 18) {
+        emitSignupDebugEvent('talent_signup_error', { reason: 'under_18' });
         setError('You must be 18 or older.');
         setMessage(null);
         return;
@@ -424,6 +541,9 @@ export function AuthPage() {
     }
 
     if (!SUPABASE_PUBLIC_CONFIG_READY || !authEnabled || !supabase) {
+      if (individualMode === 'signup') {
+        emitSignupDebugEvent('talent_signup_error', { reason: 'auth_configuration' });
+      }
       setError(AUTH_CONFIGURATION_ERROR);
       setMessage(null);
       return;
@@ -455,6 +575,7 @@ export function AuthPage() {
         }
 
         if (!signUpData.session) {
+          emitSignupDebugEvent('talent_signup_success', { hasSession: false });
           setPendingAction(null);
           clearPersistedAuthState();
           setMessage(null);
@@ -470,6 +591,7 @@ export function AuthPage() {
         } else {
           persistAuthenticatedRouteState('individual');
         }
+        emitSignupDebugEvent('talent_signup_success', { hasSession: true });
         setMessage('Your account is ready.');
         router.replace(`/profile/${encodeURIComponent(normalizedUsername || signUpData.user?.id || 'member')}`);
         return;
@@ -505,6 +627,9 @@ export function AuthPage() {
         setError('This account is not registered as an individual talent workspace.');
       }
     } catch (vaultError) {
+      if (individualMode === 'signup') {
+        emitSignupDebugEvent('talent_signup_error', { reason: getAuthErrorMessage(vaultError) });
+      }
       setPendingAction(null);
       setError(getAuthErrorMessage(vaultError));
       setMessage(null);
@@ -573,7 +698,7 @@ export function AuthPage() {
     setError(null);
     setMessage(null);
     setAuthMessage({ text: '', isError: false });
-    setIndividualMode('signin');
+    setIndividualMode(role === 'talent' ? initialMode : 'signin');
     setIndividualFullName('');
     setIndividualUsername('');
     setIndividualBirthDate('');
@@ -590,7 +715,7 @@ export function AuthPage() {
     setError(null);
     setMessage(null);
     setAuthMessage({ text: '', isError: false });
-    setIndividualMode('signin');
+    setIndividualMode(initialMode);
     setIndividualFullName('');
     setIndividualUsername('');
     setIndividualBirthDate('');
@@ -602,13 +727,13 @@ export function AuthPage() {
   if (loading || !hasLoadedIntent || pendingSync) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.16),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.14),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.16),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.14),transparent_30%)]" />
         <Card className="relative w-full max-w-xl border-white/10 bg-white/[0.04] backdrop-blur-2xl">
           <CardHeader>
             <Badge variant="outline" className="w-fit">Getting ready</Badge>
-            <CardTitle className="text-3xl">Loading...</CardTitle>
+            <CardTitle className="text-3xl">Preparing your signup...</CardTitle>
             <CardDescription className="text-base leading-7">
-              Please wait a moment.
+              We are checking your session before showing the form.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -619,7 +744,7 @@ export function AuthPage() {
   if (user && existingDestination) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.16),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.16),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_30%)]" />
         <Card className="relative w-full max-w-2xl border-white/10 bg-white/[0.05] backdrop-blur-2xl">
           <CardHeader>
             <Badge variant="accent" className="w-fit">Already signed in</Badge>
@@ -639,8 +764,8 @@ export function AuthPage() {
 
   return (
     <main className="relative isolate min-h-screen overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
-      <div className="absolute left-1/2 top-20 h-64 w-64 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(14,165,233,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_32%)]" />
+      <div className="pointer-events-none absolute left-1/2 top-20 h-64 w-64 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center">
         <div className="mx-auto w-full max-w-5xl">
@@ -648,10 +773,10 @@ export function AuthPage() {
             <LogicPrismLogo />
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">Welcome</Badge>
             <h1 className="mt-6 text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
-              Individual Talent Sign In
+              {pageTitle}
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-              Access your private vault with your email.
+              {pageDescription}
             </p>
             {!authEnabled ? (
               <div className="mx-auto mt-4 max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
@@ -691,8 +816,8 @@ export function AuthPage() {
                             descriptor.hoverGlow
                           )}
                         >
-                          <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent opacity-90" />
-                          <div className={cn('absolute inset-0 opacity-70', descriptor.panelAura)} />
+                          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent opacity-90" />
+                          <div className={cn('pointer-events-none absolute inset-0 opacity-70', descriptor.panelAura)} />
                           <div className="relative flex h-full flex-col p-7 sm:p-8">
                             <div className="flex items-start justify-between gap-6">
                               <div>
@@ -741,8 +866,8 @@ export function AuthPage() {
                       layoutId={`auth-role-${selectedRole}`}
                       className={cn('relative overflow-hidden rounded-[2rem] border bg-white/[0.06] backdrop-blur-2xl', activeRole.panelBorder)}
                     >
-                      <div className={cn('absolute inset-0 opacity-90', activeRole.panelAura)} />
-                      <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
+                      <div className={cn('pointer-events-none absolute inset-0 opacity-90', activeRole.panelAura)} />
+                      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
 
                       <div className="relative p-6 sm:p-8">
                         <div className="flex flex-wrap items-start justify-center gap-4">
@@ -756,8 +881,13 @@ export function AuthPage() {
                                 selectedRole === 'talent' ? 'text-2xl sm:text-3xl' : 'text-3xl sm:text-4xl'
                               )}
                             >
-                              {selectedRole === 'talent' ? (individualMode === 'signup' ? 'Create Account' : 'Sign In') : activeRole.formTitle}
+                              {selectedRole === 'talent' ? (individualMode === 'signup' ? TALENT_SIGNUP_HEADING : 'Sign In') : activeRole.formTitle}
                             </h2>
+                            {selectedRole === 'talent' && individualMode === 'signup' ? (
+                              <p className="mt-3 text-base leading-7 text-slate-300">
+                                {TALENT_SIGNUP_HELPER}
+                              </p>
+                            ) : null}
                             {selectedRole === 'recruiter' ? (
                               <p className="mt-3 text-base leading-7 text-slate-300">
                                 {activeRole.formDescription}
@@ -810,83 +940,75 @@ export function AuthPage() {
                                 {individualMode === 'signup' ? (
                                   <>
                                     <div className="grid gap-4 sm:grid-cols-2">
-                                      <div className="space-y-2">
-                                        <Label htmlFor="vault-full-name">Full Name</Label>
-                                        <Input
-                                          id="vault-full-name"
-                                          autoComplete="name"
-                                          className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
-                                          placeholder="Aarav Sharma"
-                                          type="text"
-                                          value={individualFullName}
-                                          onChange={(event) => setIndividualFullName(event.target.value)}
-                                        />
-                                      </div>
-                                      <div className="space-y-2">
-                                        <Label htmlFor="vault-username">Username</Label>
-                                        <Input
-                                          id="vault-username"
-                                          autoComplete="nickname"
-                                          className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
-                                          placeholder="@username"
-                                          type="text"
-                                          value={individualUsername}
-                                          onChange={(event) => setIndividualUsername(event.target.value)}
-                                        />
-                                        <p className="text-xs leading-5 text-slate-500">
-                                          This will be your handle.
-                                        </p>
-                                      </div>
-                                      <div className="space-y-2 sm:col-span-2">
-                                        <Label htmlFor="vault-birth-date">Birth Date</Label>
-                                        <Input
-                                          id="vault-birth-date"
-                                          className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
-                                          type="date"
-                                          value={individualBirthDate}
-                                          onChange={(event) => setIndividualBirthDate(event.target.value)}
-                                        />
-                                        <p className="text-xs leading-5 text-slate-500">
-                                          Your age should be above 18.
-                                        </p>
-                                      </div>
+                                      <AuthInputField
+                                        fieldName="full_name"
+                                        id="vault-full-name"
+                                        autoComplete="name"
+                                        inputClassName="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                                        label="Full Name"
+                                        placeholder="Aarav Sharma"
+                                        type="text"
+                                        value={individualFullName}
+                                        onChange={(event) => setIndividualFullName(event.target.value)}
+                                      />
+                                      <AuthInputField
+                                        fieldName="username"
+                                        id="vault-username"
+                                        autoComplete="nickname"
+                                        helperText="This will be your handle."
+                                        inputClassName="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                                        label="Username"
+                                        placeholder="@username"
+                                        type="text"
+                                        value={individualUsername}
+                                        onChange={(event) => setIndividualUsername(event.target.value)}
+                                      />
+                                      <AuthInputField
+                                        fieldName="birth_date"
+                                        id="vault-birth-date"
+                                        helperText="Your age should be above 18."
+                                        inputClassName="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                                        label="Birth Date"
+                                        type="date"
+                                        value={individualBirthDate}
+                                        wrapperClassName="sm:col-span-2"
+                                        onChange={(event) => setIndividualBirthDate(event.target.value)}
+                                      />
                                     </div>
                                   </>
                                 ) : null}
-                                <div className="space-y-2">
-                                  <Label htmlFor="vault-email">Email</Label>
-                                  <Input
-                                    id="vault-email"
-                                    autoComplete="email"
-                                    className="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
-                                    inputMode="email"
-                                    placeholder="you@example.com"
-                                    type="email"
-                                    value={individualEmail}
-                                    onChange={(event) => setIndividualEmail(event.target.value)}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="vault-password">Password</Label>
-                                  <div className="relative flex items-center">
-                                    <Input
-                                      id="vault-password"
-                                      autoComplete={individualMode === 'signup' ? 'new-password' : 'current-password'}
-                                      className="border-white/10 bg-slate-950/60 pr-14 focus:border-sky-500/60 focus:ring-sky-500/20"
-                                      placeholder={individualMode === 'signup' ? 'Create a password' : 'Your password'}
-                                      type={showIndividualPassword ? 'text' : 'password'}
-                                      value={individualPassword}
-                                      onChange={(event) => setIndividualPassword(event.target.value)}
-                                    />
+                                <AuthInputField
+                                  fieldName="email"
+                                  id="vault-email"
+                                  autoComplete="email"
+                                  inputClassName="border-white/10 bg-slate-950/60 focus:border-sky-500/60 focus:ring-sky-500/20"
+                                  inputMode="email"
+                                  label="Email"
+                                  placeholder="you@example.com"
+                                  type="email"
+                                  value={individualEmail}
+                                  onChange={(event) => setIndividualEmail(event.target.value)}
+                                />
+                                <AuthInputField
+                                  fieldName="password"
+                                  id="vault-password"
+                                  autoComplete={individualMode === 'signup' ? 'new-password' : 'current-password'}
+                                  inputClassName="border-white/10 bg-slate-950/60 pr-14 focus:border-sky-500/60 focus:ring-sky-500/20"
+                                  label="Password"
+                                  placeholder={individualMode === 'signup' ? 'Create a password' : 'Your password'}
+                                  type={showIndividualPassword ? 'text' : 'password'}
+                                  value={individualPassword}
+                                  onChange={(event) => setIndividualPassword(event.target.value)}
+                                  trailing={
                                     <button
                                       type="button"
                                       onClick={() => setShowIndividualPassword((value) => !value)}
-                                      className="absolute right-3 text-[10px] font-bold tracking-widest text-slate-500 hover:text-slate-300 uppercase transition-colors select-none focus:outline-none"
+                                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold uppercase tracking-widest text-slate-500 transition-colors hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
                                     >
                                       {showIndividualPassword ? 'Hide' : 'Show'}
                                     </button>
-                                  </div>
-                                </div>
+                                  }
+                                />
                                 {authMessage.text && (
                                   <div style={{
                                     padding: '12px',
@@ -901,7 +1023,26 @@ export function AuthPage() {
                                     {authMessage.text}
                                   </div>
                                 )}
-                                <Button className="w-full" size="lg" type="submit" disabled={isIndividualVaultDisabled}>
+                                {error ? (
+                                  <div className="rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                                    {error}
+                                  </div>
+                                ) : null}
+                                <Button
+                                  className="w-full"
+                                  size="lg"
+                                  type="submit"
+                                  disabled={isIndividualVaultDisabled}
+                                  onClick={() => {
+                                    if (individualMode === 'signup') {
+                                      emitSignupDebugEvent('talent_signup_create_account_click', {
+                                        disabled: isIndividualVaultDisabled,
+                                        emailDomain: getEmailDomain(individualEmail),
+                                        usernameLength: normalizedVaultUsername.length,
+                                      });
+                                    }
+                                  }}
+                                >
                                   {isVaultPending ? <ButtonSpinner /> : null}
                                   {isVaultPending
                                     ? individualMode === 'signup'
@@ -1028,8 +1169,5 @@ export function AuthPage() {
     </main>
   );
 }
-
-
-
 
 
