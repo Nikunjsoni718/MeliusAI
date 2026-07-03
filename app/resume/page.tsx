@@ -395,9 +395,9 @@ function DashboardResumePageContent() {
     normalizedTargetUsername && spectatedOwnership?.username === normalizedTargetUsername
   );
   const isOwner = normalizedTargetUsername
-    ? Boolean(hasOwnershipForTarget && spectatedOwnership?.isOwner)
+    ? Boolean(!loading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
     : Boolean(user?.id);
-  const isSpectator = Boolean(targetUsername && !isOwner);
+  const isSpectator = Boolean(targetUsername && !loading && !isOwner);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const visibleNavigationItems = useMemo(
     () => (isOwner ? navigationItems : navigationItems.filter((item) => item.label !== 'Search')),
@@ -427,6 +427,10 @@ function DashboardResumePageContent() {
   }, [authEnabled, isSpectator, loading, router, user]);
 
   useEffect(() => {
+    if (loading) {
+      return;
+    }
+
     if (!isSpectator && (!supabase || !user)) {
       setFormLoading(false);
       return;
@@ -565,7 +569,7 @@ function DashboardResumePageContent() {
     return () => {
       active = false;
     };
-  }, [isSpectator, normalizedTargetUsername, supabase, targetUsername, user]);
+  }, [isSpectator, loading, normalizedTargetUsername, supabase, targetUsername, user]);
 
   useEffect(() => {
     if (isSpectator) {

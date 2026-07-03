@@ -56,7 +56,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en-IN"> {/* Declares the specific language dialect for indexers */}
+    <html lang="en-IN">
       <head>
         {/* Injecting the structured metadata schema right into the HTML head container */}
         <script

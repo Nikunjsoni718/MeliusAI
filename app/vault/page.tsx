@@ -8,6 +8,7 @@ import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
@@ -934,6 +935,7 @@ function VaultPageContent() {
   });
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(authEnabled);
+  const [authLoading, setAuthLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
   const [spectatedOwnership, setSpectatedOwnership] = useState<{
     isOwner: boolean;
@@ -953,14 +955,15 @@ function VaultPageContent() {
     normalizedTargetUsername && spectatedOwnership?.username === normalizedTargetUsername
   );
   const isOwner = normalizedTargetUsername
-    ? Boolean(hasOwnershipForTarget && spectatedOwnership?.isOwner)
+    ? Boolean(!authLoading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
     : Boolean(viewerId);
-  const isSpectator = Boolean(targetUsername && !isOwner);
+  const isSpectator = Boolean(targetUsername && !authLoading && !isOwner);
 
   useEffect(() => {
     if (!authEnabled || !supabase) {
       setViewerId(null);
       setSpectatedOwnership(null);
+      setAuthLoading(false);
       if (!targetUsername) {
         setLoading(false);
         setVaultAssets([]);
@@ -972,11 +975,29 @@ function VaultPageContent() {
     let active = true;
 
     const resolveViewer = async () => {
+      setAuthLoading(true);
+
       try {
-        const {
-          data: { user },
+        let {
+          data: { session },
           error,
-        } = await supabase.auth.getUser();
+        } = await supabase.auth.getSession();
+
+        if (
+          !session?.user &&
+          typeof window !== 'undefined' &&
+          window.localStorage.getItem(AUTH_LOGIN_STATUS_KEY) === 'loggedIn'
+        ) {
+          await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+          if (!active) {
+            return;
+          }
+
+          const retryResult = await supabase.auth.getSession();
+          session = retryResult.data.session;
+          error = retryResult.error;
+        }
 
         if (error) {
           throw error;
@@ -986,9 +1007,10 @@ function VaultPageContent() {
           return;
         }
 
-        if (!user?.id) {
+        if (!session?.user?.id) {
           setViewerId(null);
           setSpectatedOwnership(null);
+          setAuthLoading(false);
           if (!targetUsername) {
             setVaultAssets([]);
             setLoading(false);
@@ -997,12 +1019,15 @@ function VaultPageContent() {
           return;
         }
 
-        setViewerId(user.id);
+        setViewerId(session.user.id);
+        setAuthLoading(false);
       } catch (error) {
         console.error('Failed to verify vault viewer', error);
 
         if (active) {
           setViewerId(null);
+          setSpectatedOwnership(null);
+          setAuthLoading(false);
           if (!targetUsername) {
             setVaultAssets([]);
             setLoading(false);
@@ -1024,6 +1049,7 @@ function VaultPageContent() {
       const nextViewerId = session?.user?.id ?? null;
       setViewerId(nextViewerId);
       setSpectatedOwnership(null);
+      setAuthLoading(false);
 
       if (!nextViewerId && !targetUsername) {
         setVaultAssets([]);
@@ -1094,7 +1120,7 @@ function VaultPageContent() {
 
   useEffect(() => {
     if (!isOwner || !supabase || !viewerId) {
-      if (!viewerId) {
+      if (!viewerId && !authLoading) {
         setLoading(false);
       }
 
@@ -1166,7 +1192,7 @@ function VaultPageContent() {
     return () => {
       active = false;
     };
-  }, [isOwner, router, supabase, syncToken, viewerId]);
+  }, [authLoading, isOwner, router, supabase, syncToken, viewerId]);
 
   useEffect(() => {
     if (!isOwner || !supabase || !viewerId) {
@@ -1438,6 +1464,7 @@ Return Markdown sections for goods, bads, project description, and a final score
     try {
       const response = await fetch(`/api/projects/${id}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
 

@@ -162,6 +162,7 @@ type NormalizedSpectateProfileResponse = {
   projects: ProjectRow[];
   ratings: unknown[];
   opportunities: unknown[];
+  authenticationStatus: string | null;
   viewerType: string | null;
 };
 type DashboardNavigationItem = {
@@ -175,12 +176,16 @@ type ProfileDraft = {
   username: string;
   birthDate: string;
 };
+type AuthStorageDebugState = {
+  cookieNames: string[];
+  localStorageKeys: string[];
+};
 
 const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
-async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
+async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
     console.warn('Profile vector sync skipped: NEXT_PUBLIC_API_URL is not configured.');
     return;
@@ -189,8 +194,10 @@ async function syncProfileVectorEmbedding(payload: Record<string, unknown>) {
   try {
     const response = await fetch(PROFILE_EMBEDDING_SYNC_ENDPOINT, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: JSON.stringify(payload),
     });
@@ -381,6 +388,7 @@ function normalizeSpectateProfileResponse(
           ? payloadRecord.scans
           : [],
     opportunities: Array.isArray(payloadRecord?.opportunities) ? payloadRecord.opportunities : [],
+    authenticationStatus: nullableString(payloadRecord?.authenticationStatus ?? profileRecord?.authenticationStatus),
     viewerType: nullableString(payloadRecord?.viewerType ?? profileRecord?.viewerType),
   };
 }
@@ -1989,7 +1997,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const pathname = usePathname();
   const routeParams = useParams<{ username?: string | string[] }>();
   const isOrganizationWorkspace = variant === 'organization';
-  const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
+  const {
+    authEnabled,
+    hasAccessToken,
+    loading,
+    profile,
+    session,
+    supabase,
+    user,
+  } = useViewerProfile();
   const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2028,6 +2044,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const isSpectator = !isOwner;
+  const [authStorageDebug, setAuthStorageDebug] = useState<AuthStorageDebugState>({
+    cookieNames: [],
+    localStorageKeys: [],
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [bioText, setBioText] = useState('');
@@ -2278,6 +2298,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return activeUser.id;
   }, [supabase]);
 
+  const getCurrentAccessToken = useCallback(async () => {
+    if (!supabase) {
+      return null;
+    }
+
+    const {
+      data: { session: activeSession },
+    } = await supabase.auth.getSession();
+
+    return activeSession?.access_token ?? null;
+  }, [supabase]);
+
   useEffect(() => {
     if (loading) {
       return;
@@ -2502,6 +2534,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [isSpectating]);
 
   useEffect(() => {
+    if (process.env.NODE_ENV === 'production' || typeof window === 'undefined') {
+      return;
+    }
+
+    const localStorageKeys = Object.keys(window.localStorage).filter((key) => {
+      const normalizedKey = key.toLowerCase();
+      return (
+        normalizedKey.includes('supabase') ||
+        normalizedKey.startsWith('sb-') ||
+        normalizedKey.includes('auth')
+      );
+    });
+    const cookieNames = document.cookie
+      .split(';')
+      .map((cookie) => cookie.split('=')[0]?.trim())
+      .filter((name): name is string => Boolean(name))
+      .filter((name) => {
+        const normalizedName = name.toLowerCase();
+        return normalizedName.includes('supabase') || normalizedName.startsWith('sb-');
+      });
+    const nextDebugState = { cookieNames, localStorageKeys };
+
+    setAuthStorageDebug(nextDebugState);
+    console.info('[MeliusAI mobile auth debug]', {
+      sessionExists: Boolean(session),
+      userId: user?.id ?? null,
+      accessTokenExists: hasAccessToken,
+      authLoading: loading,
+      backendIsOwner: spectatorProfilePayload?.isOwner ?? null,
+      backendViewerType: spectatorProfilePayload?.viewerType ?? null,
+      backendAuthenticationStatus: spectatorProfilePayload?.authenticationStatus ?? null,
+      supabaseCookieNames: cookieNames,
+      supabaseLocalStorageKeys: localStorageKeys,
+    });
+  }, [
+    hasAccessToken,
+    loading,
+    session,
+    spectatorProfilePayload?.authenticationStatus,
+    spectatorProfilePayload?.isOwner,
+    spectatorProfilePayload?.viewerType,
+    user?.id,
+  ]);
+
+  useEffect(() => {
     if (isSpectator || !profileHydrated || !currentUser?.id || !supabase) {
       setLiveJobs([]);
       setLoadingState(false);
@@ -2527,6 +2604,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         const response = await fetch(`${PROFILE_SPECTATOR_BASE_URL}/api/get-opportunities`, {
           cache: 'no-store',
+          credentials: 'include',
           signal: controller.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2717,7 +2795,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         birth_date: normalizedDraft.birthDate || null,
         avatar_url: avatarUrl,
         bio: bioText,
-      });
+      }, await getCurrentAccessToken());
 
       if (profileSaveSequenceRef.current === sequence) {
         lastSavedProfileRef.current = normalizedDraft;
@@ -2814,6 +2892,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     try {
       const response = await fetch(PROFILE_UPDATE_ENDPOINT, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -2852,7 +2931,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         bio: savedProfile.bio ?? nextBioText,
         skills: savedProfile.skills ?? formattedSkills,
         internal_keywords: savedProfile.internal_keywords ?? [],
-      });
+      }, await getCurrentAccessToken());
 
       if (bioSaveSequenceRef.current === sequence) {
         lastSavedBioRef.current = nextBioText;
@@ -3168,6 +3247,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       const response = await fetch('/api/verify-asset', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -3312,6 +3392,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
     try {
       const response = await fetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
 
@@ -3548,6 +3629,31 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
                 <path d="M4 17h16" />
               </svg>
             </button>
+            {process.env.NODE_ENV !== 'production' ? (
+              <div className="fixed bottom-3 left-3 z-[60] max-w-[calc(100vw-1.5rem)] rounded-xl border border-cyan-400/30 bg-slate-950/95 p-3 text-[11px] text-cyan-50 shadow-2xl shadow-black/40 backdrop-blur md:left-auto md:right-3 md:max-w-sm">
+                <p className="font-semibold text-white">Mobile auth debug</p>
+                <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+                  <dt className="text-slate-400">session</dt>
+                  <dd>{session ? 'yes' : 'no'}</dd>
+                  <dt className="text-slate-400">user</dt>
+                  <dd className="truncate">{user?.id ?? 'none'}</dd>
+                  <dt className="text-slate-400">token</dt>
+                  <dd>{hasAccessToken ? 'yes' : 'no'}</dd>
+                  <dt className="text-slate-400">auth loading</dt>
+                  <dd>{loading ? 'yes' : 'no'}</dd>
+                  <dt className="text-slate-400">backend owner</dt>
+                  <dd>{spectatorProfilePayload?.isOwner === true ? 'yes' : 'no'}</dd>
+                  <dt className="text-slate-400">viewer type</dt>
+                  <dd>{spectatorProfilePayload?.viewerType ?? 'unknown'}</dd>
+                  <dt className="text-slate-400">auth status</dt>
+                  <dd>{spectatorProfilePayload?.authenticationStatus ?? 'unknown'}</dd>
+                  <dt className="text-slate-400">cookies</dt>
+                  <dd className="truncate">{authStorageDebug.cookieNames.join(', ') || 'none'}</dd>
+                  <dt className="text-slate-400">storage</dt>
+                  <dd className="truncate">{authStorageDebug.localStorageKeys.join(', ') || 'none'}</dd>
+                </dl>
+              </div>
+            ) : null}
             <AnimatePresence>
               {bioToastMessage ? (
                 <motion.div

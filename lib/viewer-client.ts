@@ -1,6 +1,6 @@
 'use client';
 
-import type { User } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -27,9 +27,34 @@ export type ViewerProfile = Pick<
 >;
 
 type ProfileResponse = {
-  data?: ViewerProfile;
+  data?: ViewerProfile | null;
+  email?: string | null;
+  id?: string | null;
+  role?: UserRow['role'] | 'user';
+  user?: ViewerProfile | null;
   error?: string;
-};
+} & Partial<ViewerProfile>;
+
+function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerProfile | null {
+  const candidate = body?.data ?? body?.user ?? body;
+
+  if (!candidate?.id) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    role: candidate.role === 'recruiter' ? 'recruiter' : 'talent',
+    role_selected_at: candidate.role_selected_at ?? null,
+    display_name: candidate.display_name ?? '',
+    username: candidate.username ?? null,
+    birth_date: candidate.birth_date ?? null,
+    headline: candidate.headline ?? null,
+    company_name: candidate.company_name ?? null,
+    github_username: candidate.github_username ?? null,
+    avatar_url: candidate.avatar_url ?? null,
+  };
+}
 
 export function getDashboardHref(role: UserRow['role']) {
   return role === 'recruiter' ? '/company' : '/home';
@@ -41,6 +66,7 @@ export function useViewerProfile() {
     return authEnabled ? createSupabaseBrowserClient() : null;
   });
   const [loading, setLoading] = useState(authEnabled);
+  const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ViewerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,23 +91,40 @@ export function useViewerProfile() {
         setLoading(true);
       }
 
-      const {
-        data: { user: currentUser },
-        error: userError,
-      } = await supabase.auth.getUser();
+      let {
+        data: { session: currentSession },
+        error: sessionError,
+      } = await supabase.auth.getSession();
 
       if (!active) {
         return;
       }
 
-      if (userError) {
-        setError(userError.message);
+      const persistedState = readPersistedAuthState();
+      if (!currentSession?.user && persistedState.loginStatus === 'loggedIn' && !hasLoadedViewerRef.current) {
+        await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+        if (!active) {
+          return;
+        }
+
+        const retryResult = await supabase.auth.getSession();
+        currentSession = retryResult.data.session;
+        sessionError = retryResult.error;
+      }
+
+      if (sessionError) {
+        setSession(null);
+        setUser(null);
+        setError(sessionError.message);
         hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
 
-      setUser(currentUser ?? null);
+      const currentUser = currentSession?.user ?? null;
+      setSession(currentSession ?? null);
+      setUser(currentUser);
 
       if (!currentUser) {
         clearPersistedAuthState();
@@ -95,8 +138,14 @@ export function useViewerProfile() {
 
       persistAuthenticatedUser(currentUser);
       setPersistedRole(readPersistedAuthState().userRole);
+      setError(null);
+      hasLoadedViewerRef.current = true;
+      setLoading(false);
 
-      const response = await fetch('/api/auth/profile', { cache: 'no-store' });
+      const response = await fetch('/api/auth/profile', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
       const body = (await response.json().catch(() => null)) as ProfileResponse | null;
 
       if (!active) {
@@ -106,32 +155,29 @@ export function useViewerProfile() {
       if (response.status === 401) {
         setProfile(null);
         setError(null);
-        hasLoadedViewerRef.current = true;
-        setLoading(false);
         return;
       }
 
       if (!response.ok) {
         setError(body?.error ?? 'Unable to load profile.');
-        hasLoadedViewerRef.current = true;
-        setLoading(false);
         return;
       }
 
-      setProfile(body?.data ?? null);
+      setProfile(normalizeViewerProfileResponse(body));
       setError(null);
-      hasLoadedViewerRef.current = true;
-      setLoading(false);
     };
 
     void loadViewer();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (authRefreshTimerRef.current) {
         window.clearTimeout(authRefreshTimerRef.current);
       }
+
+      setSession(nextSession ?? null);
+      setUser(nextSession?.user ?? null);
 
       const refreshDelay = event === 'SIGNED_IN' || event === 'SIGNED_OUT' ? 0 : 350;
       authRefreshTimerRef.current = window.setTimeout(() => {
@@ -151,9 +197,11 @@ export function useViewerProfile() {
   return {
     authEnabled,
     error,
+    hasAccessToken: Boolean(session?.access_token),
     loading,
     profile,
     persistedRole,
+    session,
     supabase,
     user,
   };
