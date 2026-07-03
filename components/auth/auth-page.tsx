@@ -338,7 +338,6 @@ type AuthPageProps = {
 };
 
 export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
-=======
 type ProfileBootstrapResponse = {
   data?: {
     id?: string;
