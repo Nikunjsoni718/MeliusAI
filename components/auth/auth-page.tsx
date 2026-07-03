@@ -261,7 +261,6 @@ function ButtonSpinner() {
   );
 }
 
-<<<<<<< Updated upstream
 type AuthInputFieldProps = InputHTMLAttributes<HTMLInputElement> & {
   fieldName: string;
   helperText?: string;
@@ -337,7 +336,6 @@ type AuthPageProps = {
   initialMode?: 'signin' | 'signup';
 };
 
-export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
 type ProfileBootstrapResponse = {
   data?: {
     id?: string;
@@ -351,8 +349,7 @@ type ProfileBootstrapResponse = {
   success?: boolean;
 };
 
-export function AuthPage() {
->>>>>>> Stashed changes
+export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const router = useRouter();
   const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
@@ -655,14 +652,9 @@ export function AuthPage() {
         } else {
           persistAuthenticatedRouteState('individual');
         }
-<<<<<<< Updated upstream
         emitSignupDebugEvent('talent_signup_success', { hasSession: true });
-        setMessage('Your account is ready.');
-        router.replace(`/profile/${encodeURIComponent(normalizedUsername || signUpData.user?.id || 'member')}`);
-=======
         setMessage('Your MeliusAI profile is ready.');
         router.replace(`/profile/${encodeURIComponent(profileHandle)}`);
->>>>>>> Stashed changes
         return;
       }
 
