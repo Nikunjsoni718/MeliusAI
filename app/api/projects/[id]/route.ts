@@ -227,19 +227,6 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
       return NextResponse.json({ error: 'Forbidden: you can only delete your own assets.' }, { status: 403 });
     }
 
-    const { error: scoreDeleteError } = await privilegedSupabase
-      .from('scores')
-      .delete()
-      .eq('project_id', id);
-
-    if (scoreDeleteError) {
-      console.error('Failed to delete related score rows', scoreDeleteError);
-
-      if (adminSupabase) {
-        throw new Error('Unable to delete related audit history.');
-      }
-    }
-
     const storagePaths = getProjectVaultStoragePaths(project, sessionData.user.id);
 
     if (storagePaths.length > 0) {
@@ -253,7 +240,7 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
           storagePaths,
           error: storageDeleteError,
         });
-        throw new Error('Unable to delete the stored asset file.');
+        throw new Error(storageDeleteError.message || 'Unable to delete the stored asset file.');
       }
     }
 
@@ -264,6 +251,10 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
       .select('id');
 
     if (deleteError) {
+      console.error('Failed to delete primary project row', {
+        projectId: id,
+        error: deleteError,
+      });
       throw deleteError;
     }
 
