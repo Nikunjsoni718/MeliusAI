@@ -38,6 +38,25 @@ const TALENT_SIGNUP_HEADING = 'Create your free MeliusAI Talent account.';
 const TALENT_SIGNUP_HELPER =
   'Upload a project and get an AI review with score, strengths, weaknesses, and recommendations.';
 
+function normalizeBaseUrl(url: string) {
+  return url.replace(/\/+$/, '');
+}
+
+function getBaseUrl() {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (siteUrl) {
+    return normalizeBaseUrl(siteUrl);
+  }
+
+  const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL?.trim();
+  if (vercelUrl) {
+    const urlWithProtocol = /^https?:\/\//i.test(vercelUrl) ? vercelUrl : `https://${vercelUrl}`;
+    return normalizeBaseUrl(urlWithProtocol);
+  }
+
+  return 'http://localhost:3000';
+}
+
 type RoleDescriptor = {
   role: UserRole;
   badge: 'accent' | 'creative';
@@ -695,7 +714,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
           email,
           password: individualPassword,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/confirmed`,
+            emailRedirectTo: `${getBaseUrl()}/auth/confirmed`,
             data: {
               role: 'talent',
               display_name: individualFullName.trim(),
