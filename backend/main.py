@@ -1363,11 +1363,202 @@ class VerifyRequest(BaseModel):
 
 
 class AuditResponse(BaseModel):
+    detectedType: str = "unknown"
+    language: str = "Unknown"
+    reviewMode: str = "general artifact review"
+    complexityLevel: str = "unknown"
+    summary: str = ""
     executiveSummary: str
     score: int
     pros: List[str]
     cons: List[str]
     recommendations: List[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def hydrate_summary_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized_data = dict(data)
+        summary = str(normalized_data.get("summary") or "").strip()
+        executive_summary = str(normalized_data.get("executiveSummary") or "").strip()
+
+        if summary and not executive_summary:
+            normalized_data["executiveSummary"] = summary
+        elif executive_summary and not summary:
+            normalized_data["summary"] = executive_summary
+
+        return normalized_data
+
+
+ALLOWED_DETECTED_TYPES = {
+    "HTML website/project",
+    "HTML learning notes/practice file",
+    "documentation/README",
+    "beginner code file",
+    "actual software project",
+    "general notes",
+    "unknown",
+}
+
+
+LANGUAGE_BY_EXTENSION = {
+    ".css": "CSS",
+    ".html": "HTML",
+    ".htm": "HTML",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript React (JSX)",
+    ".json": "JSON",
+    ".md": "Markdown",
+    ".mdx": "MDX",
+    ".py": "Python",
+    ".readme": "Markdown",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript React (TSX)",
+    ".txt": "Plain text",
+}
+
+
+REVIEW_MODE_BY_DETECTED_TYPE = {
+    "HTML website/project": "website/project review",
+    "HTML learning notes/practice file": "educational HTML notes/practice review",
+    "documentation/README": "documentation review",
+    "beginner code file": "beginner code review",
+    "actual software project": "software project review",
+    "general notes": "notes review",
+    "unknown": "general artifact review",
+}
+
+
+def count_regex(pattern: str, value: str) -> int:
+    return len(re.findall(pattern, value, flags=re.IGNORECASE | re.MULTILINE))
+
+
+def detect_asset_language(asset_name: str, asset_text_content: str) -> str:
+    asset_name_lower = asset_name.lower()
+    _, extension = os.path.splitext(asset_name_lower)
+
+    if asset_name_lower == "readme" or asset_name_lower.startswith("readme."):
+        return "Markdown"
+
+    if extension in LANGUAGE_BY_EXTENSION:
+        return LANGUAGE_BY_EXTENSION[extension]
+
+    stripped_content = asset_text_content.strip()
+    lowered_content = stripped_content.lower()
+
+    if re.search(r"<!doctype\s+html|<html[\s>]|<body[\s>]|<div[\s>]|<section[\s>]", lowered_content):
+        return "HTML"
+    if lowered_content.startswith("#") or count_regex(r"^\s{0,3}#{1,6}\s+\S+", stripped_content) >= 2:
+        return "Markdown"
+    if re.search(r"\b(import|export)\s+.+\b(from|function|const)\b|console\.log\(", stripped_content):
+        return "JavaScript/TypeScript"
+    if re.search(r"\bdef\s+\w+\(|\bimport\s+\w+|if\s+__name__\s*==", stripped_content):
+        return "Python"
+
+    return "Unknown"
+
+
+def classify_html_asset(asset_text_content: str) -> str:
+    lowered_content = asset_text_content.lower()
+    html_tag_names = re.findall(r"</?\s*([a-z][a-z0-9-]*)\b", lowered_content)
+    unique_html_tags = set(html_tag_names)
+
+    tutorial_signal_count = count_regex(
+        r"\b(example|practice|notes?|tutorial|exercise|lesson|demo|try it|learn|"
+        r"basic html|html basics|tag examples?|attributes?|comments?|forms?|tables?|"
+        r"media tags?|semantic tags?|heading tags?|paragraph tags?)\b",
+        lowered_content,
+    )
+    html_comment_count = count_regex(r"<!--", lowered_content)
+    repeated_document_count = count_regex(r"<!doctype\s+html|<html[\s>]", lowered_content)
+    snippet_heading_count = count_regex(r"\b(example|practice|exercise|demo)\s*\d*", lowered_content)
+    diverse_practice_tag_count = sum(
+        1
+        for tag_name in [
+            "form",
+            "input",
+            "textarea",
+            "button",
+            "table",
+            "tr",
+            "td",
+            "a",
+            "img",
+            "video",
+            "audio",
+            "iframe",
+        ]
+        if tag_name in unique_html_tags
+    )
+
+    website_structure_score = 0
+    website_structure_score += 2 if count_regex(r"<!doctype\s+html", lowered_content) == 1 else 0
+    website_structure_score += 2 if all(tag in unique_html_tags for tag in ["html", "head", "body"]) else 0
+    website_structure_score += 1 if "title" in unique_html_tags else 0
+    website_structure_score += 1 if {"header", "nav", "main", "footer"} & unique_html_tags else 0
+    website_structure_score += 1 if re.search(r"<link\b[^>]+stylesheet|<script\b|<style\b", lowered_content) else 0
+
+    learning_notes_score = 0
+    learning_notes_score += min(tutorial_signal_count, 6)
+    learning_notes_score += min(html_comment_count, 4)
+    learning_notes_score += min(snippet_heading_count, 4)
+    learning_notes_score += 3 if repeated_document_count > 1 else 0
+    learning_notes_score += 2 if len(unique_html_tags) >= 18 else 0
+    learning_notes_score += 2 if diverse_practice_tag_count >= 5 else 0
+
+    if learning_notes_score >= 5 and learning_notes_score >= website_structure_score + 1:
+        return "HTML learning notes/practice file"
+
+    if website_structure_score >= 5 and learning_notes_score < 5:
+        return "HTML website/project"
+
+    if tutorial_signal_count >= 2 or html_comment_count >= 3 or diverse_practice_tag_count >= 4:
+        return "HTML learning notes/practice file"
+
+    return "HTML website/project"
+
+
+def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[str, str]:
+    asset_name_lower = asset_name.lower().strip()
+    _, extension = os.path.splitext(asset_name_lower)
+    language = detect_asset_language(asset_name, asset_text_content)
+    stripped_content = asset_text_content.strip()
+    lowered_content = stripped_content.lower()
+    line_count = len([line for line in stripped_content.splitlines() if line.strip()])
+
+    if language == "HTML":
+        detected_type = classify_html_asset(asset_text_content)
+    elif asset_name_lower == "readme" or asset_name_lower.startswith("readme.") or extension in {".md", ".mdx"}:
+        detected_type = "documentation/README"
+    elif re.search(r"(^|\n)\s*(package\.json|requirements\.txt|pyproject\.toml|dockerfile|src/|app/|pages/)", lowered_content):
+        detected_type = "actual software project"
+    elif language in {"JavaScript/TypeScript", "Python", "CSS", "JSON", "TypeScript", "JavaScript"}:
+        detected_type = "actual software project" if line_count > 180 else "beginner code file"
+    elif count_regex(r"^\s*[-*]\s+|\b(notes?|summary|todo|ideas?|learning|study)\b", stripped_content) >= 3:
+        detected_type = "general notes"
+    else:
+        detected_type = "unknown"
+
+    complexity_level = "unknown"
+    if detected_type == "HTML learning notes/practice file":
+        complexity_level = "beginner-to-intermediate" if count_regex(r"<(form|table|video|audio|iframe|section|article)\b", lowered_content) >= 3 else "beginner"
+    elif detected_type == "HTML website/project":
+        complexity_level = "intermediate" if count_regex(r"<(script|style|form|nav|main|section)\b", lowered_content) >= 3 else "beginner"
+    elif detected_type == "actual software project":
+        complexity_level = "intermediate-to-advanced" if line_count > 300 else "intermediate"
+    elif detected_type == "beginner code file":
+        complexity_level = "beginner"
+    elif detected_type in {"documentation/README", "general notes"}:
+        complexity_level = "beginner-to-intermediate"
+
+    return {
+        "detectedType": detected_type,
+        "language": language,
+        "reviewMode": REVIEW_MODE_BY_DETECTED_TYPE.get(detected_type, "general artifact review"),
+        "complexityLevel": complexity_level,
+    }
 
 
 ENHANCED_AUDIT_SYSTEM_PROMPT = """
@@ -1375,9 +1566,21 @@ You are an Elite Principal Reviewer conducting an automated project audit for Me
 
 Evaluate the uploaded content intelligently, fairly, and contextually. The content may be code, HTML, PDF text, presentation text, documentation, or another project artifact. Do not act like a basic linter.
 
-- Contextual Intent: First deduce what the uploaded content is intended to be. Grade it based on the standards required for that specific artifact type, such as a quick script, production backend, frontend page, portfolio document, school project, presentation, or business document.
+- Classification First: Before scoring or reviewing, classify the uploaded artifact into exactly one detectedType:
+HTML website/project, HTML learning notes/practice file, documentation/README, beginner code file, actual software project, general notes, or unknown.
 
 - Relevant Criteria Only: Do not apply irrelevant standards. Do not ask a PowerPoint for unit tests. Do not judge a simple HTML page like a production backend. Do not over-penalize missing project descriptions unless the artifact depends on explanation.
+
+- HTML-Specific Rules:
+If an HTML file is mostly examples, comments, tutorial-style notes, repeated tags, demos, or practice snippets, classify it as "HTML learning notes/practice file" instead of "HTML website/project".
+For HTML learning notes/practice files, review concept coverage, HTML syntax correctness, organization, readability, usefulness as notes, broken tags, and practical improvement suggestions. Clearly state when the file is not a complete website/project yet. Do not punish it only for not being a website, but mention if it is not production-ready.
+For HTML website/project files, review the actual website structure, semantics, accessibility, responsiveness, production readiness, completeness, and maintainability.
+
+- Other Review Modes:
+For documentation/README, review clarity, completeness, installation/usage guidance, structure, and usefulness.
+For beginner code files, review correctness, learning progression, naming, readability, syntax, and next-step improvements at the learner's level.
+For actual software projects, review architecture, security, maintainability, tests, data flow, error handling, and production readiness.
+For general notes, review organization, clarity, coverage, accuracy, and actionability.
 
 - Severity Classification: Evaluate flaws using strict tiers:
 Critical: security vulnerabilities, crashes, broken logic, unsafe handling, unusable output.
@@ -1385,13 +1588,13 @@ Structural: poor architecture, missing error handling, inefficient design, weak 
 Best-Practices: formatting, naming, comments, documentation, minor presentation polish.
 
 - Holistic Scoring from 0 to 100:
-Start from 100. Deduct based on severity and relevance. Reward strong architecture, clarity, completeness, usability, originality, and practical readiness. A score above 90 means the artifact is highly polished and close to production/professional ready. Minor polish issues should not heavily reduce the score.
+Start from 100. Deduct based on severity and relevance to the detectedType and complexityLevel. Reward clarity, correctness, completeness for the artifact's actual purpose, usefulness, originality, and practical readiness. Score according to the detected type and learning level, not against an unrelated production-project standard.
 
 - High Signal, Low Noise:
 Return only the top 2 to 4 highest-priority pros, cons, and recommendations. Avoid generic filler. Every point must be specific to the uploaded content.
 
 Output ONLY a valid JSON object with these exact keys:
-executiveSummary, score, pros, cons, recommendations.
+detectedType, language, reviewMode, complexityLevel, summary, executiveSummary, score, pros, cons, recommendations.
 
 Do not include markdown blocks like ```json.
 """
@@ -1408,7 +1611,18 @@ def normalize_audit_list(value: List[str]) -> List[str]:
     return normalized_items[:4]
 
 
-def parse_audit_response(raw_content: str | None) -> AuditResponse:
+def normalize_detected_type(value: str, fallback_value: str = "unknown") -> str:
+    normalized_lookup = {allowed_value.lower(): allowed_value for allowed_value in ALLOWED_DETECTED_TYPES}
+    normalized_value = normalized_lookup.get(str(value or "").strip().lower())
+    normalized_fallback = normalized_lookup.get(str(fallback_value or "").strip().lower(), "unknown")
+
+    if normalized_value and normalized_value != "unknown":
+        return normalized_value
+
+    return normalized_fallback
+
+
+def parse_audit_response(raw_content: str | None, asset_classification: Dict[str, str] | None = None) -> AuditResponse:
     if not raw_content or not raw_content.strip():
         raise HTTPException(
             status_code=502,
@@ -1431,8 +1645,46 @@ def parse_audit_response(raw_content: str | None) -> AuditResponse:
             detail="AI audit response did not match the required schema.",
         ) from validation_error
 
+    classification = asset_classification or {}
+    classification_detected_type = normalize_detected_type(classification.get("detectedType", "unknown"))
+    model_detected_type = normalize_detected_type(
+        audit_response.detectedType,
+        classification_detected_type,
+    )
+
+    if classification_detected_type == "HTML learning notes/practice file" and model_detected_type == "HTML website/project":
+        audit_response.detectedType = classification_detected_type
+    else:
+        audit_response.detectedType = model_detected_type
+
+    classification_language = (classification.get("language") or "").strip()
+    model_language = audit_response.language.strip()
+    audit_response.language = (
+        classification_language
+        if classification_language and classification_language.lower() != "unknown"
+        else model_language or "Unknown"
+    )
+    audit_response.reviewMode = REVIEW_MODE_BY_DETECTED_TYPE.get(
+        audit_response.detectedType,
+        classification.get("reviewMode") or audit_response.reviewMode or "general artifact review",
+    ).strip()
+    classification_complexity_level = (classification.get("complexityLevel") or "").strip()
+    model_complexity_level = audit_response.complexityLevel.strip()
+    audit_response.complexityLevel = (
+        classification_complexity_level
+        if classification_complexity_level and classification_complexity_level.lower() != "unknown"
+        else model_complexity_level or "unknown"
+    )
+    audit_response.summary = audit_response.summary.strip()
     audit_response.score = max(0, min(100, int(audit_response.score)))
     audit_response.executiveSummary = audit_response.executiveSummary.strip()
+
+    if not audit_response.summary:
+        audit_response.summary = audit_response.executiveSummary
+
+    if not audit_response.executiveSummary:
+        audit_response.executiveSummary = audit_response.summary
+
     audit_response.pros = normalize_audit_list(audit_response.pros)
     audit_response.cons = normalize_audit_list(audit_response.cons)
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
@@ -2826,6 +3078,8 @@ async def verify_asset(
             except Exception:
                 pass
 
+        asset_classification = classify_uploaded_asset(asset_name, asset_text_content)
+
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -2838,8 +3092,14 @@ async def verify_asset(
                     "content": (
                         "Uploaded Artifact Metadata:\n"
                         f"- Asset name: {asset_name}\n"
+                        f"- Pre-review detected type: {asset_classification['detectedType']}\n"
+                        f"- Pre-review language: {asset_classification['language']}\n"
+                        f"- Pre-review mode: {asset_classification['reviewMode']}\n"
+                        f"- Pre-review complexity level: {asset_classification['complexityLevel']}\n"
                         f"- User-provided project context: "
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
+                        "Use the pre-review classification as a strong signal. Only change it if the uploaded "
+                        "content clearly contradicts it. Always classify before assigning a score.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
@@ -2849,10 +3109,15 @@ async def verify_asset(
             temperature=0.1,
         )
 
-        audit_response = parse_audit_response(completion.choices[0].message.content)
+        audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         audit_payload = audit_response.model_dump()
         calculated_score = audit_response.score
         executive_summary = audit_response.executiveSummary
+        summary = audit_response.summary or executive_summary
+        detected_type = audit_response.detectedType
+        language = audit_response.language
+        review_mode = audit_response.reviewMode
+        complexity_level = audit_response.complexityLevel
         pros = audit_response.pros
         cons = audit_response.cons
         recommendations = audit_response.recommendations
@@ -2891,12 +3156,16 @@ async def verify_asset(
 
         response_payload = {
             "success": True,
+            "detectedType": detected_type,
+            "language": language,
+            "reviewMode": review_mode,
+            "complexityLevel": complexity_level,
             "executiveSummary": executive_summary,
             "report": audit_payload,
             "score": calculated_score,
             "description": executive_summary,
             "executive_summary": executive_summary,
-            "summary": executive_summary,
+            "summary": summary,
             "audit_summary": executive_summary,
             "pros": pros,
             "cons": cons,

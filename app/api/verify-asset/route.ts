@@ -20,6 +20,37 @@ function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function getDocumentDataUrlContentType(assetName: string, responseContentType: string) {
+  const normalizedResponseType = responseContentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  const normalizedAssetName = assetName.toLowerCase();
+
+  if (normalizedResponseType) {
+    return normalizedResponseType;
+  }
+
+  if (normalizedAssetName.endsWith('.pdf')) {
+    return 'application/pdf';
+  }
+
+  if (normalizedAssetName.endsWith('.pptx')) {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  }
+
+  return 'application/octet-stream';
+}
+
+function shouldForwardAsDataUrl(assetName: string, responseContentType: string) {
+  const normalizedResponseType = responseContentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  const normalizedAssetName = assetName.toLowerCase();
+
+  return (
+    normalizedAssetName.endsWith('.pdf') ||
+    normalizedAssetName.endsWith('.pptx') ||
+    normalizedResponseType === 'application/pdf' ||
+    normalizedResponseType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const backendUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL?.trim().replace(/\/$/, '');
@@ -64,46 +95,49 @@ export async function POST(request: Request) {
       );
     }
 
-    if (assetTextContent) {
-      const pythonResponse = await fetch(`${backendUrl}/api/verify-asset`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          projectId,
-          assetName,
-          code: assetTextContent,
-          assetTextContent,
-          userContextDescription,
-        }),
-      });
+    let contentForVerification = assetTextContent;
 
-      const responseBody = await pythonResponse.text();
-
-      return new Response(responseBody, {
-        status: pythonResponse.status,
-        headers: {
-          'Content-Type': pythonResponse.headers.get('content-type') ?? 'application/json',
-        },
-      });
-    }
-
-    if (!fileUrl) {
+    if (!contentForVerification && !fileUrl) {
       return NextResponse.json(
         { error: 'fileUrl is required.' },
         { status: 400 }
       );
     }
 
-    const pythonResponse = await fetch(`${backendUrl}/api/evaluate`, {
+    if (!contentForVerification) {
+      const assetResponse = await fetch(fileUrl);
+
+      if (!assetResponse.ok) {
+        return NextResponse.json(
+          { error: 'Unable to download the uploaded asset for verification.' },
+          { status: assetResponse.status }
+        );
+      }
+
+      const responseContentType = assetResponse.headers.get('content-type') ?? '';
+      const assetBuffer = Buffer.from(await assetResponse.arrayBuffer());
+
+      if (shouldForwardAsDataUrl(assetName, responseContentType)) {
+        const dataUrlContentType = getDocumentDataUrlContentType(assetName, responseContentType);
+        contentForVerification = `data:${dataUrlContentType};base64,${assetBuffer.toString('base64')}`;
+      } else {
+        contentForVerification = assetBuffer.toString('utf8');
+      }
+    }
+
+    const pythonResponse = await fetch(`${backendUrl}/api/verify-asset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
       },
-      body: JSON.stringify({ fileUrl, filename, projectId }),
+      body: JSON.stringify({
+        projectId,
+        assetName,
+        code: contentForVerification,
+        assetTextContent: contentForVerification,
+        userContextDescription,
+      }),
     });
 
     const responseBody = await pythonResponse.text();
