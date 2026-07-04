@@ -773,22 +773,20 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
         ((data.user as { raw_user_meta_data?: { role?: string } } | null)?.raw_user_meta_data?.role);
 
       if (data.user && authRole === 'talent') {
-        const profileHandle =
-          ((data.user as { raw_user_meta_data?: { username?: string } } | null)?.raw_user_meta_data?.username) ||
-          (data.user.user_metadata?.username as string | undefined) ||
-          data.user.id;
-        const verifiedProfileHandle = await ensureIndividualProfile({
-          accessToken: data.session?.access_token,
-          birthDate: (data.user.user_metadata?.birth_date as string | undefined) ?? null,
-          fullName:
-            (data.user.user_metadata?.full_name as string | undefined) ??
-            (data.user.user_metadata?.display_name as string | undefined) ??
-            null,
-          username: profileHandle,
-        });
+        const userId = data.user.id;
+        const { data: profileLookup, error: profileLookupError } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', userId)
+          .single();
+
+        if (profileLookupError || !profileLookup?.username) {
+          throw new Error('Sign-in succeeded, but your profile username could not be found.');
+        }
+
         persistAuthenticatedUser(data.user);
         setMessage('Welcome back.');
-        router.replace(`/profile/${encodeURIComponent(verifiedProfileHandle)}`);
+        router.push(`/profile/${encodeURIComponent(profileLookup.username)}`);
         return;
       }
 
