@@ -1485,7 +1485,7 @@ Return Markdown sections for goods, bads, project description, and a final score
       setViewingAuditAsset((currentAsset) => (currentAsset?.id === id ? null : currentAsset));
     } catch (error) {
       console.error('Failed to delete vault asset', error);
-      setVaultError('Unable to delete this asset right now.');
+      setVaultError(error instanceof Error ? error.message : 'Unable to delete this asset right now.');
     } finally {
       setDeletingAssetId(null);
     }

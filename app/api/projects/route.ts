@@ -78,11 +78,14 @@ export async function POST(request: NextRequest) {
     const { data, error } = await supabase
       .from('projects')
       .insert({
+        user_id: sessionData.user.id,
         owner_id: sessionData.user.id,
         ...(typeof body.is_public === 'boolean' ? { is_public: body.is_public } : {}),
         title: body.title,
+        name: body.title,
         description: body.description?.trim() || null,
         source_url: body.source_url,
+        file_url: body.source_url,
         source_kind: body.source_kind ?? inferPortfolioSourceKind(body.source_url),
         profession: body.profession ?? 'Developer',
         target_company: body.target_company ?? null,

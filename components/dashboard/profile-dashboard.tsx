@@ -3063,9 +3063,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       .from('projects')
       .insert({
         user_id: userId,
+        owner_id: userId,
         name: file.name,
+        title: file.name,
         file_url: fileUrl,
+        source_url: fileUrl,
         file_type: fileExtension,
+        file_name: file.name,
+        file_size: file.size,
         description: description.trim() || null,
       })
       .select('*')
@@ -3416,8 +3421,9 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
         setActivePreviewName(null);
         setActivePreviewUrl(null);
       }
-    } catch {
-      showProjectVerifyError('We could not delete this asset.');
+    } catch (error) {
+      console.error('Failed to delete project asset', error);
+      showProjectVerifyError(error instanceof Error ? error.message : 'We could not delete this asset.');
     } finally {
       setDeletingProjectId(null);
     }
