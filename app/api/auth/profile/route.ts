@@ -7,8 +7,6 @@ import type { ProfileRow, UserRole } from '@/types/supabase';
 
 export const runtime = 'nodejs';
 
-const USER_SELECT =
-  'id, role, role_selected_at, display_name, username, birth_date, headline, company_name, github_username, avatar_url';
 const PROFILE_SELECT =
   'id, email, full_name, username, birth_date, bio, skills, avatar_url, age, current_status, created_at, updated_at';
 
@@ -140,24 +138,21 @@ function toViewerProfile(user: User, profile: ProfileRow, appUser: Record<string
 
 async function readVerifiedProfile(user: User) {
   const admin = createSupabaseAdminClient();
-  const [{ data: profile, error: profileError }, { data: appUser, error: userError }] = await Promise.all([
-    admin.from('profiles').select(PROFILE_SELECT).eq('id', user.id).maybeSingle(),
-    admin.from('users').select(USER_SELECT).eq('id', user.id).maybeSingle(),
-  ]);
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .select(PROFILE_SELECT)
+    .eq('id', user.id)
+    .maybeSingle();
 
   if (profileError) {
     throw new Error(`Profile lookup failed: ${profileError.message}`);
   }
 
-  if (userError) {
-    throw new Error(`Auth profile lookup failed: ${userError.message}`);
-  }
-
   if (!profile) {
-    return { appUser: appUser as Record<string, unknown> | null, profile: null };
+    return { appUser: user.user_metadata as Record<string, unknown>, profile: null };
   }
 
-  return { appUser: appUser as Record<string, unknown> | null, profile: profile as ProfileRow };
+  return { appUser: user.user_metadata as Record<string, unknown>, profile: profile as ProfileRow };
 }
 
 async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPayload) {
@@ -174,22 +169,24 @@ async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPaylo
   const companyName = normalizeText(payload.company_name) ?? getMetadataText(user, 'company_name');
   const now = new Date().toISOString();
 
-  const { error: userUpsertError } = await admin.from('users').upsert(
-    {
-      id: user.id,
-      role,
-      role_selected_at: roleSelectedAt,
-      display_name: displayName,
-      username,
-      birth_date: birthDate,
-      avatar_url: avatarUrl,
-      company_name: companyName,
-    },
-    { onConflict: 'id' }
-  );
+  const nextUserMetadata = {
+    ...user.user_metadata,
+    role,
+    role_selected_at: roleSelectedAt,
+    display_name: displayName,
+    full_name: displayName,
+    username,
+    birth_date: birthDate,
+    avatar_url: avatarUrl,
+    company_name: companyName,
+  };
 
-  if (userUpsertError) {
-    throw new Error(`Auth user profile upsert failed: ${userUpsertError.message}`);
+  const { data: metadataUpdateData, error: metadataUpdateError } = await admin.auth.admin.updateUserById(user.id, {
+    user_metadata: nextUserMetadata,
+  });
+
+  if (metadataUpdateError) {
+    throw new Error(`Auth metadata update failed: ${metadataUpdateError.message}`);
   }
 
   const { error: profileUpsertError } = await admin.from('profiles').upsert(
@@ -209,7 +206,8 @@ async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPaylo
     throw new Error(`App profile upsert failed: ${profileUpsertError.message}`);
   }
 
-  const { appUser, profile } = await readVerifiedProfile(user);
+  const verifiedUser = metadataUpdateData.user ?? ({ ...user, user_metadata: nextUserMetadata } as User);
+  const { appUser, profile } = await readVerifiedProfile(verifiedUser);
 
   if (!profile) {
     throw new Error('App profile verification failed: no row returned from public.profiles.');
@@ -312,19 +310,22 @@ export async function PATCH(request: NextRequest) {
     const role = normalizeRole(payload.role ?? user.user_metadata?.role);
     const roleSelectedAt = normalizeTimestamp(payload.role_selected_at) ?? new Date().toISOString();
 
-    const { error: updateError } = await admin
-      .from('users')
-      .update({
-        role,
-        role_selected_at: roleSelectedAt,
-      })
-      .eq('id', user.id);
+    const nextUserMetadata = {
+      ...user.user_metadata,
+      role,
+      role_selected_at: roleSelectedAt,
+    };
+
+    const { data: metadataUpdateData, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
+      user_metadata: nextUserMetadata,
+    });
 
     if (updateError) {
       throw new Error(`Role update failed: ${updateError.message}`);
     }
 
-    const { appUser, profile } = await readVerifiedProfile(user);
+    const verifiedUser = metadataUpdateData.user ?? ({ ...user, user_metadata: nextUserMetadata } as User);
+    const { appUser, profile } = await readVerifiedProfile(verifiedUser);
 
     if (!profile) {
       return jsonError(

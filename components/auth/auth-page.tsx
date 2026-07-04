@@ -352,6 +352,7 @@ type ProfileBootstrapResponse = {
 export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const router = useRouter();
   const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
+  const handledSignedInRef = useRef(false);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
   const [hasLoadedIntent, setHasLoadedIntent] = useState(false);
   const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>(initialMode);
@@ -407,6 +408,86 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
       clearRoleIntent();
     }
   }, [profile?.role_selected_at]);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event !== 'SIGNED_IN' || !session || handledSignedInRef.current) {
+        return;
+      }
+
+      const completeSignIn = async () => {
+        handledSignedInRef.current = true;
+
+        try {
+          const userMetadata = session.user.user_metadata ?? {};
+          const metadataRole = typeof userMetadata.role === 'string' ? userMetadata.role.toLowerCase() : '';
+          const role =
+            metadataRole === 'recruiter' ||
+            metadataRole === 'corporate' ||
+            metadataRole === 'organization' ||
+            metadataRole === 'organisation'
+              ? 'recruiter'
+              : 'talent';
+
+          if (role !== 'talent') {
+            handledSignedInRef.current = false;
+            return;
+          }
+
+          persistAuthenticatedUser(session.user);
+
+          const response = await fetch('/api/auth/profile', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              role: 'talent',
+              full_name:
+                typeof userMetadata.full_name === 'string'
+                  ? userMetadata.full_name
+                  : typeof userMetadata.display_name === 'string'
+                    ? userMetadata.display_name
+                    : null,
+              username: typeof userMetadata.username === 'string' ? userMetadata.username : null,
+              birth_date: typeof userMetadata.birth_date === 'string' ? userMetadata.birth_date : null,
+            }),
+          });
+          const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
+
+          if (!response.ok || !body?.success) {
+            throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
+          }
+
+          const profileHandle =
+            body.profile?.username ??
+            body.data?.username ??
+            (typeof session.user.user_metadata?.username === 'string' ? session.user.user_metadata.username : null) ??
+            session.user.id;
+
+          router.push(`/profile/${encodeURIComponent(profileHandle)}`);
+          router.refresh();
+        } catch (signInError) {
+          handledSignedInRef.current = false;
+          setError(signInError instanceof Error ? signInError.message : 'Unable to finish sign-in.');
+        }
+      };
+
+      void completeSignIn();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [router, supabase]);
 
   useEffect(() => {
     if (!hasLoadedIntent || !user || !profile || !selectedRole || profile.role_selected_at || pendingSync) {
@@ -614,6 +695,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
           email,
           password: individualPassword,
           options: {
+            emailRedirectTo: `${window.location.origin}/auth/confirmed`,
             data: {
               role: 'talent',
               display_name: individualFullName.trim(),
