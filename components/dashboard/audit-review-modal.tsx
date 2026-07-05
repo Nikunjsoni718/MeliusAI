@@ -184,6 +184,8 @@ function parseAuditReport(rawText: string) {
 }
 
 type StructuredAuditData = {
+  ai_summary?: string | null;
+  user_description?: string | null;
   audit_summary?: string | null;
   description?: string | null;
   executive_summary?: string | null;
@@ -195,6 +197,22 @@ type StructuredAuditData = {
 
 function getStructuredItems(value?: string[] | null) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && Boolean(item.trim())) : [];
+}
+
+function getStructuredSummary(auditData?: StructuredAuditData | null) {
+  const storedSummary =
+    auditData?.ai_summary?.trim() ||
+    auditData?.user_description?.trim() ||
+    auditData?.audit_summary?.trim() ||
+    auditData?.executive_summary?.trim() ||
+    auditData?.summary?.trim() ||
+    auditData?.description?.trim() ||
+    '';
+
+  return storedSummary
+    .replace(/^\s*#{1,6}\s*executive summary\s*/i, '')
+    .split(/\n\s*(?:#{1,6}\s*)?(?:pros|strengths|cons|weaknesses|strategic recommendations|recommendations|scorecard)\b/i)[0]
+    .trim();
 }
 
 function AuditBulletList({
@@ -237,12 +255,7 @@ export function AuditReviewModal({
   auditData?: StructuredAuditData | null;
 }) {
   const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(reportText);
-  const structuredSummary =
-    auditData?.description?.trim() ||
-    auditData?.executive_summary?.trim() ||
-    auditData?.summary?.trim() ||
-    auditData?.audit_summary?.trim() ||
-    '';
+  const structuredSummary = getStructuredSummary(auditData);
   const structuredPros = getStructuredItems(auditData?.pros);
   const structuredCons = getStructuredItems(auditData?.cons);
   const structuredRecommendations = getStructuredItems(auditData?.recommendations);
@@ -281,7 +294,7 @@ export function AuditReviewModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-5">
                   <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                    Goods & Strengths
+                    Strengths
                   </h4>
                   <AuditBulletList
                     items={structuredPros}
@@ -292,7 +305,7 @@ export function AuditReviewModal({
 
                 <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-5">
                   <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-rose-300">
-                    Bads & Flaws
+                    Weaknesses
                   </h4>
                   <AuditBulletList
                     items={structuredCons}
@@ -323,7 +336,7 @@ export function AuditReviewModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-5 rounded-xl bg-emerald-950/5 border border-emerald-900/20 flex flex-col">
                   <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-emerald-900/10">
-                    Goods & Strengths
+                    Strengths
                   </div>
                   <AuditBulletList
                     items={leftSideGoods}
@@ -334,7 +347,7 @@ export function AuditReviewModal({
 
                 <div className="p-5 rounded-xl bg-rose-950/5 border border-rose-900/20 flex flex-col">
                   <div className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-rose-900/10">
-                    Bads & Flaws
+                    Weaknesses
                   </div>
                   <AuditBulletList
                     items={rightSideBads}

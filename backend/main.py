@@ -1332,27 +1332,32 @@ class VerifyRequest(BaseModel):
 
 
 class AuditResponse(BaseModel):
-    user_description: str
+    ai_summary: str
     score: int = Field(..., ge=0, le=100)
-    pros: List[str]
-    cons: List[str]
+    strengths: List[str]
+    weaknesses: List[str]
     recommendations: List[str]
 
     @model_validator(mode="before")
     @classmethod
-    def hydrate_user_description(cls, data: Any) -> Any:
+    def hydrate_audit_fields(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
 
         normalized_data = dict(data)
-        user_description = str(normalized_data.get("user_description") or "").strip()
+        ai_summary = str(normalized_data.get("ai_summary") or "").strip()
 
-        if not user_description:
-            for legacy_key in ("executiveSummary", "executive_summary", "summary", "description"):
+        if not ai_summary:
+            for legacy_key in ("user_description", "executiveSummary", "executive_summary", "summary", "description"):
                 legacy_value = str(normalized_data.get(legacy_key) or "").strip()
                 if legacy_value:
-                    normalized_data["user_description"] = legacy_value
+                    normalized_data["ai_summary"] = legacy_value
                     break
+
+        if "strengths" not in normalized_data and "pros" in normalized_data:
+            normalized_data["strengths"] = normalized_data.get("pros")
+        if "weaknesses" not in normalized_data and "cons" in normalized_data:
+            normalized_data["weaknesses"] = normalized_data.get("cons")
 
         return normalized_data
 
@@ -1825,31 +1830,23 @@ def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[st
     }
 
 
-ENHANCED_AUDIT_SYSTEM_PROMPT = """SYSTEM ROLE: You are an elite Y Combinator CTO, Senior Staff Engineer, and Technical Mentor. Your job is to audit user-uploaded code assets and return a highly intelligent, contextual, and deeply analytical JSON report.
+ENHANCED_AUDIT_SYSTEM_PROMPT = """SYSTEM ROLE: You are an elite Y Combinator CTO and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
 
-RULE 1: CONTEXTUAL GRADING (The Score)
-Do not punish a file for being small. Grade the file based strictly on its intended scope. 
-- If it is a simple HTML practice file, grade it out of 100 based strictly on HTML semantics, accessibility (a11y), and structural best practices. If it is perfect HTML, it deserves a 90+, even if it has no CSS/JS.
-- If it is a production React component, grade it on state management, render cycles, and modularity.
-- Deduct points for missing documentation, bad variable names, lack of error handling, or security flaws.
+RULE 1: CONTEXTUAL, FAIR GRADING (Smart, not harsh)
+Grade the file based STRICTLY on its intended scope. 
+- Do not punish a simple file for being simple. 
+- If a user uploads an HTML file, grade it out of 100 based *only* on HTML best practices (semantics, structure, accessibility). If the HTML is well-written, give it a high score (85+). Do NOT deduct points because it lacks CSS or JavaScript. Evaluate it for what it is.
 
-RULE 2: THE EXECUTIVE SUMMARY (The Brain)
-You must write a brilliant, 3-4 sentence technical analysis. It must sound like an empathetic but rigorous human Senior Developer reviewing a Pull Request. 
-- You MUST start the summary with one of these two bolded tags: **[Recruiter-Ready]** (if it proves hireable skills) or **[Practice & Growth]** (if it is a learning file).
-- Immediately explain *why* it received its score and what its primary technical value is. 
-- Never use generic placeholder text. 
+RULE 2: THE EXECUTIVE SUMMARY
+Write a supportive, 3-4 sentence technical analysis. Start the summary with either **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score in a constructive, encouraging tone. Do not use Markdown headers (##) in this text.
 
-RULE 3: ACTIONABLE INSIGHTS (Pros, Cons, Recs)
-Your pros and cons must reference *specific* things in the user's code. Do not say "Lacks styling." Say "Lacks CSS styling which leaves the semantic `<header>` and `<nav>` elements unformatted." 
-Your recommendations must be concrete next steps to level up the code.
-
-RULE 4: STRICT JSON OUTPUT
-You must return ONLY a raw JSON object. No markdown wrappers (like ```json). Use this exact structure:
+RULE 3: STRICT JSON OUTPUT (Updated Keys)
+You must return ONLY a raw JSON object. Do not wrap it in markdown. Use these exact keys (Note: pros/cons are now strengths/weaknesses):
 {
-  "user_description": "Your brilliant 3-4 sentence paragraph. Do NOT use markdown headers (##), just standard text.",
+  "ai_summary": "Your supportive 3-4 sentence paragraph.",
   "score": <Number out of 100>,
-  "pros": ["Highly specific strength 1", "Highly specific strength 2"],
-  "cons": ["Highly specific flaw 1", "Highly specific flaw 2"],
+  "strengths": ["Specific strength 1", "Specific strength 2"],
+  "weaknesses": ["Specific area to improve 1", "Specific area to improve 2"],
   "recommendations": ["Actionable step 1", "Actionable step 2"]
 }"""
 
@@ -1871,7 +1868,7 @@ def normalize_audit_list(value: Any) -> List[str]:
     return normalized_items[:4]
 
 
-def sanitize_audit_user_description(value: Any) -> str:
+def sanitize_audit_summary(value: Any) -> str:
     description = str(value or "").strip()
 
     if not description:
@@ -1958,16 +1955,16 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
             detail="AI audit response did not match the required schema.",
         ) from validation_error
 
-    audit_response.user_description = sanitize_audit_user_description(audit_response.user_description)
-    if not audit_response.user_description:
+    audit_response.ai_summary = sanitize_audit_summary(audit_response.ai_summary)
+    if not audit_response.ai_summary:
         raise HTTPException(
             status_code=502,
-            detail="AI audit response was missing the required user_description.",
+            detail="AI audit response was missing the required ai_summary.",
         )
 
     audit_response.score = max(0, min(100, int(round(float(audit_response.score)))))
-    audit_response.pros = normalize_audit_list(audit_response.pros)
-    audit_response.cons = normalize_audit_list(audit_response.cons)
+    audit_response.strengths = normalize_audit_list(audit_response.strengths)
+    audit_response.weaknesses = normalize_audit_list(audit_response.weaknesses)
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
 
     return audit_response
@@ -3382,7 +3379,7 @@ async def verify_asset(
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
                         "Use the metadata only as context. Grade the artifact by its intended scope, not by raw "
                         "file size or line count. Return the exact JSON object requested in the system prompt, "
-                        "with user_description as the executive summary field.\n\n"
+                        "with ai_summary as the executive summary field.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
@@ -3395,27 +3392,27 @@ async def verify_asset(
         audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         audit_payload = audit_response.model_dump()
         calculated_score = audit_response.score
-        user_description = audit_response.user_description
+        ai_summary = audit_response.ai_summary
         detected_type = asset_classification["detectedType"]
         language = asset_classification["language"]
         review_mode = asset_classification["reviewMode"]
         complexity_level = asset_classification["complexityLevel"]
         project_depth = asset_classification["projectDepth"]
         recruiter_readiness = asset_classification["recruiterReadiness"]
-        pros = audit_response.pros
-        cons = audit_response.cons
+        strengths = audit_response.strengths
+        weaknesses = audit_response.weaknesses
         recommendations = audit_response.recommendations
         update_payload = {
             "score": calculated_score,
             "evaluation_score": calculated_score,
             "logic_score": calculated_score,
-            "audit_summary": user_description,
-            "ai_summary": user_description,
-            "description": user_description,
-            "pros": pros,
-            "cons": cons,
+            "audit_summary": ai_summary,
+            "ai_summary": ai_summary,
+            "description": ai_summary,
+            "pros": strengths,
+            "cons": weaknesses,
             "recommendations": recommendations,
-            "user_description": user_description,
+            "user_description": ai_summary,
             "has_been_audited": True,
             "status": "Verified",
         }
@@ -3446,21 +3443,26 @@ async def verify_asset(
             "complexityLevel": complexity_level,
             "projectDepth": project_depth,
             "recruiterReadiness": recruiter_readiness,
-            "user_description": user_description,
-            "executiveSummary": user_description,
+            "ai_summary": ai_summary,
+            "user_description": ai_summary,
+            "executiveSummary": ai_summary,
             "report": {
                 **audit_payload,
                 "calculatedScore": calculated_score,
-                "executiveSummary": user_description,
+                "executiveSummary": ai_summary,
+                "pros": strengths,
+                "cons": weaknesses,
                 "strategicRecommendations": recommendations,
             },
             "score": calculated_score,
-            "description": user_description,
-            "executive_summary": user_description,
-            "summary": user_description,
-            "audit_summary": user_description,
-            "pros": pros,
-            "cons": cons,
+            "description": ai_summary,
+            "executive_summary": ai_summary,
+            "summary": ai_summary,
+            "audit_summary": ai_summary,
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "pros": strengths,
+            "cons": weaknesses,
             "recommendations": recommendations,
         }
 

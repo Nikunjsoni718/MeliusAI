@@ -104,21 +104,27 @@ type VerifyAssetResponse = {
   report?: {
     calculatedScore?: number;
     score?: number;
+    ai_summary?: string;
     user_description?: string;
     executiveSummary?: string;
     pros?: string[];
     cons?: string[];
+    strengths?: string[];
+    weaknesses?: string[];
     recommendations?: string[];
     strategicRecommendations?: string[];
   };
   project?: PreviewProject;
   reportText?: string;
+  ai_summary?: string;
   user_description?: string;
   description?: string;
   executive_summary?: string;
   summary?: string;
   score?: number;
   grade?: string;
+  strengths?: string[];
+  weaknesses?: string[];
   pros?: string[];
   cons?: string[];
   recommendations?: string[];
@@ -206,6 +212,39 @@ function getStringArray(value: unknown) {
 
 function getProjectBio(project?: PreviewProject | null) {
   return project?.user_description?.trim() || project?.bio?.trim() || '';
+}
+
+function getExecutiveSummaryText(project?: PreviewProject | null) {
+  const storedSummary =
+    project?.user_description?.trim() ||
+    project?.ai_summary?.trim() ||
+    project?.audit_summary?.trim() ||
+    project?.executive_summary?.trim() ||
+    project?.summary?.trim() ||
+    '';
+  let rawSummary = storedSummary;
+
+  if (storedSummary.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(storedSummary) as {
+        ai_summary?: unknown;
+        user_description?: unknown;
+        executiveSummary?: unknown;
+        summary?: unknown;
+      };
+      rawSummary =
+        [parsed.ai_summary, parsed.user_description, parsed.executiveSummary, parsed.summary]
+          .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          ?.trim() || storedSummary;
+    } catch {
+      rawSummary = storedSummary;
+    }
+  }
+
+  return rawSummary
+    .replace(/^\s*#{1,6}\s*executive summary\s*/i, '')
+    .split(/\n\s*(?:#{1,6}\s*)?(?:pros|strengths|cons|weaknesses|strategic recommendations|recommendations|scorecard)\b/i)[0]
+    .trim();
 }
 
 function getProjectAssetText(project: PreviewProject | null | undefined, previewName: string) {
@@ -303,11 +342,7 @@ export function AssetPreviewModal({
   const recommendations = getMetricItems(liveProject, 'recommendations');
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const executiveSummaryMarkdown =
-    liveProject?.user_description?.trim() ||
-    liveProject?.audit_summary?.trim() ||
-    liveProject?.description?.trim() ||
-    liveProject?.executive_summary?.trim() ||
-    liveProject?.summary?.trim() ||
+    getExecutiveSummaryText(liveProject) ||
     "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
 
   useEffect(() => {
@@ -413,48 +448,41 @@ export function AssetPreviewModal({
       const report = data.report;
       const pythonScore = typeof data.score === 'number' ? data.score : undefined;
       const executiveSummary =
+        data.ai_summary?.trim() ||
+        report?.ai_summary?.trim() ||
         data.user_description?.trim() ||
         report?.user_description?.trim() ||
-        data.description?.trim() ||
-        data.executive_summary?.trim() ||
-        data.summary?.trim() ||
         report?.executiveSummary?.trim() ||
+        data.project?.ai_summary?.trim() ||
         data.project?.user_description?.trim() ||
-        data.project?.description?.trim() ||
         data.project?.audit_summary?.trim() ||
-        liveProject.user_description?.trim() ||
-        liveProject.description?.trim() ||
-        liveProject.audit_summary?.trim() ||
+        getExecutiveSummaryText(liveProject) ||
         '';
-      const prosList = data.pros ?? report?.pros ?? [];
-      const consList = data.cons ?? report?.cons ?? [];
+      const strengthsList = data.strengths ?? report?.strengths ?? data.pros ?? report?.pros ?? [];
+      const weaknessesList = data.weaknesses ?? report?.weaknesses ?? data.cons ?? report?.cons ?? [];
       const recommendationList = data.recommendations ?? report?.recommendations ?? report?.strategicRecommendations ?? [];
-      const reportSections = [
-        executiveSummary,
-        prosList.length > 0 ? `Pros\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
-        consList.length > 0 ? `Cons\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
-        recommendationList.length > 0
-          ? `Strategic Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
-          : '',
-        `MeliusAI Verification Score: ${pythonScore ?? report?.score ?? report?.calculatedScore ?? 0}/100`,
-      ].filter((section) => section.trim().length > 0);
-      const reportText = data.reportText?.trim() || reportSections.join('\n\n');
+      const summaryOnlyText =
+        data.ai_summary?.trim() ||
+        data.user_description?.trim() ||
+        data.project?.ai_summary?.trim() ||
+        data.project?.user_description?.trim() ||
+        executiveSummary;
       const projectPatch: Partial<PreviewProject> = {
         ...(data.project ?? {}),
         score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.score ?? liveProject.score,
         evaluation_score:
           report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
         logic_score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
-        user_description: data.user_description ?? data.project?.user_description ?? (executiveSummary || liveProject.user_description),
-        audit_summary: executiveSummary || report?.executiveSummary || data.project?.audit_summary || liveProject.audit_summary,
-        executive_summary: data.executive_summary ?? data.project?.executive_summary ?? liveProject.executive_summary,
-        summary: data.summary ?? data.project?.summary ?? liveProject.summary,
-        pros: report?.pros ?? data.pros ?? data.project?.pros ?? liveProject.pros,
-        cons: report?.cons ?? data.cons ?? data.project?.cons ?? liveProject.cons,
+        ai_summary: data.ai_summary ?? data.project?.ai_summary ?? (summaryOnlyText || liveProject.ai_summary),
+        user_description: data.user_description ?? data.project?.user_description ?? (summaryOnlyText || liveProject.user_description),
+        audit_summary: summaryOnlyText || report?.executiveSummary || data.project?.audit_summary || liveProject.audit_summary,
+        executive_summary: data.executive_summary ?? summaryOnlyText ?? data.project?.executive_summary ?? liveProject.executive_summary,
+        summary: data.summary ?? summaryOnlyText ?? data.project?.summary ?? liveProject.summary,
+        pros: strengthsList.length > 0 ? strengthsList : data.project?.pros ?? liveProject.pros,
+        cons: weaknessesList.length > 0 ? weaknessesList : data.project?.cons ?? liveProject.cons,
         recommendations:
-          report?.recommendations ?? report?.strategicRecommendations ?? data.recommendations ?? data.project?.recommendations ?? liveProject.recommendations,
-        ai_summary: data.project?.ai_summary ?? reportText ?? liveProject.ai_summary,
-        description: data.project?.description ?? (executiveSummary || reportText || liveProject.description),
+          recommendationList.length > 0 ? recommendationList : data.project?.recommendations ?? liveProject.recommendations,
+        description: data.project?.description ?? (summaryOnlyText || liveProject.description),
       };
 
       setLiveProject((currentProject) => ({
@@ -601,8 +629,8 @@ export function AssetPreviewModal({
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
-              <MetricList title="AI Pros" tone="emerald" items={pros} />
-              <MetricList title="AI Cons" tone="rose" items={cons} />
+              <MetricList title="Strengths" tone="emerald" items={pros} />
+              <MetricList title="Weaknesses" tone="rose" items={cons} />
               <MetricList title="Recommendations" tone="cyan" items={recommendations} />
             </div>
           </div>

@@ -3269,7 +3269,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const payload = (await response.json()) as {
         error?: string;
         grade?: string;
+        ai_summary?: string;
         user_description?: string;
+        strengths?: string[];
+        weaknesses?: string[];
         pros?: string[];
         cons?: string[];
         recommendations?: string[];
@@ -3277,8 +3280,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         report?: {
           calculatedScore?: number;
           score?: number;
+          ai_summary?: string;
           user_description?: string;
           executiveSummary?: string;
+          strengths?: string[];
+          weaknesses?: string[];
           pros?: string[];
           cons?: string[];
           recommendations?: string[];
@@ -3298,27 +3304,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const updatedProject = payload.project;
       const pythonScore = typeof payload.score === 'number' ? payload.score : null;
       const executiveSummary =
+        payload.ai_summary?.trim() ||
+        payload.report?.ai_summary?.trim() ||
         payload.user_description?.trim() ||
         payload.report?.user_description?.trim() ||
-        payload.description?.trim() ||
-        payload.executive_summary?.trim() ||
-        payload.summary?.trim() ||
         payload.report?.executiveSummary?.trim() ||
+        updatedProject?.ai_summary?.trim() ||
         updatedProject?.user_description?.trim() ||
-        updatedProject?.description?.trim() ||
         updatedProject?.executive_summary?.trim() ||
         updatedProject?.summary?.trim() ||
         updatedProject?.audit_summary?.trim() ||
         '';
-      const prosList = payload.pros ?? payload.report?.pros ?? [];
-      const consList = payload.cons ?? payload.report?.cons ?? [];
+      const prosList = payload.strengths ?? payload.report?.strengths ?? payload.pros ?? payload.report?.pros ?? [];
+      const consList = payload.weaknesses ?? payload.report?.weaknesses ?? payload.cons ?? payload.report?.cons ?? [];
       const recommendationList = payload.recommendations ?? payload.report?.recommendations ?? payload.report?.strategicRecommendations ?? [];
       const generatedReportText = [
         executiveSummary,
-        prosList.length > 0 ? `Pros\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
-        consList.length > 0 ? `Cons\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
+        prosList.length > 0 ? `Strengths\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
+        consList.length > 0 ? `Weaknesses\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
         recommendationList.length > 0
-          ? `Strategic Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
+          ? `Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
           : '',
         `MeliusAI Verification Score: ${pythonScore ?? payload.report?.score ?? payload.report?.calculatedScore ?? 0}/100`,
       ]
@@ -3334,15 +3339,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         evaluation_score: updatedProject?.evaluation_score ?? pythonScore,
         logic_score: updatedProject?.logic_score ?? pythonScore,
         score: updatedProject?.score ?? pythonScore,
+        ai_summary: payload.ai_summary ?? updatedProject?.ai_summary ?? executiveSummary,
         user_description: payload.user_description ?? updatedProject?.user_description ?? executiveSummary,
         audit_summary: executiveSummary || updatedProject?.audit_summary,
         executive_summary: payload.executive_summary ?? updatedProject?.executive_summary,
         summary: payload.summary ?? updatedProject?.summary,
-        ai_summary: updatedProject?.ai_summary ?? accumulatedReportText,
-        description: updatedProject?.description ?? accumulatedReportText,
-        pros: payload.pros ?? updatedProject?.pros,
-        cons: payload.cons ?? updatedProject?.cons,
-        recommendations: payload.recommendations ?? updatedProject?.recommendations,
+        description: updatedProject?.description ?? executiveSummary,
+        pros: prosList.length > 0 ? prosList : updatedProject?.pros,
+        cons: consList.length > 0 ? consList : updatedProject?.cons,
+        recommendations: recommendationList.length > 0 ? recommendationList : updatedProject?.recommendations,
       };
 
       setProjects((currentProjects) => {
@@ -4258,6 +4263,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
                 }
                 auditData={{
+                  ai_summary: viewingAuditAsset.ai_summary,
+                  user_description: viewingAuditAsset.user_description,
                   audit_summary: viewingAuditAsset.audit_summary,
                   description: viewingAuditAsset.description,
                   executive_summary: viewingAuditAsset.audit_summary,

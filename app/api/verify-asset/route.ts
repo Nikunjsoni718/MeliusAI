@@ -9,53 +9,25 @@ const OPENAI_VERIFY_MODEL = process.env.OPENAI_VERIFY_ASSET_MODEL?.trim() || 'gp
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_TEXT_CHARS_FOR_AUDIT = 32000;
 
-const VERIFY_ASSET_SYSTEM_PROMPT = `
-You are an elite Senior Staff Engineer, Technical Recruiter, and Mentor auditing candidate code assets for hiring readiness.
-You are strict, highly analytical, and ruthless about evidence. Do not give high scores for basic, trivial, tutorial, boilerplate, or incomplete work.
+const VERIFY_ASSET_SYSTEM_PROMPT = `SYSTEM ROLE: You are an elite Y Combinator CTO and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
 
-PHASE 1: SILENT CLASSIFICATION (CRUCIAL)
-Before evaluating, silently classify the uploaded file into exactly one of these categories. Your score MUST obey the category cap:
-- CATEGORY A (Trivial/Boilerplate): Config files such as package.json, tailwind.config, tsconfig, lockfiles, empty READMEs, basic HTML forms, generated files, and extremely simple scripts. MAX SCORE: 20/100.
-- CATEGORY B (Notes/Theory): Text files, Markdown study notes, conceptual notes, non-implementation writeups. MAX SCORE: 30/100.
-- CATEGORY C (Beginner/Practice): Tutorial follow-alongs, basic loops, simple calculators, single-file basic logic, learner exercises. MAX SCORE: 55/100.
-- CATEGORY D (Intermediate Component): Complex UI components with state, standard CRUD API routes, moderate algorithms, useful scripts/modules with validation and structure. MAX SCORE: 75/100.
-- CATEGORY E (Production-Grade): Full system architectures, secure APIs, optimized algorithms, complex state management, robust error handling, strong edge-case coverage. SCORE RANGE: 76-100.
+RULE 1: CONTEXTUAL, FAIR GRADING (Smart, not harsh)
+Grade the file based STRICTLY on its intended scope. 
+- Do not punish a simple file for being simple. 
+- If a user uploads an HTML file, grade it out of 100 based *only* on HTML best practices (semantics, structure, accessibility). If the HTML is well-written, give it a high score (85+). Do NOT deduct points because it lacks CSS or JavaScript. Evaluate it for what it is.
 
-PHASE 2: RECRUITER-READINESS VERDICT
-The executiveSummary MUST begin with exactly one of these bolded tags:
-**[Recruiter-Ready]**
-**[For Learning/Practice Only]**
-After the tag, explain exactly why a hiring manager would or would not be impressed by this specific file. Separate harsh market realities from constructive mentorship.
-Most single beginner files, notes, config files, basic HTML, and tutorial scripts are **[For Learning/Practice Only]** even when correct.
-Use **[Recruiter-Ready]** only when the exact uploaded asset demonstrates production-level engineering signal on its own.
+RULE 2: THE EXECUTIVE SUMMARY
+Write a supportive, 3-4 sentence technical analysis. Start the summary with either **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score in a constructive, encouraging tone. Do not use Markdown headers (##) in this text.
 
-PHASE 3: DEEP TECHNICAL AUDIT
-Audit the actual content, not the user's intent. Detect and penalize:
-- Missing documentation or unclear setup/use instructions when relevant.
-- Missing input validation and weak error handling.
-- Security issues: hardcoded secrets, injection vectors, unsafe file/network/database handling.
-- Poor maintainability: vague names, magic numbers, monolithic functions, repeated logic, unclear separation of concerns.
-- Language-specific issues: semantic HTML and accessibility, React dependency arrays and state boundaries, Python idioms and exception handling, C/C++ memory safety and edge cases, SQL injection, API auth and status handling.
-
-SCORING DISCIPLINE
-- Never exceed the classification cap.
-- A perfect config file is still CATEGORY A.
-- Notes are scored as learning material, not as software projects.
-- Simple calculators and basic scripts generally belong in CATEGORY C and must not exceed 55.
-- Intermediate components must still lose points for missing validation, tests, security, accessibility, documentation, or edge-case handling.
-- CATEGORY E requires production-grade completeness, not just many lines of code.
-
-STRICT JSON OUTPUT FORMAT
-Return ONLY a raw JSON object. Do not wrap it in markdown fences. Do not add extra keys.
-Use exactly this shape:
+RULE 3: STRICT JSON OUTPUT (Updated Keys)
+You must return ONLY a raw JSON object. Do not wrap it in markdown. Use these exact keys (Note: pros/cons are now strengths/weaknesses):
 {
-  "executiveSummary": "Your brutal but fair overall assessment, starting with **[Recruiter-Ready]** or **[For Learning/Practice Only]**.",
-  "score": 1,
-  "pros": ["Highly specific technical strength 1", "Highly specific technical strength 2"],
-  "cons": ["Specific vulnerability", "Missing architecture", "Poor structure"],
-  "recommendations": ["Actionable step to refactor to production grade", "Specific concept to study next"]
-}
-`;
+  "ai_summary": "Your supportive 3-4 sentence paragraph.",
+  "score": <Number out of 100>,
+  "strengths": ["Specific strength 1", "Specific strength 2"],
+  "weaknesses": ["Specific area to improve 1", "Specific area to improve 2"],
+  "recommendations": ["Actionable next step 1", "Actionable next step 2"]
+}`;
 
 type VerifyAssetPayload = {
   fileUrl?: unknown;
@@ -70,10 +42,10 @@ type VerifyAssetPayload = {
 };
 
 type AuditPayload = {
-  executiveSummary: string;
+  ai_summary: string;
   score: number;
-  pros: string[];
-  cons: string[];
+  strengths: string[];
+  weaknesses: string[];
   recommendations: string[];
 };
 
@@ -532,14 +504,13 @@ function buildUserPrompt({
     'Uploaded Artifact Metadata:',
     `- Asset name: ${assetName}`,
     `- Context lens: ${getContextLens(assetName)}`,
-    `- Server-side classification guardrail: ${scoreBand.label}`,
-    `- Server-side maximum score cap: ${scoreBand.maxScore}/100`,
-    `- Server-side classification reason: ${scoreBand.reason}`,
+    `- Server-side scope hint: ${scoreBand.label}`,
+    `- Server-side scope reason: ${scoreBand.reason}`,
     `- Content truncated: ${truncated ? 'yes' : 'no'}`,
     `- User-provided project context: ${userContextDescription || 'No user-written project description was supplied.'}`,
     '',
-    'You must obey the server-side cap. If the content is worse than the guardrail suggests, score lower.',
-    'Return only the raw JSON object with the exact frontend keys.',
+    'Use the scope hint only as context. Grade the artifact by its intended scope, not by file size or line count.',
+    'Return only the raw JSON object with ai_summary, score, strengths, weaknesses, and recommendations.',
     '',
     auditText
       ? `Uploaded Content To Audit:\n<<<ASSET_CONTENT_START\n${auditText}\nASSET_CONTENT_END>>>`
@@ -568,44 +539,39 @@ function extractJsonObject(rawText: string) {
   }
 }
 
-function normalizeStringArray(value: unknown, fallback: string) {
+function normalizeStringArray(value: unknown) {
   if (!Array.isArray(value)) {
-    return [fallback];
+    return [];
   }
 
-  const normalized = value
+  return value
     .map((item) => String(item).trim())
     .filter(Boolean)
     .slice(0, 5);
-
-  return normalized.length ? normalized : [fallback];
 }
 
-function normalizeExecutiveSummary(summary: unknown, score: number, scoreBand: ScoreBand) {
+function normalizeAiSummary(summary: unknown) {
   const rawSummary = String(summary || '').trim();
-  const verdict = score >= 76 && scoreBand.label === 'CATEGORY E' ? '**[Recruiter-Ready]**' : '**[For Learning/Practice Only]**';
-  const withoutVerdict = rawSummary.replace(/^\*\*\[(Recruiter-Ready|For Learning\/Practice Only)\]\*\*\s*/i, '').trim();
-  const body =
-    withoutVerdict ||
-    `${scoreBand.reason}. Market reality: this asset does not yet provide enough evidence for a hiring manager to treat it as production-grade work. Mentor note: upgrade the implementation depth, validation, error handling, and documentation.`;
+  const withoutMarkdownHeader = rawSummary.replace(/^\s*#{1,6}\s*.*$/gm, '').trim();
 
-  return `${verdict} ${body}`;
+  if (!withoutMarkdownHeader) {
+    throw new Error('AI audit response was missing ai_summary.');
+  }
+
+  return withoutMarkdownHeader;
 }
 
-function normalizeAuditPayload(parsed: Record<string, unknown>, scoreBand: ScoreBand): AuditPayload {
+function normalizeAuditPayload(parsed: Record<string, unknown>): AuditPayload {
   const rawScore = Number(parsed.score);
-  const finiteScore = Number.isFinite(rawScore) ? rawScore : 1;
-  const score = Math.max(1, Math.min(scoreBand.maxScore, Math.round(finiteScore)));
+  const finiteScore = Number.isFinite(rawScore) ? rawScore : 0;
+  const score = Math.max(0, Math.min(100, Math.round(finiteScore)));
 
   return {
-    executiveSummary: normalizeExecutiveSummary(parsed.executiveSummary, score, scoreBand),
+    ai_summary: normalizeAiSummary(parsed.ai_summary ?? parsed.user_description ?? parsed.executiveSummary),
     score,
-    pros: normalizeStringArray(parsed.pros, 'The asset has at least some readable intent or structure to build from.'),
-    cons: normalizeStringArray(parsed.cons, 'The asset lacks enough production-grade technical evidence for a strong hiring signal.'),
-    recommendations: normalizeStringArray(
-      parsed.recommendations,
-      'Add concrete implementation depth, validation, error handling, documentation, and tests appropriate to the asset type.'
-    ),
+    strengths: normalizeStringArray(parsed.strengths ?? parsed.pros),
+    weaknesses: normalizeStringArray(parsed.weaknesses ?? parsed.cons),
+    recommendations: normalizeStringArray(parsed.recommendations),
   };
 }
 
@@ -657,7 +623,7 @@ async function runOpenAIAudit({
     throw new Error('AI audit response was empty.');
   }
 
-  return normalizeAuditPayload(extractJsonObject(rawContent), scoreBand);
+  return normalizeAuditPayload(extractJsonObject(rawContent));
 }
 
 async function persistAuditResult({
@@ -677,13 +643,13 @@ async function persistAuditResult({
       score: audit.score,
       evaluation_score: audit.score,
       logic_score: audit.score,
-      audit_summary: audit.executiveSummary,
-      ai_summary: JSON.stringify(audit),
-      description: audit.executiveSummary,
-      pros: audit.pros,
-      cons: audit.cons,
+      audit_summary: audit.ai_summary,
+      ai_summary: audit.ai_summary,
+      description: audit.ai_summary,
+      pros: audit.strengths,
+      cons: audit.weaknesses,
       recommendations: audit.recommendations,
-      user_description: audit.executiveSummary,
+      user_description: audit.ai_summary,
       has_been_audited: true,
     })
     .eq('id', projectId)
