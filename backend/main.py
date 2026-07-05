@@ -3523,7 +3523,7 @@ async def verify_asset(
         asset_classification = classify_uploaded_asset(asset_name, asset_text_content)
 
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",

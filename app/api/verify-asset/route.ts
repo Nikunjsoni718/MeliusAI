@@ -1,76 +1,63 @@
-import { generateObject, type ModelMessage } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import { NextResponse } from 'next/server';
 import JSZip from 'jszip';
-import { z } from 'zod/v4';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
 const OPENAI_VERIFY_MODEL = process.env.OPENAI_VERIFY_ASSET_MODEL?.trim() || 'gpt-4o-mini';
+const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_TEXT_CHARS_FOR_AUDIT = 32000;
 
 const VERIFY_ASSET_SYSTEM_PROMPT = `
-You are MeliusAI's strict AI auditing engine: a combined Senior Staff Engineer, Technical Recruiter, and Mentor.
+You are an elite Senior Staff Engineer, Technical Recruiter, and Mentor auditing candidate code assets for hiring readiness.
+You are strict, highly analytical, and ruthless about evidence. Do not give high scores for basic, trivial, tutorial, boilerplate, or incomplete work.
 
-Your job is to evaluate the uploaded asset as evidence of technical skill. Be fair, specific, and demanding. Do not inflate scores for boilerplate, notes, tutorials, config files, or basic examples.
+PHASE 1: SILENT CLASSIFICATION (CRUCIAL)
+Before evaluating, silently classify the uploaded file into exactly one of these categories. Your score MUST obey the category cap:
+- CATEGORY A (Trivial/Boilerplate): Config files such as package.json, tailwind.config, tsconfig, lockfiles, empty READMEs, basic HTML forms, generated files, and extremely simple scripts. MAX SCORE: 20/100.
+- CATEGORY B (Notes/Theory): Text files, Markdown study notes, conceptual notes, non-implementation writeups. MAX SCORE: 30/100.
+- CATEGORY C (Beginner/Practice): Tutorial follow-alongs, basic loops, simple calculators, single-file basic logic, learner exercises. MAX SCORE: 55/100.
+- CATEGORY D (Intermediate Component): Complex UI components with state, standard CRUD API routes, moderate algorithms, useful scripts/modules with validation and structure. MAX SCORE: 75/100.
+- CATEGORY E (Production-Grade): Full system architectures, secure APIs, optimized algorithms, complex state management, robust error handling, strong edge-case coverage. SCORE RANGE: 76-100.
 
-PHASE 1: ASSET CLASSIFICATION (Internal Reasoning)
-Before grading, silently classify the uploaded file into exactly one category:
-- Trivial/Boilerplate: config files, basic static HTML, empty READMEs, generated files, simple scripts, package manifests, lockfiles, environment samples.
-- Notes/Theory: Markdown notes, text explanations, conceptual writeups, setup notes, non-code documentation.
-- Practice/Beginner: tutorial follow-alongs, basic loops, calculators, single-purpose exercises, beginner CRUD snippets, toy examples.
-- Intermediate/Project Component: API routes, UI components with meaningful state, non-trivial scripts, basic algorithms, reusable modules, real app screens.
-- Production-Grade/Complex: full system architecture, secure APIs, robust data flows, optimized algorithms, meaningful edge-case handling, tests, performance/security awareness.
+PHASE 2: RECRUITER-READINESS VERDICT
+The executiveSummary MUST begin with exactly one of these bolded tags:
+**[Recruiter-Ready]**
+**[For Learning/Practice Only]**
+After the tag, explain exactly why a hiring manager would or would not be impressed by this specific file. Separate harsh market realities from constructive mentorship.
+Most single beginner files, notes, config files, basic HTML, and tutorial scripts are **[For Learning/Practice Only]** even when correct.
+Use **[Recruiter-Ready]** only when the exact uploaded asset demonstrates production-level engineering signal on its own.
 
-PHASE 2: DYNAMIC SCORING BANDS (Strict Rubric)
-Strictly cap the score based on the internal classification:
-- Trivial/Config/Notes: MAX SCORE 25/100.
-- Practice/Beginner: MAX SCORE 50/100.
-- Intermediate: MAX SCORE 75/100.
-- Production-Grade: Can score 76-100 only if the asset handles edge cases, security, error states, maintainability, and performance.
-- A perfect config file is still just a config file. It cannot score highly as a display of programming skill.
-- Deduct heavily for missing error handling, lack of useful comments around non-obvious logic, hardcoded values, poor variable naming, weak structure, security risks, brittle assumptions, missing accessibility, and absent tests where tests would naturally be expected.
+PHASE 3: DEEP TECHNICAL AUDIT
+Audit the actual content, not the user's intent. Detect and penalize:
+- Missing documentation or unclear setup/use instructions when relevant.
+- Missing input validation and weak error handling.
+- Security issues: hardcoded secrets, injection vectors, unsafe file/network/database handling.
+- Poor maintainability: vague names, magic numbers, monolithic functions, repeated logic, unclear separation of concerns.
+- Language-specific issues: semantic HTML and accessibility, React dependency arrays and state boundaries, Python idioms and exception handling, C/C++ memory safety and edge cases, SQL injection, API auth and status handling.
 
-RECRUITER-READINESS EVALUATION
-- The executiveSummary must explicitly state one verdict: "Recruiter-Ready" or "For Learning/Practice".
-- Separate market-readiness from private mentorship. Use language like "Recruiter-Readiness Verdict: ..." and "Mentor Note: ...".
-- "Recruiter-Ready" means this exact asset is impressive enough to show a hiring manager on its own. Most notes, config files, beginner exercises, and incomplete snippets are "For Learning/Practice" even when well written.
+SCORING DISCIPLINE
+- Never exceed the classification cap.
+- A perfect config file is still CATEGORY A.
+- Notes are scored as learning material, not as software projects.
+- Simple calculators and basic scripts generally belong in CATEGORY C and must not exceed 55.
+- Intermediate components must still lose points for missing validation, tests, security, accessibility, documentation, or edge-case handling.
+- CATEGORY E requires production-grade completeness, not just many lines of code.
 
-LANGUAGE & CONTEXT AWARENESS
-- Frontend files (HTML/CSS/JS/React/Vue/Svelte): judge responsiveness, accessibility, semantic structure, state management, UX completeness, browser behavior, and maintainability.
-- Backend/scripts (Python, Java, C++, C, C#, Go, Rust, Node, SQL): judge correctness, time/space complexity, memory/resource handling, security, SQL injection risk, hardcoded secrets, input validation, and error handling.
-- Markdown/README/text: judge clarity, setup instructions, architectural explanations, accuracy, and usefulness, but keep the score capped as notes/documentation unless the asset includes substantive implementation.
-
-OUTPUT CONSTRAINTS
-Return ONLY a JSON object with exactly these keys:
+STRICT JSON OUTPUT FORMAT
+Return ONLY a raw JSON object. Do not wrap it in markdown fences. Do not add extra keys.
+Use exactly this shape:
 {
-  "executiveSummary": "String (Must include Recruiter-Readiness verdict and overall impression)",
-  "score": Number,
-  "pros": ["Array of specific technical strengths"],
-  "cons": ["Array of specific technical flaws, missing features, or security risks"],
-  "recommendations": ["Array of actionable, senior-level advice to upgrade the code to the next level"]
+  "executiveSummary": "Your brutal but fair overall assessment, starting with **[Recruiter-Ready]** or **[For Learning/Practice Only]**.",
+  "score": 1,
+  "pros": ["Highly specific technical strength 1", "Highly specific technical strength 2"],
+  "cons": ["Specific vulnerability", "Missing architecture", "Poor structure"],
+  "recommendations": ["Actionable step to refactor to production grade", "Specific concept to study next"]
 }
-Do not include markdown wrappers, prose outside JSON, hidden fields, comments, or extra keys.
 `;
 
-const auditSchema = z
-  .object({
-    executiveSummary: z
-      .string()
-      .min(1)
-      .describe('Must include Recruiter-Readiness Verdict and Mentor Note.'),
-    score: z.number().min(0).max(100).describe('Strictly banded score from 0 to 100.'),
-    pros: z.array(z.string().min(1)).min(1).max(5),
-    cons: z.array(z.string().min(1)).min(1).max(5),
-    recommendations: z.array(z.string().min(1)).min(1).max(5),
-  })
-  .strict();
-
-type AuditPayload = z.infer<typeof auditSchema>;
-
-type VerifyAssetProxyPayload = {
+type VerifyAssetPayload = {
   fileUrl?: unknown;
   filename?: unknown;
   assetName?: unknown;
@@ -82,33 +69,43 @@ type VerifyAssetProxyPayload = {
   file_id?: unknown;
 };
 
+type AuditPayload = {
+  executiveSummary: string;
+  score: number;
+  pros: string[];
+  cons: string[];
+  recommendations: string[];
+};
+
 type ParsedDataUrl = {
   buffer: Buffer;
-  data: string;
-  isBase64: boolean;
   mediaType: string;
 };
 
 type ScoreBand = {
-  label:
-    | 'Trivial/Boilerplate'
-    | 'Notes/Theory'
-    | 'Practice/Beginner'
-    | 'Intermediate/Project Component'
-    | 'Production-Grade/Complex';
-  maxScore: 25 | 50 | 75 | 100;
+  label: 'CATEGORY A' | 'CATEGORY B' | 'CATEGORY C' | 'CATEGORY D' | 'CATEGORY E';
+  maxScore: 20 | 30 | 55 | 75 | 100;
   reason: string;
 };
 
-type UserMessageContent = Extract<ModelMessage, { role: 'user' }>['content'];
+type OpenAIChatCompletionResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+};
 
 const configFilenames = new Set([
   '.env',
   '.env.example',
   '.env.local',
+  '.eslintrc',
   '.gitignore',
   '.prettierrc',
-  '.eslintrc',
   'components.json',
   'dockerfile',
   'eslint.config.js',
@@ -121,6 +118,7 @@ const configFilenames = new Set([
   'pnpm-lock.yaml',
   'postcss.config.js',
   'postcss.config.mjs',
+  'requirements.txt',
   'tailwind.config.js',
   'tailwind.config.ts',
   'tsconfig.json',
@@ -148,7 +146,17 @@ const backendExtensions = new Set([
   '.sql',
   '.ts',
 ]);
-const codeExtensions = new Set([...frontendExtensions, ...backendExtensions, '.h', '.hpp', '.kt', '.kts', '.lua', '.sh', '.swift']);
+const codeExtensions = new Set([
+  ...frontendExtensions,
+  ...backendExtensions,
+  '.h',
+  '.hpp',
+  '.kt',
+  '.kts',
+  '.lua',
+  '.sh',
+  '.swift',
+]);
 const textExtensions = new Set([...codeExtensions, ...notesExtensions, '.csv', '.json', '.xml']);
 
 function getString(value: unknown) {
@@ -172,15 +180,6 @@ function isReadme(assetName: string) {
   return normalizedName === 'readme' || normalizedName.startsWith('readme.');
 }
 
-function isTextLikeAsset(assetName: string, contentType: string) {
-  const normalizedType = getNormalizedContentType(contentType);
-
-  return (
-    isTextLikeContentType(normalizedType) ||
-    textExtensions.has(getExtension(assetName))
-  );
-}
-
 function isTextLikeContentType(contentType: string) {
   const normalizedType = getNormalizedContentType(contentType);
 
@@ -192,6 +191,10 @@ function isTextLikeContentType(contentType: string) {
     normalizedType === 'application/xml' ||
     normalizedType === 'application/x-sh'
   );
+}
+
+function isTextLikeAsset(assetName: string, contentType: string) {
+  return isTextLikeContentType(contentType) || textExtensions.has(getExtension(assetName));
 }
 
 function isPdfAsset(assetName: string, contentType: string) {
@@ -214,30 +217,15 @@ function isDocxAsset(assetName: string, contentType: string) {
   );
 }
 
-function shouldAttachAsModelFile(mediaType: string) {
-  const normalizedType = getNormalizedContentType(mediaType);
-
-  return normalizedType === 'application/pdf' || normalizedType.startsWith('image/');
-}
-
 function getDocumentDataUrlContentType(assetName: string, responseContentType: string) {
   const normalizedResponseType = getNormalizedContentType(responseContentType);
-  const normalizedAssetName = assetName.toLowerCase();
 
   if (normalizedResponseType) {
     return normalizedResponseType;
   }
 
-  if (normalizedAssetName.endsWith('.pdf')) {
+  if (assetName.toLowerCase().endsWith('.pdf')) {
     return 'application/pdf';
-  }
-
-  if (normalizedAssetName.endsWith('.pptx')) {
-    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-  }
-
-  if (normalizedAssetName.endsWith('.docx')) {
-    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   }
 
   return 'application/octet-stream';
@@ -256,15 +244,11 @@ function parseDataUrl(value: string): ParsedDataUrl | null {
   const isBase64 = metadata.includes(';base64');
 
   try {
-    const data = isBase64 ? rawData.replace(/\s/g, '') : Buffer.from(decodeURIComponent(rawData), 'utf8').toString('base64');
-    const buffer = Buffer.from(data, 'base64');
+    const buffer = isBase64
+      ? Buffer.from(rawData.replace(/\s/g, ''), 'base64')
+      : Buffer.from(decodeURIComponent(rawData), 'utf8');
 
-    return {
-      buffer,
-      data,
-      isBase64,
-      mediaType,
-    };
+    return { buffer, mediaType };
   } catch {
     return null;
   }
@@ -282,11 +266,10 @@ function decodeXmlEntities(value: string) {
 }
 
 function extractTextNodes(xml: string) {
-  const textNodes = [...xml.matchAll(/<(?:a:t|w:t|t)[^>]*>([\s\S]*?)<\/(?:a:t|w:t|t)>/gi)].map((match) =>
-    decodeXmlEntities(match[1].replace(/<[^>]+>/g, '').trim())
-  );
-
-  return textNodes.filter(Boolean).join('\n');
+  return [...xml.matchAll(/<(?:a:t|w:t|t)[^>]*>([\s\S]*?)<\/(?:a:t|w:t|t)>/gi)]
+    .map((match) => decodeXmlEntities(match[1].replace(/<[^>]+>/g, '').trim()))
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function extractOpenXmlText(buffer: Buffer, assetName: string) {
@@ -312,14 +295,11 @@ async function extractOpenXmlText(buffer: Buffer, assetName: string) {
 
     const documentXml = await zip.file('word/document.xml')?.async('string');
 
-    if (documentXml) {
-      return extractTextNodes(documentXml).trim();
-    }
+    return documentXml ? extractTextNodes(documentXml).trim() : '';
   } catch (error) {
     console.warn('Unable to extract Office document text for verification:', error);
+    return '';
   }
-
-  return '';
 }
 
 async function normalizeProvidedAssetContent(content: string, assetName: string) {
@@ -405,12 +385,18 @@ function countMatches(value: string, pattern: RegExp) {
   return value.match(pattern)?.length ?? 0;
 }
 
-function looksLikeBasicHtml(content: string) {
-  const lowered = content.toLowerCase();
-  const hasScriptOrForm = /<script\b|<form\b|<input\b|<button\b|<nav\b|<main\b|<section\b|<article\b|@media\b/i.test(content);
-  const htmlTagCount = countMatches(lowered, /<([a-z][a-z0-9-]*)\b/g);
+function isExtremelySimpleScript(content: string) {
+  const nonEmptyLineCount = content.split(/\r?\n/).filter((line) => line.trim()).length;
+  const hasStructure = /\b(function|class|def|try|catch|except|validate|schema|interface|type)\b/i.test(content);
 
-  return /<!doctype\s+html|<html[\s>]/i.test(content) && !hasScriptOrForm && htmlTagCount < 20;
+  return nonEmptyLineCount <= 15 && !hasStructure;
+}
+
+function looksLikeBasicHtml(content: string) {
+  const htmlTagCount = countMatches(content.toLowerCase(), /<([a-z][a-z0-9-]*)\b/g);
+  const hasAppSignals = /<script\b|useState\s*\(|fetch\s*\(|<nav\b|<main\b|<section\b|<article\b|@media\b/i.test(content);
+
+  return /<!doctype\s+html|<html[\s>]|<form\b/i.test(content) && !hasAppSignals && htmlTagCount < 25;
 }
 
 function hasBeginnerSignals(content: string) {
@@ -418,7 +404,7 @@ function hasBeginnerSignals(content: string) {
 }
 
 function hasIntermediateSignals(content: string) {
-  return /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b|NextResponse|useState\s*\(|useEffect\s*\(|createSupabase|fetch\s*\(|class\s+\w+|async\s+function|router\.|app\.|SELECT\s+.+\s+FROM|INSERT\s+INTO/i.test(
+  return /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b|NextResponse|useState\s*\(|useEffect\s*\(|fetch\s*\(|createSupabase|class\s+\w+|async\s+function|SELECT\s+.+\s+FROM|INSERT\s+INTO/i.test(
     content
   );
 }
@@ -427,11 +413,11 @@ function productionSignalCount(content: string) {
   const signals = [
     /auth|getUser|Authorization|JWT|session/i,
     /zod|schema|validate|sanitize|parse|safeParse/i,
-    /try\s*{|catch\s*\(|throw new|error handling|NextResponse\.json/i,
+    /try\s*{|catch\s*\(|throw new|raise\s+|except\s+/i,
     /rateLimit|csrf|xss|sql injection|escape|permission|RLS|policy/i,
     /cache|memo|index|pagination|batch|stream|timeout|AbortController|Promise\.all/i,
-    /test\(|describe\(|expect\(|unit test|integration test/i,
-    /transaction|rollback|idempotent|retry|dedupe|queue/i,
+    /test\(|describe\(|expect\(|pytest|unittest|assert\s+/i,
+    /transaction|rollback|idempotent|retry|queue/i,
   ];
 
   return signals.filter((pattern) => pattern.test(content)).length;
@@ -444,74 +430,55 @@ function inferScoreBand(assetName: string, content: string): ScoreBand {
   const nonEmptyLineCount = signalText.split(/\r?\n/).filter((line) => line.trim()).length;
   const isDataUrlOnly = Boolean(parseDataUrl(content)) && !signalText.trim();
 
-  if (configFilenames.has(normalizedName) || configExtensions.has(extension)) {
+  if (
+    configFilenames.has(normalizedName) ||
+    configExtensions.has(extension) ||
+    looksLikeBasicHtml(signalText) ||
+    isExtremelySimpleScript(signalText)
+  ) {
     return {
-      label: 'Trivial/Boilerplate',
-      maxScore: 25,
-      reason: 'configuration or boilerplate artifact',
+      label: 'CATEGORY A',
+      maxScore: 20,
+      reason: 'trivial, boilerplate, basic HTML, config/package, or extremely simple script',
     };
   }
 
-  if (isReadme(assetName) || notesExtensions.has(extension)) {
+  if (isReadme(assetName) || notesExtensions.has(extension) || isDataUrlOnly || (!codeExtensions.has(extension) && extension)) {
     return {
-      label: 'Notes/Theory',
-      maxScore: 25,
-      reason: 'documentation, notes, or theory rather than implementation',
+      label: 'CATEGORY B',
+      maxScore: 30,
+      reason: 'notes, theory, documentation, non-code, or low implementation evidence',
     };
   }
 
-  if (isDataUrlOnly) {
+  if (signalText.length > 4000 && nonEmptyLineCount >= 100 && productionSignalCount(signalText) >= 5) {
     return {
-      label: 'Notes/Theory',
-      maxScore: 25,
-      reason: 'binary/non-text artifact with limited direct implementation evidence',
-    };
-  }
-
-  if (!codeExtensions.has(extension) && extension) {
-    return {
-      label: 'Notes/Theory',
-      maxScore: 25,
-      reason: 'non-code artifact',
-    };
-  }
-
-  if ((extension === '.html' || extension === '.htm') && looksLikeBasicHtml(signalText)) {
-    return {
-      label: 'Trivial/Boilerplate',
-      maxScore: 25,
-      reason: 'basic static HTML without meaningful application behavior',
-    };
-  }
-
-  if (signalText.length > 3500 && nonEmptyLineCount >= 100 && productionSignalCount(signalText) >= 5) {
-    return {
-      label: 'Production-Grade/Complex',
+      label: 'CATEGORY E',
       maxScore: 100,
-      reason: 'substantial implementation with production-readiness signals',
+      reason: 'substantial implementation with production-grade signals',
     };
   }
 
-  if (hasIntermediateSignals(signalText) || nonEmptyLineCount >= 45) {
+  if (hasIntermediateSignals(signalText) || nonEmptyLineCount >= 50 || productionSignalCount(signalText) >= 3) {
     return {
-      label: 'Intermediate/Project Component',
+      label: 'CATEGORY D',
       maxScore: 75,
-      reason: 'real project component or non-trivial implementation',
+      reason: 'intermediate component, API route, stateful UI, or moderate algorithm/module',
     };
   }
 
-  if (hasBeginnerSignals(signalText) || nonEmptyLineCount < 45) {
+  if (hasBeginnerSignals(signalText) || codeExtensions.has(extension)) {
     return {
-      label: 'Practice/Beginner',
-      maxScore: 50,
-      reason: 'small or tutorial-scale code artifact',
+      label: 'CATEGORY C',
+      maxScore: 55,
+      reason: 'beginner/practice code or single-file basic logic',
     };
   }
 
   return {
-    label: 'Intermediate/Project Component',
-    maxScore: 75,
-    reason: 'implementation has project-level signals but not enough production evidence',
+    label: 'CATEGORY B',
+    maxScore: 30,
+    reason: 'insufficient evidence of implementation depth',
   };
 }
 
@@ -519,18 +486,18 @@ function getContextLens(assetName: string) {
   const extension = getExtension(assetName);
 
   if (notesExtensions.has(extension) || isReadme(assetName)) {
-    return 'Markdown/README/text documentation lens: clarity, setup instructions, architectural explanation, accuracy.';
+    return 'Markdown/README/text lens: clarity, setup instructions, completeness, examples, and whether this proves coding ability.';
   }
 
   if (frontendExtensions.has(extension)) {
-    return 'Frontend lens: responsiveness, accessibility, semantic markup, state management, UX completeness, browser behavior.';
+    return 'Frontend lens: semantic HTML, accessibility, responsiveness, React/state boundaries, UX completeness, maintainability.';
   }
 
   if (backendExtensions.has(extension)) {
-    return 'Backend/script lens: correctness, complexity, memory/resource handling, security, input validation, hardcoded secrets, error handling.';
+    return 'Backend/script lens: correctness, complexity, validation, security, hardcoded secrets, injection risk, error handling.';
   }
 
-  return 'General artifact lens: evaluate only what this file proves technically; do not infer unseen implementation.';
+  return 'General artifact lens: evaluate only the technical evidence present in this file.';
 }
 
 function truncateForAudit(content: string) {
@@ -542,12 +509,12 @@ function truncateForAudit(content: string) {
   }
 
   return {
-    text: `${content.slice(0, MAX_TEXT_CHARS_FOR_AUDIT)}\n\n[TRUNCATED: only the first ${MAX_TEXT_CHARS_FOR_AUDIT} characters were provided to the model. Penalize uncertainty where relevant.]`,
+    text: `${content.slice(0, MAX_TEXT_CHARS_FOR_AUDIT)}\n\n[TRUNCATED: only the first ${MAX_TEXT_CHARS_FOR_AUDIT} characters were provided. Penalize uncertainty.]`,
     truncated: true,
   };
 }
 
-function buildAuditMessages({
+function buildUserPrompt({
   assetName,
   content,
   scoreBand,
@@ -557,81 +524,140 @@ function buildAuditMessages({
   content: string;
   scoreBand: ScoreBand;
   userContextDescription: string;
-}): ModelMessage[] {
-  const parsedDataUrl = parseDataUrl(content);
+}) {
   const signalText = getSignalText(content);
   const { text: auditText, truncated } = truncateForAudit(signalText);
-  const promptText = [
+
+  return [
     'Uploaded Artifact Metadata:',
     `- Asset name: ${assetName}`,
     `- Context lens: ${getContextLens(assetName)}`,
-    `- Server-side pre-review classification signal: ${scoreBand.label}`,
+    `- Server-side classification guardrail: ${scoreBand.label}`,
     `- Server-side maximum score cap: ${scoreBand.maxScore}/100`,
-    `- Server-side cap reason: ${scoreBand.reason}`,
-    `- Content was truncated for model review: ${truncated ? 'yes' : 'no'}`,
+    `- Server-side classification reason: ${scoreBand.reason}`,
+    `- Content truncated: ${truncated ? 'yes' : 'no'}`,
     `- User-provided project context: ${userContextDescription || 'No user-written project description was supplied.'}`,
     '',
-    'Instructions:',
-    '- Use the server-side classification signal as a strong guardrail.',
-    '- If the content clearly belongs in a lower category, score lower.',
-    '- Never exceed the provided maximum score cap.',
-    '- Make every pro, con, and recommendation specific to this asset.',
+    'You must obey the server-side cap. If the content is worse than the guardrail suggests, score lower.',
+    'Return only the raw JSON object with the exact frontend keys.',
     '',
     auditText
       ? `Uploaded Content To Audit:\n<<<ASSET_CONTENT_START\n${auditText}\nASSET_CONTENT_END>>>`
-      : 'Uploaded Content To Audit:\nA binary file is attached only if the model supports this media type. If no readable implementation content is available, evaluate the asset as low evidence of programming skill.',
+      : 'Uploaded Content To Audit:\nNo readable implementation content was extractable. Treat this as low evidence of programming skill.',
   ].join('\n');
-
-  const contentParts: Exclude<UserMessageContent, string> = [{ type: 'text', text: promptText }];
-
-  if (parsedDataUrl && shouldAttachAsModelFile(parsedDataUrl.mediaType)) {
-    contentParts.push({
-      type: 'file',
-      data: parsedDataUrl.data,
-      filename: assetName,
-      mediaType: parsedDataUrl.mediaType,
-    });
-  }
-
-  return [
-    {
-      role: 'user',
-      content: contentParts,
-    },
-  ];
 }
 
-function normalizeAuditList(items: string[], fallback: string) {
-  const normalized = items.map((item) => item.trim()).filter(Boolean).slice(0, 5);
+function extractJsonObject(rawText: string) {
+  const trimmedText = rawText
+    .trim()
+    .replace(/^```(?:json)?/i, '')
+    .replace(/```$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(trimmedText) as Record<string, unknown>;
+  } catch {
+    const firstBrace = trimmedText.indexOf('{');
+    const lastBrace = trimmedText.lastIndexOf('}');
+
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return JSON.parse(trimmedText.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+    }
+
+    throw new Error('AI audit response was not valid JSON.');
+  }
+}
+
+function normalizeStringArray(value: unknown, fallback: string) {
+  if (!Array.isArray(value)) {
+    return [fallback];
+  }
+
+  const normalized = value
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 5);
 
   return normalized.length ? normalized : [fallback];
 }
 
-function normalizeExecutiveSummary(summary: string, score: number, scoreBand: ScoreBand) {
-  const verdict = score >= 76 && scoreBand.maxScore === 100 ? 'Recruiter-Ready' : 'For Learning/Practice';
-  const withoutVerdict = summary
-    .replace(/Recruiter-Readiness Verdict:\s*(Recruiter-Ready|For Learning\/Practice)\.?\s*/i, '')
-    .trim();
-  const withMentorNote = /Mentor Note:/i.test(withoutVerdict)
-    ? withoutVerdict
-    : `${withoutVerdict} Mentor Note: Upgrade the asset by addressing the highest-impact technical gaps before using it as portfolio evidence.`;
+function normalizeExecutiveSummary(summary: unknown, score: number, scoreBand: ScoreBand) {
+  const rawSummary = String(summary || '').trim();
+  const verdict = score >= 76 && scoreBand.label === 'CATEGORY E' ? '**[Recruiter-Ready]**' : '**[For Learning/Practice Only]**';
+  const withoutVerdict = rawSummary.replace(/^\*\*\[(Recruiter-Ready|For Learning\/Practice Only)\]\*\*\s*/i, '').trim();
+  const body =
+    withoutVerdict ||
+    `${scoreBand.reason}. Market reality: this asset does not yet provide enough evidence for a hiring manager to treat it as production-grade work. Mentor note: upgrade the implementation depth, validation, error handling, and documentation.`;
 
-  return `Recruiter-Readiness Verdict: ${verdict}. ${withMentorNote}`.trim();
+  return `${verdict} ${body}`;
 }
 
-function normalizeAuditPayload(audit: AuditPayload, scoreBand: ScoreBand): AuditPayload {
-  const score = Math.max(0, Math.min(scoreBand.maxScore, Math.round(audit.score)));
+function normalizeAuditPayload(parsed: Record<string, unknown>, scoreBand: ScoreBand): AuditPayload {
+  const rawScore = Number(parsed.score);
+  const finiteScore = Number.isFinite(rawScore) ? rawScore : 1;
+  const score = Math.max(1, Math.min(scoreBand.maxScore, Math.round(finiteScore)));
 
   return {
-    executiveSummary: normalizeExecutiveSummary(audit.executiveSummary.trim(), score, scoreBand),
+    executiveSummary: normalizeExecutiveSummary(parsed.executiveSummary, score, scoreBand),
     score,
-    pros: normalizeAuditList(audit.pros, 'The asset contains some readable structure or intent that can be built upon.'),
-    cons: normalizeAuditList(audit.cons, 'The asset does not yet provide enough implementation evidence for a strong technical signal.'),
-    recommendations: normalizeAuditList(
-      audit.recommendations,
-      'Add substantive implementation details, error handling, and evidence of real-world constraints.'
+    pros: normalizeStringArray(parsed.pros, 'The asset has at least some readable intent or structure to build from.'),
+    cons: normalizeStringArray(parsed.cons, 'The asset lacks enough production-grade technical evidence for a strong hiring signal.'),
+    recommendations: normalizeStringArray(
+      parsed.recommendations,
+      'Add concrete implementation depth, validation, error handling, documentation, and tests appropriate to the asset type.'
     ),
   };
+}
+
+async function runOpenAIAudit({
+  assetName,
+  content,
+  scoreBand,
+  userContextDescription,
+}: {
+  assetName: string;
+  content: string;
+  scoreBand: ScoreBand;
+  userContextDescription: string;
+}) {
+  const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_VERIFY_MODEL,
+      messages: [
+        { role: 'system', content: VERIFY_ASSET_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: buildUserPrompt({
+            assetName,
+            content,
+            scoreBand,
+            userContextDescription,
+          }),
+        },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.05,
+    }),
+  });
+
+  const responseJson = (await response.json().catch(() => ({}))) as OpenAIChatCompletionResponse;
+
+  if (!response.ok) {
+    throw new Error(responseJson.error?.message || 'OpenAI asset audit request failed.');
+  }
+
+  const rawContent = responseJson.choices?.[0]?.message?.content;
+
+  if (!rawContent) {
+    throw new Error('AI audit response was empty.');
+  }
+
+  return normalizeAuditPayload(extractJsonObject(rawContent), scoreBand);
 }
 
 async function persistAuditResult({
@@ -647,7 +673,6 @@ async function persistAuditResult({
   userContextDescription: string;
   userId: string;
 }) {
-  const auditJson = JSON.stringify(audit);
   const { error } = await supabase
     .from('projects')
     .update({
@@ -655,7 +680,7 @@ async function persistAuditResult({
       evaluation_score: audit.score,
       logic_score: audit.score,
       audit_summary: audit.executiveSummary,
-      ai_summary: auditJson,
+      ai_summary: JSON.stringify(audit),
       description: audit.executiveSummary,
       summary: audit.executiveSummary,
       pros: audit.pros,
@@ -691,7 +716,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = (await request.json().catch(() => null)) as VerifyAssetProxyPayload | null;
+    const body = (await request.json().catch(() => null)) as VerifyAssetPayload | null;
 
     if (!body) {
       return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
@@ -717,7 +742,7 @@ export async function POST(request: Request) {
 
     if (!assetTextContent && !fileUrl) {
       return NextResponse.json(
-        { error: 'fileUrl is required.' },
+        { error: 'fileUrl or assetTextContent is required.' },
         { status: 400 }
       );
     }
@@ -736,26 +761,12 @@ export async function POST(request: Request) {
     }
 
     const scoreBand = inferScoreBand(assetName, contentForVerification);
-    const { object } = await generateObject({
-      model: openai(OPENAI_VERIFY_MODEL),
-      system: VERIFY_ASSET_SYSTEM_PROMPT,
-      messages: buildAuditMessages({
-        assetName,
-        content: contentForVerification,
-        scoreBand,
-        userContextDescription,
-      }),
-      schema: auditSchema,
-      schemaName: 'melius_asset_audit',
-      schemaDescription: 'Strict MeliusAI asset verification audit with exact frontend keys.',
-      maxOutputTokens: 1800,
-      providerOptions: {
-        openai: {
-          strictJsonSchema: true,
-        },
-      },
+    const audit = await runOpenAIAudit({
+      assetName,
+      content: contentForVerification,
+      scoreBand,
+      userContextDescription,
     });
-    const audit = normalizeAuditPayload(object, scoreBand);
 
     await persistAuditResult({
       audit,
