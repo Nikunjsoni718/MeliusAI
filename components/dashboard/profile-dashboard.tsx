@@ -3059,18 +3059,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     const fileExtension = getFileExtension(file.name) || 'file';
+    const uploadDescription = description.trim() || null;
     const { data, error } = await supabase
       .from('projects')
       .insert({
         user_id: userId,
-        owner_id: userId,
         name: file.name,
-        title: file.name,
         file_url: fileUrl,
-        source_url: fileUrl,
         file_type: fileExtension,
-        file_size: file.size,
-        description: description.trim() || null,
+        description: uploadDescription,
+        user_description: uploadDescription,
+        is_public: false,
+        has_been_audited: false,
+        status: 'draft',
       })
       .select('*')
       .single();
