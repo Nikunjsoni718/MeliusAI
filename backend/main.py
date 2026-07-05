@@ -361,10 +361,6 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "qualifications, experience, hobbies, skills"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = "*"
-SPECTATE_SCORE_PUBLIC_SELECT = (
-    "id, project_id, scored_by, source, score, summary, improvement_tips, "
-    "created_at, updated_at"
-)
 
 
 def normalize_email(value: Any) -> str | None:
@@ -414,55 +410,28 @@ def dedupe_rows_by_id(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 async def fetch_project_rows_for_profile(supabase: Any, profile_id: str) -> List[Dict[str, Any]]:
-    project_rows: List[Dict[str, Any]] = []
+    try:
+        projects_response = await asyncio.to_thread(
+            lambda: supabase.table("projects")
+            .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+            .eq("user_id", profile_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as projects_error:
+        logger.warning(
+            "Unable to hydrate spectator profile projects via user_id: %s",
+            projects_error,
+        )
+        return []
 
-    for ownership_column in ("user_id", "owner_id"):
-        try:
-            projects_response = await asyncio.to_thread(
-                lambda column=ownership_column: supabase.table("projects")
-                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                .eq(column, profile_id)
-                .order("created_at", desc=True)
-                .execute()
-            )
-            if isinstance(projects_response.data, list):
-                project_rows.extend(projects_response.data)
-        except Exception as projects_error:
-            logger.warning(
-                "Unable to hydrate spectator profile projects via %s: %s",
-                ownership_column,
-                projects_error,
-            )
+    project_rows = projects_response.data if isinstance(projects_response.data, list) else []
 
     return sorted(
         dedupe_rows_by_id(project_rows),
         key=lambda row: str(row.get("created_at") or ""),
         reverse=True,
     )
-
-
-async def fetch_score_rows_for_projects(supabase: Any, project_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    project_ids = [
-        str(project.get("id") or "").strip()
-        for project in project_rows
-        if str(project.get("id") or "").strip()
-    ]
-    if not project_ids:
-        return []
-
-    try:
-        scores_response = await asyncio.to_thread(
-            lambda: supabase.table("scores")
-            .select(SPECTATE_SCORE_PUBLIC_SELECT)
-            .in_("project_id", project_ids)
-            .order("created_at", desc=True)
-            .execute()
-        )
-    except Exception as scores_error:
-        logger.warning("Unable to hydrate spectator profile score rows: %s", scores_error)
-        return []
-
-    return scores_response.data or []
 
 
 def get_project_score(project: Dict[str, Any]) -> int | float | None:
@@ -2747,8 +2716,7 @@ async def spectate_profile(
         )
         profile["projects"] = []
 
-    score_rows = await fetch_score_rows_for_projects(supabase, profile["projects"])
-    scan_rows = dedupe_rows_by_id(score_rows + build_project_scan_rows(profile["projects"]))
+    scan_rows = build_project_scan_rows(profile["projects"])
     profile["ratings"] = scan_rows
     profile["scores"] = scan_rows
     profile["scans"] = scan_rows
