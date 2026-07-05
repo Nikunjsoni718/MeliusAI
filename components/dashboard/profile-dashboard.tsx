@@ -3069,7 +3069,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         file_url: fileUrl,
         source_url: fileUrl,
         file_type: fileExtension,
-        file_name: file.name,
         file_size: file.size,
         description: description.trim() || null,
       })
