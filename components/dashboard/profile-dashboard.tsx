@@ -3148,14 +3148,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: 'done',
       });
 
-      setProjects((currentProjects) =>
-        projectWithExtractedCode.is_public === false ? currentProjects : [projectWithExtractedCode, ...currentProjects]
-      );
+      setProjects((currentProjects) => [
+        projectWithExtractedCode,
+        ...currentProjects.filter((project) => project.id !== projectWithExtractedCode.id),
+      ]);
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
         [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
       }));
       setProjectDescription('');
+      router.refresh();
 
       uploadClearRef.current = window.setTimeout(() => {
         setUploadState(null);
