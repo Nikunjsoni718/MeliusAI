@@ -664,13 +664,11 @@ async function persistAuditResult({
   audit,
   projectId,
   supabase,
-  userContextDescription,
   userId,
 }: {
   audit: AuditPayload;
   projectId: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-  userContextDescription: string;
   userId: string;
 }) {
   const { error } = await supabase
@@ -682,15 +680,14 @@ async function persistAuditResult({
       audit_summary: audit.executiveSummary,
       ai_summary: JSON.stringify(audit),
       description: audit.executiveSummary,
-      summary: audit.executiveSummary,
       pros: audit.pros,
       cons: audit.cons,
       recommendations: audit.recommendations,
-      user_description: userContextDescription || null,
+      user_description: audit.executiveSummary,
       has_been_audited: true,
     })
     .eq('id', projectId)
-    .or(`user_id.eq.${userId},owner_id.eq.${userId}`);
+    .eq('user_id', userId);
 
   if (error) {
     throw error;
@@ -772,7 +769,6 @@ export async function POST(request: Request) {
       audit,
       projectId,
       supabase,
-      userContextDescription,
       userId: user.id,
     });
 
