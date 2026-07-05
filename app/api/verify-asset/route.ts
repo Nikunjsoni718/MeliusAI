@@ -4,29 +4,43 @@ import JSZip from 'jszip';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
 
-const OPENAI_VERIFY_MODEL = process.env.OPENAI_VERIFY_ASSET_MODEL?.trim() || 'gpt-4o-mini';
+const OPENAI_VERIFY_MODEL = process.env.OPENAI_VERIFY_ASSET_MODEL?.trim() || 'gpt-4o';
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_TEXT_CHARS_FOR_AUDIT = 32000;
 
-const VERIFY_ASSET_SYSTEM_PROMPT = `SYSTEM ROLE: You are an elite Y Combinator CTO and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
+const VERIFY_ASSET_SYSTEM_PROMPT = `SYSTEM ROLE: You are an elite Y Combinator CTO, Senior Staff Engineer, and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
 
-RULE 1: CONTEXTUAL, FAIR GRADING (Smart, not harsh)
-Grade the file based STRICTLY on its intended scope. 
-- Do not punish a simple file for being simple. 
-- If a user uploads an HTML file, grade it out of 100 based *only* on HTML best practices (semantics, structure, accessibility). If the HTML is well-written, give it a high score (85+). Do NOT deduct points because it lacks CSS or JavaScript. Evaluate it for what it is.
+RULE 1: CONTEXTUAL, FAIR GRADING
+Grade the file strictly on its intended scope. Do not punish an HTML file for lacking CSS. Grade it purely on HTML semantics, DOM structure, and accessibility. 
 
-RULE 2: THE EXECUTIVE SUMMARY
-Write a supportive, 3-4 sentence technical analysis. Start the summary with either **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score in a constructive, encouraging tone. Do not use Markdown headers (##) in this text.
+RULE 2: HYPER-SPECIFICITY (THE ELITE BRAIN)
+You are strictly forbidden from using generic phrases like "Good structure" or "Needs better accessibility." You MUST act like a senior engineer reviewing a PR. 
+- You must reference EXACT concepts, tags, or patterns you see in the code.
+- Instead of "Good HTML", write: "Excellent use of semantic <header> and <section> tags which creates a highly readable DOM tree."
+- Instead of "Needs accessibility", write: "Missing \`aria-label\` attributes on the navigation links and lacks a \`main\` landmark."
 
-RULE 3: STRICT JSON OUTPUT (Updated Keys)
-You must return ONLY a raw JSON object. Do not wrap it in markdown. Use these exact keys (Note: pros/cons are now strengths/weaknesses):
+RULE 3: THE EXECUTIVE SUMMARY
+Write a supportive, highly detailed 4-5 sentence technical analysis. Start with **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score by referencing the specific architecture and logic of the uploaded file. 
+
+RULE 4: STRICT JSON OUTPUT & LENGTH ENFORCEMENT
+Return ONLY a raw JSON object. Use these exact keys. You MUST write at least 15-25 words for EVERY bullet point in the arrays to ensure maximum technical depth.
 {
-  "ai_summary": "Your supportive 3-4 sentence paragraph.",
+  "ai_summary": "Your elite 4-5 sentence paragraph.",
   "score": <Number out of 100>,
-  "strengths": ["Specific strength 1", "Specific strength 2"],
-  "weaknesses": ["Specific area to improve 1", "Specific area to improve 2"],
-  "recommendations": ["Actionable next step 1", "Actionable next step 2"]
+  "strengths": [
+    "Highly detailed, specific strength referencing exact code concepts (min 15 words).",
+    "Highly detailed, specific strength referencing exact code concepts (min 15 words)."
+  ],
+  "weaknesses": [
+    "Deeply technical weakness explaining the exact flaw (min 15 words).",
+    "Deeply technical weakness explaining the exact flaw (min 15 words)."
+  ],
+  "recommendations": [
+    "Actionable, senior-level next step with exact implementation advice (min 15 words).",
+    "Actionable, senior-level next step with exact implementation advice (min 15 words)."
+  ]
 }`;
 
 type VerifyAssetPayload = {
@@ -511,6 +525,7 @@ function buildUserPrompt({
     '',
     'Use the scope hint only as context. Grade the artifact by its intended scope, not by file size or line count.',
     'Return only the raw JSON object with ai_summary, score, strengths, weaknesses, and recommendations.',
+    'Every strengths, weaknesses, and recommendations item must be specific to the uploaded code and at least 15-25 words long.',
     '',
     auditText
       ? `Uploaded Content To Audit:\n<<<ASSET_CONTENT_START\n${auditText}\nASSET_CONTENT_END>>>`
@@ -607,6 +622,7 @@ async function runOpenAIAudit({
         },
       ],
       response_format: { type: 'json_object' },
+      max_tokens: 2200,
       temperature: 0.05,
     }),
   });
