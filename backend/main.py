@@ -1363,10 +1363,12 @@ class VerifyRequest(BaseModel):
 
 
 class AuditResponse(BaseModel):
-    detectedType: str = "unknown"
+    detectedType: str = "unknown file"
     language: str = "Unknown"
     reviewMode: str = "general artifact review"
     complexityLevel: str = "unknown"
+    projectDepth: str = "low implementation evidence"
+    recruiterReadiness: str = "No"
     summary: str = ""
     executiveSummary: str
     score: int
@@ -1393,41 +1395,143 @@ class AuditResponse(BaseModel):
 
 
 ALLOWED_DETECTED_TYPES = {
-    "HTML website/project",
-    "HTML learning notes/practice file",
-    "documentation/README",
-    "beginner code file",
-    "actual software project",
+    "complete website/project",
+    "single code file",
+    "beginner practice code",
+    "HTML/CSS/JS learning notes",
+    "README/documentation",
+    "config/package file",
+    "resume/portfolio text",
     "general notes",
-    "unknown",
+    "incomplete/broken file",
+    "unknown file",
+}
+
+
+DETECTED_TYPE_ALIASES = {
+    "html website/project": "complete website/project",
+    "html learning notes/practice file": "HTML/CSS/JS learning notes",
+    "documentation/readme": "README/documentation",
+    "beginner code file": "beginner practice code",
+    "actual software project": "complete website/project",
+    "unknown": "unknown file",
 }
 
 
 LANGUAGE_BY_EXTENSION = {
+    ".c": "C",
+    ".cc": "C++",
+    ".cpp": "C++",
+    ".cs": "C#",
     ".css": "CSS",
+    ".cxx": "C++",
+    ".go": "Go",
+    ".h": "C/C++ Header",
+    ".hpp": "C++ Header",
     ".html": "HTML",
     ".htm": "HTML",
+    ".java": "Java",
     ".js": "JavaScript",
     ".jsx": "JavaScript React (JSX)",
     ".json": "JSON",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
     ".md": "Markdown",
     ".mdx": "MDX",
+    ".mjs": "JavaScript",
+    ".php": "PHP",
     ".py": "Python",
+    ".rb": "Ruby",
     ".readme": "Markdown",
+    ".rs": "Rust",
+    ".scss": "SCSS",
+    ".sh": "Shell",
+    ".sql": "SQL",
+    ".svelte": "Svelte",
+    ".swift": "Swift",
     ".ts": "TypeScript",
     ".tsx": "TypeScript React (TSX)",
     ".txt": "Plain text",
+    ".vue": "Vue",
+    ".xml": "XML",
+    ".yaml": "YAML",
+    ".yml": "YAML",
 }
 
 
 REVIEW_MODE_BY_DETECTED_TYPE = {
-    "HTML website/project": "website/project review",
-    "HTML learning notes/practice file": "educational HTML notes/practice review",
-    "documentation/README": "documentation review",
-    "beginner code file": "beginner code review",
-    "actual software project": "software project review",
+    "complete website/project": "full project/website review",
+    "single code file": "single-file code review",
+    "beginner practice code": "beginner practice code review",
+    "HTML/CSS/JS learning notes": "frontend learning-notes review",
+    "README/documentation": "documentation review",
+    "config/package file": "configuration/package review",
+    "resume/portfolio text": "resume/portfolio content review",
     "general notes": "notes review",
-    "unknown": "general artifact review",
+    "incomplete/broken file": "broken or incomplete artifact review",
+    "unknown file": "general artifact review",
+}
+
+
+CONFIG_FILE_NAMES = {
+    ".env",
+    ".env.example",
+    ".env.local",
+    ".gitignore",
+    ".prettierrc",
+    "components.json",
+    "dockerfile",
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "next.config.js",
+    "next.config.mjs",
+    "next.config.ts",
+    "package-lock.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "postcss.config.js",
+    "postcss.config.mjs",
+    "requirements.txt",
+    "tailwind.config.js",
+    "tailwind.config.ts",
+    "tsconfig.json",
+    "vite.config.js",
+    "vite.config.ts",
+    "yarn.lock",
+}
+
+
+CONFIG_EXTENSIONS = {".ini", ".lock", ".toml", ".yaml", ".yml"}
+CODE_EXTENSIONS = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".cxx",
+    ".go",
+    ".h",
+    ".hpp",
+    ".html",
+    ".htm",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".kts",
+    ".mjs",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scss",
+    ".sh",
+    ".sql",
+    ".svelte",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".vue",
 }
 
 
@@ -1450,12 +1554,18 @@ def detect_asset_language(asset_name: str, asset_text_content: str) -> str:
 
     if re.search(r"<!doctype\s+html|<html[\s>]|<body[\s>]|<div[\s>]|<section[\s>]", lowered_content):
         return "HTML"
+    if re.search(r"#include\s*<[^>]+>|using\s+namespace\s+std|std::|cout\s*<<|cin\s*>>|int\s+main\s*\(", stripped_content):
+        return "C++" if re.search(r"std::|cout\s*<<|cin\s*>>|class\s+\w+", stripped_content) else "C"
+    if re.search(r"\bpublic\s+class\s+\w+|\bSystem\.out\.println\b|\bstatic\s+void\s+main\s*\(", stripped_content):
+        return "Java"
     if lowered_content.startswith("#") or count_regex(r"^\s{0,3}#{1,6}\s+\S+", stripped_content) >= 2:
         return "Markdown"
-    if re.search(r"\b(import|export)\s+.+\b(from|function|const)\b|console\.log\(", stripped_content):
+    if re.search(r"\b(import|export)\s+.+\b(from|function|const)\b|console\.log\(|useState\s*\(|type\s+\w+\s*=", stripped_content):
         return "JavaScript/TypeScript"
     if re.search(r"\bdef\s+\w+\(|\bimport\s+\w+|if\s+__name__\s*==", stripped_content):
         return "Python"
+    if re.search(r"\bSELECT\b.+\bFROM\b|\bINSERT\s+INTO\b|\bCREATE\s+TABLE\b", stripped_content, flags=re.IGNORECASE | re.DOTALL):
+        return "SQL"
 
     return "Unknown"
 
@@ -1472,7 +1582,9 @@ def classify_html_asset(asset_text_content: str) -> str:
         lowered_content,
     )
     html_comment_count = count_regex(r"<!--", lowered_content)
-    repeated_document_count = count_regex(r"<!doctype\s+html|<html[\s>]", lowered_content)
+    doctype_count = count_regex(r"<!doctype\s+html", lowered_content)
+    html_root_count = count_regex(r"<html[\s>]", lowered_content)
+    repeated_document_count = max(doctype_count, html_root_count)
     snippet_heading_count = count_regex(r"\b(example|practice|exercise|demo)\s*\d*", lowered_content)
     diverse_practice_tag_count = sum(
         1
@@ -1494,7 +1606,7 @@ def classify_html_asset(asset_text_content: str) -> str:
     )
 
     website_structure_score = 0
-    website_structure_score += 2 if count_regex(r"<!doctype\s+html", lowered_content) == 1 else 0
+    website_structure_score += 2 if doctype_count == 1 else 0
     website_structure_score += 2 if all(tag in unique_html_tags for tag in ["html", "head", "body"]) else 0
     website_structure_score += 1 if "title" in unique_html_tags else 0
     website_structure_score += 1 if {"header", "nav", "main", "footer"} & unique_html_tags else 0
@@ -1508,96 +1620,382 @@ def classify_html_asset(asset_text_content: str) -> str:
     learning_notes_score += 2 if len(unique_html_tags) >= 18 else 0
     learning_notes_score += 2 if diverse_practice_tag_count >= 5 else 0
 
+    if "<html" in lowered_content and "</html>" not in lowered_content and learning_notes_score < 4:
+        return "incomplete/broken file"
+
+    if (
+        website_structure_score >= 6
+        and repeated_document_count == 1
+        and {"header", "nav", "main", "footer"} & unique_html_tags
+        and not re.search(r"\b(html basics|practice notes?|tutorial|lesson|example tags?|tag examples?)\b", lowered_content)
+    ):
+        return "complete website/project"
+
     if learning_notes_score >= 5 and learning_notes_score >= website_structure_score + 1:
-        return "HTML learning notes/practice file"
+        return "HTML/CSS/JS learning notes"
 
     if website_structure_score >= 5 and learning_notes_score < 5:
-        return "HTML website/project"
+        return "complete website/project"
 
     if tutorial_signal_count >= 2 or html_comment_count >= 3 or diverse_practice_tag_count >= 4:
-        return "HTML learning notes/practice file"
+        return "HTML/CSS/JS learning notes"
 
-    return "HTML website/project"
+    return "complete website/project"
 
 
-def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[str, str]:
+def count_non_empty_lines(value: str) -> int:
+    return len([line for line in value.splitlines() if line.strip()])
+
+
+def has_unbalanced_code_delimiters(asset_text_content: str) -> bool:
+    stripped_content = asset_text_content.strip()
+
+    if not stripped_content:
+        return True
+
+    delimiter_pairs = [("{", "}"), ("(", ")"), ("[", "]")]
+
+    return any(abs(stripped_content.count(opening) - stripped_content.count(closing)) >= 3 for opening, closing in delimiter_pairs)
+
+
+def count_production_signals(asset_text_content: str) -> int:
+    production_signal_patterns = [
+        r"\btry\s*:|\btry\s*\{|\bcatch\s*\(|except\s+\w*|throw\s+new|raise\s+",
+        r"\bvalidate|validation|sanitize|schema|safeparse|pydantic|zod|regex",
+        r"\bauth|authorization|session|jwt|permission|role|rls|csrf|xss|sql injection",
+        r"\btest\(|describe\(|expect\(|unittest|pytest|assert\s+",
+        r"\btransaction|rollback|retry|timeout|cache|pagination|index|batch|stream",
+        r"\bclass\s+\w+|interface\s+\w+|module\.exports|export\s+(async\s+)?function|def\s+\w+\(",
+        r"\breadme|setup|install|usage|deployment|environment",
+    ]
+
+    return sum(1 for pattern in production_signal_patterns if re.search(pattern, asset_text_content, flags=re.IGNORECASE | re.MULTILINE))
+
+
+def has_readme_completeness_signals(asset_text_content: str) -> bool:
+    lowered_content = asset_text_content.lower()
+    required_signal_count = sum(
+        1
+        for pattern in [
+            r"\binstall|setup|getting started\b",
+            r"\busage|example|how to run\b",
+            r"\bdependenc|requirements|environment|\.env\b",
+            r"\bscreenshot|demo|live link|preview\b",
+            r"\barchitecture|features|api|folder structure\b",
+        ]
+        if re.search(pattern, lowered_content)
+    )
+
+    return required_signal_count >= 3
+
+
+def has_beginner_code_signals(asset_name: str, asset_text_content: str, line_count: int) -> bool:
+    lowered_name = asset_name.lower()
+    lowered_content = asset_text_content.lower()
+    tutorial_signals = re.search(
+        r"\b(calculator|hello world|practice|exercise|tutorial|beginner|lesson|marks?|grade|todo|simple)\b",
+        lowered_name + "\n" + lowered_content,
+    )
+    structural_signal_count = count_regex(
+        r"\bclass\s+\w+|\bdef\s+\w+\(|\bfunction\s+\w+\(|=>|try\s*:|try\s*\{|catch\s*\(|except\s+|validate|schema|test\(",
+        asset_text_content,
+    )
+    advanced_signal_count = count_regex(
+        r"\bclass\s+\w+|\bstruct\s+\w+|\bvector\s*<|\bbool\s+\w+\s*\(|\bdouble\s+\w+\s*\(|\bconst\s+auto\b|\bfor\s*\(|\bvalid\w*\b",
+        asset_text_content,
+    )
+
+    if advanced_signal_count >= 4 and re.search(r"\bvalid|invalid|error|empty|range|<=|>=\b", lowered_content):
+        return False
+
+    return bool(tutorial_signals) or (line_count < 75 and structural_signal_count <= 2)
+
+
+def has_project_level_signals(asset_text_content: str, line_count: int) -> bool:
+    return (
+        line_count >= 160
+        or count_regex(r"(^|\n)\s*(src/|app/|pages/|components/|lib/|api/|package\.json|requirements\.txt)", asset_text_content) >= 2
+        or count_production_signals(asset_text_content) >= 5
+    )
+
+
+def derive_project_depth(detected_type: str, asset_text_content: str, line_count: int) -> str:
+    if detected_type in {"config/package file", "general notes", "resume/portfolio text", "unknown file"}:
+        return "low implementation evidence"
+    if detected_type == "incomplete/broken file":
+        return "broken/incomplete"
+    if detected_type == "HTML/CSS/JS learning notes":
+        return "learning material"
+    if detected_type == "README/documentation":
+        return "documentation-only" if not has_readme_completeness_signals(asset_text_content) else "strong documentation"
+    if detected_type == "beginner practice code":
+        return "beginner practice"
+    if detected_type == "single code file":
+        return "strong single-file project" if count_production_signals(asset_text_content) >= 4 and line_count >= 90 else "single-file component"
+    if detected_type == "complete website/project":
+        return "project-level" if has_project_level_signals(asset_text_content, line_count) else "small complete project"
+
+    return "unknown"
+
+
+def derive_recruiter_readiness(detected_type: str, project_depth: str) -> str:
+    if detected_type == "complete website/project" and project_depth == "project-level":
+        return "Potentially recruiter-ready after final polish"
+    if detected_type == "single code file" and project_depth == "strong single-file project":
+        return "Maybe, if paired with README/demo context"
+    if detected_type == "README/documentation":
+        return "No - documentation alone cannot verify coding ability"
+    if detected_type in {"HTML/CSS/JS learning notes", "beginner practice code", "general notes", "config/package file"}:
+        return "No - learning/practice artifact"
+    if detected_type == "incomplete/broken file":
+        return "No - incomplete or broken"
+
+    return "No"
+
+
+def determine_score_ceiling(detected_type: str, project_depth: str, asset_text_content: str) -> int:
+    if detected_type == "incomplete/broken file":
+        return 45
+    if detected_type == "unknown file":
+        return 39
+    if detected_type == "config/package file":
+        return 35
+    if detected_type == "general notes":
+        return 50
+    if detected_type == "resume/portfolio text":
+        return 55
+    if detected_type == "HTML/CSS/JS learning notes":
+        return 65
+    if detected_type == "README/documentation":
+        return 85 if has_readme_completeness_signals(asset_text_content) else 70
+    if detected_type == "beginner practice code":
+        has_validation = bool(re.search(r"\b(if|else|try|except|catch|validate|invalid|error|while)\b", asset_text_content, flags=re.IGNORECASE))
+        has_structure = count_regex(r"\bclass\s+\w+|\bdef\s+\w+\(|\bfunction\s+\w+\(|\w+\s+\w+\s*\([^)]*\)\s*\{", asset_text_content) >= 2
+        return 72 if has_validation and has_structure else 68
+    if detected_type == "single code file":
+        return 85 if project_depth == "strong single-file project" else 78
+    if detected_type == "complete website/project":
+        return 100 if project_depth == "project-level" else 88
+
+    return 75
+
+
+def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[str, Any]:
     asset_name_lower = asset_name.lower().strip()
+    base_asset_name = Path(asset_name_lower.replace("\\", "/")).name
     _, extension = os.path.splitext(asset_name_lower)
     language = detect_asset_language(asset_name, asset_text_content)
     stripped_content = asset_text_content.strip()
     lowered_content = stripped_content.lower()
-    line_count = len([line for line in stripped_content.splitlines() if line.strip()])
+    line_count = count_non_empty_lines(stripped_content)
 
-    if language == "HTML":
+    if not stripped_content or line_count <= 1 and len(stripped_content) < 30:
+        detected_type = "incomplete/broken file"
+    elif base_asset_name in CONFIG_FILE_NAMES or extension in CONFIG_EXTENSIONS:
+        detected_type = "config/package file"
+    elif language == "HTML":
         detected_type = classify_html_asset(asset_text_content)
-    elif asset_name_lower == "readme" or asset_name_lower.startswith("readme.") or extension in {".md", ".mdx"}:
-        detected_type = "documentation/README"
-    elif re.search(r"(^|\n)\s*(package\.json|requirements\.txt|pyproject\.toml|dockerfile|src/|app/|pages/)", lowered_content):
-        detected_type = "actual software project"
-    elif language in {"JavaScript/TypeScript", "Python", "CSS", "JSON", "TypeScript", "JavaScript"}:
-        detected_type = "actual software project" if line_count > 180 else "beginner code file"
-    elif count_regex(r"^\s*[-*]\s+|\b(notes?|summary|todo|ideas?|learning|study)\b", stripped_content) >= 3:
+    elif asset_name_lower == "readme" or base_asset_name == "readme" or base_asset_name.startswith("readme.") or extension in {".md", ".mdx"}:
+        detected_type = "README/documentation"
+    elif re.search(r"\b(resume|curriculum vitae|portfolio|experience|education|skills|linkedin|github)\b", lowered_content) and extension in {".txt", ".pdf", ".docx"}:
+        detected_type = "resume/portfolio text"
+    elif has_unbalanced_code_delimiters(stripped_content) and extension in CODE_EXTENSIONS and line_count >= 4:
+        detected_type = "incomplete/broken file"
+    elif has_project_level_signals(stripped_content, line_count):
+        detected_type = "complete website/project"
+    elif language in {
+        "C",
+        "C++",
+        "C/C++ Header",
+        "C#",
+        "Go",
+        "Java",
+        "JavaScript",
+        "JavaScript/TypeScript",
+        "JavaScript React (JSX)",
+        "Kotlin",
+        "PHP",
+        "Python",
+        "Ruby",
+        "Rust",
+        "Shell",
+        "SQL",
+        "Swift",
+        "TypeScript",
+        "TypeScript React (TSX)",
+        "Vue",
+    }:
+        detected_type = "beginner practice code" if has_beginner_code_signals(asset_name, stripped_content, line_count) else "single code file"
+    elif count_regex(r"^\s*[-*]\s+|\b(notes?|summary|todo|ideas?|learning|study|lecture|concepts?)\b", stripped_content) >= 3:
         detected_type = "general notes"
     else:
-        detected_type = "unknown"
+        detected_type = "unknown file"
 
     complexity_level = "unknown"
-    if detected_type == "HTML learning notes/practice file":
+    if detected_type == "HTML/CSS/JS learning notes":
         complexity_level = "beginner-to-intermediate" if count_regex(r"<(form|table|video|audio|iframe|section|article)\b", lowered_content) >= 3 else "beginner"
-    elif detected_type == "HTML website/project":
-        complexity_level = "intermediate" if count_regex(r"<(script|style|form|nav|main|section)\b", lowered_content) >= 3 else "beginner"
-    elif detected_type == "actual software project":
-        complexity_level = "intermediate-to-advanced" if line_count > 300 else "intermediate"
-    elif detected_type == "beginner code file":
+    elif detected_type == "complete website/project":
+        complexity_level = "advanced" if count_production_signals(stripped_content) >= 5 else "intermediate"
+    elif detected_type == "single code file":
+        complexity_level = "intermediate" if count_production_signals(stripped_content) >= 3 or line_count >= 90 else "beginner-to-intermediate"
+    elif detected_type == "beginner practice code":
         complexity_level = "beginner"
-    elif detected_type in {"documentation/README", "general notes"}:
-        complexity_level = "beginner-to-intermediate"
+    elif detected_type == "README/documentation":
+        complexity_level = "intermediate" if has_readme_completeness_signals(stripped_content) else "basic"
+    elif detected_type in {"general notes", "resume/portfolio text", "config/package file"}:
+        complexity_level = "low implementation signal"
+    elif detected_type == "incomplete/broken file":
+        complexity_level = "broken/incomplete"
+
+    project_depth = derive_project_depth(detected_type, stripped_content, line_count)
+    recruiter_readiness = derive_recruiter_readiness(detected_type, project_depth)
+    score_ceiling = determine_score_ceiling(detected_type, project_depth, stripped_content)
 
     return {
         "detectedType": detected_type,
         "language": language,
         "reviewMode": REVIEW_MODE_BY_DETECTED_TYPE.get(detected_type, "general artifact review"),
         "complexityLevel": complexity_level,
+        "projectDepth": project_depth,
+        "recruiterReadiness": recruiter_readiness,
+        "scoreCeiling": score_ceiling,
     }
 
 
 ENHANCED_AUDIT_SYSTEM_PROMPT = """
-You are an Elite Principal Reviewer conducting an automated project audit for MeliusAI.
+You are MeliusAI's strict AI auditing brain: a senior software engineer, technical recruiter, and practical mentor in one reviewer.
 
-Evaluate the uploaded content intelligently, fairly, and contextually. The content may be code, HTML, PDF text, presentation text, documentation, or another project artifact. Do not act like a basic linter.
+Your first job is to understand what the upload actually is. Do not score notes, config files, READMEs, beginner exercises, broken snippets, and full projects with the same rubric.
 
-- Classification First: Before scoring or reviewing, classify the uploaded artifact into exactly one detectedType:
-HTML website/project, HTML learning notes/practice file, documentation/README, beginner code file, actual software project, general notes, or unknown.
+PHASE 1 - CLASSIFY FIRST
+Before scoring, classify the upload into exactly one detectedType:
+- complete website/project
+- single code file
+- beginner practice code
+- HTML/CSS/JS learning notes
+- README/documentation
+- config/package file
+- resume/portfolio text
+- general notes
+- incomplete/broken file
+- unknown file
 
-- Relevant Criteria Only: Do not apply irrelevant standards. Do not ask a PowerPoint for unit tests. Do not judge a simple HTML page like a production backend. Do not over-penalize missing project descriptions unless the artifact depends on explanation.
+Also determine:
+- language
+- reviewMode
+- complexityLevel
+- projectDepth
+- recruiterReadiness
 
-- HTML-Specific Rules:
-If an HTML file is mostly examples, comments, tutorial-style notes, repeated tags, demos, or practice snippets, classify it as "HTML learning notes/practice file" instead of "HTML website/project".
-For HTML learning notes/practice files, review concept coverage, HTML syntax correctness, organization, readability, usefulness as notes, broken tags, and practical improvement suggestions. Clearly state when the file is not a complete website/project yet. Do not punish it only for not being a website, but mention if it is not production-ready.
-For HTML website/project files, review the actual website structure, semantics, accessibility, responsiveness, production readiness, completeness, and maintainability.
+Use the server-provided pre-review classification, projectDepth, recruiterReadiness, and score ceiling as strong guardrails. Only override them if the actual content clearly proves a different category. Never exceed the server-provided score ceiling.
 
-- Other Review Modes:
-For documentation/README, review clarity, completeness, installation/usage guidance, structure, and usefulness.
-For beginner code files, review correctness, learning progression, naming, readability, syntax, and next-step improvements at the learner's level.
-For actual software projects, review architecture, security, maintainability, tests, data flow, error handling, and production readiness.
-For general notes, review organization, clarity, coverage, accuracy, and actionability.
+PHASE 2 - CONTEXT-AWARE RUBRICS
+If notes/tutorial:
+Review clarity, organization, accuracy, completeness, examples, usefulness, and learning value. Do not call it a website or project.
 
-- Severity Classification: Evaluate flaws using strict tiers:
-Critical: security vulnerabilities, crashes, broken logic, unsafe handling, unusable output.
-Structural: poor architecture, missing error handling, inefficient design, weak organization.
-Best-Practices: formatting, naming, comments, documentation, minor presentation polish.
+If README/documentation:
+Review setup instructions, dependencies, usage examples, screenshots/demo links, clarity, structure, and completeness. A README can score high only when it includes concrete setup, usage, dependency, example, and structure details. Documentation alone cannot verify coding ability.
 
-- Holistic Scoring from 0 to 100:
-Start from 100. Deduct based on severity and relevance to the detectedType and complexityLevel. Reward clarity, correctness, completeness for the artifact's actual purpose, usefulness, originality, and practical readiness. Score according to the detected type and learning level, not against an unrelated production-project standard.
+If single code file:
+Review syntax, logic, structure, readability, error handling, input validation, comments, maintainability, and complexity. A single file is not recruiter-ready unless it is genuinely strong, complete, and useful.
 
-- High Signal, Low Noise:
-Return only the top 2 to 4 highest-priority pros, cons, and recommendations. Avoid generic filler. Every point must be specific to the uploaded content.
+If full project/website:
+Review architecture, completeness, UI/UX, accessibility, responsiveness, SEO basics, maintainability, documentation, error handling, deployment readiness, and real-world usefulness.
+
+If C/C++:
+Review syntax, functions/classes, memory safety, input/output handling, edge cases, readability, algorithmic logic, time/space complexity, and whether it is beginner-level or project-level.
+
+If Python/JS/TS:
+Review structure, functions/modules, error handling, validation, maintainability, real-world usefulness, and scalability.
+
+PHASE 3 - STRICT SCORING CALIBRATION
+Use these bands:
+- 90-100: exceptional, production-ready, polished, recruiter-ready
+- 80-89: strong, well-structured, close to recruiter-ready
+- 70-79: decent beginner/intermediate work but missing important pieces
+- 60-69: basic functional work with clear gaps
+- 40-59: rough, incomplete, weak, or structurally problematic
+- 0-39: broken, irrelevant, mostly unusable, or not enough content
+
+Rules:
+- Basic beginner code should usually be 50-70 unless unusually strong.
+- Simple scripts should not get 75+ unless they include validation, structure, usability, and completeness.
+- Basic C++ calculators usually belong around 55-68.
+- Beginner Python scripts usually belong around 60-72.
+- Stronger class-based C++ single-file projects can reach 78-85 if they handle structure, validation, and edge cases.
+- Notes should not get high project scores. Score them as learning material.
+- README files can score high only if they include setup, usage, dependencies, examples, and clear structure.
+- Penalize broken syntax, poor nesting, missing validation, unclear structure, missing documentation, and lack of project depth.
+
+PHASE 4 - RECRUITER READINESS
+The executiveSummary must include context like:
+"Detected Type: Beginner C++ single-file program. Review Mode: Code Review. Complexity: Beginner. Project Depth: Beginner practice. Recruiter Ready: No."
+
+Then explain market-readiness separately from mentorship:
+- "This is useful as a beginner practice file, but not recruiter-ready as a standalone project."
+- "This README is clear but cannot verify coding ability by itself."
+- "This project is close to portfolio-ready but needs deployment, documentation, and error handling."
+- "This appears to be learning notes, not a complete project."
+
+PHASE 5 - SPECIFIC RECOMMENDATIONS
+Avoid generic advice like "improve code quality."
+Give specific advice such as:
+- Add division-by-zero handling.
+- Separate HTML notes into sections.
+- Add README setup steps.
+- Add input validation for negative marks.
+- Use functions instead of putting all logic in main.
+- Add screenshots/demo link.
+- Split large files into components/modules.
+
+Return only the top 2 to 4 highest-priority pros, cons, and recommendations. Every item must be specific to the uploaded content.
 
 Output ONLY a valid JSON object with these exact keys:
-detectedType, language, reviewMode, complexityLevel, summary, executiveSummary, score, pros, cons, recommendations.
+detectedType, language, reviewMode, complexityLevel, projectDepth, recruiterReadiness, summary, executiveSummary, score, pros, cons, recommendations.
 
-Do not include markdown blocks like ```json.
+Do not include markdown blocks like ```json. Do not include prose outside JSON.
 """
+
+
+AUDIT_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "melius_asset_audit",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "detectedType": {"type": "string"},
+                "language": {"type": "string"},
+                "reviewMode": {"type": "string"},
+                "complexityLevel": {"type": "string"},
+                "projectDepth": {"type": "string"},
+                "recruiterReadiness": {"type": "string"},
+                "summary": {"type": "string"},
+                "executiveSummary": {"type": "string"},
+                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                "pros": {"type": "array", "items": {"type": "string"}},
+                "cons": {"type": "array", "items": {"type": "string"}},
+                "recommendations": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "detectedType",
+                "language",
+                "reviewMode",
+                "complexityLevel",
+                "projectDepth",
+                "recruiterReadiness",
+                "summary",
+                "executiveSummary",
+                "score",
+                "pros",
+                "cons",
+                "recommendations",
+            ],
+        },
+    },
+}
 
 
 def normalize_audit_list(value: List[str]) -> List[str]:
@@ -1613,16 +2011,48 @@ def normalize_audit_list(value: List[str]) -> List[str]:
 
 def normalize_detected_type(value: str, fallback_value: str = "unknown") -> str:
     normalized_lookup = {allowed_value.lower(): allowed_value for allowed_value in ALLOWED_DETECTED_TYPES}
-    normalized_value = normalized_lookup.get(str(value or "").strip().lower())
-    normalized_fallback = normalized_lookup.get(str(fallback_value or "").strip().lower(), "unknown")
+    raw_value = str(value or "").strip().lower()
+    raw_fallback = str(fallback_value or "").strip().lower()
+    normalized_value = normalized_lookup.get(raw_value) or DETECTED_TYPE_ALIASES.get(raw_value)
+    normalized_fallback = normalized_lookup.get(raw_fallback) or DETECTED_TYPE_ALIASES.get(raw_fallback) or "unknown file"
 
-    if normalized_value and normalized_value != "unknown":
+    if normalized_value and normalized_value != "unknown file":
         return normalized_value
 
     return normalized_fallback
 
 
-def parse_audit_response(raw_content: str | None, asset_classification: Dict[str, str] | None = None) -> AuditResponse:
+def normalize_recruiter_readiness(value: str, detected_type: str, score: int) -> str:
+    normalized_value = str(value or "").strip()
+    lowered_value = normalized_value.lower()
+
+    if score >= 90 and detected_type == "complete website/project":
+        return "Yes - recruiter-ready"
+    if score >= 80 and detected_type in {"complete website/project", "single code file"}:
+        return "Close - needs final portfolio polish"
+    if "yes" in lowered_value and detected_type not in {"complete website/project", "single code file"}:
+        return "No - not enough standalone coding evidence"
+
+    return normalized_value or derive_recruiter_readiness(detected_type, "unknown")
+
+
+def ensure_executive_summary_context(audit_response: AuditResponse) -> str:
+    context_sentence = (
+        f"Detected Type: {audit_response.detectedType}. "
+        f"Review Mode: {audit_response.reviewMode}. "
+        f"Complexity: {audit_response.complexityLevel}. "
+        f"Project Depth: {audit_response.projectDepth}. "
+        f"Recruiter Ready: {audit_response.recruiterReadiness}. "
+    )
+    existing_summary = audit_response.executiveSummary.strip()
+
+    if "Detected Type:" in existing_summary and "Recruiter Ready:" in existing_summary:
+        return existing_summary
+
+    return f"{context_sentence}{existing_summary}".strip()
+
+
+def parse_audit_response(raw_content: str | None, asset_classification: Dict[str, Any] | None = None) -> AuditResponse:
     if not raw_content or not raw_content.strip():
         raise HTTPException(
             status_code=502,
@@ -1646,13 +2076,15 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
         ) from validation_error
 
     classification = asset_classification or {}
-    classification_detected_type = normalize_detected_type(classification.get("detectedType", "unknown"))
+    classification_detected_type = normalize_detected_type(classification.get("detectedType", "unknown file"))
     model_detected_type = normalize_detected_type(
         audit_response.detectedType,
         classification_detected_type,
     )
 
-    if classification_detected_type == "HTML learning notes/practice file" and model_detected_type == "HTML website/project":
+    if classification_detected_type == "HTML/CSS/JS learning notes" and model_detected_type == "complete website/project":
+        audit_response.detectedType = classification_detected_type
+    elif classification_detected_type in {"config/package file", "general notes", "README/documentation", "incomplete/broken file"}:
         audit_response.detectedType = classification_detected_type
     else:
         audit_response.detectedType = model_detected_type
@@ -1675,8 +2107,16 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
         if classification_complexity_level and classification_complexity_level.lower() != "unknown"
         else model_complexity_level or "unknown"
     )
+    classification_project_depth = (classification.get("projectDepth") or "").strip()
+    audit_response.projectDepth = classification_project_depth or audit_response.projectDepth.strip() or "unknown"
     audit_response.summary = audit_response.summary.strip()
-    audit_response.score = max(0, min(100, int(audit_response.score)))
+    score_ceiling = int(classification.get("scoreCeiling") or 100)
+    audit_response.score = max(0, min(score_ceiling, min(100, int(audit_response.score))))
+    audit_response.recruiterReadiness = normalize_recruiter_readiness(
+        classification.get("recruiterReadiness") or audit_response.recruiterReadiness,
+        audit_response.detectedType,
+        audit_response.score,
+    )
     audit_response.executiveSummary = audit_response.executiveSummary.strip()
 
     if not audit_response.summary:
@@ -1684,6 +2124,8 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
 
     if not audit_response.executiveSummary:
         audit_response.executiveSummary = audit_response.summary
+
+    audit_response.executiveSummary = ensure_executive_summary_context(audit_response)
 
     audit_response.pros = normalize_audit_list(audit_response.pros)
     audit_response.cons = normalize_audit_list(audit_response.cons)
@@ -3096,16 +3538,20 @@ async def verify_asset(
                         f"- Pre-review language: {asset_classification['language']}\n"
                         f"- Pre-review mode: {asset_classification['reviewMode']}\n"
                         f"- Pre-review complexity level: {asset_classification['complexityLevel']}\n"
+                        f"- Pre-review project depth: {asset_classification['projectDepth']}\n"
+                        f"- Pre-review recruiter readiness: {asset_classification['recruiterReadiness']}\n"
+                        f"- Server-side score ceiling: {asset_classification['scoreCeiling']}/100\n"
                         f"- User-provided project context: "
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
                         "Use the pre-review classification as a strong signal. Only change it if the uploaded "
-                        "content clearly contradicts it. Always classify before assigning a score.\n\n"
+                        "content clearly contradicts it. Always classify before assigning a score. Never exceed "
+                        "the server-side score ceiling.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
+            response_format=AUDIT_RESPONSE_FORMAT,
             temperature=0.1,
         )
 
@@ -3118,6 +3564,8 @@ async def verify_asset(
         language = audit_response.language
         review_mode = audit_response.reviewMode
         complexity_level = audit_response.complexityLevel
+        project_depth = audit_response.projectDepth
+        recruiter_readiness = audit_response.recruiterReadiness
         pros = audit_response.pros
         cons = audit_response.cons
         recommendations = audit_response.recommendations
@@ -3160,6 +3608,8 @@ async def verify_asset(
             "language": language,
             "reviewMode": review_mode,
             "complexityLevel": complexity_level,
+            "projectDepth": project_depth,
+            "recruiterReadiness": recruiter_readiness,
             "executiveSummary": executive_summary,
             "report": audit_payload,
             "score": calculated_score,
