@@ -274,7 +274,7 @@ export function AuditReviewModal({
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Executive Summary</h4>
                 <p className="text-sm text-slate-300 mb-6 line-clamp-4 leading-relaxed">
-                  {structuredSummary || 'No executive summary has been generated yet.'}
+                  {structuredSummary || 'Verification summary pending.'}
                 </p>
               </div>
 

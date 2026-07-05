@@ -1332,33 +1332,27 @@ class VerifyRequest(BaseModel):
 
 
 class AuditResponse(BaseModel):
-    detectedType: str = "unknown file"
-    language: str = "Unknown"
-    reviewMode: str = "general artifact review"
-    complexityLevel: str = "unknown"
-    projectDepth: str = "low implementation evidence"
-    recruiterReadiness: str = "No"
-    summary: str = ""
-    executiveSummary: str
-    score: int
+    user_description: str
+    score: int = Field(..., ge=0, le=100)
     pros: List[str]
     cons: List[str]
     recommendations: List[str]
 
     @model_validator(mode="before")
     @classmethod
-    def hydrate_summary_fields(cls, data: Any) -> Any:
+    def hydrate_user_description(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
 
         normalized_data = dict(data)
-        summary = str(normalized_data.get("summary") or "").strip()
-        executive_summary = str(normalized_data.get("executiveSummary") or "").strip()
+        user_description = str(normalized_data.get("user_description") or "").strip()
 
-        if summary and not executive_summary:
-            normalized_data["executiveSummary"] = summary
-        elif executive_summary and not summary:
-            normalized_data["summary"] = executive_summary
+        if not user_description:
+            for legacy_key in ("executiveSummary", "executive_summary", "summary", "description"):
+                legacy_value = str(normalized_data.get(legacy_key) or "").strip()
+                if legacy_value:
+                    normalized_data["user_description"] = legacy_value
+                    break
 
         return normalized_data
 
@@ -1831,143 +1825,42 @@ def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[st
     }
 
 
-ENHANCED_AUDIT_SYSTEM_PROMPT = """
-You are MeliusAI's strict AI auditing brain: a senior software engineer, technical recruiter, and practical mentor in one reviewer.
+ENHANCED_AUDIT_SYSTEM_PROMPT = """SYSTEM ROLE: You are an elite Y Combinator CTO, Senior Staff Engineer, and Technical Mentor. Your job is to audit user-uploaded code assets and return a highly intelligent, contextual, and deeply analytical JSON report.
 
-Your first job is to understand what the upload actually is. Do not score notes, config files, READMEs, beginner exercises, broken snippets, and full projects with the same rubric.
+RULE 1: CONTEXTUAL GRADING (The Score)
+Do not punish a file for being small. Grade the file based strictly on its intended scope. 
+- If it is a simple HTML practice file, grade it out of 100 based strictly on HTML semantics, accessibility (a11y), and structural best practices. If it is perfect HTML, it deserves a 90+, even if it has no CSS/JS.
+- If it is a production React component, grade it on state management, render cycles, and modularity.
+- Deduct points for missing documentation, bad variable names, lack of error handling, or security flaws.
 
-PHASE 1 - CLASSIFY FIRST
-Before scoring, classify the upload into exactly one detectedType:
-- complete website/project
-- single code file
-- beginner practice code
-- HTML/CSS/JS learning notes
-- README/documentation
-- config/package file
-- resume/portfolio text
-- general notes
-- incomplete/broken file
-- unknown file
+RULE 2: THE EXECUTIVE SUMMARY (The Brain)
+You must write a brilliant, 3-4 sentence technical analysis. It must sound like an empathetic but rigorous human Senior Developer reviewing a Pull Request. 
+- You MUST start the summary with one of these two bolded tags: **[Recruiter-Ready]** (if it proves hireable skills) or **[Practice & Growth]** (if it is a learning file).
+- Immediately explain *why* it received its score and what its primary technical value is. 
+- Never use generic placeholder text. 
 
-Also determine:
-- language
-- reviewMode
-- complexityLevel
-- projectDepth
-- recruiterReadiness
+RULE 3: ACTIONABLE INSIGHTS (Pros, Cons, Recs)
+Your pros and cons must reference *specific* things in the user's code. Do not say "Lacks styling." Say "Lacks CSS styling which leaves the semantic `<header>` and `<nav>` elements unformatted." 
+Your recommendations must be concrete next steps to level up the code.
 
-Use the server-provided pre-review classification, projectDepth, recruiterReadiness, and score ceiling as strong guardrails. Only override them if the actual content clearly proves a different category. Never exceed the server-provided score ceiling.
-
-PHASE 2 - CONTEXT-AWARE RUBRICS
-If notes/tutorial:
-Review clarity, organization, accuracy, completeness, examples, usefulness, and learning value. Do not call it a website or project.
-
-If README/documentation:
-Review setup instructions, dependencies, usage examples, screenshots/demo links, clarity, structure, and completeness. A README can score high only when it includes concrete setup, usage, dependency, example, and structure details. Documentation alone cannot verify coding ability.
-
-If single code file:
-Review syntax, logic, structure, readability, error handling, input validation, comments, maintainability, and complexity. A single file is not recruiter-ready unless it is genuinely strong, complete, and useful.
-
-If full project/website:
-Review architecture, completeness, UI/UX, accessibility, responsiveness, SEO basics, maintainability, documentation, error handling, deployment readiness, and real-world usefulness.
-
-If C/C++:
-Review syntax, functions/classes, memory safety, input/output handling, edge cases, readability, algorithmic logic, time/space complexity, and whether it is beginner-level or project-level.
-
-If Python/JS/TS:
-Review structure, functions/modules, error handling, validation, maintainability, real-world usefulness, and scalability.
-
-PHASE 3 - STRICT SCORING CALIBRATION
-Use these bands:
-- 90-100: exceptional, production-ready, polished, recruiter-ready
-- 80-89: strong, well-structured, close to recruiter-ready
-- 70-79: decent beginner/intermediate work but missing important pieces
-- 60-69: basic functional work with clear gaps
-- 40-59: rough, incomplete, weak, or structurally problematic
-- 0-39: broken, irrelevant, mostly unusable, or not enough content
-
-Rules:
-- Basic beginner code should usually be 50-70 unless unusually strong.
-- Simple scripts should not get 75+ unless they include validation, structure, usability, and completeness.
-- Basic C++ calculators usually belong around 55-68.
-- Beginner Python scripts usually belong around 60-72.
-- Stronger class-based C++ single-file projects can reach 78-85 if they handle structure, validation, and edge cases.
-- Notes should not get high project scores. Score them as learning material.
-- README files can score high only if they include setup, usage, dependencies, examples, and clear structure.
-- Penalize broken syntax, poor nesting, missing validation, unclear structure, missing documentation, and lack of project depth.
-
-PHASE 4 - RECRUITER READINESS
-The executiveSummary must include context like:
-"Detected Type: Beginner C++ single-file program. Review Mode: Code Review. Complexity: Beginner. Project Depth: Beginner practice. Recruiter Ready: No."
-
-Then explain market-readiness separately from mentorship:
-- "This is useful as a beginner practice file, but not recruiter-ready as a standalone project."
-- "This README is clear but cannot verify coding ability by itself."
-- "This project is close to portfolio-ready but needs deployment, documentation, and error handling."
-- "This appears to be learning notes, not a complete project."
-
-PHASE 5 - SPECIFIC RECOMMENDATIONS
-Avoid generic advice like "improve code quality."
-Give specific advice such as:
-- Add division-by-zero handling.
-- Separate HTML notes into sections.
-- Add README setup steps.
-- Add input validation for negative marks.
-- Use functions instead of putting all logic in main.
-- Add screenshots/demo link.
-- Split large files into components/modules.
-
-Return only the top 2 to 4 highest-priority pros, cons, and recommendations. Every item must be specific to the uploaded content.
-
-Output ONLY a valid JSON object with these exact keys:
-detectedType, language, reviewMode, complexityLevel, projectDepth, recruiterReadiness, summary, executiveSummary, score, pros, cons, recommendations.
-
-Do not include markdown blocks like ```json. Do not include prose outside JSON.
-"""
+RULE 4: STRICT JSON OUTPUT
+You must return ONLY a raw JSON object. No markdown wrappers (like ```json). Use this exact structure:
+{
+  "user_description": "Your brilliant 3-4 sentence paragraph. Do NOT use markdown headers (##), just standard text.",
+  "score": <Number out of 100>,
+  "pros": ["Highly specific strength 1", "Highly specific strength 2"],
+  "cons": ["Highly specific flaw 1", "Highly specific flaw 2"],
+  "recommendations": ["Actionable step 1", "Actionable step 2"]
+}"""
 
 
-AUDIT_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "melius_asset_audit",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "detectedType": {"type": "string"},
-                "language": {"type": "string"},
-                "reviewMode": {"type": "string"},
-                "complexityLevel": {"type": "string"},
-                "projectDepth": {"type": "string"},
-                "recruiterReadiness": {"type": "string"},
-                "summary": {"type": "string"},
-                "executiveSummary": {"type": "string"},
-                "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "pros": {"type": "array", "items": {"type": "string"}},
-                "cons": {"type": "array", "items": {"type": "string"}},
-                "recommendations": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": [
-                "detectedType",
-                "language",
-                "reviewMode",
-                "complexityLevel",
-                "projectDepth",
-                "recruiterReadiness",
-                "summary",
-                "executiveSummary",
-                "score",
-                "pros",
-                "cons",
-                "recommendations",
-            ],
-        },
-    },
-}
+AUDIT_RESPONSE_FORMAT = {"type": "json_object"}
 
 
-def normalize_audit_list(value: List[str]) -> List[str]:
+def normalize_audit_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+
     normalized_items = []
 
     for item in value:
@@ -1976,6 +1869,27 @@ def normalize_audit_list(value: List[str]) -> List[str]:
             normalized_items.append(normalized_item)
 
     return normalized_items[:4]
+
+
+def sanitize_audit_user_description(value: Any) -> str:
+    description = str(value or "").strip()
+
+    if not description:
+        return ""
+
+    description = re.sub(r"^\s*```(?:json|markdown|md)?\s*", "", description, flags=re.IGNORECASE)
+    description = re.sub(r"\s*```\s*$", "", description)
+    description = re.sub(r"(?im)^\s*#{1,6}\s*executive summary\s*$", "", description)
+    description = re.sub(r"(?im)^\s*Grade:\s*N/A\s*$", "", description)
+    description = re.sub(
+        r"(?is)\bNo\s+executive\s+summary\s+has\s+been\s+generated\s+yet\.?\s*(?:Grade:\s*N/A)?",
+        "",
+        description,
+    )
+
+    description = re.sub(r"\n{3,}", "\n\n", description).strip()
+
+    return description
 
 
 def normalize_detected_type(value: str, fallback_value: str = "unknown") -> str:
@@ -2044,58 +1958,14 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
             detail="AI audit response did not match the required schema.",
         ) from validation_error
 
-    classification = asset_classification or {}
-    classification_detected_type = normalize_detected_type(classification.get("detectedType", "unknown file"))
-    model_detected_type = normalize_detected_type(
-        audit_response.detectedType,
-        classification_detected_type,
-    )
+    audit_response.user_description = sanitize_audit_user_description(audit_response.user_description)
+    if not audit_response.user_description:
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response was missing the required user_description.",
+        )
 
-    if classification_detected_type == "HTML/CSS/JS learning notes" and model_detected_type == "complete website/project":
-        audit_response.detectedType = classification_detected_type
-    elif classification_detected_type in {"config/package file", "general notes", "README/documentation", "incomplete/broken file"}:
-        audit_response.detectedType = classification_detected_type
-    else:
-        audit_response.detectedType = model_detected_type
-
-    classification_language = (classification.get("language") or "").strip()
-    model_language = audit_response.language.strip()
-    audit_response.language = (
-        classification_language
-        if classification_language and classification_language.lower() != "unknown"
-        else model_language or "Unknown"
-    )
-    audit_response.reviewMode = REVIEW_MODE_BY_DETECTED_TYPE.get(
-        audit_response.detectedType,
-        classification.get("reviewMode") or audit_response.reviewMode or "general artifact review",
-    ).strip()
-    classification_complexity_level = (classification.get("complexityLevel") or "").strip()
-    model_complexity_level = audit_response.complexityLevel.strip()
-    audit_response.complexityLevel = (
-        classification_complexity_level
-        if classification_complexity_level and classification_complexity_level.lower() != "unknown"
-        else model_complexity_level or "unknown"
-    )
-    classification_project_depth = (classification.get("projectDepth") or "").strip()
-    audit_response.projectDepth = classification_project_depth or audit_response.projectDepth.strip() or "unknown"
-    audit_response.summary = audit_response.summary.strip()
-    score_ceiling = int(classification.get("scoreCeiling") or 100)
-    audit_response.score = max(0, min(score_ceiling, min(100, int(audit_response.score))))
-    audit_response.recruiterReadiness = normalize_recruiter_readiness(
-        classification.get("recruiterReadiness") or audit_response.recruiterReadiness,
-        audit_response.detectedType,
-        audit_response.score,
-    )
-    audit_response.executiveSummary = audit_response.executiveSummary.strip()
-
-    if not audit_response.summary:
-        audit_response.summary = audit_response.executiveSummary
-
-    if not audit_response.executiveSummary:
-        audit_response.executiveSummary = audit_response.summary
-
-    audit_response.executiveSummary = ensure_executive_summary_context(audit_response)
-
+    audit_response.score = max(0, min(100, int(round(float(audit_response.score)))))
     audit_response.pros = normalize_audit_list(audit_response.pros)
     audit_response.cons = normalize_audit_list(audit_response.cons)
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
@@ -3508,12 +3378,11 @@ async def verify_asset(
                         f"- Pre-review complexity level: {asset_classification['complexityLevel']}\n"
                         f"- Pre-review project depth: {asset_classification['projectDepth']}\n"
                         f"- Pre-review recruiter readiness: {asset_classification['recruiterReadiness']}\n"
-                        f"- Server-side score ceiling: {asset_classification['scoreCeiling']}/100\n"
                         f"- User-provided project context: "
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
-                        "Use the pre-review classification as a strong signal. Only change it if the uploaded "
-                        "content clearly contradicts it. Always classify before assigning a score. Never exceed "
-                        "the server-side score ceiling.\n\n"
+                        "Use the metadata only as context. Grade the artifact by its intended scope, not by raw "
+                        "file size or line count. Return the exact JSON object requested in the system prompt, "
+                        "with user_description as the executive summary field.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
@@ -3526,14 +3395,13 @@ async def verify_asset(
         audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         audit_payload = audit_response.model_dump()
         calculated_score = audit_response.score
-        executive_summary = audit_response.executiveSummary
-        summary = audit_response.summary or executive_summary
-        detected_type = audit_response.detectedType
-        language = audit_response.language
-        review_mode = audit_response.reviewMode
-        complexity_level = audit_response.complexityLevel
-        project_depth = audit_response.projectDepth
-        recruiter_readiness = audit_response.recruiterReadiness
+        user_description = audit_response.user_description
+        detected_type = asset_classification["detectedType"]
+        language = asset_classification["language"]
+        review_mode = asset_classification["reviewMode"]
+        complexity_level = asset_classification["complexityLevel"]
+        project_depth = asset_classification["projectDepth"]
+        recruiter_readiness = asset_classification["recruiterReadiness"]
         pros = audit_response.pros
         cons = audit_response.cons
         recommendations = audit_response.recommendations
@@ -3541,13 +3409,13 @@ async def verify_asset(
             "score": calculated_score,
             "evaluation_score": calculated_score,
             "logic_score": calculated_score,
-            "audit_summary": executive_summary,
-            "ai_summary": executive_summary,
-            "description": executive_summary,
+            "audit_summary": user_description,
+            "ai_summary": user_description,
+            "description": user_description,
             "pros": pros,
             "cons": cons,
             "recommendations": recommendations,
-            "user_description": user_context_description,
+            "user_description": user_description,
             "has_been_audited": True,
             "status": "Verified",
         }
@@ -3578,13 +3446,19 @@ async def verify_asset(
             "complexityLevel": complexity_level,
             "projectDepth": project_depth,
             "recruiterReadiness": recruiter_readiness,
-            "executiveSummary": executive_summary,
-            "report": audit_payload,
+            "user_description": user_description,
+            "executiveSummary": user_description,
+            "report": {
+                **audit_payload,
+                "calculatedScore": calculated_score,
+                "executiveSummary": user_description,
+                "strategicRecommendations": recommendations,
+            },
             "score": calculated_score,
-            "description": executive_summary,
-            "executive_summary": executive_summary,
-            "summary": summary,
-            "audit_summary": executive_summary,
+            "description": user_description,
+            "executive_summary": user_description,
+            "summary": user_description,
+            "audit_summary": user_description,
             "pros": pros,
             "cons": cons,
             "recommendations": recommendations,

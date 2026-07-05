@@ -3269,10 +3269,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const payload = (await response.json()) as {
         error?: string;
         grade?: string;
+        user_description?: string;
         pros?: string[];
         cons?: string[];
         recommendations?: string[];
         project?: ProjectItem;
+        report?: {
+          calculatedScore?: number;
+          score?: number;
+          user_description?: string;
+          executiveSummary?: string;
+          pros?: string[];
+          cons?: string[];
+          recommendations?: string[];
+          strategicRecommendations?: string[];
+        };
         reportText?: string;
         description?: string;
         executive_summary?: string;
@@ -3287,31 +3298,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const updatedProject = payload.project;
       const pythonScore = typeof payload.score === 'number' ? payload.score : null;
       const executiveSummary =
+        payload.user_description?.trim() ||
+        payload.report?.user_description?.trim() ||
         payload.description?.trim() ||
         payload.executive_summary?.trim() ||
         payload.summary?.trim() ||
+        payload.report?.executiveSummary?.trim() ||
+        updatedProject?.user_description?.trim() ||
         updatedProject?.description?.trim() ||
         updatedProject?.executive_summary?.trim() ||
         updatedProject?.summary?.trim() ||
         updatedProject?.audit_summary?.trim() ||
         '';
-      const generatedReportText = `## Executive Summary
-${executiveSummary || 'No executive summary has been generated yet.'}
-
-Grade: ${payload.grade ?? 'N/A'}
-
-## Pros
-${(payload.pros ?? []).map((item) => `- ${item}`).join('\n') || '- No strengths returned.'}
-
-## Cons
-${(payload.cons ?? []).map((item) => `- ${item}`).join('\n') || '- No flaws returned.'}
-
-## Strategic Recommendations
-${(payload.recommendations ?? []).map((item) => `- ${item}`).join('\n') || '- No recommendations returned.'}
-
-## Scorecard
-MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
-      const accumulatedReportText = payload.reportText ?? updatedProject?.description ?? updatedProject?.ai_summary ?? generatedReportText;
+      const prosList = payload.pros ?? payload.report?.pros ?? [];
+      const consList = payload.cons ?? payload.report?.cons ?? [];
+      const recommendationList = payload.recommendations ?? payload.report?.recommendations ?? payload.report?.strategicRecommendations ?? [];
+      const generatedReportText = [
+        executiveSummary,
+        prosList.length > 0 ? `Pros\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
+        consList.length > 0 ? `Cons\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
+        recommendationList.length > 0
+          ? `Strategic Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
+          : '',
+        `MeliusAI Verification Score: ${pythonScore ?? payload.report?.score ?? payload.report?.calculatedScore ?? 0}/100`,
+      ]
+        .filter((section) => section.trim().length > 0)
+        .join('\n\n');
+      const accumulatedReportText =
+        payload.reportText?.trim() || updatedProject?.description?.trim() || updatedProject?.ai_summary?.trim() || generatedReportText;
 
       setLiveStreamText(accumulatedReportText);
       const verifiedProjectPatch: Partial<ProjectItem> = {
@@ -3320,6 +3334,7 @@ MeliusAI Verification Score: **${pythonScore ?? 0}/100**`;
         evaluation_score: updatedProject?.evaluation_score ?? pythonScore,
         logic_score: updatedProject?.logic_score ?? pythonScore,
         score: updatedProject?.score ?? pythonScore,
+        user_description: payload.user_description ?? updatedProject?.user_description ?? executiveSummary,
         audit_summary: executiveSummary || updatedProject?.audit_summary,
         executive_summary: payload.executive_summary ?? updatedProject?.executive_summary,
         summary: payload.summary ?? updatedProject?.summary,

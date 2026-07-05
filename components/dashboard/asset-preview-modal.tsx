@@ -3,6 +3,8 @@
 import Image from 'next/image';
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -101,13 +103,17 @@ type VerifyAssetResponse = {
   error?: string;
   report?: {
     calculatedScore?: number;
+    score?: number;
+    user_description?: string;
     executiveSummary?: string;
     pros?: string[];
     cons?: string[];
+    recommendations?: string[];
     strategicRecommendations?: string[];
   };
   project?: PreviewProject;
   reportText?: string;
+  user_description?: string;
   description?: string;
   executive_summary?: string;
   summary?: string;
@@ -296,6 +302,13 @@ export function AssetPreviewModal({
   const cons = getMetricItems(liveProject, 'cons');
   const recommendations = getMetricItems(liveProject, 'recommendations');
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
+  const executiveSummaryMarkdown =
+    liveProject?.user_description?.trim() ||
+    liveProject?.audit_summary?.trim() ||
+    liveProject?.description?.trim() ||
+    liveProject?.executive_summary?.trim() ||
+    liveProject?.summary?.trim() ||
+    "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
 
   useEffect(() => {
     setIsPortalMounted(true);
@@ -400,48 +413,48 @@ export function AssetPreviewModal({
       const report = data.report;
       const pythonScore = typeof data.score === 'number' ? data.score : undefined;
       const executiveSummary =
+        data.user_description?.trim() ||
+        report?.user_description?.trim() ||
         data.description?.trim() ||
         data.executive_summary?.trim() ||
         data.summary?.trim() ||
         report?.executiveSummary?.trim() ||
+        data.project?.user_description?.trim() ||
         data.project?.description?.trim() ||
         data.project?.audit_summary?.trim() ||
+        liveProject.user_description?.trim() ||
         liveProject.description?.trim() ||
         liveProject.audit_summary?.trim() ||
         '';
-      const reportText =
-        data.reportText ??
-        `## Executive Summary
-${executiveSummary || 'No executive summary has been generated yet.'}
-
-Grade: ${data.grade ?? 'N/A'}
-
-## Pros
-${(data.pros ?? report?.pros ?? []).map((item) => `- ${item}`).join('\n') || '- No strengths returned.'}
-
-## Cons
-${(data.cons ?? report?.cons ?? []).map((item) => `- ${item}`).join('\n') || '- No flaws returned.'}
-
-## Strategic Recommendations
-${(data.recommendations ?? report?.strategicRecommendations ?? []).map((item) => `- ${item}`).join('\n') || '- No recommendations returned.'}
-
-## Scorecard
-MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/100**`;
+      const prosList = data.pros ?? report?.pros ?? [];
+      const consList = data.cons ?? report?.cons ?? [];
+      const recommendationList = data.recommendations ?? report?.recommendations ?? report?.strategicRecommendations ?? [];
+      const reportSections = [
+        executiveSummary,
+        prosList.length > 0 ? `Pros\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
+        consList.length > 0 ? `Cons\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
+        recommendationList.length > 0
+          ? `Strategic Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
+          : '',
+        `MeliusAI Verification Score: ${pythonScore ?? report?.score ?? report?.calculatedScore ?? 0}/100`,
+      ].filter((section) => section.trim().length > 0);
+      const reportText = data.reportText?.trim() || reportSections.join('\n\n');
       const projectPatch: Partial<PreviewProject> = {
         ...(data.project ?? {}),
-        score: report?.calculatedScore ?? pythonScore ?? data.project?.score ?? liveProject.score,
+        score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.score ?? liveProject.score,
         evaluation_score:
-          report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
-        logic_score: report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
+          report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
+        logic_score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
+        user_description: data.user_description ?? data.project?.user_description ?? (executiveSummary || liveProject.user_description),
         audit_summary: executiveSummary || report?.executiveSummary || data.project?.audit_summary || liveProject.audit_summary,
         executive_summary: data.executive_summary ?? data.project?.executive_summary ?? liveProject.executive_summary,
         summary: data.summary ?? data.project?.summary ?? liveProject.summary,
         pros: report?.pros ?? data.pros ?? data.project?.pros ?? liveProject.pros,
         cons: report?.cons ?? data.cons ?? data.project?.cons ?? liveProject.cons,
         recommendations:
-          report?.strategicRecommendations ?? data.recommendations ?? data.project?.recommendations ?? liveProject.recommendations,
-        ai_summary: reportText ?? data.project?.ai_summary ?? liveProject.ai_summary,
-        description: reportText ?? data.project?.description ?? liveProject.description,
+          report?.recommendations ?? report?.strategicRecommendations ?? data.recommendations ?? data.project?.recommendations ?? liveProject.recommendations,
+        ai_summary: data.project?.ai_summary ?? reportText ?? liveProject.ai_summary,
+        description: data.project?.description ?? (executiveSummary || reportText || liveProject.description),
       };
 
       setLiveProject((currentProject) => ({
@@ -547,13 +560,9 @@ MeliusAI Verification Score: **${pythonScore ?? report?.calculatedScore ?? 0}/10
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
-            <p className="mt-2 text-sm leading-relaxed text-slate-300">
-              {liveProject?.description?.trim() ||
-                liveProject?.executive_summary?.trim() ||
-                liveProject?.summary?.trim() ||
-                liveProject?.audit_summary?.trim() ||
-                "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary."}
-            </p>
+            <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{executiveSummaryMarkdown}</ReactMarkdown>
+            </div>
           </div>
 
           {canVerify ? (
