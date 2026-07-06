@@ -157,6 +157,12 @@ async function readVerifiedProfile(user: User) {
 
 async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPayload) {
   const admin = createSupabaseAdminClient();
+  const existingProfile = await readVerifiedProfile(user);
+
+  if (existingProfile.profile) {
+    return existingProfile;
+  }
+
   const role = normalizeRole(payload.role ?? user.user_metadata?.role);
   const displayName = getDisplayName(user, payload);
   const username = normalizeUsername(payload.username) ?? normalizeUsername(user.user_metadata?.username);
@@ -187,6 +193,25 @@ async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPaylo
 
   if (metadataUpdateError) {
     throw new Error(`Auth metadata update failed: ${metadataUpdateError.message}`);
+  }
+
+  const { error: userUpsertError } = await admin.from('users').upsert(
+    {
+      id: user.id,
+      role,
+      role_selected_at: roleSelectedAt,
+      display_name: displayName,
+      username,
+      birth_date: birthDate,
+      avatar_url: avatarUrl,
+      company_name: companyName,
+      updated_at: now,
+    },
+    { onConflict: 'id' }
+  );
+
+  if (userUpsertError) {
+    throw new Error(`App user upsert failed: ${userUpsertError.message}`);
   }
 
   const { error: profileUpsertError } = await admin.from('profiles').upsert(
@@ -234,10 +259,19 @@ export async function GET(request: NextRequest) {
     const { appUser, profile } = await readVerifiedProfile(user);
 
     if (!profile) {
-      return jsonError(
-        'Authenticated user exists, but the MeliusAI profiles row is missing.',
-        409,
-        { userId: user.id }
+      const bootstrapped = await upsertAndVerifyProfile(user, {});
+      const bootstrappedProfileData = toViewerProfile(user, bootstrapped.profile, bootstrapped.appUser);
+
+      return NextResponse.json(
+        {
+          data: bootstrappedProfileData,
+          email: user.email ?? null,
+          id: bootstrappedProfileData.id,
+          profile: bootstrapped.profile,
+          role: bootstrappedProfileData.role,
+          success: true,
+        },
+        { status: 200 }
       );
     }
 
