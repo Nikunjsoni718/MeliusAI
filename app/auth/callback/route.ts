@@ -4,28 +4,13 @@ import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase
 
 export const runtime = 'nodejs';
 
-type CallbackProfile = {
-  username: string | null;
-};
-
-function getMetadataUsername(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function getProfileRedirectPath(profile: CallbackProfile | null, userId: string, metadataUsername?: string | null) {
-  const profileUsername = profile?.username?.trim();
-  const redirectHandle = profileUsername || metadataUsername?.trim() || userId;
-
-  return `/profile/${encodeURIComponent(redirectHandle)}`;
-}
-
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
   const origin = requestUrl.origin;
 
   if (!hasSupabaseServerEnv()) {
-    return NextResponse.redirect(new URL('/auth/login', origin));
+    return NextResponse.redirect(`${origin}/auth/login`);
   }
 
   try {
@@ -58,13 +43,9 @@ export async function GET(request: NextRequest) {
       console.warn('OAuth callback could not load generated profile username:', profileError.message);
     }
 
-    const metadataUsername =
-      getMetadataUsername(user.user_metadata?.username) ??
-      getMetadataUsername(user.user_metadata?.preferred_username);
+    const targetPath = profile?.username ? `/profile/${profile.username}` : `/profile/${user.id}`;
 
-    return NextResponse.redirect(
-      new URL(getProfileRedirectPath((profile as CallbackProfile | null) ?? null, user.id, metadataUsername), origin)
-    );
+    return NextResponse.redirect(`${origin}${targetPath}`);
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const fallbackUrl = new URL('/auth/login', origin);
