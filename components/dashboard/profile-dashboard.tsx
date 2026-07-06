@@ -1143,10 +1143,10 @@ function SkeletonBlock({ className }: { className: string }) {
   return <div className={cn('animate-pulse rounded-full bg-slate-800/70', className)} />;
 }
 
-function ProfileDashboardSkeleton() {
+function DashboardSkeleton() {
   return (
-    <div className="flex w-full flex-col gap-6 opacity-100 transition-opacity duration-500">
-      <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
+    <div className="flex w-full min-w-0 flex-col gap-6 opacity-100 transition-opacity duration-500">
+      <div className="w-full min-w-0 rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
             <div className="h-16 w-16 shrink-0 animate-pulse rounded-full border border-slate-800 bg-slate-800/70" />
@@ -1163,7 +1163,7 @@ function ProfileDashboardSkeleton() {
                 <SkeletonBlock className="h-7 w-32" />
               </div>
               <SkeletonBlock className="h-4 w-28" />
-              <SkeletonBlock className="h-9 w-64" />
+              <SkeletonBlock className="h-9 w-full max-w-xs" />
             </div>
           </div>
           <div className="flex gap-2">
@@ -1176,7 +1176,7 @@ function ProfileDashboardSkeleton() {
       <div className="space-y-10">
         <section className="space-y-4">
           <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-            <CardContent className="p-6">
+            <CardContent className="p-4 sm:p-6">
               <SkeletonBlock className="h-3 w-12" />
               <SkeletonBlock className="mt-3 h-7 w-36 rounded-lg" />
               <div className="mt-5 space-y-3 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
@@ -1196,7 +1196,7 @@ function ProfileDashboardSkeleton() {
             </div>
             <SkeletonBlock className="h-7 w-24" />
           </div>
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-4">
             {[0, 1, 2, 3].map((item) => (
               <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                 <CardContent className="p-5">
@@ -1216,7 +1216,7 @@ function ProfileDashboardSkeleton() {
             <SkeletonBlock className="h-4 w-52 rounded-lg" />
           </div>
           <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-            <CardContent className="grid gap-8 p-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+            <CardContent className="grid gap-8 p-4 sm:p-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-center">
               <div className="space-y-6">
                 <div className="flex items-center gap-5">
                   <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
@@ -1284,7 +1284,7 @@ function ProfileIdentitySkeleton() {
         <SkeletonBlock className="h-7 w-24" />
       </div>
       <SkeletonBlock className="h-4 w-28 rounded-lg" />
-      <SkeletonBlock className="h-9 w-64 rounded-full" />
+      <SkeletonBlock className="h-9 w-full max-w-xs rounded-full" />
     </div>
   );
 }
@@ -1293,7 +1293,7 @@ function BioSectionSkeleton() {
   return (
     <section className="space-y-4">
       <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-        <CardContent className="p-6">
+        <CardContent className="p-4 sm:p-6">
           <div>
             <SkeletonBlock className="h-4 w-12 rounded-lg" />
             <SkeletonBlock className="mt-3 h-7 w-36 rounded-lg" />
@@ -1320,7 +1320,7 @@ function WorkAssetsSkeleton() {
         </div>
         <SkeletonBlock className="h-7 w-24 rounded-full" />
       </div>
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {[0, 1, 2, 3].map((item) => (
           <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
             <CardContent className="p-5">
@@ -1344,7 +1344,7 @@ function RatingsSectionSkeleton() {
         <SkeletonBlock className="h-4 w-52 rounded-lg" />
       </div>
       <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-        <CardContent className="grid gap-8 p-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+        <CardContent className="grid gap-8 p-4 sm:p-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-center">
           <div className="space-y-6">
             <div className="flex items-center gap-5">
               <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
@@ -1922,7 +1922,7 @@ function ProjectDropzone({
       }}
       onDrop={handleDrop}
       className={cn(
-        'flex w-full cursor-pointer flex-col rounded-[1.75rem] border border-dashed bg-[#050b1b]/40 p-6 transition',
+        'flex w-full cursor-pointer flex-col rounded-[1.75rem] border border-dashed bg-[#050b1b]/40 p-4 transition sm:p-6',
         compact ? 'min-h-[252px] justify-center' : 'min-h-[240px] justify-center',
         disabled ? 'cursor-default border-sky-400/30 bg-sky-500/[0.06]' : 'border-white/20 hover:border-sky-400/40 hover:bg-white/[0.03]',
         isDragActive && !disabled ? 'border-sky-400/50 bg-sky-500/[0.08]' : null
@@ -2027,7 +2027,7 @@ function ProjectCard({
   }
 
   return (
-    <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
+    <Card className="relative w-full min-w-0 overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
       <CardContent className="p-0">
         <div className="relative flex h-full flex-col justify-between p-5">
           <div className="flex flex-1 flex-col">
@@ -3722,7 +3722,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden bg-slate-950 text-white">
+    <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
           {isSidebarOpen ? (
             <button
               type="button"
@@ -3733,7 +3733,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ) : null}
           <aside
             className={cn(
-              'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:flex-shrink-0 md:translate-x-0 md:bg-slate-900',
+              'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-y-auto border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0 md:overflow-visible md:bg-slate-900',
               isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
             )}
           >
@@ -3810,7 +3810,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
           </aside>
 
-          <main className="relative h-full w-full flex-1 overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
+          <main className="relative h-full min-w-0 flex-1 overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
             <button
               type="button"
               aria-label="Toggle sidebar"
@@ -3835,7 +3835,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             {process.env.NODE_ENV !== 'production' ? (
               <div className="fixed bottom-3 left-3 z-[60] max-w-[calc(100vw-1.5rem)] rounded-xl border border-cyan-400/30 bg-slate-950/95 p-3 text-[11px] text-cyan-50 shadow-2xl shadow-black/40 backdrop-blur md:left-auto md:right-3 md:max-w-sm">
                 <p className="font-semibold text-white">Mobile auth debug</p>
-                <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+                <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                   <dt className="text-slate-400">session</dt>
                   <dd>{session ? 'yes' : 'no'}</dd>
                   <dt className="text-slate-400">user</dt>
@@ -3864,7 +3864,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -12, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed right-5 top-5 z-50 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100 shadow-[0_0_30px_rgba(244,63,94,0.16)] backdrop-blur-2xl"
+                  className="fixed left-4 right-4 top-4 z-50 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100 shadow-[0_0_30px_rgba(244,63,94,0.16)] backdrop-blur-2xl sm:left-auto sm:right-5 sm:max-w-sm"
                   role="status"
                 >
                   {bioToastMessage}
@@ -3876,7 +3876,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -12, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed right-5 top-20 z-50 rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 shadow-[0_0_30px_rgba(56,189,248,0.16)] backdrop-blur-2xl"
+                  className="fixed left-4 right-4 top-20 z-50 rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 shadow-[0_0_30px_rgba(56,189,248,0.16)] backdrop-blur-2xl sm:left-auto sm:right-5 sm:max-w-sm"
                   role="status"
                 >
                   {projectVerifyError}
@@ -3885,7 +3885,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </AnimatePresence>
             {isUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
-                <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-6 text-center backdrop-blur-md">
+                <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-4 text-center backdrop-blur-md sm:p-6">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/10 text-sky-100">
                     <UploadIcon className="h-6 w-6" />
                   </div>
@@ -3895,10 +3895,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
             ) : (
-            <Suspense fallback={<ProfileDashboardSkeleton />}>
-            <div className="flex w-full flex-col gap-6 opacity-100 transition-opacity duration-500">
-            <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <Suspense fallback={<DashboardSkeleton />}>
+            <div className="flex w-full min-w-0 flex-col gap-6 opacity-100 transition-opacity duration-500">
+            <div className="w-full min-w-0 rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-4 backdrop-blur-md sm:p-6 lg:p-7">
+                <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
                     <ProfilePhoto
                       fallbackLabel={displayName}
@@ -3942,7 +3942,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         {isEditing ? (
                           <Input
                             aria-label="Full name"
-                            className="h-auto min-w-[220px] max-w-sm border-blue-950/50 bg-[#050b1b]/60 px-3 py-2 text-3xl font-semibold text-white focus:border-sky-500/60 focus:ring-sky-500/20"
+                            className="h-auto w-full min-w-0 max-w-sm border-blue-950/50 bg-[#050b1b]/60 px-3 py-2 text-2xl font-semibold text-white focus:border-sky-500/60 focus:ring-sky-500/20 sm:min-w-[220px] sm:text-3xl"
                             value={profileDraft.displayName}
                             onChange={(event) => updateProfileDraft('displayName', event.target.value)}
                           />
@@ -3972,7 +3972,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       {email ? (
                         <a
                           href={`mailto:${email}`}
-                          className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-2 text-xs font-medium text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.1)] transition-all hover:border-cyan-300/60 hover:bg-cyan-500/15 hover:text-white hover:shadow-[0_0_28px_rgba(34,211,238,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
+                          className="mt-3 inline-flex w-full max-w-full items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-2 text-xs font-medium text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.1)] transition-all hover:border-cyan-300/60 hover:bg-cyan-500/15 hover:text-white hover:shadow-[0_0_28px_rgba(34,211,238,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 sm:w-auto"
                         >
                           <Mail className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
                           <span className="truncate sm:whitespace-normal sm:break-all">{email}</span>
@@ -4026,7 +4026,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.98, y: 10 }}
                     transition={{ duration: 0.18, ease: 'easeOut' }}
-                    className="absolute right-6 top-6 w-[min(360px,calc(100%-3rem))] rounded-3xl border border-blue-950/50 bg-[#090d1f]/90 p-5 backdrop-blur-md"
+                    className="absolute left-4 right-4 top-4 w-auto rounded-3xl border border-blue-950/50 bg-[#090d1f]/90 p-4 backdrop-blur-md sm:left-auto sm:right-6 sm:top-6 sm:w-[min(360px,calc(100%-3rem))] sm:p-5"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-white">Settings</p>
@@ -4162,7 +4162,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 {bioSaveState === 'saving' ? (
                   <div className="absolute right-6 top-6 h-2 w-2 rounded-full bg-sky-300 shadow-[0_0_20px_rgba(56,189,248,0.9)]" />
                 ) : null}
-                <CardContent className="p-6">
+                <CardContent className="p-4 sm:p-6">
                   <div>
                     <div>
                       <p className="text-sm text-slate-400">Bio</p>
@@ -4195,7 +4195,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       </div>
                     </>
                   ) : (
-                    <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5 text-base leading-7 text-slate-300">
+                    <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-4 text-base leading-7 text-slate-300 sm:p-5">
                       {displayBio || 'No bio provided yet.'}
                     </div>
                   )}
@@ -4224,7 +4224,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
               {allProjects.length === 0 ? (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                  <CardContent className="p-8">
+                  <CardContent className="p-4 sm:p-8">
                     {isOwner ? (
                       <ProjectDropzone
                         upload={uploadState}
@@ -4236,7 +4236,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         }}
                       />
                     ) : (
-                      <div className="rounded-[1.75rem] border border-blue-950/40 bg-[#050b1b]/35 p-8 text-center">
+                      <div className="rounded-[1.75rem] border border-blue-950/40 bg-[#050b1b]/35 p-4 text-center sm:p-8">
                         <p className="text-base font-semibold text-white">No public work assets yet.</p>
                         <p className="mt-2 text-sm text-slate-400">
                           This profile owner has not shared portfolio files in this workspace.
@@ -4247,7 +4247,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
+                  <div className="grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {visibleProjects.length > 0 &&
                       visibleProjects.map((project) => (
                         <ProjectCard
@@ -4304,7 +4304,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
 
               <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                <CardContent className="grid gap-8 p-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+                <CardContent className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-center lg:gap-8">
                   <div className="space-y-6">
                     <div className="flex items-center gap-5">
                       {typeof normalizedScore === 'number' ? (
@@ -4418,7 +4418,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               ) : fetchError ? (
                 <Card className="border-rose-400/20 bg-rose-500/[0.07] backdrop-blur-md">
-                  <CardContent className="p-6">
+                  <CardContent className="p-4 sm:p-6">
                     <p className="text-sm text-rose-100">{fetchError}</p>
                   </CardContent>
                 </Card>
@@ -4437,7 +4437,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                  <CardContent className="p-6">
+                  <CardContent className="p-4 sm:p-6">
                     <p className="text-sm text-slate-300">
                       No active opportunities are seeking your specific specialization right now. Keep optimizing your profile score!
                     </p>
