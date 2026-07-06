@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
@@ -44,6 +45,22 @@ function getAvatarUrl(metadata: Record<string, unknown> | undefined) {
   return getMetadataText(metadata, 'avatar_url') ?? getMetadataText(metadata, 'picture');
 }
 
+function createSupabaseAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.');
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
@@ -55,6 +72,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const supabase = await createSupabaseServerClient();
+    const supabaseAdmin = createSupabaseAdminClient();
 
     if (code) {
       const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
@@ -96,7 +114,7 @@ export async function GET(request: NextRequest) {
 
       for (let attempt = 1; attempt <= 3 && !finalUsername; attempt += 1) {
         const generatedUsername = createUsername(usernameSeed);
-        const { data: upsertedProfile, error: upsertError } = await supabase
+        const { error: insertError } = await supabaseAdmin
           .from('profiles')
           .upsert(
             {
@@ -107,17 +125,17 @@ export async function GET(request: NextRequest) {
               avatar_url: getAvatarUrl(metadata),
             },
             { onConflict: 'id' }
-          )
-          .select('username')
-          .single();
+          );
 
-        if (!upsertError) {
-          finalUsername = (upsertedProfile as CallbackProfile).username;
+        if (!insertError) {
+          finalUsername = generatedUsername;
           break;
         }
 
-        if (upsertError.code !== '23505' || attempt === 3) {
-          throw upsertError;
+        console.error('CRITICAL ERROR saving profile:', insertError);
+
+        if (insertError.code !== '23505' || attempt === 3) {
+          throw insertError;
         }
       }
     }
