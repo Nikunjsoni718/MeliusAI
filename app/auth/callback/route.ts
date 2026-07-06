@@ -6,10 +6,6 @@ import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase
 
 export const runtime = 'nodejs';
 
-type CallbackProfile = {
-  username: string | null;
-};
-
 function getMetadataText(metadata: Record<string, unknown> | undefined, key: string) {
   const value = metadata?.[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -105,7 +101,8 @@ export async function GET(request: NextRequest) {
 
     if (!finalUsername) {
       const metadata = user.user_metadata as Record<string, unknown> | undefined;
-      const displayName = getDisplayName(metadata, user.email);
+      const generatedFullName = getDisplayName(metadata, user.email);
+      const generatedAvatarUrl = getAvatarUrl(metadata);
       const usernameSeed =
         getMetadataText(metadata, 'full_name') ??
         getMetadataText(metadata, 'name') ??
@@ -114,28 +111,52 @@ export async function GET(request: NextRequest) {
 
       for (let attempt = 1; attempt <= 3 && !finalUsername; attempt += 1) {
         const generatedUsername = createUsername(usernameSeed);
-        const { error: insertError } = await supabaseAdmin
+
+        const { error: usersError } = await supabaseAdmin
+          .from('users')
+          .upsert(
+            {
+              id: user.id,
+              role: 'talent',
+              display_name: generatedFullName,
+              username: generatedUsername,
+              avatar_url: generatedAvatarUrl,
+            },
+            { onConflict: 'id' }
+          );
+
+        if (usersError) {
+          console.error('CRITICAL ERROR saving user base row:', usersError);
+
+          if (usersError.code === '23505' && attempt < 3) {
+            continue;
+          }
+
+          throw usersError;
+        }
+
+        const { error: profilesError } = await supabaseAdmin
           .from('profiles')
           .upsert(
             {
               id: user.id,
               email: user.email ?? null,
-              full_name: displayName,
+              full_name: generatedFullName,
               username: generatedUsername,
-              avatar_url: getAvatarUrl(metadata),
+              avatar_url: generatedAvatarUrl,
             },
             { onConflict: 'id' }
           );
 
-        if (!insertError) {
+        if (!profilesError) {
           finalUsername = generatedUsername;
           break;
         }
 
-        console.error('CRITICAL ERROR saving profile:', insertError);
+        console.error('CRITICAL ERROR saving profile:', profilesError);
 
-        if (insertError.code !== '23505' || attempt === 3) {
-          throw insertError;
+        if (profilesError.code !== '23505' || attempt === 3) {
+          throw profilesError;
         }
       }
     }
@@ -146,10 +167,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(`${origin}/profile/${encodeURIComponent(finalUsername)}`);
   } catch (error) {
-    console.error('OAuth callback failed:', error);
-    const fallbackUrl = new URL('/auth/login', origin);
-    fallbackUrl.searchParams.set('error', 'oauth_callback_failed');
+    console.error('Database save failed:', error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : error && typeof error === 'object' && 'message' in error
+          ? String((error as { message?: unknown }).message)
+          : 'OAuth callback failed.';
 
-    return NextResponse.redirect(fallbackUrl);
+    return NextResponse.redirect(`${origin}/?error=${encodeURIComponent(message)}`);
   }
 }
