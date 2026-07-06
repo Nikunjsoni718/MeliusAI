@@ -21,7 +21,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
-import { PROFILE_SPECTATOR_BASE_URL, fetchSpectateProfileResponse } from '@/lib/spectate-profile';
+import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProjectRow, UserRow } from '@/types/supabase';
@@ -41,7 +41,6 @@ type ProjectItem = {
   id: string;
   title: string;
   user_id?: string | null;
-  owner_id?: string | null;
   is_public?: boolean | null;
   source_url?: string | null;
   source_kind: string | null;
@@ -138,23 +137,6 @@ type SpectatorScanItem = {
   description?: string | null;
   created_at?: string | null;
 };
-type SpectateProfileResponse = {
-  success?: boolean;
-  profile?: SpectatorProfilePayload | null;
-  resume?: Partial<SpectatorProfilePayload> | null;
-  projects?: ProjectRow[] | null;
-  vault_assets?: ProjectRow[] | null;
-  vaultAssets?: ProjectRow[] | null;
-  ratings?: SpectatorRatingItem[] | null;
-  scores?: SpectatorRatingItem[] | null;
-  scans?: SpectatorScanItem[] | null;
-  opportunities?: unknown[] | null;
-  isOwner?: boolean;
-  viewerType?: string;
-  authenticationStatus?: string;
-  detail?: string;
-  message?: string;
-} | SpectatorProfilePayload;
 type NormalizedSpectateProfileResponse = {
   detail: string | null;
   isOwner: boolean;
@@ -187,6 +169,11 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
+const PROFILE_DASHBOARD_COLUMNS =
+  'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
+const PROJECT_DASHBOARD_COLUMNS =
+  'id, user_id, is_public, name, title, source_url, file_name, file_type, file_url, file_size, user_description, score, evaluation_score, has_been_audited, logic_score, source_kind, status, created_at, updated_at';
+const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
     console.warn('Profile vector sync skipped: NEXT_PUBLIC_API_URL is not configured.');
@@ -260,38 +247,6 @@ function getProfileUsernameFromPathname(pathname: string) {
   return normalizeProfileUsername(profilePathMatch?.[1]);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function nullableString(value: unknown) {
-  return typeof value === 'string' ? value : null;
-}
-
-function nullableStringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : null;
-}
-
-function nullableStringArrayOrString(value: unknown) {
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === 'string');
-  }
-
-  return typeof value === 'string' ? value : null;
-}
-
-function nullableNumber(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function nullableProjects(value: unknown) {
-  return Array.isArray(value) ? (value as ProjectRow[]) : null;
-}
-
 function normalizeProfileList(value: unknown) {
   if (Array.isArray(value)) {
     return value
@@ -306,143 +261,71 @@ function normalizeProfileList(value: unknown) {
   return [];
 }
 
-function normalizeSpectatorProfilePayload(value: unknown): SpectatorProfilePayload | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-
-  const hasProfileShape = [
-    'id',
-    'username',
-    'full_name',
-    'email',
-    'bio',
-    'avatar_url',
-    'age',
-    'current_status',
-    'qualifications',
-    'experience',
-    'hobbies',
-    'skills',
-    'projects',
-  ].some((key) => key in record);
-
-  if (!hasProfileShape) {
-    return null;
-  }
-
-  return {
-    id: nullableString(record.id),
-    username: nullableString(record.username),
-    full_name: nullableString(record.full_name),
-    email: nullableString(record.email),
-    bio: nullableString(record.bio),
-    avatar_url: nullableString(record.avatar_url),
-    age: nullableNumber(record.age),
-    current_status: nullableString(record.current_status),
-    qualifications: nullableStringArray(record.qualifications),
-    experience: nullableStringArrayOrString(record.experience),
-    hobbies: nullableStringArray(record.hobbies),
-    skills: nullableStringArray(record.skills),
-    projects: nullableProjects(record.projects),
-  };
-}
-
-function normalizeSpectateProfileResponse(
-  payload: unknown,
-  targetUsername: string
-): NormalizedSpectateProfileResponse {
-  const payloadRecord = asRecord(payload);
-  const profileRecord = asRecord(payloadRecord?.profile);
-  const directProfile = normalizeSpectatorProfilePayload(payload);
-  const wrappedProfile = normalizeSpectatorProfilePayload(profileRecord);
-  const wrappedResume = normalizeSpectatorProfilePayload(payloadRecord?.resume);
-  const profile = wrappedProfile ?? directProfile;
-
-  return {
-    detail: nullableString(payloadRecord?.detail),
-    isOwner: payloadRecord?.isOwner === true || profileRecord?.isOwner === true,
-    message: nullableString(payloadRecord?.message),
-    profile: profile
-      ? ({
-          ...profile,
-          ...(wrappedResume ?? {}),
-          id: profile.id ?? wrappedResume?.id ?? null,
-          username: profile.username ?? wrappedResume?.username ?? targetUsername,
-          email: profile.email ?? wrappedResume?.email ?? null,
-        } satisfies SavedProfileItem)
-      : null,
-    projects: Array.isArray(payloadRecord?.projects)
-      ? (payloadRecord.projects as ProjectRow[])
-      : Array.isArray(profile?.projects)
-        ? profile.projects
-        : Array.isArray(payloadRecord?.vault_assets)
-          ? (payloadRecord.vault_assets as ProjectRow[])
-          : Array.isArray(payloadRecord?.vaultAssets)
-            ? (payloadRecord.vaultAssets as ProjectRow[])
-            : [],
-    ratings: Array.isArray(payloadRecord?.ratings)
-      ? payloadRecord.ratings
-      : Array.isArray(payloadRecord?.scores)
-        ? payloadRecord.scores
-        : Array.isArray(payloadRecord?.scans)
-          ? payloadRecord.scans
-          : [],
-    opportunities: Array.isArray(payloadRecord?.opportunities) ? payloadRecord.opportunities : [],
-    authenticationStatus: nullableString(payloadRecord?.authenticationStatus ?? profileRecord?.authenticationStatus),
-    viewerType: nullableString(payloadRecord?.viewerType ?? profileRecord?.viewerType),
-  };
-}
-
 type SpectatorProfileCacheKey = readonly ['spectate-profile', string, string];
 
 async function fetchSpectatorProfile([
   ,
   targetUsername,
 ]: SpectatorProfileCacheKey, supabase?: SupabaseClient): Promise<NormalizedSpectateProfileResponse> {
-  const response = await fetchSpectateProfileResponse(targetUsername);
-  const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
-  const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
-
-  if (!response.ok || !normalizedSpectatorPayload.profile) {
-    throw new Error(
-      normalizedSpectatorPayload.detail ||
-        normalizedSpectatorPayload.message ||
-        `Unable to load candidate profile "${targetUsername}".`
-    );
+  if (!supabase) {
+    throw new Error('Supabase is not configured for dashboard profile loading.');
   }
 
-  let authenticatedUserId: string | null = null;
-
-  if (supabase) {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) {
-      console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
-    }
-
-    authenticatedUserId = user?.id ?? null;
+  const username = normalizeProfileUsername(targetUsername);
+  if (!username) {
+    throw new Error('Unable to load candidate profile without a username.');
   }
 
-  const isOwner = Boolean(
-    authenticatedUserId && normalizedSpectatorPayload.profile?.id === authenticatedUserId
-  );
+  const { data: profileData, error: profileError } = await supabase
+    .from('profiles')
+    .select(PROFILE_DASHBOARD_COLUMNS)
+    .eq('username', username)
+    .single();
+
+  if (profileError || !profileData) {
+    throw new Error(profileError?.message || `Unable to load candidate profile "${username}".`);
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
+  }
+
+  const savedProfile = profileData as SavedProfileItem;
+  const isOwner = user?.id === savedProfile.id;
+  let projectsQuery = supabase
+    .from('projects')
+    .select(PROJECT_DASHBOARD_COLUMNS)
+    .eq('user_id', savedProfile.id)
+    .order('created_at', { ascending: false })
+    .limit(DASHBOARD_PROJECT_LIMIT);
+
+  if (!isOwner) {
+    projectsQuery = projectsQuery.eq('is_public', true);
+  }
+
+  const { data: projectsData, error: projectsError } = await projectsQuery;
+
+  if (projectsError) {
+    throw new Error(projectsError.message || `Unable to load projects for "${username}".`);
+  }
+
+  const projects = Array.isArray(projectsData) ? (projectsData as ProjectRow[]) : [];
 
   return {
-    ...normalizedSpectatorPayload,
+    detail: null,
     isOwner,
-    authenticationStatus: authenticatedUserId
-      ? 'authenticated'
-      : normalizedSpectatorPayload.authenticationStatus,
-    viewerType: isOwner
-      ? 'owner'
-      : authenticatedUserId
-        ? 'authenticated'
-        : normalizedSpectatorPayload.viewerType,
+    message: null,
+    profile: savedProfile,
+    projects,
+    ratings: [],
+    opportunities: [],
+    authenticationStatus: user ? 'authenticated' : 'anonymous',
+    viewerType: isOwner ? 'owner' : user ? 'authenticated' : 'public',
   };
 }
 
@@ -777,7 +660,6 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
   return {
     id: row.id,
     user_id: row.user_id ?? null,
-    owner_id: row.owner_id ?? null,
     is_public: row.is_public ?? null,
     title: fileName,
     source_url: fileUrl,
@@ -2331,16 +2213,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   const displayName =
     profileDraft.displayName ||
-    profileFallback?.displayName ||
     profileData?.full_name ||
+    profileFallback?.displayName ||
     (isOwner ? profile?.display_name : null) ||
     (isOwner ? user?.user_metadata?.full_name : null) ||
     (isOwner ? user?.user_metadata?.name : null) ||
     'Member';
   const username =
     profileDraft.username ||
-    profileFallback?.username ||
     profileData?.username ||
+    profileFallback?.username ||
     (isOwner ? profile?.username : null) ||
     (isOwner ? user?.user_metadata?.username : null) ||
     targetUsername ||
@@ -2365,7 +2247,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     (isOwner ? (user?.user_metadata?.picture as string | undefined) : null) ??
     null;
   const avgProjectScore =
-    typeof profileFallback?.avgProjectScore === 'number'
+    typeof profileData?.avg_project_score === 'number'
+      ? Math.round(profileData.avg_project_score)
+      : typeof profileFallback?.avgProjectScore === 'number'
       ? Math.round(profileFallback.avgProjectScore)
       : 0;
   const isProfilePayloadPending = Boolean(targetUsername) && !profileData && !spectatorProfileError;
