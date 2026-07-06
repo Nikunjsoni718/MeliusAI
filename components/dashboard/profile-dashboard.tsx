@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import useSWR, { useSWRConfig } from 'swr';
 
 import faviconLogo from '@/app/favicon.png';
@@ -399,7 +400,7 @@ type SpectatorProfileCacheKey = readonly ['spectate-profile', string, string];
 async function fetchSpectatorProfile([
   ,
   targetUsername,
-]: SpectatorProfileCacheKey): Promise<NormalizedSpectateProfileResponse> {
+]: SpectatorProfileCacheKey, supabase?: SupabaseClient): Promise<NormalizedSpectateProfileResponse> {
   const response = await fetchSpectateProfileResponse(targetUsername);
   const spectatorPayload = (await response.json().catch(() => null)) as SpectateProfileResponse | null;
   const normalizedSpectatorPayload = normalizeSpectateProfileResponse(spectatorPayload, targetUsername);
@@ -412,7 +413,37 @@ async function fetchSpectatorProfile([
     );
   }
 
-  return normalizedSpectatorPayload;
+  let authenticatedUserId: string | null = null;
+
+  if (supabase) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
+    }
+
+    authenticatedUserId = user?.id ?? null;
+  }
+
+  const isOwner = Boolean(
+    authenticatedUserId && normalizedSpectatorPayload.profile?.id === authenticatedUserId
+  );
+
+  return {
+    ...normalizedSpectatorPayload,
+    isOwner,
+    authenticationStatus: authenticatedUserId
+      ? 'authenticated'
+      : normalizedSpectatorPayload.authenticationStatus,
+    viewerType: isOwner
+      ? 'owner'
+      : authenticatedUserId
+        ? 'authenticated'
+        : normalizedSpectatorPayload.viewerType,
+  };
 }
 
 function formatScanDate(value: string) {
@@ -2241,11 +2272,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     },
     [authEnabled, loading, targetUsername, user?.id]
   );
+  const dashboardProfileFetcher = useCallback(
+    (cacheKey: SpectatorProfileCacheKey) => fetchSpectatorProfile(cacheKey, supabase ?? undefined),
+    [supabase]
+  );
   const {
     data: spectatorProfilePayload,
     error: spectatorProfileError,
     isLoading: spectatorProfileLoading,
-  } = useSWR(spectatorProfileKey, fetchSpectatorProfile, {
+  } = useSWR(spectatorProfileKey, dashboardProfileFetcher, {
     dedupingInterval: DASHBOARD_PROFILE_CACHE_MS,
     errorRetryInterval: 15_000,
     errorRetryCount: 2,
@@ -2268,7 +2303,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     dashboardPrefetchKeysRef.current.add(prefetchKey);
     void mutate<NormalizedSpectateProfileResponse>(
       spectatorProfileKey,
-      fetchSpectatorProfile(spectatorProfileKey),
+      dashboardProfileFetcher(spectatorProfileKey),
       {
         populateCache: true,
         revalidate: false,
@@ -2278,7 +2313,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       dashboardPrefetchKeysRef.current.delete(prefetchKey);
       console.warn('Dashboard profile prefetch skipped:', error);
     });
-  }, [mutate, spectatorProfileKey, spectatorProfileLoading, spectatorProfilePayload]);
+  }, [dashboardProfileFetcher, mutate, spectatorProfileKey, spectatorProfileLoading, spectatorProfilePayload]);
   const prefetchDashboardNavigation = useCallback(
     (item: DashboardNavigationItem) => {
       const routeHref = item.href.split('#')[0] || item.href;

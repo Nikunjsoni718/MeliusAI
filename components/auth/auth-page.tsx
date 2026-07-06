@@ -574,7 +574,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
       return;
     }
 
-    const redirectTo = `${window.location.origin}/auth/login`;
+    const redirectTo = `${window.location.origin}/auth/callback`;
 
     setPendingAction('linkedin');
     setError(null);
