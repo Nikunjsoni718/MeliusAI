@@ -4,6 +4,15 @@ import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase
 
 export const runtime = 'nodejs';
 
+const PROFILE_USERNAME_FETCH_ATTEMPTS = 3;
+const PROFILE_USERNAME_FETCH_RETRY_MS = 500;
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
@@ -33,17 +42,33 @@ export async function GET(request: NextRequest) {
       throw userError ?? new Error('OAuth callback did not return an authenticated user.');
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', user.id)
-      .single();
+    let profileUsername: string | null = null;
 
-    if (profileError) {
-      console.warn('OAuth callback could not load generated profile username:', profileError.message);
+    for (let attempt = 1; attempt <= PROFILE_USERNAME_FETCH_ATTEMPTS; attempt += 1) {
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        console.warn('OAuth callback could not load generated profile username:', profileError.message);
+      }
+
+      const username = typeof profile?.username === 'string' ? profile.username.trim() : '';
+      if (username) {
+        profileUsername = username;
+        break;
+      }
+
+      if (attempt < PROFILE_USERNAME_FETCH_ATTEMPTS) {
+        await wait(PROFILE_USERNAME_FETCH_RETRY_MS);
+      }
     }
 
-    const targetPath = profile?.username ? `/profile/${profile.username}` : `/profile/${user.id}`;
+    const targetPath = profileUsername
+      ? `/profile/${encodeURIComponent(profileUsername)}`
+      : `/profile/${encodeURIComponent(user.id)}`;
 
     return NextResponse.redirect(`${origin}${targetPath}`);
   } catch (error) {
