@@ -3,6 +3,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useState } from 'react';
 
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -171,6 +172,16 @@ export function AuthPanel({
         </div>
       </CardHeader>
       <CardContent>
+        {authEnabled && supabase ? (
+          <div className="mb-4 space-y-4">
+            <GoogleSignInButton />
+            <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              <span className="h-px flex-1 bg-white/10" />
+              <span>or use email</span>
+              <span className="h-px flex-1 bg-white/10" />
+            </div>
+          </div>
+        ) : null}
         <form className="space-y-4" onSubmit={handleSubmit}>
           {mode === 'signup' ? (
             <div className="space-y-2">

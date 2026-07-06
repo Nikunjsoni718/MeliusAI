@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 
 import faviconLogo from '@/app/favicon.png';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1109,6 +1110,17 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
                                   Create Account
                                 </button>
                               </div>
+
+                              {authEnabled && SUPABASE_PUBLIC_CONFIG_READY ? (
+                                <div className="space-y-4">
+                                  <GoogleSignInButton />
+                                  <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                                    <span className="h-px flex-1 bg-white/10" />
+                                    <span>or use email</span>
+                                    <span className="h-px flex-1 bg-white/10" />
+                                  </div>
+                                </div>
+                              ) : null}
 
                               <form className="space-y-4" onSubmit={(event) => void initializeIndividualVault(event)}>
                                 {individualMode === 'signup' ? (
