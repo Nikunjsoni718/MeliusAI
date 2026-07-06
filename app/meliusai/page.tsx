@@ -948,6 +948,7 @@ ${getProjectDescription(linkedProject)}
 
           <Link
             href="/vault"
+            prefetch
             className="group w-full flex items-center gap-2.5 px-3 py-2 text-xs font-sans font-medium text-slate-400 hover:text-slate-200 hover:bg-blue-950/20 rounded-lg transition-all duration-200"
           >
             <span className="text-slate-500 group-hover:text-cyan-400">📁</span> View Vault
@@ -955,6 +956,7 @@ ${getProjectDescription(linkedProject)}
 
           <Link
             href="/search"
+            prefetch
             className="group w-full flex items-center gap-2.5 px-3 py-2 text-xs font-sans font-medium text-slate-400 hover:text-slate-200 hover:bg-blue-950/20 rounded-lg transition-all duration-200"
           >
             <span className="text-slate-500 group-hover:text-cyan-400">🔍</span> Search Opportunities
@@ -962,6 +964,7 @@ ${getProjectDescription(linkedProject)}
 
           <Link
             href="/profile"
+            prefetch
             className="group w-full flex items-center gap-2.5 px-3 py-2 text-xs font-sans font-medium text-slate-400 hover:text-slate-200 hover:bg-blue-950/20 rounded-lg transition-all duration-200"
           >
             <span className="text-slate-500 group-hover:text-cyan-400">🏠</span> Home

@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 
 import faviconLogo from '@/app/favicon.png';
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
@@ -185,6 +185,7 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
     console.warn('Profile vector sync skipped: NEXT_PUBLIC_API_URL is not configured.');
@@ -1015,19 +1016,24 @@ function SidebarNavButton({
   href,
   icon,
   onClick,
+  onPrefetch,
 }: {
   label: string;
   active?: boolean;
   href: string;
   icon: ReactNode;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onPrefetch?: () => void;
 }) {
   return (
     <Link
       href={href}
+      prefetch
       aria-label={label}
       title={label}
       onClick={onClick}
+      onFocus={onPrefetch}
+      onMouseEnter={onPrefetch}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         label === 'MeliusAI' ? 'text-cyan-400/90 hover:text-cyan-400' : null,
@@ -1261,6 +1267,130 @@ function ProfileDashboardSkeleton() {
         </section>
       </div>
     </div>
+  );
+}
+
+function ProfileIdentitySkeleton() {
+  return (
+    <div className="space-y-3">
+      <SkeletonBlock className="h-4 w-40 rounded-lg" />
+      <div className="flex flex-wrap gap-2">
+        <SkeletonBlock className="h-6 w-20" />
+        <SkeletonBlock className="h-6 w-24" />
+        <SkeletonBlock className="h-6 w-28" />
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <SkeletonBlock className="h-9 w-56 rounded-xl" />
+        <SkeletonBlock className="h-7 w-24" />
+      </div>
+      <SkeletonBlock className="h-4 w-28 rounded-lg" />
+      <SkeletonBlock className="h-9 w-64 rounded-full" />
+    </div>
+  );
+}
+
+function BioSectionSkeleton() {
+  return (
+    <section className="space-y-4">
+      <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+        <CardContent className="p-6">
+          <div>
+            <SkeletonBlock className="h-4 w-12 rounded-lg" />
+            <SkeletonBlock className="mt-3 h-7 w-36 rounded-lg" />
+          </div>
+          <div className="mt-5 space-y-3 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
+            <SkeletonBlock className="h-4 w-full rounded-lg" />
+            <SkeletonBlock className="h-4 w-11/12 rounded-lg" />
+            <SkeletonBlock className="h-4 w-4/5 rounded-lg" />
+            <SkeletonBlock className="h-4 w-2/3 rounded-lg" />
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function WorkAssetsSkeleton() {
+  return (
+    <section id="my-work-assets" className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-3">
+          <SkeletonBlock className="h-7 w-44 rounded-lg" />
+          <SkeletonBlock className="h-4 w-32 rounded-lg" />
+        </div>
+        <SkeletonBlock className="h-7 w-24 rounded-full" />
+      </div>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((item) => (
+          <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+            <CardContent className="p-5">
+              <SkeletonBlock className="h-4 w-2/3 rounded-lg" />
+              <SkeletonBlock className="mt-4 h-32 w-full rounded-2xl" />
+              <SkeletonBlock className="mt-4 h-4 w-full rounded-lg" />
+              <SkeletonBlock className="mt-2 h-4 w-4/5 rounded-lg" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RatingsSectionSkeleton() {
+  return (
+    <section id="my-ratings" className="scroll-mt-24 space-y-4">
+      <div className="space-y-3">
+        <SkeletonBlock className="h-7 w-36 rounded-lg" />
+        <SkeletonBlock className="h-4 w-52 rounded-lg" />
+      </div>
+      <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+        <CardContent className="grid gap-8 p-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-center">
+          <div className="space-y-6">
+            <div className="flex items-center gap-5">
+              <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
+                <div className="absolute inset-0 animate-pulse rounded-full border border-slate-800 bg-slate-800/70" />
+                <div className="relative h-24 w-24 animate-pulse rounded-full border border-slate-700 bg-slate-900/80" />
+              </div>
+              <div className="space-y-3">
+                <SkeletonBlock className="h-4 w-24 rounded-lg" />
+                <SkeletonBlock className="h-7 w-36 rounded-lg" />
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
+                <SkeletonBlock className="h-3 w-20 rounded-lg" />
+                <SkeletonBlock className="mt-4 h-8 w-14 rounded-lg" />
+              </div>
+              <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
+                <SkeletonBlock className="h-3 w-28 rounded-lg" />
+                <SkeletonBlock className="mt-4 h-8 w-14 rounded-lg" />
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <SkeletonBlock className="h-6 w-56 rounded-lg" />
+              <SkeletonBlock className="h-7 w-20 rounded-full" />
+            </div>
+            <div className="mt-4 space-y-3">
+              {[0, 1, 2].map((item) => (
+                <div
+                  key={item}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4"
+                >
+                  <div className="flex-1 space-y-3">
+                    <SkeletonBlock className="h-4 w-2/5 rounded-lg" />
+                    <SkeletonBlock className="h-3 w-1/4 rounded-lg" />
+                    <SkeletonBlock className="h-3 w-4/5 rounded-lg" />
+                  </div>
+                  <SkeletonBlock className="h-7 w-16 rounded-full" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -2006,6 +2136,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     supabase,
     user,
   } = useViewerProfile();
+  const { mutate } = useSWRConfig();
   const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2073,6 +2204,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioToastTimerRef = useRef<number | null>(null);
   const lastSavedBioRef = useRef('');
   const lastSavedSkillsInputRef = useRef('');
+  const dashboardPrefetchKeysRef = useRef<Set<string>>(new Set());
   const [profileFallback, setProfileFallback] = useState<{
     displayName: string;
     username: string;
@@ -2114,10 +2246,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     error: spectatorProfileError,
     isLoading: spectatorProfileLoading,
   } = useSWR(spectatorProfileKey, fetchSpectatorProfile, {
-    dedupingInterval: 120_000,
+    dedupingInterval: DASHBOARD_PROFILE_CACHE_MS,
+    errorRetryInterval: 15_000,
+    errorRetryCount: 2,
+    focusThrottleInterval: DASHBOARD_PROFILE_CACHE_MS,
+    keepPreviousData: true,
+    revalidateIfStale: false,
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
   });
+  const prefetchDashboardProfilePayload = useCallback(() => {
+    if (!spectatorProfileKey || spectatorProfileLoading || spectatorProfilePayload) {
+      return;
+    }
+
+    const prefetchKey = spectatorProfileKey.join(':');
+    if (dashboardPrefetchKeysRef.current.has(prefetchKey)) {
+      return;
+    }
+
+    dashboardPrefetchKeysRef.current.add(prefetchKey);
+    void mutate<NormalizedSpectateProfileResponse>(
+      spectatorProfileKey,
+      fetchSpectatorProfile(spectatorProfileKey),
+      {
+        populateCache: true,
+        revalidate: false,
+        rollbackOnError: false,
+      }
+    ).catch((error) => {
+      dashboardPrefetchKeysRef.current.delete(prefetchKey);
+      console.warn('Dashboard profile prefetch skipped:', error);
+    });
+  }, [mutate, spectatorProfileKey, spectatorProfileLoading, spectatorProfilePayload]);
+  const prefetchDashboardNavigation = useCallback(
+    (item: DashboardNavigationItem) => {
+      const routeHref = item.href.split('#')[0] || item.href;
+
+      router.prefetch(routeHref);
+
+      if (item.label === 'Vault' || item.label === 'Home' || item.label === 'Resume') {
+        prefetchDashboardProfilePayload();
+      }
+    },
+    [prefetchDashboardProfilePayload, router]
+  );
   const viewerMetadataUsername =
     typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
 
@@ -2160,6 +2333,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     typeof profileFallback?.avgProjectScore === 'number'
       ? Math.round(profileFallback.avgProjectScore)
       : 0;
+  const isProfilePayloadPending = Boolean(targetUsername) && !profileData && !spectatorProfileError;
   const dashboardNavigation = useMemo<DashboardNavigationItem[]>(
     () => {
       const items = [
@@ -3598,6 +3772,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           (item.href === profileHref && pathname.startsWith('/profile/'))
                         }
                         icon={item.icon}
+                        onPrefetch={() => prefetchDashboardNavigation(item)}
                         onClick={
                           item.label === 'Opportunities'
                             ? (event) => {
@@ -3719,9 +3894,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <Progress value={uploadState?.progress ?? 5} className="mt-5 bg-slate-900/90" />
                 </div>
               </div>
-            ) : profileLoading ? (
-              <ProfileDashboardSkeleton />
             ) : (
+            <Suspense fallback={<ProfileDashboardSkeleton />}>
             <div className="flex w-full flex-col gap-6 opacity-100 transition-opacity duration-500">
             <div className="rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
                 <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
@@ -3734,6 +3908,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       onSelect={isOwner && isEditing ? handleAvatarSelect : undefined}
                     />
                     <div className="min-w-0 flex-1">
+                      {isProfilePayloadPending ? (
+                        <ProfileIdentitySkeleton />
+                      ) : (
+                        <>
                       <p className="text-sm text-slate-400">
                         {isOwner ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
                       </p>
@@ -3807,6 +3985,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       )}
                       {profileSaveError ? <p className="mt-2 text-sm text-rose-200">{profileSaveError}</p> : null}
                       {avatarError ? <p className="mt-2 text-sm text-slate-400">Photo update did not finish. Try again.</p> : null}
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -3973,6 +4153,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
 
             <div className="space-y-10">
+              <Suspense fallback={<BioSectionSkeleton />}>
+                {isProfilePayloadPending ? (
+                  <BioSectionSkeleton />
+                ) : (
               <section className="space-y-4">
               <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                 {bioSaveState === 'saving' ? (
@@ -4018,7 +4202,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </CardContent>
               </Card>
             </section>
+                )}
+              </Suspense>
 
+              <Suspense fallback={<WorkAssetsSkeleton />}>
+                {isProfilePayloadPending ? (
+                  <WorkAssetsSkeleton />
+                ) : (
             <section id="my-work-assets" className="space-y-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
@@ -4100,7 +4290,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </>
               )}
             </section>
+                )}
+              </Suspense>
 
+              <Suspense fallback={<RatingsSectionSkeleton />}>
+                {isProfilePayloadPending ? (
+                  <RatingsSectionSkeleton />
+                ) : (
             <section id="my-ratings" className="scroll-mt-24 space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">My Ratings</h2>
@@ -4204,6 +4400,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </CardContent>
               </Card>
             </section>
+                )}
+              </Suspense>
 
             {isOwner && (
               <section id="opportunities" className="space-y-4">
@@ -4251,6 +4449,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
             </div>
             </div>
+            </Suspense>
             )}
 
             {viewingAuditAsset ? (
