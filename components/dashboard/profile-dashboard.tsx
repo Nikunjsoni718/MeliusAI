@@ -276,16 +276,6 @@ async function fetchSpectatorProfile([
     throw new Error('Unable to load candidate profile without a username.');
   }
 
-  const { data: profileData, error: profileError } = await supabase
-    .from('profiles')
-    .select(PROFILE_DASHBOARD_COLUMNS)
-    .eq('username', username)
-    .single();
-
-  if (profileError || !profileData) {
-    throw new Error(profileError?.message || `Unable to load candidate profile "${username}".`);
-  }
-
   const {
     data: { user },
     error: userError,
@@ -295,7 +285,58 @@ async function fetchSpectatorProfile([
     console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
   }
 
-  const savedProfile = profileData as SavedProfileItem;
+  const { data: profileData, error: profileError } = await supabase
+    .from('profiles')
+    .select(PROFILE_DASHBOARD_COLUMNS)
+    .eq('username', username)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message || `Unable to load candidate profile "${username}".`);
+  }
+
+  let savedProfile = profileData as SavedProfileItem | null;
+
+  if (!savedProfile && user?.id === username) {
+    const { data: profileById, error: profileByIdError } = await supabase
+      .from('profiles')
+      .select(PROFILE_DASHBOARD_COLUMNS)
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileByIdError) {
+      console.warn('Dashboard UUID fallback could not load profile by id:', profileByIdError.message);
+    }
+
+    savedProfile = profileById as SavedProfileItem | null;
+  }
+
+  if (!savedProfile?.id) {
+    const fallbackProfile = {
+      id: user?.id ?? username,
+      username,
+      full_name: null,
+      bio: null,
+      current_status: null,
+      avg_project_score: null,
+      avatar_url: null,
+      email: user?.email ?? null,
+    } satisfies SavedProfileItem;
+    const fallbackIsOwner = Boolean(user?.id && user.id === fallbackProfile.id);
+
+    return {
+      detail: `Profile "${username}" was not found.`,
+      isOwner: fallbackIsOwner,
+      message: 'Profile not found.',
+      profile: fallbackProfile,
+      projects: [],
+      ratings: [],
+      opportunities: [],
+      authenticationStatus: user ? 'authenticated' : 'anonymous',
+      viewerType: fallbackIsOwner ? 'owner' : user ? 'authenticated' : 'public',
+    };
+  }
+
   const isOwner = user?.id === savedProfile.id;
   let projectsQuery = supabase
     .from('projects')
