@@ -172,7 +172,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, is_public, name, title, source_url, file_name, file_type, file_url, file_size, user_description, score, evaluation_score, has_been_audited, logic_score, source_kind, status, created_at, updated_at';
+  'id, title:name, source_url:file_url, description, file_type, created_at, is_public';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
