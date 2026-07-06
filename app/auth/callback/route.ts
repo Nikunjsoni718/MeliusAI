@@ -1,83 +1,22 @@
-import type { User } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const CALLBACK_PROFILE_COLUMNS = 'id, username';
+type CallbackProfile = {
+  username: string | null;
+};
 
-function getMetadataText(user: User, key: string) {
-  const value = user.user_metadata?.[key];
+function getMetadataUsername(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function normalizeUsername(value: string | null | undefined) {
-  const normalized = value?.replace(/^@+/, '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-  return normalized && normalized.length >= 3 ? normalized.slice(0, 24) : null;
-}
+function getProfileRedirectPath(profile: CallbackProfile | null, userId: string, metadataUsername?: string | null) {
+  const profileUsername = profile?.username?.trim();
+  const redirectHandle = profileUsername || metadataUsername?.trim() || userId;
 
-function getDisplayName(user: User) {
-  return (
-    getMetadataText(user, 'full_name') ??
-    getMetadataText(user, 'name') ??
-    getMetadataText(user, 'display_name') ??
-    user.email?.split('@')[0] ??
-    'Member'
-  );
-}
-
-function getOAuthUsername(user: User) {
-  return (
-    normalizeUsername(getMetadataText(user, 'username')) ??
-    normalizeUsername(getMetadataText(user, 'preferred_username')) ??
-    `user_${user.id.replace(/-/g, '').slice(0, 12)}`
-  );
-}
-
-async function readOrCreateProfile(user: User) {
-  const admin = createSupabaseAdminClient();
-  const { data: existingProfile, error: readError } = await admin
-    .from('profiles')
-    .select(CALLBACK_PROFILE_COLUMNS)
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (readError) {
-    throw readError;
-  }
-
-  if (existingProfile) {
-    return existingProfile as { id: string; username: string | null };
-  }
-
-  const now = new Date().toISOString();
-  const { data: createdProfile, error: createError } = await admin
-    .from('profiles')
-    .upsert(
-      {
-        id: user.id,
-        email: user.email ?? null,
-        full_name: getDisplayName(user),
-        username: getOAuthUsername(user),
-        avatar_url: getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture'),
-        updated_at: now,
-      },
-      { onConflict: 'id' }
-    )
-    .select(CALLBACK_PROFILE_COLUMNS)
-    .single();
-
-  if (createError) {
-    throw createError;
-  }
-
-  return createdProfile as { id: string; username: string | null };
-}
-
-function getProfileRedirectPath(profile: { id: string; username: string | null }) {
-  return `/profile/${encodeURIComponent(profile.username?.trim() || profile.id)}`;
+  return `/profile/${encodeURIComponent(redirectHandle)}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -105,13 +44,27 @@ export async function GET(request: NextRequest) {
       error: userError,
     } = await supabase.auth.getUser();
 
-    if (userError || !user) {
+    if (userError || !user?.id) {
       throw userError ?? new Error('OAuth callback did not return an authenticated user.');
     }
 
-    const profile = await readOrCreateProfile(user);
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', user.id)
+      .single();
 
-    return NextResponse.redirect(new URL(getProfileRedirectPath(profile), origin));
+    if (profileError) {
+      console.warn('OAuth callback could not load generated profile username:', profileError.message);
+    }
+
+    const metadataUsername =
+      getMetadataUsername(user.user_metadata?.username) ??
+      getMetadataUsername(user.user_metadata?.preferred_username);
+
+    return NextResponse.redirect(
+      new URL(getProfileRedirectPath((profile as CallbackProfile | null) ?? null, user.id, metadataUsername), origin)
+    );
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const fallbackUrl = new URL('/auth/login', origin);
