@@ -3072,13 +3072,14 @@ async def get_opportunities(
     current_user_id: str = Depends(verify_user),
     candidate_id: str | None = None,
 ):
-    resolved_candidate_id = current_user_id.strip()
+    resolved_candidate_id = str(current_user_id or "").strip()
     if not resolved_candidate_id:
         raise HTTPException(status_code=400, detail="Candidate profile id is required")
 
     try:
         supabase = get_supabase_read_client(request)
 
+        print(f"Fetching profile for user_id: {resolved_candidate_id}")
         profile_response = await asyncio.to_thread(
             lambda: supabase.table("profiles")
             .select("skills")
@@ -3086,9 +3087,15 @@ async def get_opportunities(
             .maybe_single()
             .execute()
         )
+
+        if not profile_response or not hasattr(profile_response, "data"):
+            print("Error: Supabase returned None for profile_response.")
+            return JSONResponse(content=[])
+
         candidate_profile = profile_response.data
         if not isinstance(candidate_profile, dict) or not candidate_profile:
-            raise HTTPException(status_code=404, detail="Profile not found")
+            print(f"Profile not found for user_id: {resolved_candidate_id}")
+            return JSONResponse(content=[])
 
         raw_skills = candidate_profile.get("skills")
         if isinstance(raw_skills, list):
