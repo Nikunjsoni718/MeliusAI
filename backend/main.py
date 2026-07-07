@@ -109,14 +109,19 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
 )
 
 PROFILE_PROCESSING_SYSTEM_PROMPT = (
-    "You are the MeliusAI profile intelligence pipeline. Analyze a candidate bio and return "
-    "ONLY a valid JSON object with these exact keys: "
-    "'skills' as an array of concrete skills, tools, technologies, roles, or capabilities; "
-    "'internal_keywords' as an array of lowercase semantic search keywords and synonyms; "
-    "'extracted_experience' as a concise string summarizing experience evidence; "
-    "'extracted_preferences' as a concise string summarizing work preferences, role goals, "
-    "industries, environments, or collaboration style. Do not return markdown."
+    "You are an elite Technical Recruiter and profile intelligence analyst. Analyze the "
+    "candidate bio to infer missing keywords, standardize terminology, and expand implicit "
+    "technical context. Return concise, professional structured data only. If a framework "
+    "implies a broader skill, include both terms where useful, such as adding React when "
+    "Next.js is present."
 )
+
+
+class ProfileExtraction(BaseModel):
+    skills: list[str] = Field(description="Standardized skills. Infer implicit skills (e.g., if Next.js, add React).")
+    internal_keywords: list[str] = Field(description="Broad industry terms, synonyms, and categorizations.")
+    extracted_experience: list[str] = Field(description="Cleaned, professional summary points of work history.")
+    extracted_preferences: list[str] = Field(description="Inferred work preferences like 'Remote', 'Startup', etc.")
 
 SEARCH_QUERY_SYSTEM_PROMPT = (
     "You are a talent search engine. The user will type a natural language search query. "
@@ -128,7 +133,7 @@ SEARCH_QUERY_SYSTEM_PROMPT = (
 )
 
 
-def normalize_profile_processing_list(value: Any) -> List[str]:
+def normalize_profile_processing_list(value: Any, *, lowercase: bool = True) -> List[str]:
     values = value if isinstance(value, list) else [value]
     normalized_values = []
 
@@ -138,7 +143,9 @@ def normalize_profile_processing_list(value: Any) -> List[str]:
         else:
             raw_item = str(item or "")
 
-        normalized_item = raw_item.strip().lower()
+        normalized_item = raw_item.strip()
+        if lowercase:
+            normalized_item = normalized_item.lower()
         if normalized_item and normalized_item not in normalized_values:
             normalized_values.append(normalized_item)
 
@@ -155,36 +162,42 @@ def normalize_profile_processing_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-async def extract_profile_processing_fields(bio_text: str) -> Dict[str, Any]:
+async def extract_profile_processing_fields(bio_text: str) -> ProfileExtraction:
     clean_bio = str(bio_text or "").strip()
 
     if not clean_bio:
-        return {
-            "skills": [],
-            "internal_keywords": [],
-            "extracted_experience": "",
-            "extracted_preferences": "",
-        }
+        return ProfileExtraction(
+            skills=[],
+            internal_keywords=[],
+            extracted_experience=[],
+            extracted_preferences=[],
+        )
 
-    completion = await async_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": PROFILE_PROCESSING_SYSTEM_PROMPT},
-            {"role": "user", "content": clean_bio},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
+    completion = await asyncio.to_thread(
+        lambda: client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": PROFILE_PROCESSING_SYSTEM_PROMPT},
+                {"role": "user", "content": clean_bio},
+            ],
+            response_format=ProfileExtraction,
+            temperature=0,
+        )
     )
-    raw_content = completion.choices[0].message.content or "{}"
-    parsed_content = json.loads(raw_content)
+    extracted_data = completion.choices[0].message.parsed
 
-    skills = normalize_profile_processing_list(parsed_content.get("skills"))
-    internal_keywords = normalize_profile_processing_list(parsed_content.get("internal_keywords"))
-    extracted_experience = normalize_profile_processing_text(
-        parsed_content.get("extracted_experience") or parsed_content.get("experience")
+    if extracted_data is None:
+        raise ValueError("OpenAI profile extraction returned no parsed structured output")
+
+    skills = normalize_profile_processing_list(extracted_data.skills)
+    internal_keywords = normalize_profile_processing_list(extracted_data.internal_keywords)
+    extracted_experience = normalize_profile_processing_list(
+        extracted_data.extracted_experience,
+        lowercase=False,
     )
-    extracted_preferences = normalize_profile_processing_text(
-        parsed_content.get("extracted_preferences") or parsed_content.get("preferences")
+    extracted_preferences = normalize_profile_processing_list(
+        extracted_data.extracted_preferences,
+        lowercase=False,
     )
 
     if not skills and internal_keywords:
@@ -193,12 +206,12 @@ async def extract_profile_processing_fields(bio_text: str) -> Dict[str, Any]:
     if not internal_keywords and skills:
         internal_keywords = skills
 
-    return {
-        "skills": skills,
-        "internal_keywords": internal_keywords,
-        "extracted_experience": extracted_experience,
-        "extracted_preferences": extracted_preferences,
-    }
+    return ProfileExtraction(
+        skills=skills,
+        internal_keywords=internal_keywords,
+        extracted_experience=extracted_experience,
+        extracted_preferences=extracted_preferences,
+    )
 
 
 async def extract_bio_data(bio_text: str) -> Dict[str, List[str]]:
@@ -2518,20 +2531,20 @@ async def run_profile_ai_processing(
         print(f"--- PROFILE PROCESSING ABORTED: empty bio for user_id={clean_user_id} ---", flush=True)
         return
 
-    extracted_fields: Dict[str, Any] = {
-        "skills": [],
-        "internal_keywords": [],
-        "extracted_experience": "",
-        "extracted_preferences": "",
-    }
+    extracted_data = ProfileExtraction(
+        skills=[],
+        internal_keywords=[],
+        extracted_experience=[],
+        extracted_preferences=[],
+    )
 
     try:
         print(f"--- PROFILE PROCESSING: Starting LLM extraction for user_id={clean_user_id} ---", flush=True)
-        extracted_fields = await extract_profile_processing_fields(clean_bio)
+        extracted_data = await extract_profile_processing_fields(clean_bio)
         print(
             "--- PROFILE PROCESSING: LLM extraction complete "
-            f"for user_id={clean_user_id}; skills={len(extracted_fields.get('skills') or [])}, "
-            f"keywords={len(extracted_fields.get('internal_keywords') or [])} ---",
+            f"for user_id={clean_user_id}; skills={len(extracted_data.skills)}, "
+            f"keywords={len(extracted_data.internal_keywords)} ---",
             flush=True,
         )
     except Exception as extraction_error:
@@ -2542,15 +2555,15 @@ async def run_profile_ai_processing(
         print(f"--- PROFILE PROCESSING: Starting internal keyword expansion for user_id={clean_user_id} ---", flush=True)
         fallback_keywords = await asyncio.to_thread(lambda: extract_profile_internal_keywords(clean_bio))
         combined_keywords = normalize_profile_processing_list(
-            list(extracted_fields.get("internal_keywords") or []) + fallback_keywords
+            list(extracted_data.internal_keywords) + fallback_keywords
         )
         if combined_keywords:
-            extracted_fields["internal_keywords"] = combined_keywords
-        if not extracted_fields.get("skills") and combined_keywords:
-            extracted_fields["skills"] = combined_keywords[:12]
+            extracted_data.internal_keywords = combined_keywords
+        if not extracted_data.skills and combined_keywords:
+            extracted_data.skills = combined_keywords[:12]
         print(
             "--- PROFILE PROCESSING: Keyword expansion complete "
-            f"for user_id={clean_user_id}; keywords={len(extracted_fields.get('internal_keywords') or [])} ---",
+            f"for user_id={clean_user_id}; keywords={len(extracted_data.internal_keywords)} ---",
             flush=True,
         )
     except Exception as keyword_error:
@@ -2562,10 +2575,10 @@ async def run_profile_ai_processing(
         embedding_text = build_profile_embedding_text(
             {
                 "bio": clean_bio,
-                "skills": extracted_fields.get("skills") or [],
-                "internal_keywords": extracted_fields.get("internal_keywords") or [],
-                "extracted_experience": extracted_fields.get("extracted_experience") or "",
-                "extracted_preferences": extracted_fields.get("extracted_preferences") or "",
+                "skills": extracted_data.skills,
+                "internal_keywords": extracted_data.internal_keywords,
+                "extracted_experience": extracted_data.extracted_experience,
+                "extracted_preferences": extracted_data.extracted_preferences,
             }
         )
 
@@ -2586,14 +2599,10 @@ async def run_profile_ai_processing(
     try:
         print(f"--- PROFILE PROCESSING: Updating Supabase profile for user_id={clean_user_id} ---", flush=True)
         update_payload: Dict[str, Any] = {
-            "skills": normalize_profile_processing_list(extracted_fields.get("skills")),
-            "internal_keywords": normalize_profile_processing_list(extracted_fields.get("internal_keywords")),
-            "extracted_experience": normalize_profile_processing_text(
-                extracted_fields.get("extracted_experience")
-            ),
-            "extracted_preferences": normalize_profile_processing_text(
-                extracted_fields.get("extracted_preferences")
-            ),
+            "skills": list(extracted_data.skills),
+            "internal_keywords": list(extracted_data.internal_keywords),
+            "extracted_experience": list(extracted_data.extracted_experience),
+            "extracted_preferences": list(extracted_data.extracted_preferences),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
