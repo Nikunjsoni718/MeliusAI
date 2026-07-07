@@ -247,6 +247,31 @@ function getProfileUsernameFromPathname(pathname: string) {
   return normalizeProfileUsername(profilePathMatch?.[1]);
 }
 
+function normalizeDisplayUsername(value: string | null | undefined) {
+  const normalized = value
+    ?.trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized || null;
+}
+
+function resolveDisplayUsername({
+  fullName,
+  id,
+  username,
+}: {
+  fullName?: string | null;
+  id?: string | null;
+  username?: string | null;
+}) {
+  return normalizeDisplayUsername(username) ?? normalizeDisplayUsername(fullName) ?? normalizeDisplayUsername(id) ?? 'member';
+}
+
 function normalizeProfileList(value: unknown) {
   if (Array.isArray(value)) {
     return value
@@ -2260,16 +2285,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     (isOwner ? user?.user_metadata?.full_name : null) ||
     (isOwner ? user?.user_metadata?.name : null) ||
     'Member';
-  const username =
-    profileDraft.username ||
-    profileData?.username ||
-    profileFallback?.username ||
-    (isOwner ? profile?.username : null) ||
-    (isOwner ? user?.user_metadata?.username : null) ||
-    targetUsername ||
-    'member';
+  const displayUsername = resolveDisplayUsername({
+    username:
+      profileDraft.username ||
+      profileData?.username ||
+      profileFallback?.username ||
+      (isOwner ? profile?.username : null) ||
+      (isOwner ? user?.user_metadata?.username : null),
+    fullName: profileData?.full_name || profileDraft.displayName || profileFallback?.displayName || displayName,
+    id: profileData?.id ?? resolvedProfileId ?? (isOwner ? user?.id ?? null : null) ?? targetUsername ?? profileId,
+  });
+  const username = displayUsername;
   const isSpectating = !isOwner && Boolean(targetUsername);
-  const profileHandle = targetUsername || username;
+  const profileHandle = username || targetUsername || 'member';
   const profileHref = `/profile/${encodeURIComponent(profileHandle)}`;
   const email =
     profileData?.email?.trim() ||
@@ -2582,13 +2610,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           user?.email?.split('@')[0] ??
           targetUsername
         : targetUsername;
-      const fallbackUsername = isOwnProfile
-        ? authenticatedUsername ?? targetUsername
-        : targetUsername;
+      const fallbackUsername = resolveDisplayUsername({
+        username: isOwnProfile ? authenticatedUsername : null,
+        fullName: savedProfile?.full_name ?? fallbackName,
+        id: savedProfile?.id ?? targetUsername,
+      });
       const hasDbProfile = Boolean(savedProfile);
       const birthDate = savedProfile?.birth_date ?? null;
       const displayName = savedProfile?.full_name ?? fallbackName;
-      const usernameValue = savedProfile?.username ?? fallbackUsername;
+      const usernameValue = resolveDisplayUsername({
+        username: savedProfile?.username ?? fallbackUsername,
+        fullName: displayName,
+        id: savedProfile?.id ?? targetUsername,
+      });
       const bioValue = savedProfile?.bio ??
         (isOwnProfile ? sessionUserMetadata?.bio ?? '' : '');
       const skillsInputValue = Array.isArray(savedProfile?.skills) ? savedProfile.skills.join(', ') : '';
@@ -2883,7 +2917,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     const normalizedDraft = {
       displayName: nextDraft.displayName.trim(),
-      username: nextDraft.username.trim().replace(/^@+/, ''),
+      username: resolveDisplayUsername({
+        username: nextDraft.username,
+        fullName: nextDraft.displayName || displayName,
+        id: resolvedProfileId ?? user?.id ?? profileId,
+      }),
       birthDate: nextDraft.birthDate.trim(),
     };
 
@@ -3032,7 +3070,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         },
         body: JSON.stringify({
           bio: nextBioText,
+          full_name: profileDraft.displayName || displayName,
           skills: formattedSkills,
+          username: profileDraft.username || username,
         }),
       });
       const updateData = (await response.json()) as {
@@ -3928,7 +3968,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           </Link>
                         )}
                       </div>
-                      <p className="mt-2 text-sm text-slate-400">@{username}</p>
+                      <p className="mt-2 text-sm text-slate-400">@{displayUsername}</p>
                       {email ? (
                         <a
                           href={`mailto:${email}`}

@@ -2,6 +2,7 @@ import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { NextResponse } from 'next/server';
 
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -14,7 +15,9 @@ const BIO_EXTRACTION_SYSTEM_PROMPT =
 
 type ProfileUpdatePayload = {
   bio?: unknown;
+  full_name?: unknown;
   skills?: unknown;
+  username?: unknown;
 };
 
 type ExtractedBioData = {
@@ -38,6 +41,22 @@ function normalizeKeywordArray(value: unknown): string[] {
   }
 
   return Array.from(uniqueKeywords);
+}
+
+function normalizeProfileText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeProfileUsername(value: unknown) {
+  const normalized = normalizeProfileText(value)
+    ?.replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized || null;
 }
 
 function parseKeywordJson(rawText: string): string[] {
@@ -148,31 +167,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized profile update request.' }, { status: 401 });
     }
 
-    const { data, error } = await supabase
+    const userMetadata = user.user_metadata ?? {};
+    const fallbackFullName =
+      normalizeProfileText(payload.full_name) ??
+      normalizeProfileText(userMetadata.full_name) ??
+      normalizeProfileText(userMetadata.name) ??
+      normalizeProfileText(userMetadata.display_name) ??
+      user.email?.split('@')[0] ??
+      'Member';
+    const fallbackUsername =
+      normalizeProfileUsername(payload.username) ??
+      normalizeProfileUsername(userMetadata.username) ??
+      normalizeProfileUsername(userMetadata.preferred_username);
+    const avatarUrl =
+      normalizeProfileText(userMetadata.avatar_url) ??
+      normalizeProfileText(userMetadata.picture);
+    const supabaseAdmin = createSupabaseAdminClient();
+    const { data, error } = await supabaseAdmin
       .from('profiles')
-      .update({
+      .upsert({
+        id: user.id,
+        email: user.email ?? null,
+        full_name: fallbackFullName,
+        username: fallbackUsername,
+        avatar_url: avatarUrl,
         bio,
         skills,
         internal_keywords: internalKeywords,
         extracted_experience: extractedBioData.experience,
         extracted_preferences: extractedBioData.preferences,
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id)
+      }, { onConflict: 'id' })
       .select('id, bio, skills, internal_keywords, extracted_experience, extracted_preferences')
-      .maybeSingle();
+      .single();
 
     if (error) {
       throw error;
-    }
-
-    if (!data?.id) {
-      return NextResponse.json(
-        {
-          error: 'Your MeliusAI profile row is missing. Please retry signup/profile setup before saving.',
-        },
-        { status: 409 }
-      );
     }
 
     return NextResponse.json(
