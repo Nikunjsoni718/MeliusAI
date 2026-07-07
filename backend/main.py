@@ -109,20 +109,18 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
 )
 
 PROFILE_PROCESSING_SYSTEM_PROMPT = (
-    "You are an elite Technical Recruiter and profile intelligence analyst. Analyze the "
-    "candidate bio to infer missing keywords, standardize terminology, and expand implicit "
-    "technical context. Return concise, professional structured data only. You are strictly "
-    "limited by maximum item counts. Be ruthless and grounded. When inferring implicit skills, "
-    "only add direct, industry-standard pairings. Do NOT flatter the candidate by adding skills "
-    "they haven't strongly implied."
+    "You are a STRICT DATA PARSER, not a resume writer.\n"
+    "RULE 1: DO NOT invent, hallucinate, or assume experience, duties, or preferences that are not explicitly stated in the text. If it is not in the text, return an empty array.\n"
+    "RULE 2: You MUST extract explicitly mentioned skills. You may add 1-2 direct industry pairings (e.g., UI/UX -> Figma), but no flattering.\n"
+    "RULE 3: You MUST strictly obey array limits. MAXIMUM 5 skills. MAXIMUM 4 internal_keywords. MAXIMUM 2 experience points. MAXIMUM 3 preferences. Violating these limits breaks the database."
 )
 
 
 class ProfileExtraction(BaseModel):
     skills: list[str] = Field(description="Standardized hard skills. Infer highly relevant, closely coupled skills (e.g., 'UI/UX' -> 'Frontend Design', 'Backend' -> 'Python' or 'SQL'). Do NOT flatter the candidate by inventing loosely related skills. MAXIMUM 5 ITEMS. 1-2 words each.")
     internal_keywords: list[str] = Field(description="Broad industry terms and categorizations based on their bio (e.g., 'Web Development', 'Engineering'). Stay grounded in reality. MAXIMUM 4 ITEMS.")
-    extracted_experience: list[str] = Field(description="Cleaned, professional summary points of work history.")
-    extracted_preferences: list[str] = Field(description="Inferred work preferences like 'Remote', 'Startup', etc.")
+    extracted_experience: list[str] = Field(description="STRICTLY EXTRACT. Only list experience explicitly stated in the text. DO NOT invent duties or responsibilities. Max 2 items.")
+    extracted_preferences: list[str] = Field(description="STRICTLY EXTRACT explicitly stated preferences (e.g., 'looking for remote'). DO NOT invent cultural preferences. Max 3 items.")
 
 SEARCH_QUERY_SYSTEM_PROMPT = (
     "You are a talent search engine. The user will type a natural language search query. "
