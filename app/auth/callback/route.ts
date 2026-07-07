@@ -1,10 +1,28 @@
 import type { User } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
+
+function getProfileEmbeddingSyncEndpoint() {
+  const explicitEndpoint =
+    process.env.PYTHON_BACKEND_PROFILE_SYNC_URL ||
+    process.env.NEXT_PUBLIC_PYTHON_BACKEND_PROFILE_SYNC_URL;
+
+  if (explicitEndpoint?.trim()) {
+    return explicitEndpoint.trim();
+  }
+
+  const backendBaseUrl = process.env.PYTHON_BACKEND_URL || process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
+
+  if (backendBaseUrl?.trim()) {
+    return `${backendBaseUrl.trim().replace(/\/$/, '')}/api/profile/sync-embedding`;
+  }
+
+  return 'https://meliusai.onrender.com/api/profile/sync-embedding';
+}
 
 function createSupabaseAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -51,6 +69,60 @@ function toUsername(value: string) {
     .replace(/^_+|_+$/g, '');
 
   return username || 'member';
+}
+
+async function triggerProfileEmbeddingSync({
+  accessToken,
+  avatarUrl,
+  bio,
+  fullName,
+  userId,
+  username,
+}: {
+  accessToken?: string | null;
+  avatarUrl?: string | null;
+  bio?: string | null;
+  fullName: string;
+  userId: string;
+  username: string;
+}) {
+  if (!accessToken) {
+    console.warn('OAuth profile embedding sync skipped: missing Supabase access token.');
+    return;
+  }
+
+  const endpoint = getProfileEmbeddingSyncEndpoint();
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: userId,
+        user_id: userId,
+        username,
+        full_name: fullName,
+        avatar_url: avatarUrl,
+        bio: bio ?? '',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      console.error(
+        `OAuth profile embedding sync failed with HTTP ${response.status}: ${errorText || response.statusText}`
+      );
+      return;
+    }
+
+    console.log('OAuth profile embedding sync triggered successfully.');
+  } catch (error) {
+    console.error('OAuth profile embedding sync request failed:', error);
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -117,6 +189,17 @@ export async function GET(request: NextRequest) {
       console.error('OAuth callback profile upsert failed:', profileUpsertError);
       throw profileUpsertError;
     }
+
+    after(() =>
+      triggerProfileEmbeddingSync({
+        accessToken: authData.session?.access_token,
+        avatarUrl,
+        bio: null,
+        fullName,
+        userId: user.id,
+        username: finalUsername,
+      })
+    );
 
     return NextResponse.redirect(`${origin}/profile/${encodeURIComponent(finalUsername)}`);
   } catch (error) {
