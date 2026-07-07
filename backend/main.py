@@ -2701,7 +2701,13 @@ async def sync_single_profile_embedding(
         supabase = get_request_supabase_client(request)
 
         # 1. ALWAYS fetch the full existing profile first
-        existing_profile_res = supabase.table("profiles").select("*").eq("id", current_user_id).maybe_single().execute()
+        existing_profile_res = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select("*")
+            .eq("id", current_user_id)
+            .maybe_single()
+            .execute()
+        )
         existing_profile = existing_profile_res.data or {}
 
         # 2. Merge the new incoming data INTO the existing profile data
@@ -2719,13 +2725,18 @@ async def sync_single_profile_embedding(
         internal_keywords = await extract_profile_internal_keywords(str(merged_profile.get("bio", "")))
         
         # 4. Generate the new embedding using the complete profile
-        new_embedding = fetch_openai_embeddings([profile_text])[0]
+        new_embedding = await asyncio.to_thread(lambda: fetch_openai_embeddings([profile_text])[0])
         
         update_payload = {"profile_embedding": new_embedding}
         if internal_keywords:
             update_payload["internal_keywords"] = internal_keywords
 
-        supabase.table("profiles").update(update_payload).eq("id", current_user_id).execute()
+        await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .update(update_payload)
+            .eq("id", current_user_id)
+            .execute()
+        )
         print("--- ML SUCCESS: Automatically synchronized complete profile vector ---")
 
         return {"success": True, "message": "Profile vector embedding synchronized."}
