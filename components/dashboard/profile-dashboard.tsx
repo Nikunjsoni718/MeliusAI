@@ -172,7 +172,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, title:name, source_url:file_url, description, file_type, created_at, is_public';
+  'id, title:name, source_url:file_url, description, user_description, file_type, file_size, source_kind, status, target_company, score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited, created_at, is_public';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -751,6 +751,14 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
   const fileUrl = row.file_url ?? row.source_url ?? null;
   const fileType = row.file_type ?? null;
   const fileExtension = getFileExtension(fileName);
+  const hydratedScore = typeof row.score === 'number' ? row.score : null;
+  const hydratedAuditSummary = row.audit_summary?.trim() || row.ai_summary?.trim() || null;
+  const hydratedAiSummary = row.ai_summary?.trim() || row.audit_summary?.trim() || null;
+  const hydratedSummary =
+    rowWithAuditAliases.summary?.trim() ||
+    rowWithAuditAliases.executive_summary?.trim() ||
+    hydratedAuditSummary ||
+    hydratedAiSummary;
 
   return {
     id: row.id,
@@ -770,19 +778,20 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     file_name: row.file_name ?? fileName,
     file_url: fileUrl,
     code_language: getCodeLanguage(fileExtension),
-    description: row.description ?? null,
-    executive_summary: rowWithAuditAliases.executive_summary ?? null,
-    summary: rowWithAuditAliases.summary ?? null,
+    description: row.description ?? hydratedAuditSummary ?? hydratedAiSummary,
+    executive_summary: rowWithAuditAliases.executive_summary ?? hydratedAuditSummary ?? hydratedAiSummary,
+    summary: hydratedSummary ?? null,
     user_description: row.user_description ?? null,
-    score: typeof row.score === 'number' ? row.score : null,
-    audit_summary: row.audit_summary ?? null,
+    score: hydratedScore,
+    audit_summary: hydratedAuditSummary,
     pros: Array.isArray(row.pros) ? row.pros : null,
     cons: Array.isArray(row.cons) ? row.cons : null,
     recommendations: Array.isArray(row.recommendations) ? row.recommendations : null,
-    evaluation_score: typeof row.evaluation_score === 'number' ? row.evaluation_score : null,
-    has_been_audited: row.has_been_audited ?? null,
-    logic_score: typeof row.logic_score === 'number' ? row.logic_score : null,
-    ai_summary: row.ai_summary ?? null,
+    evaluation_score: typeof row.evaluation_score === 'number' ? row.evaluation_score : hydratedScore,
+    has_been_audited:
+      row.has_been_audited ?? Boolean(hydratedScore !== null || hydratedAuditSummary || hydratedAiSummary),
+    logic_score: typeof row.logic_score === 'number' ? row.logic_score : hydratedScore,
+    ai_summary: hydratedAiSummary,
     created_at: row.created_at ?? null,
     is_local: false,
   };
