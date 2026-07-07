@@ -1,228 +1,123 @@
-import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import { NextResponse } from 'next/server';
 
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const HR_KEYWORD_SYSTEM_PROMPT =
-  "You are an advanced HR semantic parsing layer engine for MeliusAI. Analyze the raw text biography of this user. Extract every single industry skill, tool, programming language, and core professional capability mentioned. Return ONLY a valid, raw JSON array of lowercase string keywords. Do not include any introductory sentences, conversational text, or markdown code blocks. Example Output: ['video editing', 'python', 'ui ux design', 'premiere pro'].";
-
-const BIO_EXTRACTION_SYSTEM_PROMPT =
-  "You are an expert technical recruiter. Analyze the following candidate biography. Extract specific technical experiences (years, tools, roles) and work preferences (remote, hybrid, startup, enterprise, etc.). Return ONLY a valid JSON object with two keys: 'experience' (a list of strings) and 'preferences' (a list of strings). Do not return markdown, just raw JSON.";
-
-type ProfileUpdatePayload = {
+type ProfileUpdateBody = {
+  avatar_url?: unknown;
   bio?: unknown;
+  birth_date?: unknown;
+  current_status?: unknown;
   full_name?: unknown;
   skills?: unknown;
   username?: unknown;
 };
 
-type ExtractedBioData = {
-  experience: string[];
-  preferences: string[];
-};
-
-function normalizeKeywordArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const uniqueKeywords = new Set<string>();
-
-  for (const item of value) {
-    const keyword = String(item).trim().toLowerCase();
-
-    if (keyword) {
-      uniqueKeywords.add(keyword);
-    }
-  }
-
-  return Array.from(uniqueKeywords);
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : undefined;
 }
 
-function normalizeProfileText(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
+function normalizeUsername(value: unknown) {
+  const username = normalizeText(value);
 
-function normalizeProfileUsername(value: unknown) {
-  const normalized = normalizeProfileText(value)
+  return username
     ?.replace(/^@+/, '')
     .toLowerCase()
     .replace(/\s+/g, '_')
     .replace(/[^a-z0-9_]/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
-
-  return normalized || null;
 }
 
-function parseKeywordJson(rawText: string): string[] {
-  const cleanText = rawText
-    .trim()
-    .replace(/^```(?:json)?/i, '')
-    .replace(/```$/i, '')
-    .trim();
-
-  try {
-    return normalizeKeywordArray(JSON.parse(cleanText));
-  } catch {
-    const singleQuoteNormalized = cleanText.replace(/'/g, '"');
-
-    try {
-      return normalizeKeywordArray(JSON.parse(singleQuoteNormalized));
-    } catch {
-      return [];
-    }
+function normalizeSkills(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
   }
+
+  return value
+    .map((skill) => String(skill).trim().toLowerCase())
+    .filter(Boolean);
 }
 
-async function extractInternalKeywords(bio: string) {
-  const cleanBio = bio.trim();
-
-  if (!cleanBio) {
-    return [];
-  }
-
+export async function POST(req: Request) {
   try {
-    const { text } = await generateText({
-      model: openai('gpt-4o-mini'),
-      system: HR_KEYWORD_SYSTEM_PROMPT,
-      prompt: cleanBio,
-      temperature: 0,
-    });
-
-    return parseKeywordJson(text);
-  } catch (error) {
-    console.warn('Profile semantic keyword extraction failed quietly:', error);
-    return [];
-  }
-}
-
-function parseExtractedBioJson(rawText: string): ExtractedBioData {
-  const cleanText = rawText
-    .trim()
-    .replace(/^```(?:json)?/i, '')
-    .replace(/```$/i, '')
-    .trim();
-
-  try {
-    const parsed = JSON.parse(cleanText) as Record<string, unknown>;
-
-    return {
-      experience: normalizeKeywordArray(parsed.experience),
-      preferences: normalizeKeywordArray(parsed.preferences),
-    };
-  } catch {
-    return { experience: [], preferences: [] };
-  }
-}
-
-async function extract_bio_data(bio_text: string): Promise<ExtractedBioData> {
-  const cleanBio = bio_text.trim();
-
-  if (!cleanBio) {
-    return { experience: [], preferences: [] };
-  }
-
-  try {
-    const { text } = await generateText({
-      model: openai('gpt-4o-mini'),
-      system: BIO_EXTRACTION_SYSTEM_PROMPT,
-      prompt: cleanBio,
-      temperature: 0,
-    });
-
-    return parseExtractedBioJson(text);
-  } catch (error) {
-    console.warn('Profile bio attribute extraction failed quietly:', error);
-    return { experience: [], preferences: [] };
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const payload = (await request.json()) as ProfileUpdatePayload;
-    const bio = typeof payload.bio === 'string' ? payload.bio.trim() : '';
-    const skills = normalizeKeywordArray(payload.skills);
-    const [aiKeywords, extractedBioData] = await Promise.all([
-      extractInternalKeywords(bio),
-      extract_bio_data(bio),
-    ]);
-    const internalKeywords = normalizeKeywordArray([...aiKeywords, ...skills]);
-
+    const body = (await req.json()) as ProfileUpdateBody;
     const supabase = await createSupabaseServerClient();
     const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
 
-    if (userError) {
-      throw userError;
+    if (sessionError) {
+      throw sessionError;
     }
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized profile update request.' }, { status: 401 });
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const userMetadata = user.user_metadata ?? {};
-    const fallbackFullName =
-      normalizeProfileText(payload.full_name) ??
-      normalizeProfileText(userMetadata.full_name) ??
-      normalizeProfileText(userMetadata.name) ??
-      normalizeProfileText(userMetadata.display_name) ??
-      user.email?.split('@')[0] ??
-      'Member';
-    const fallbackUsername =
-      normalizeProfileUsername(payload.username) ??
-      normalizeProfileUsername(userMetadata.username) ??
-      normalizeProfileUsername(userMetadata.preferred_username);
-    const avatarUrl =
-      normalizeProfileText(userMetadata.avatar_url) ??
-      normalizeProfileText(userMetadata.picture);
-    const supabaseAdmin = createSupabaseAdminClient();
-    const { data, error } = await supabaseAdmin
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    const username = normalizeUsername(body.username);
+    const bio = normalizeText(body.bio);
+    const fullName = normalizeText(body.full_name);
+    const avatarUrl = normalizeText(body.avatar_url);
+    const birthDate = normalizeText(body.birth_date);
+    const currentStatus = normalizeText(body.current_status);
+    const skills = normalizeSkills(body.skills);
+
+    if (username !== undefined) {
+      updatePayload.username = username || null;
+    }
+
+    if (bio !== undefined) {
+      updatePayload.bio = bio;
+    }
+
+    if (fullName !== undefined) {
+      updatePayload.full_name = fullName || null;
+    }
+
+    if (avatarUrl !== undefined) {
+      updatePayload.avatar_url = avatarUrl || null;
+    }
+
+    if (birthDate !== undefined) {
+      updatePayload.birth_date = birthDate || null;
+    }
+
+    if (currentStatus !== undefined) {
+      updatePayload.current_status = currentStatus || null;
+    }
+
+    if (skills !== undefined) {
+      updatePayload.skills = skills;
+    }
+
+    const { data: profile, error } = await supabase
       .from('profiles')
-      .upsert({
-        id: user.id,
-        email: user.email ?? null,
-        full_name: fallbackFullName,
-        username: fallbackUsername,
-        avatar_url: avatarUrl,
-        bio,
-        skills,
-        internal_keywords: internalKeywords,
-        extracted_experience: extractedBioData.experience,
-        extracted_preferences: extractedBioData.preferences,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' })
-      .select('id, bio, skills, internal_keywords, extracted_experience, extracted_preferences')
-      .single();
+      .update(updatePayload)
+      .eq('id', session.user.id)
+      .select('id, username, full_name, bio, skills, avatar_url, birth_date, current_status, updated_at')
+      .maybeSingle();
 
     if (error) {
-      throw error;
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     return NextResponse.json(
       {
+        profile,
+        status: 'success',
         success: true,
-        profile: data,
-        internal_keywords: internalKeywords,
-        extracted_experience: extractedBioData.experience,
-        extracted_preferences: extractedBioData.preferences,
       },
       { status: 200 }
     );
-  } catch (error) {
-    console.error('Profile update semantic ingestion failed:', error);
+  } catch (e) {
+    console.error('Profile update route failed:', e);
 
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Profile update failed.',
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
