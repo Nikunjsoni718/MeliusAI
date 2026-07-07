@@ -2689,40 +2689,41 @@ async def sync_single_profile_embedding(
     data = await request.json()
 
     try:
-        profile_id = current_user_id
-        if not profile_id:
-            return {"success": False, "message": "Profile vector sync skipped: missing profile id."}
-
         supabase = get_request_supabase_client(request)
-        profile_text = build_profile_embedding_text(data)
 
-        if not profile_text.strip():
-            existing_profile = (
-                supabase.table("profiles")
-                .select("*")
-                .eq("id", profile_id)
-                .maybe_single()
-                .execute()
-            )
-            profile_text = build_profile_embedding_text(existing_profile.data or {})
+        # 1. ALWAYS fetch the full existing profile first
+        existing_profile_res = supabase.table("profiles").select("*").eq("id", current_user_id).maybe_single().execute()
+        existing_profile = existing_profile_res.data or {}
+
+        # 2. Merge the new incoming data INTO the existing profile data
+        # This prevents partial frontend payloads from wiping out the rest of the vector
+        merged_profile = {**existing_profile, **data}
+
+        # 3. Build the text using the fully merged dataset
+        profile_text = build_profile_embedding_text(merged_profile)
 
         if not profile_text.strip():
             return {"success": False, "message": "Profile vector sync skipped: no semantic profile text found."}
 
-        print(f"--- SYNC ENGINE DEBUG: Vectorizing User '{data.get('username')}' with text length: {len(profile_text)} ---")
-        internal_keywords = extract_profile_internal_keywords(str(data.get("bio", "")))
+        print(f"--- SYNC ENGINE DEBUG: Vectorizing User '{merged_profile.get('username')}' with text length: {len(profile_text)} ---")
+        
+        internal_keywords = extract_profile_internal_keywords(str(merged_profile.get("bio", "")))
+        
+        # 4. Generate the new embedding using the complete profile
         new_embedding = fetch_openai_embeddings([profile_text])[0]
+        
         update_payload = {"profile_embedding": new_embedding}
         if internal_keywords:
             update_payload["internal_keywords"] = internal_keywords
 
         supabase.table("profiles").update(update_payload).eq("id", current_user_id).execute()
-        print("--- ML SUCCESS: Automatically synchronized profile vector embeddings in background thread ---")
+        print("--- ML SUCCESS: Automatically synchronized complete profile vector ---")
 
         return {"success": True, "message": "Profile vector embedding synchronized."}
+        
     except Exception as embedding_sync_error:
         print(f"--- ML ERROR: Profile saved, but auto-vector generation failed: {embedding_sync_error} ---")
-        return {"success": False, "message": "Profile saved, but vector synchronization failed."}
+        return {"success": False, "message": "Profile saved, but vector synchronization failed."}     
 
 
 @app.post("/api/search-member")
