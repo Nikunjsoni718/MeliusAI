@@ -925,7 +925,7 @@ async def evaluate_code(
 
         logger.info("code_evaluation.openai.start filename=%s", filename)
         completion = await async_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
                 {
@@ -1120,7 +1120,7 @@ OUTPUT FORMAT (Strict JSON matching the dashboard UI):
 """
 
         completion = await async_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -1344,7 +1344,7 @@ async def review_portfolio_asset(
         # D. ASYNCHRONOUS TOKEN GENERATOR FUNCTION
         def stream_generator():
             chat_stream = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content}
@@ -3639,7 +3639,7 @@ async def verify_asset(
         asset_classification = classify_uploaded_asset(asset_name, asset_text_content)
 
         completion = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -4559,7 +4559,7 @@ async def interactive_chat_station(
         def stream_generator():
             try:
                 chat_stream = client.chat.completions.create(
-                    model="gpt-4o",
+                    model="gpt-4o-mini",
                     messages=[{"role": "system", "content": system_prompt}] + request.messages,
                     temperature=0.8,
                     stream=True
