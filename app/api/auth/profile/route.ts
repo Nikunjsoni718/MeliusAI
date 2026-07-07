@@ -3,21 +3,30 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import type { ProfileRow, UserRole } from '@/types/supabase';
+import type { UserRole } from '@/types/supabase';
 
 export const runtime = 'nodejs';
 
-const PROFILE_SELECT =
-  'id, email, full_name, username, birth_date, bio, skills, avatar_url, age, current_status, created_at, updated_at';
+const PROFILE_SELECT = 'id, username, full_name, birth_date, bio, avatar_url, updated_at, email, created_at';
 
 type ProfileBootstrapPayload = {
-  birth_date?: unknown;
-  company_name?: unknown;
   display_name?: unknown;
   full_name?: unknown;
   role?: unknown;
   role_selected_at?: unknown;
   username?: unknown;
+};
+
+type ProfileRecord = {
+  id: string;
+  username: string | null;
+  full_name: string | null;
+  birth_date?: string | null;
+  bio?: string | null;
+  avatar_url: string | null;
+  updated_at?: string | null;
+  email?: string | null;
+  created_at?: string | null;
 };
 
 function jsonError(message: string, status: number, details?: unknown) {
@@ -44,44 +53,42 @@ function normalizeRole(value: unknown): UserRole {
 }
 
 function normalizeUsername(value: unknown) {
-  const normalized = normalizeText(value)?.replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9_]/g, '') ?? null;
+  const normalized = normalizeText(value)
+    ?.replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
   return normalized && normalized.length >= 3 ? normalized.slice(0, 24) : null;
-}
-
-function normalizeBirthDate(value: unknown) {
-  const birthDate = normalizeText(value);
-
-  if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
-    return null;
-  }
-
-  const parsedDate = new Date(`${birthDate}T00:00:00.000Z`);
-
-  return Number.isNaN(parsedDate.getTime()) ? null : birthDate;
-}
-
-function normalizeTimestamp(value: unknown) {
-  const timestamp = normalizeText(value);
-
-  if (!timestamp) {
-    return null;
-  }
-
-  const parsedDate = new Date(timestamp);
-
-  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate.toISOString();
 }
 
 function getDisplayName(user: User, payload: ProfileBootstrapPayload) {
   return (
     normalizeText(payload.full_name) ??
     normalizeText(payload.display_name) ??
-    getMetadataText(user, 'display_name') ??
     getMetadataText(user, 'full_name') ??
     getMetadataText(user, 'name') ??
-    getMetadataText(user, 'company_name') ??
+    getMetadataText(user, 'display_name') ??
     user.email?.split('@')[0] ??
     'Member'
+  );
+}
+
+function getAvatarUrl(user: User) {
+  return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
+}
+
+function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existingUsername?: string | null) {
+  return (
+    normalizeUsername(existingUsername) ??
+    normalizeUsername(payload.username) ??
+    normalizeUsername(getMetadataText(user, 'username')) ??
+    normalizeUsername(getMetadataText(user, 'preferred_username')) ??
+    normalizeUsername(getDisplayName(user, payload)) ??
+    normalizeUsername(user.email?.split('@')[0]) ??
+    `member_${user.id.replace(/-/g, '').slice(0, 8)}`
   );
 }
 
@@ -112,10 +119,24 @@ async function readAuthenticatedUser(request: NextRequest) {
   return { user: bearerUser ?? null, error: bearerError ?? error };
 }
 
-function toViewerProfile(user: User, profile: ProfileRow, appUser: Record<string, unknown> | null) {
-  const role = normalizeRole(appUser?.role ?? user.user_metadata?.role);
+async function readProfile(userId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data: profile, error } = await admin
+    .from('profiles')
+    .select(PROFILE_SELECT)
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Profile lookup failed: ${error.message}`);
+  }
+
+  return (profile as ProfileRecord | null) ?? null;
+}
+
+function toViewerProfile(user: User, profile: ProfileRecord) {
+  const role = normalizeRole(user.user_metadata?.role);
   const displayName =
-    normalizeText(appUser?.display_name) ??
     profile.full_name ??
     getMetadataText(user, 'display_name') ??
     getMetadataText(user, 'full_name') ??
@@ -125,167 +146,79 @@ function toViewerProfile(user: User, profile: ProfileRow, appUser: Record<string
   return {
     id: user.id,
     role,
-    role_selected_at: normalizeText(appUser?.role_selected_at),
+    role_selected_at: getMetadataText(user, 'role_selected_at'),
     display_name: displayName,
-    username: profile.username ?? normalizeText(appUser?.username) ?? getMetadataText(user, 'username'),
-    birth_date: profile.birth_date ?? normalizeText(appUser?.birth_date) ?? getMetadataText(user, 'birth_date'),
-    headline: normalizeText(appUser?.headline),
-    company_name: normalizeText(appUser?.company_name) ?? getMetadataText(user, 'company_name'),
-    github_username: normalizeText(appUser?.github_username) ?? getMetadataText(user, 'github_username'),
-    avatar_url: profile.avatar_url ?? normalizeText(appUser?.avatar_url) ?? getMetadataText(user, 'avatar_url'),
+    username: profile.username ?? getMetadataText(user, 'username'),
+    birth_date: profile.birth_date ?? getMetadataText(user, 'birth_date'),
+    headline: null,
+    company_name: null,
+    github_username: null,
+    avatar_url: profile.avatar_url ?? getMetadataText(user, 'avatar_url'),
   };
 }
 
-async function readVerifiedProfile(user: User) {
+async function upsertProfile(user: User, payload: ProfileBootstrapPayload) {
   const admin = createSupabaseAdminClient();
-  const { data: profile, error: profileError } = await admin
+  const existingProfile = await readProfile(user.id);
+  const fullName = getDisplayName(user, payload);
+  const username = getProfileUsername(user, payload, existingProfile?.username);
+  const avatarUrl = getAvatarUrl(user);
+
+  const { data: profile, error } = await admin
     .from('profiles')
+    .upsert(
+      {
+        id: user.id,
+        email: user.email ?? null,
+        full_name: fullName,
+        avatar_url: avatarUrl,
+        username,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    )
     .select(PROFILE_SELECT)
-    .eq('id', user.id)
-    .maybeSingle();
+    .single();
 
-  if (profileError) {
-    throw new Error(`Profile lookup failed: ${profileError.message}`);
+  if (error) {
+    throw new Error(`App profile upsert failed: ${error.message}`);
   }
 
-  if (!profile) {
-    return { appUser: user.user_metadata as Record<string, unknown>, profile: null };
-  }
-
-  return { appUser: user.user_metadata as Record<string, unknown>, profile: profile as ProfileRow };
+  return profile as ProfileRecord;
 }
 
-async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPayload) {
-  const admin = createSupabaseAdminClient();
-  const existingProfile = await readVerifiedProfile(user);
+function profileResponse(user: User, profile: ProfileRecord) {
+  const profileData = toViewerProfile(user, profile);
 
-  if (existingProfile.profile) {
-    return existingProfile;
-  }
-
-  const role = normalizeRole(payload.role ?? user.user_metadata?.role);
-  const displayName = getDisplayName(user, payload);
-  const username = normalizeUsername(payload.username) ?? normalizeUsername(user.user_metadata?.username);
-  const birthDate = normalizeBirthDate(payload.birth_date) ?? normalizeBirthDate(user.user_metadata?.birth_date);
-  const roleSelectedAt = normalizeTimestamp(payload.role_selected_at ?? user.user_metadata?.role_selected_at);
-  const avatarUrl =
-    getMetadataText(user, 'avatar_url') ??
-    getMetadataText(user, 'picture') ??
-    null;
-  const companyName = normalizeText(payload.company_name) ?? getMetadataText(user, 'company_name');
-  const now = new Date().toISOString();
-
-  const nextUserMetadata = {
-    ...user.user_metadata,
-    role,
-    role_selected_at: roleSelectedAt,
-    display_name: displayName,
-    full_name: displayName,
-    username,
-    birth_date: birthDate,
-    avatar_url: avatarUrl,
-    company_name: companyName,
-  };
-
-  const { data: metadataUpdateData, error: metadataUpdateError } = await admin.auth.admin.updateUserById(user.id, {
-    user_metadata: nextUserMetadata,
-  });
-
-  if (metadataUpdateError) {
-    throw new Error(`Auth metadata update failed: ${metadataUpdateError.message}`);
-  }
-
-  const { error: userUpsertError } = await admin.from('profiles').upsert(
+  return NextResponse.json(
     {
-      id: user.id,
-      role,
-      role_selected_at: roleSelectedAt,
-      display_name: displayName,
-      username,
-      birth_date: birthDate,
-      avatar_url: avatarUrl,
-      company_name: companyName,
-      updated_at: now,
-    },
-    { onConflict: 'id' }
-  );
-
-  if (userUpsertError) {
-    throw new Error(`App user upsert failed: ${userUpsertError.message}`);
-  }
-
-  const { error: profileUpsertError } = await admin.from('profiles').upsert(
-    {
-      id: user.id,
+      data: profileData,
       email: user.email ?? null,
-      full_name: displayName,
-      username,
-      birth_date: birthDate,
-      avatar_url: avatarUrl,
-      updated_at: now,
+      id: profileData.id,
+      profile,
+      role: profileData.role,
+      status: 'success',
+      success: true,
     },
-    { onConflict: 'id' }
+    { status: 200 }
   );
-
-  if (profileUpsertError) {
-    throw new Error(`App profile upsert failed: ${profileUpsertError.message}`);
-  }
-
-  const verifiedUser = metadataUpdateData.user ?? ({ ...user, user_metadata: nextUserMetadata } as User);
-  const { appUser, profile } = await readVerifiedProfile(verifiedUser);
-
-  if (!profile) {
-    throw new Error('App profile verification failed: no row returned from public.profiles.');
-  }
-
-  return { appUser, profile };
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const { user } = await readAuthenticatedUser(request);
+    const { user, error } = await readAuthenticatedUser(request);
+
+    if (error && !user) {
+      return jsonError(error.message, 401);
+    }
 
     if (!user) {
-      return NextResponse.json(
-        {
-          email: null,
-          id: null,
-          role: 'user',
-        },
-        { status: 200 }
-      );
+      return jsonError('Unauthorized', 401);
     }
 
-    const { appUser, profile } = await readVerifiedProfile(user);
+    const profile = (await readProfile(user.id)) ?? (await upsertProfile(user, {}));
 
-    if (!profile) {
-      const bootstrapped = await upsertAndVerifyProfile(user, {});
-      const bootstrappedProfileData = toViewerProfile(user, bootstrapped.profile, bootstrapped.appUser);
-
-      return NextResponse.json(
-        {
-          data: bootstrappedProfileData,
-          email: user.email ?? null,
-          id: bootstrappedProfileData.id,
-          profile: bootstrapped.profile,
-          role: bootstrappedProfileData.role,
-          success: true,
-        },
-        { status: 200 }
-      );
-    }
-
-    const profileData = toViewerProfile(user, profile, appUser);
-
-    return NextResponse.json(
-      {
-        data: profileData,
-        email: user.email ?? null,
-        id: profileData.id,
-        role: profileData.role,
-      },
-      { status: 200 }
-    );
+    return profileResponse(user, profile);
   } catch (error) {
     console.error('Profile route failed:', error);
 
@@ -306,17 +239,9 @@ export async function POST(request: NextRequest) {
       return jsonError('You must be signed in before MeliusAI can create your profile.', 401);
     }
 
-    const { appUser, profile } = await upsertAndVerifyProfile(user, payload);
-    const profileData = toViewerProfile(user, profile, appUser);
+    const profile = await upsertProfile(user, payload);
 
-    return NextResponse.json(
-      {
-        data: profileData,
-        profile,
-        success: true,
-      },
-      { status: 200 }
-    );
+    return profileResponse(user, profile);
   } catch (error) {
     console.error('Profile bootstrap failed:', error);
 
@@ -342,14 +267,12 @@ export async function PATCH(request: NextRequest) {
 
     const admin = createSupabaseAdminClient();
     const role = normalizeRole(payload.role ?? user.user_metadata?.role);
-    const roleSelectedAt = normalizeTimestamp(payload.role_selected_at) ?? new Date().toISOString();
-
+    const roleSelectedAt = normalizeText(payload.role_selected_at) ?? new Date().toISOString();
     const nextUserMetadata = {
       ...user.user_metadata,
       role,
       role_selected_at: roleSelectedAt,
     };
-
     const { data: metadataUpdateData, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
       user_metadata: nextUserMetadata,
     });
@@ -359,25 +282,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     const verifiedUser = metadataUpdateData.user ?? ({ ...user, user_metadata: nextUserMetadata } as User);
-    const { appUser, profile } = await readVerifiedProfile(verifiedUser);
+    const profile = (await readProfile(verifiedUser.id)) ?? (await upsertProfile(verifiedUser, payload));
 
-    if (!profile) {
-      return jsonError(
-        'Role was updated, but the MeliusAI profiles row is missing. Please retry profile setup.',
-        409,
-        { userId: user.id }
-      );
-    }
-
-    const profileData = toViewerProfile(user, profile, appUser);
-
-    return NextResponse.json(
-      {
-        data: profileData,
-        success: true,
-      },
-      { status: 200 }
-    );
+    return profileResponse(verifiedUser, profile);
   } catch (error) {
     console.error('Profile role update failed:', error);
 
