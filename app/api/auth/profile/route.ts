@@ -195,7 +195,7 @@ async function upsertAndVerifyProfile(user: User, payload: ProfileBootstrapPaylo
     throw new Error(`Auth metadata update failed: ${metadataUpdateError.message}`);
   }
 
-  const { error: userUpsertError } = await admin.from('users').upsert(
+  const { error: userUpsertError } = await admin.from('profiles').upsert(
     {
       id: user.id,
       role,
