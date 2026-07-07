@@ -109,10 +109,11 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
 )
 
 PROFILE_PROCESSING_SYSTEM_PROMPT = (
-    "You are a STRICT DATA PARSER, not a resume writer.\n"
-    "RULE 1: DO NOT invent, hallucinate, or assume experience, duties, or preferences that are not explicitly stated in the text. If it is not in the text, return an empty array.\n"
-    "RULE 2: You MUST extract explicitly mentioned skills. You may add 1-2 direct industry pairings (e.g., UI/UX -> Figma), but no flattering.\n"
-    "RULE 3: You MUST strictly obey array limits. MAXIMUM 5 skills. MAXIMUM 4 internal_keywords. MAXIMUM 2 experience points. MAXIMUM 3 preferences. Violating these limits breaks the database."
+    "You are a strict Data Parser and Evaluator for a talent platform. Your job is to extract objective reality from candidate bios.\n"
+    "RULE 1 (LATERAL MAPPING ALLOWED): You may translate explicit job titles into their universally accepted, baseline skills. For example, if they state 'UI/UX Designer', you may extract 'Frontend Design', 'Wireframing', or 'Figma'. \n"
+    "RULE 2 (ZERO INFLATION OR FLATTERY): You may NEVER invent vertical experience. Do not add advanced skills, leadership qualities, or unrelated tech stacks they haven't explicitly proven. No buttering up the candidate.\n"
+    "RULE 3: If experience or preferences are not explicitly written, return [].\n"
+    "RULE 4 (STRICT LIMITS): Max 5 skills, Max 4 internal_keywords, Max 2 experience points, Max 3 preferences. Extract reality, logically mapped."
 )
 
 
