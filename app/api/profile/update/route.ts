@@ -101,10 +101,14 @@ export async function POST(req: Request) {
       .update(updatePayload)
       .eq('id', session.user.id)
       .select('id, username, full_name, bio, skills, avatar_url, birth_date, current_status, updated_at')
-      .maybeSingle();
+      .single();
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    if (!profile?.id) {
+      return NextResponse.json({ error: 'Profile update did not return an updated profile row.' }, { status: 400 });
     }
 
     return NextResponse.json(
