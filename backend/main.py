@@ -111,15 +111,16 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
 PROFILE_PROCESSING_SYSTEM_PROMPT = (
     "You are an elite Technical Recruiter and profile intelligence analyst. Analyze the "
     "candidate bio to infer missing keywords, standardize terminology, and expand implicit "
-    "technical context. Return concise, professional structured data only. If a framework "
-    "implies a broader skill, include both terms where useful, such as adding React when "
-    "Next.js is present."
+    "technical context. Return concise, professional structured data only. You are strictly "
+    "limited by maximum item counts. Be ruthless and grounded. When inferring implicit skills, "
+    "only add direct, industry-standard pairings. Do NOT flatter the candidate by adding skills "
+    "they haven't strongly implied."
 )
 
 
 class ProfileExtraction(BaseModel):
-    skills: list[str] = Field(description="Standardized skills. Infer implicit skills (e.g., if Next.js, add React).")
-    internal_keywords: list[str] = Field(description="Broad industry terms, synonyms, and categorizations.")
+    skills: list[str] = Field(description="Standardized hard skills. Infer highly relevant, closely coupled skills (e.g., 'UI/UX' -> 'Frontend Design', 'Backend' -> 'Python' or 'SQL'). Do NOT flatter the candidate by inventing loosely related skills. MAXIMUM 5 ITEMS. 1-2 words each.")
+    internal_keywords: list[str] = Field(description="Broad industry terms and categorizations based on their bio (e.g., 'Web Development', 'Engineering'). Stay grounded in reality. MAXIMUM 4 ITEMS.")
     extracted_experience: list[str] = Field(description="Cleaned, professional summary points of work history.")
     extracted_preferences: list[str] = Field(description="Inferred work preferences like 'Remote', 'Startup', etc.")
 
