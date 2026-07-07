@@ -128,6 +128,124 @@ export function TalentDashboard() {
     }
   }, [profile, router]);
 
+  useEffect(() => {
+    if (!supabase || !user?.id) {
+      setReviewResult(null);
+      return;
+    }
+
+    let active = true;
+
+    const fetchSavedAudit = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('projects')
+          .select(
+            'id, owner_id, user_id, source_url, source_kind, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
+          )
+          .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (!active) {
+          return;
+        }
+
+        if (error) {
+          console.warn('Unable to hydrate saved MeliusAI audit:', error);
+          return;
+        }
+
+        const savedAudit = Array.isArray(data)
+          ? data.find((project) =>
+              Boolean(
+                project.ai_summary?.trim() ||
+                  project.audit_summary?.trim() ||
+                  project.summary?.trim() ||
+                  project.logic_score ||
+                  project.evaluation_score ||
+                  project.score
+              )
+            )
+          : null;
+
+        if (!savedAudit) {
+          setReviewResult(null);
+          return;
+        }
+
+        const savedScore = savedAudit.logic_score ?? savedAudit.evaluation_score ?? savedAudit.score ?? 0;
+        const savedSummary =
+          savedAudit.ai_summary?.trim() ||
+          savedAudit.audit_summary?.trim() ||
+          savedAudit.summary?.trim() ||
+          savedAudit.description?.trim() ||
+          'Your saved MeliusAI audit is ready.';
+        const savedProfession = savedAudit.profession?.trim() || 'Developer';
+        const savedTargetCompany = savedAudit.target_company?.trim() || null;
+        const savedPros = Array.isArray(savedAudit.pros) ? savedAudit.pros : [];
+        const savedCons = Array.isArray(savedAudit.cons) ? savedAudit.cons : [];
+        const savedRecommendations = Array.isArray(savedAudit.recommendations) ? savedAudit.recommendations : [];
+
+        setSourceUrl(savedAudit.source_url?.trim() || '');
+        setDescription(savedAudit.description?.trim() || '');
+        setProfession(savedProfession);
+        setTargetCompany(savedTargetCompany ?? '');
+        setAgentEnabled(Boolean(savedAudit.auto_apply_enabled));
+        setReviewResult(
+          normalizeReviewPayload({
+            sourceKind: savedAudit.source_kind ?? 'website',
+            meliusScore: savedScore,
+            summary: savedSummary,
+            verifiedHeadline: 'Saved MeliusAI audit restored.',
+            targetRole: savedProfession,
+            targetCompany: savedTargetCompany,
+            readyMeter: savedTargetCompany ? savedScore : null,
+            autoApplyEligible: Boolean(savedAudit.auto_apply_enabled && savedTargetCompany && clampScore(savedScore) >= 90),
+            scoreSource: 'manual',
+            goods: [
+              { title: 'Saved audit restored', detail: savedPros[0] ?? 'Your previous MeliusAI report loaded from Supabase.' },
+              { title: 'Project signal preserved', detail: savedPros[1] ?? 'Your saved project context is available after refresh.' },
+              { title: 'Verification state hydrated', detail: savedPros[2] ?? savedSummary },
+            ],
+            bads: [
+              { title: 'Next improvement', detail: savedCons[0] ?? 'Add more implementation evidence to sharpen the review.' },
+              { title: 'Audit follow-up', detail: savedCons[1] ?? 'Tighten the project notes for a clearer score.' },
+              { title: 'Readiness gap', detail: savedCons[2] ?? 'Keep strengthening proof around production readiness.' },
+            ],
+            roadmap: [
+              savedRecommendations[0] ?? 'Review the restored audit summary.',
+              savedRecommendations[1] ?? 'Add stronger project evidence.',
+              savedRecommendations[2] ?? 'Run another audit after updates.',
+              savedRecommendations[3] ?? 'Use the saved report to guide the next iteration.',
+            ],
+            gaps: [
+              savedCons[0] ?? 'Add deeper implementation evidence.',
+              savedCons[1] ?? 'Clarify the target role requirements.',
+              savedCons[2] ?? 'Show measurable production readiness.',
+            ],
+            improvementTips: [
+              savedRecommendations[0] ?? 'Add implementation details.',
+              savedRecommendations[1] ?? 'Clarify the target role.',
+              savedRecommendations[2] ?? 'Include measurable impact.',
+            ],
+            savedProjectId: savedAudit.id,
+          })
+        );
+      } catch (error) {
+        if (active) {
+          console.warn('Unable to hydrate saved MeliusAI audit:', error);
+        }
+      }
+    };
+
+    void fetchSavedAudit();
+
+    return () => {
+      active = false;
+    };
+  }, [supabase, user?.id]);
+
   async function handleReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setReviewError(null);
