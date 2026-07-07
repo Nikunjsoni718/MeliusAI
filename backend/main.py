@@ -89,8 +89,9 @@ async def enforce_cors_origin_whitelist(request: Request, call_next):
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = AsyncOpenAI()
+async_client = client
+sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
@@ -173,16 +174,14 @@ async def extract_profile_processing_fields(bio_text: str) -> ProfileExtraction:
             extracted_preferences=[],
         )
 
-    completion = await asyncio.to_thread(
-        lambda: client.beta.chat.completions.parse(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": PROFILE_PROCESSING_SYSTEM_PROMPT},
-                {"role": "user", "content": clean_bio},
-            ],
-            response_format=ProfileExtraction,
-            temperature=0,
-        )
+    completion = await client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": PROFILE_PROCESSING_SYSTEM_PROMPT},
+            {"role": "user", "content": clean_bio},
+        ],
+        response_format=ProfileExtraction,
+        temperature=0,
     )
     extracted_data = completion.choices[0].message.parsed
 
@@ -1274,7 +1273,7 @@ async def review_portfolio_asset(
 
             if target_size_bytes <= max_chunk_size_bytes:
                 with open(processing_target, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
+                    transcript = sync_client.audio.transcriptions.create(model="whisper-1", file=audio_file)
                 content_stream = f"[AUDIO TRANSCRIPT]:\n{transcript.text}"
 
             # Phase C: Long media still above the safe cap is split into sequential 15-minute MP3 chunks.
@@ -1295,7 +1294,7 @@ async def review_portfolio_asset(
                     audio_chunk.export(str(chunk_filename), format="mp3", bitrate="64k")
 
                     with open(chunk_filename, "rb") as chunk_file:
-                        chunk_transcript = client.audio.transcriptions.create(model="whisper-1", file=chunk_file)
+                        chunk_transcript = sync_client.audio.transcriptions.create(model="whisper-1", file=chunk_file)
 
                     accumulated_transcripts.append(chunk_transcript.text)
 
@@ -1356,7 +1355,7 @@ async def review_portfolio_asset(
 
         # D. ASYNCHRONOUS TOKEN GENERATOR FUNCTION
         def stream_generator():
-            chat_stream = client.chat.completions.create(
+            chat_stream = sync_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -2344,7 +2343,7 @@ def cosine_similarity(left: List[float], right: List[float]) -> float:
 
 
 def fetch_openai_embeddings(texts: List[str]) -> List[List[float]]:
-    embedding_response = client.embeddings.create(
+    embedding_response = sync_client.embeddings.create(
         model="text-embedding-3-small",
         input=[text[:7000] for text in texts],
     )
@@ -2376,14 +2375,14 @@ def parse_llm_keyword_array(raw_text: str) -> List[str]:
     return []
 
 
-def extract_profile_internal_keywords(bio: str) -> List[str]:
+async def extract_profile_internal_keywords(bio: str) -> List[str]:
     clean_bio = bio.strip()
 
     if not clean_bio:
         return []
 
     try:
-        keyword_completion = client.chat.completions.create(
+        keyword_completion = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
@@ -2553,7 +2552,7 @@ async def run_profile_ai_processing(
 
     try:
         print(f"--- PROFILE PROCESSING: Starting internal keyword expansion for user_id={clean_user_id} ---", flush=True)
-        fallback_keywords = await asyncio.to_thread(lambda: extract_profile_internal_keywords(clean_bio))
+        fallback_keywords = await extract_profile_internal_keywords(clean_bio)
         combined_keywords = normalize_profile_processing_list(
             list(extracted_data.internal_keywords) + fallback_keywords
         )
@@ -2716,7 +2715,7 @@ async def sync_single_profile_embedding(
 
         print(f"--- SYNC ENGINE DEBUG: Vectorizing User '{merged_profile.get('username')}' with text length: {len(profile_text)} ---")
         
-        internal_keywords = extract_profile_internal_keywords(str(merged_profile.get("bio", "")))
+        internal_keywords = await extract_profile_internal_keywords(str(merged_profile.get("bio", "")))
         
         # 4. Generate the new embedding using the complete profile
         new_embedding = fetch_openai_embeddings([profile_text])[0]
@@ -3647,7 +3646,7 @@ async def verify_asset(
 
         asset_classification = classify_uploaded_asset(asset_name, asset_text_content)
 
-        completion = client.chat.completions.create(
+        completion = sync_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
@@ -4567,7 +4566,7 @@ async def interactive_chat_station(
         # 🛠️ INNER GENERATOR CORE INTEGRITY PROTECTION
         def stream_generator():
             try:
-                chat_stream = client.chat.completions.create(
+                chat_stream = sync_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "system", "content": system_prompt}] + request.messages,
                     temperature=0.8,
@@ -4635,7 +4634,7 @@ async def sync_database_embeddings(
             
             # 3. Request high-dimensional vector coordinates from OpenAI
             if len(raw_text_payload) > 5:
-                embedding_response = client.embeddings.create(
+                embedding_response = sync_client.embeddings.create(
                     model="text-embedding-3-small",
                     input=[raw_text_payload[:7000]]
                 )
