@@ -272,6 +272,35 @@ function resolveDisplayUsername({
   return normalizeDisplayUsername(username) ?? normalizeDisplayUsername(fullName) ?? normalizeDisplayUsername(id) ?? 'member';
 }
 
+const USERNAME_TAKEN_MESSAGE = 'This username is already taken.';
+
+function getErrorText(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? '');
+  }
+
+  return String(error ?? '');
+}
+
+function isUsernameConflictError(error: unknown) {
+  const errorText = getErrorText(error).toLowerCase();
+  const errorCode =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+
+  return (
+    errorCode === '23505' ||
+    errorText.includes('duplicate key') ||
+    errorText.includes('unique constraint') ||
+    errorText.includes('already exists')
+  );
+}
+
 function normalizeProfileList(value: unknown) {
   if (Array.isArray(value)) {
     return value
@@ -2152,6 +2181,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileHydrated, setProfileHydrated] = useState(false);
   const [profileSyncState, setProfileSyncState] = useState<SyncState>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const [usernameSaveError, setUsernameSaveError] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState<boolean>(false);
   const isSpectator = !isOwner;
   const [authStorageDebug, setAuthStorageDebug] = useState<AuthStorageDebugState>({
@@ -2674,6 +2704,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
       setFetchError(null);
       setProfileSaveError(null);
+      setUsernameSaveError(null);
       setProfileSyncState('idle');
       setBioSaveState('idle');
       setProfileLoading(false);
@@ -2904,15 +2935,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return cleanName || 'project-file';
   }
 
-  async function saveProfileDraft(nextDraft = profileDraft) {
+  async function saveProfileDraft(nextDraft = profileDraft): Promise<boolean> {
     if (!isOwner) {
-      return;
+      return false;
     }
 
     if (!supabase) {
       setProfileSaveError('Profile sync is not ready.');
       setProfileSyncState('error');
-      return;
+      return false;
     }
 
     const normalizedDraft = {
@@ -2931,20 +2962,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       lastSaved.username === normalizedDraft.username &&
       lastSaved.birthDate === normalizedDraft.birthDate
     ) {
-      return;
+      return true;
     }
 
     const sequence = profileSaveSequenceRef.current + 1;
     profileSaveSequenceRef.current = sequence;
     setProfileSyncState('syncing');
     setProfileSaveError(null);
+    setUsernameSaveError(null);
 
     try {
       const userId = await getConfirmedUserId();
       if (!userId) {
         setProfileSyncState('error');
         setProfileSaveError('Profile sync is not ready.');
-        return;
+        return false;
       }
 
       const { error } = await supabase.from('profiles').upsert({
@@ -2984,18 +3016,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         );
         setProfileSyncState('idle');
         setProfileSaveError(null);
+        setUsernameSaveError(null);
       }
+
+      return true;
     } catch (error) {
       if (profileSaveSequenceRef.current === sequence) {
-        setProfileSyncState('error');
-        setProfileSaveError(error instanceof Error ? error.message : 'We could not save your profile.');
+        if (isUsernameConflictError(error)) {
+          setProfileSyncState('idle');
+          setProfileSaveError(null);
+          setUsernameSaveError(USERNAME_TAKEN_MESSAGE);
+        } else {
+          setProfileSyncState('error');
+          setProfileSaveError(error instanceof Error ? error.message : 'We could not save your profile.');
+        }
       }
+
+      return false;
     }
   }
 
   function updateProfileDraft(field: keyof ProfileDraft, value: string) {
     if (!isOwner) {
       return;
+    }
+
+    if (field === 'username') {
+      setUsernameSaveError(null);
+      setProfileSaveError(null);
     }
 
     const nextDraft = {
@@ -3060,6 +3108,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     const sequence = bioSaveSequenceRef.current + 1;
     bioSaveSequenceRef.current = sequence;
     setBioSaveState('saving');
+    setUsernameSaveError(null);
 
     try {
       const response = await fetch(PROFILE_UPDATE_ENDPOINT, {
@@ -3119,19 +3168,28 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               }
             : previous
         );
+        setUsernameSaveError(null);
         showBioSavedState();
       }
     } catch (error) {
       console.error('Profile dynamic platform data sync failed:', error);
       if (bioSaveSequenceRef.current === sequence) {
         setBioSaveState('idle');
+        if (isUsernameConflictError(error)) {
+          setUsernameSaveError(USERNAME_TAKEN_MESSAGE);
+          return;
+        }
         showBioToast('Sync Error: Please check your connection.');
       }
     }
   }
 
   async function saveCompleteProfile() {
-    await saveProfileDraft();
+    const profileSaved = await saveProfileDraft();
+    if (!profileSaved) {
+      return;
+    }
+
     await saveBio(bioText);
   }
 
@@ -3974,21 +4032,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         )}
                       </div>
                       {isEditing ? (
-                        <label className="mt-2 flex w-full max-w-sm items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
-                          <span className="flex h-10 items-center border-r border-blue-950/50 px-3 text-slate-500">
-                            @
-                          </span>
-                          <input
-                            type="text"
-                            aria-label="Profile username"
-                            placeholder={displayUsername}
-                            value={profileDraft.username}
-                            onChange={(event) =>
-                              updateProfileDraft('username', event.target.value.replace(/^@+/, ''))
-                            }
-                            className="h-10 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-slate-600"
-                          />
-                        </label>
+                        <>
+                          <label className="mt-2 flex w-full max-w-sm items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
+                            <span className="flex h-10 items-center border-r border-blue-950/50 px-3 text-slate-500">
+                              @
+                            </span>
+                            <input
+                              type="text"
+                              aria-label="Profile username"
+                              placeholder={displayUsername}
+                              value={profileDraft.username}
+                              onChange={(event) =>
+                                updateProfileDraft('username', event.target.value.replace(/^@+/, ''))
+                              }
+                              className="h-10 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-slate-600"
+                            />
+                          </label>
+                          {usernameSaveError ? (
+                            <p className="mt-2 text-sm font-medium text-rose-300">{usernameSaveError}</p>
+                          ) : null}
+                        </>
                       ) : (
                         <p className="mt-2 text-sm text-slate-400">@{displayUsername}</p>
                       )}
@@ -4078,12 +4141,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         <Label htmlFor="profile-username" className="text-xs uppercase tracking-[0.2em] text-slate-500">
                           Username
                         </Label>
-                        <Input
-                          id="profile-username"
-                          className="mt-3 border-blue-950/50 bg-[#050b1b]/60 focus:border-sky-500/60 focus:ring-sky-500/20"
-                          value={profileDraft.username}
-                          onChange={(event) => updateProfileDraft('username', event.target.value)}
-                        />
+                        <div className="mt-3 flex items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
+                          <span className="flex h-10 items-center border-r border-blue-950/50 px-3 text-slate-500">
+                            @
+                          </span>
+                          <input
+                            id="profile-username"
+                            type="text"
+                            className="h-10 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-slate-600"
+                            placeholder={displayUsername}
+                            value={profileDraft.username}
+                            onChange={(event) =>
+                              updateProfileDraft('username', event.target.value.replace(/^@+/, ''))
+                            }
+                          />
+                        </div>
+                        {usernameSaveError ? (
+                          <p className="mt-2 text-xs font-medium text-rose-300">{usernameSaveError}</p>
+                        ) : null}
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                         <div className="flex items-center justify-between gap-3">
