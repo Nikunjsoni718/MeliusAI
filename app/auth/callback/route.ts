@@ -1,45 +1,10 @@
-import { randomBytes } from 'crypto';
+import type { User } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
-
-function getMetadataText(metadata: Record<string, unknown> | undefined, key: string) {
-  const value = metadata?.[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function toUsernameBase(value: string | null | undefined) {
-  const normalized = value
-    ?.trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-  return normalized && normalized.length >= 3 ? normalized.slice(0, 24) : 'member';
-}
-
-function createUsername(baseValue: string | null | undefined) {
-  return `${toUsernameBase(baseValue).slice(0, 24)}_${randomBytes(2).toString('hex')}`;
-}
-
-function getDisplayName(metadata: Record<string, unknown> | undefined, email: string | null | undefined) {
-  return (
-    getMetadataText(metadata, 'full_name') ??
-    getMetadataText(metadata, 'name') ??
-    getMetadataText(metadata, 'display_name') ??
-    email?.split('@')[0] ??
-    'Member'
-  );
-}
-
-function getAvatarUrl(metadata: Record<string, unknown> | undefined) {
-  return getMetadataText(metadata, 'avatar_url') ?? getMetadataText(metadata, 'picture');
-}
 
 function createSupabaseAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -57,6 +22,37 @@ function createSupabaseAdminClient() {
   });
 }
 
+function getMetadataText(user: User, key: string) {
+  const value = user.user_metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getFullName(user: User) {
+  return (
+    getMetadataText(user, 'full_name') ??
+    getMetadataText(user, 'name') ??
+    getMetadataText(user, 'display_name') ??
+    user.email?.split('@')[0] ??
+    'Member'
+  );
+}
+
+function getAvatarUrl(user: User) {
+  return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
+}
+
+function toUsername(value: string) {
+  const username = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return username || 'member';
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
@@ -66,115 +62,72 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/auth/login`);
   }
 
+  if (!code) {
+    return NextResponse.redirect(`${origin}/auth/login?error=missing_oauth_code`);
+  }
+
   try {
     const supabase = await createSupabaseServerClient();
     const supabaseAdmin = createSupabaseAdminClient();
+    const { data: authData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
-    if (code) {
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-
-      if (exchangeError) {
-        throw exchangeError;
-      }
+    if (exchangeError) {
+      throw exchangeError;
     }
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+    const user = authData.session?.user;
 
-    if (userError || !user?.id) {
-      throw userError ?? new Error('OAuth callback did not return an authenticated user.');
+    if (!user?.id) {
+      throw new Error('OAuth callback did not return an authenticated user.');
     }
 
-    const { data: existingProfile, error: profileReadError } = await supabase
+    const fullName = getFullName(user);
+    const avatarUrl = getAvatarUrl(user);
+    const emailPrefix = user.email?.split('@')[0] ?? 'member';
+    const generatedUsername = toUsername(fullName || emailPrefix);
+
+    const { data: existingProfile, error: existingProfileError } = await supabaseAdmin
       .from('profiles')
       .select('username')
       .eq('id', user.id)
       .maybeSingle();
 
-    if (profileReadError) {
-      throw profileReadError;
+    if (existingProfileError) {
+      console.error('OAuth callback profile lookup failed:', existingProfileError);
+      throw existingProfileError;
     }
 
-    let finalUsername = existingProfile?.username?.trim() || null;
+    const finalUsername =
+      typeof existingProfile?.username === 'string' && existingProfile.username.trim()
+        ? existingProfile.username.trim()
+        : generatedUsername;
 
-    if (!finalUsername) {
-      const metadata = user.user_metadata as Record<string, unknown> | undefined;
-      const generatedFullName = getDisplayName(metadata, user.email);
-      const generatedAvatarUrl = getAvatarUrl(metadata);
-      const usernameSeed =
-        getMetadataText(metadata, 'full_name') ??
-        getMetadataText(metadata, 'name') ??
-        user.email?.split('@')[0] ??
-        'member';
+    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
+      {
+        id: user.id,
+        email: user.email ?? null,
+        full_name: fullName,
+        avatar_url: avatarUrl,
+        username: finalUsername,
+      },
+      { onConflict: 'id' }
+    );
 
-      for (let attempt = 1; attempt <= 3 && !finalUsername; attempt += 1) {
-        const generatedUsername = createUsername(usernameSeed);
-
-        const { error: usersError } = await supabaseAdmin
-          .from('users')
-          .upsert(
-            {
-              id: user.id,
-              role: 'talent',
-              display_name: generatedFullName,
-              username: generatedUsername,
-              avatar_url: generatedAvatarUrl,
-            },
-            { onConflict: 'id' }
-          );
-
-        if (usersError) {
-          console.error('CRITICAL ERROR saving user base row:', usersError);
-
-          if (usersError.code === '23505' && attempt < 3) {
-            continue;
-          }
-
-          throw usersError;
-        }
-
-        const { error: profilesError } = await supabaseAdmin
-          .from('profiles')
-          .upsert(
-            {
-              id: user.id,
-              email: user.email ?? null,
-              full_name: generatedFullName,
-              username: generatedUsername,
-              avatar_url: generatedAvatarUrl,
-            },
-            { onConflict: 'id' }
-          );
-
-        if (!profilesError) {
-          finalUsername = generatedUsername;
-          break;
-        }
-
-        console.error('CRITICAL ERROR saving profile:', profilesError);
-
-        if (profilesError.code !== '23505' || attempt === 3) {
-          throw profilesError;
-        }
-      }
-    }
-
-    if (!finalUsername) {
-      throw new Error('OAuth callback could not resolve or create a profile username.');
+    if (profileUpsertError) {
+      console.error('OAuth callback profile upsert failed:', profileUpsertError);
+      throw profileUpsertError;
     }
 
     return NextResponse.redirect(`${origin}/profile/${encodeURIComponent(finalUsername)}`);
   } catch (error) {
-    console.error('Database save failed:', error);
+    console.error('OAuth callback failed:', error);
     const message =
       error instanceof Error
         ? error.message
         : error && typeof error === 'object' && 'message' in error
           ? String((error as { message?: unknown }).message)
-          : 'OAuth callback failed.';
+          : 'oauth_callback_failed';
 
-    return NextResponse.redirect(`${origin}/?error=${encodeURIComponent(message)}`);
+    return NextResponse.redirect(`${origin}/auth/login?error=${encodeURIComponent(message)}`);
   }
 }
