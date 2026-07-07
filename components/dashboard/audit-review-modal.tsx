@@ -1,5 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
+import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+
 function cleanAuditLine(value: string) {
   return value
     .replace(/^[-*•\s]+/, '')
@@ -184,6 +188,8 @@ function parseAuditReport(rawText: string) {
 }
 
 type StructuredAuditData = {
+  id?: string | null;
+  score?: number | null;
   ai_summary?: string | null;
   user_description?: string | null;
   audit_summary?: string | null;
@@ -193,6 +199,7 @@ type StructuredAuditData = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  has_been_audited?: boolean | null;
 };
 
 function getStructuredItems(value?: string[] | null) {
@@ -245,20 +252,101 @@ function AuditBulletList({
 
 export function AuditReviewModal({
   assetTitle,
+  projectId,
+  id,
   onClose,
   reportText,
   auditData,
 }: {
   assetTitle: string;
+  projectId?: string | null;
+  id?: string | null;
   onClose: () => void;
   reportText: string;
   auditData?: StructuredAuditData | null;
 }) {
-  const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(reportText);
-  const structuredSummary = getStructuredSummary(auditData);
-  const structuredPros = getStructuredItems(auditData?.pros);
-  const structuredCons = getStructuredItems(auditData?.cons);
-  const structuredRecommendations = getStructuredItems(auditData?.recommendations);
+  const resolvedProjectId = projectId ?? id ?? auditData?.id ?? null;
+  const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null);
+  const [score, setScore] = useState<number | null>(null);
+  const [auditSummary, setAuditSummary] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [pros, setPros] = useState<string[] | null>(null);
+  const [cons, setCons] = useState<string[] | null>(null);
+  const [recommendations, setRecommendations] = useState<string[] | null>(null);
+  const [hasBeenAudited, setHasBeenAudited] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!resolvedProjectId || !hasSupabaseBrowserEnv()) {
+      return;
+    }
+
+    let active = true;
+
+    const hydrateSavedAudit = async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data, error } = await supabase
+          .from('projects')
+          .select('score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
+          .eq('id', resolvedProjectId)
+          .maybeSingle();
+
+        if (!active) {
+          return;
+        }
+
+        if (error) {
+          console.error('Failed to hydrate saved MeliusAI audit report:', error);
+          return;
+        }
+
+        if (!data) {
+          return;
+        }
+
+        setHydratedProjectId(resolvedProjectId);
+        setScore(data.score ?? null);
+        setAuditSummary(data.audit_summary ?? null);
+        setAiSummary(data.ai_summary ?? null);
+        setPros(Array.isArray(data.pros) ? data.pros : []);
+        setCons(Array.isArray(data.cons) ? data.cons : []);
+        setRecommendations(Array.isArray(data.recommendations) ? data.recommendations : []);
+        setHasBeenAudited(data.has_been_audited ?? false);
+      } catch (error) {
+        if (active) {
+          console.error('Failed to hydrate saved MeliusAI audit report:', error);
+        }
+      }
+    };
+
+    void hydrateSavedAudit();
+
+    return () => {
+      active = false;
+    };
+  }, [resolvedProjectId]);
+
+  const hasHydratedProject = Boolean(resolvedProjectId && hydratedProjectId === resolvedProjectId);
+  const hydratedAuditData: StructuredAuditData = {
+    ...(auditData ?? {}),
+    score: hasHydratedProject ? score ?? auditData?.score ?? null : auditData?.score ?? null,
+    audit_summary: hasHydratedProject ? auditSummary ?? auditData?.audit_summary ?? null : auditData?.audit_summary ?? null,
+    ai_summary: hasHydratedProject ? aiSummary ?? auditData?.ai_summary ?? null : auditData?.ai_summary ?? null,
+    pros: hasHydratedProject ? pros ?? auditData?.pros ?? null : auditData?.pros ?? null,
+    cons: hasHydratedProject ? cons ?? auditData?.cons ?? null : auditData?.cons ?? null,
+    recommendations: hasHydratedProject
+      ? recommendations ?? auditData?.recommendations ?? null
+      : auditData?.recommendations ?? null,
+    has_been_audited: hasHydratedProject
+      ? hasBeenAudited ?? auditData?.has_been_audited ?? null
+      : auditData?.has_been_audited ?? null,
+  };
+  const hydratedReportText = hasHydratedProject ? auditSummary ?? aiSummary ?? reportText : reportText;
+  const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(hydratedReportText);
+  const structuredSummary = getStructuredSummary(hydratedAuditData);
+  const structuredPros = getStructuredItems(hydratedAuditData.pros);
+  const structuredCons = getStructuredItems(hydratedAuditData.cons);
+  const structuredRecommendations = getStructuredItems(hydratedAuditData.recommendations);
   const hasStructuredAudit = Boolean(
     structuredSummary || structuredPros.length || structuredCons.length || structuredRecommendations.length
   );

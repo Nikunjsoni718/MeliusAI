@@ -2332,7 +2332,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       (isOwner ? profile?.username : null) ||
       (isOwner ? user?.user_metadata?.username : null),
     fullName: profileData?.full_name || profileDraft.displayName || profileFallback?.displayName || displayName,
-    id: profileData?.id ?? resolvedProfileId ?? (isOwner ? user?.id ?? null : null) ?? targetUsername ?? profileId,
+    id: profileData?.id ?? resolvedProfileId ?? (isOwner ? user?.id : undefined) ?? targetUsername ?? profileId,
   });
   const username = displayUsername;
   const isSpectating = !isOwner && Boolean(targetUsername);
