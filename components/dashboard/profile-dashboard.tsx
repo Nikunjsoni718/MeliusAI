@@ -3130,6 +3130,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  async function saveCompleteProfile() {
+    await saveProfileDraft();
+    await saveBio(bioText);
+  }
+
   function updateBio(value: string) {
     if (!isOwner) {
       return;
@@ -3968,7 +3973,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           </Link>
                         )}
                       </div>
-                      <p className="mt-2 text-sm text-slate-400">@{displayUsername}</p>
+                      {isEditing ? (
+                        <label className="mt-2 flex w-full max-w-sm items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
+                          <span className="flex h-10 items-center border-r border-blue-950/50 px-3 text-slate-500">
+                            @
+                          </span>
+                          <input
+                            type="text"
+                            aria-label="Profile username"
+                            placeholder={displayUsername}
+                            value={profileDraft.username}
+                            onChange={(event) =>
+                              updateProfileDraft('username', event.target.value.replace(/^@+/, ''))
+                            }
+                            className="h-10 min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none placeholder:text-slate-600"
+                          />
+                        </label>
+                      ) : (
+                        <p className="mt-2 text-sm text-slate-400">@{displayUsername}</p>
+                      )}
                       {email ? (
                         <a
                           href={`mailto:${email}`}
@@ -4181,7 +4204,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       <div className="mt-5 flex justify-end">
                         <button
                           type="button"
-                          onClick={() => void saveBio(bioText)}
+                          onClick={() => void saveCompleteProfile()}
                           disabled={bioSaveState === 'saving'}
                           className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-5 py-2.5 text-sm font-medium text-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/60 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                         >
