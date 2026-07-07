@@ -64,6 +64,13 @@ function normalizeUsername(value: unknown) {
   return normalized && normalized.length >= 3 ? normalized.slice(0, 24) : null;
 }
 
+function appendUserSuffix(baseUsername: string, userId: string) {
+  const suffix = userId.replace(/-/g, '').slice(0, 8);
+  const base = baseUsername.replace(new RegExp(`_${suffix}$`), '');
+
+  return `${base}_${suffix}`;
+}
+
 function getDisplayName(user: User, payload: ProfileBootstrapPayload) {
   return (
     normalizeText(payload.full_name) ??
@@ -81,15 +88,21 @@ function getAvatarUrl(user: User) {
 }
 
 function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existingUsername?: string | null) {
-  return (
-    normalizeUsername(existingUsername) ??
+  const savedUsername = normalizeUsername(existingUsername);
+
+  if (savedUsername) {
+    return savedUsername;
+  }
+
+  const baseUsername =
     normalizeUsername(payload.username) ??
     normalizeUsername(getMetadataText(user, 'username')) ??
     normalizeUsername(getMetadataText(user, 'preferred_username')) ??
     normalizeUsername(getDisplayName(user, payload)) ??
     normalizeUsername(user.email?.split('@')[0]) ??
-    `member_${user.id.replace(/-/g, '').slice(0, 8)}`
-  );
+    'member';
+
+  return appendUserSuffix(baseUsername, user.id);
 }
 
 async function readAuthenticatedUser(request: NextRequest) {
