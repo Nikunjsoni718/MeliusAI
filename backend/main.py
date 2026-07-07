@@ -16,7 +16,7 @@ from uuid import UUID
 import httpx
 import pypdf
 from pptx import Presentation
-from fastapi import Depends, FastAPI, UploadFile, HTTPException, Request, File
+from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -108,6 +108,16 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
     "return markdown, just raw JSON."
 )
 
+PROFILE_PROCESSING_SYSTEM_PROMPT = (
+    "You are the MeliusAI profile intelligence pipeline. Analyze a candidate bio and return "
+    "ONLY a valid JSON object with these exact keys: "
+    "'skills' as an array of concrete skills, tools, technologies, roles, or capabilities; "
+    "'internal_keywords' as an array of lowercase semantic search keywords and synonyms; "
+    "'extracted_experience' as a concise string summarizing experience evidence; "
+    "'extracted_preferences' as a concise string summarizing work preferences, role goals, "
+    "industries, environments, or collaboration style. Do not return markdown."
+)
+
 SEARCH_QUERY_SYSTEM_PROMPT = (
     "You are a talent search engine. The user will type a natural language search query. "
     "Extract their intent into a JSON object with three arrays: 'target_skills' "
@@ -116,6 +126,79 @@ SEARCH_QUERY_SYSTEM_PROMPT = (
     "If the query contains a specific person's name or username, extract it into "
     "'target_name'. Otherwise, leave it null. Return ONLY valid JSON."
 )
+
+
+def normalize_profile_processing_list(value: Any) -> List[str]:
+    values = value if isinstance(value, list) else [value]
+    normalized_values = []
+
+    for item in values:
+        if isinstance(item, dict):
+            raw_item = " ".join(str(part) for part in item.values() if part)
+        else:
+            raw_item = str(item or "")
+
+        normalized_item = raw_item.strip().lower()
+        if normalized_item and normalized_item not in normalized_values:
+            normalized_values.append(normalized_item)
+
+    return normalized_values
+
+
+def normalize_profile_processing_text(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item).strip() for item in value if str(item).strip())
+
+    if isinstance(value, dict):
+        return ", ".join(str(item).strip() for item in value.values() if str(item).strip())
+
+    return str(value or "").strip()
+
+
+async def extract_profile_processing_fields(bio_text: str) -> Dict[str, Any]:
+    clean_bio = str(bio_text or "").strip()
+
+    if not clean_bio:
+        return {
+            "skills": [],
+            "internal_keywords": [],
+            "extracted_experience": "",
+            "extracted_preferences": "",
+        }
+
+    completion = await async_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": PROFILE_PROCESSING_SYSTEM_PROMPT},
+            {"role": "user", "content": clean_bio},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    raw_content = completion.choices[0].message.content or "{}"
+    parsed_content = json.loads(raw_content)
+
+    skills = normalize_profile_processing_list(parsed_content.get("skills"))
+    internal_keywords = normalize_profile_processing_list(parsed_content.get("internal_keywords"))
+    extracted_experience = normalize_profile_processing_text(
+        parsed_content.get("extracted_experience") or parsed_content.get("experience")
+    )
+    extracted_preferences = normalize_profile_processing_text(
+        parsed_content.get("extracted_preferences") or parsed_content.get("preferences")
+    )
+
+    if not skills and internal_keywords:
+        skills = internal_keywords[:12]
+
+    if not internal_keywords and skills:
+        internal_keywords = skills
+
+    return {
+        "skills": skills,
+        "internal_keywords": internal_keywords,
+        "extracted_experience": extracted_experience,
+        "extracted_preferences": extracted_preferences,
+    }
 
 
 async def extract_bio_data(bio_text: str) -> Dict[str, List[str]]:
@@ -1984,6 +2067,11 @@ class DismissOpportunityRequest(BaseModel):
     opportunity_id: str
 
 
+class ProcessProfileRequest(BaseModel):
+    user_id: str
+    bio: str
+
+
 class CreateOpportunityRequest(BaseModel):
     job_title: str
     core_requirements: str | None = None
@@ -2106,6 +2194,8 @@ def build_profile_embedding_text(profile: Dict[str, Any]) -> str:
         "headline",
         "skills",
         "internal_keywords",
+        "extracted_experience",
+        "extracted_preferences",
         "username",
         "full_name",
     ]
@@ -2406,6 +2496,189 @@ def deterministic_candidate_match(
         })
 
     return sorted(candidates, key=lambda candidate: candidate["match_index"], reverse=True)[:5]
+
+
+async def run_profile_ai_processing(
+    supabase_client: Any,
+    user_id: str,
+    bio: str,
+) -> None:
+    clean_user_id = str(user_id or "").strip()
+    clean_bio = str(bio or "").strip()
+    print(
+        f"--- PROFILE PROCESSING START: user_id={clean_user_id}, bio_length={len(clean_bio)} ---",
+        flush=True,
+    )
+
+    if not clean_user_id:
+        print("--- PROFILE PROCESSING ABORTED: missing user_id ---", flush=True)
+        return
+
+    if not clean_bio:
+        print(f"--- PROFILE PROCESSING ABORTED: empty bio for user_id={clean_user_id} ---", flush=True)
+        return
+
+    extracted_fields: Dict[str, Any] = {
+        "skills": [],
+        "internal_keywords": [],
+        "extracted_experience": "",
+        "extracted_preferences": "",
+    }
+
+    try:
+        print(f"--- PROFILE PROCESSING: Starting LLM extraction for user_id={clean_user_id} ---", flush=True)
+        extracted_fields = await extract_profile_processing_fields(clean_bio)
+        print(
+            "--- PROFILE PROCESSING: LLM extraction complete "
+            f"for user_id={clean_user_id}; skills={len(extracted_fields.get('skills') or [])}, "
+            f"keywords={len(extracted_fields.get('internal_keywords') or [])} ---",
+            flush=True,
+        )
+    except Exception as extraction_error:
+        print(f"Extraction failed: {extraction_error}", flush=True)
+        return
+
+    try:
+        print(f"--- PROFILE PROCESSING: Starting internal keyword expansion for user_id={clean_user_id} ---", flush=True)
+        fallback_keywords = await asyncio.to_thread(lambda: extract_profile_internal_keywords(clean_bio))
+        combined_keywords = normalize_profile_processing_list(
+            list(extracted_fields.get("internal_keywords") or []) + fallback_keywords
+        )
+        if combined_keywords:
+            extracted_fields["internal_keywords"] = combined_keywords
+        if not extracted_fields.get("skills") and combined_keywords:
+            extracted_fields["skills"] = combined_keywords[:12]
+        print(
+            "--- PROFILE PROCESSING: Keyword expansion complete "
+            f"for user_id={clean_user_id}; keywords={len(extracted_fields.get('internal_keywords') or [])} ---",
+            flush=True,
+        )
+    except Exception as keyword_error:
+        print(f"Keyword extraction failed: {keyword_error}", flush=True)
+
+    profile_embedding: List[float] | None = None
+    try:
+        print(f"--- PROFILE PROCESSING: Starting embedding generation for user_id={clean_user_id} ---", flush=True)
+        embedding_text = build_profile_embedding_text(
+            {
+                "bio": clean_bio,
+                "skills": extracted_fields.get("skills") or [],
+                "internal_keywords": extracted_fields.get("internal_keywords") or [],
+                "extracted_experience": extracted_fields.get("extracted_experience") or "",
+                "extracted_preferences": extracted_fields.get("extracted_preferences") or "",
+            }
+        )
+
+        if not embedding_text.strip():
+            print(f"Embedding skipped: no semantic profile text for user_id={clean_user_id}", flush=True)
+        else:
+            profile_embedding = await asyncio.to_thread(
+                lambda: fetch_openai_embeddings([embedding_text])[0]
+            )
+            print(
+                "--- PROFILE PROCESSING: Embedding generated "
+                f"for user_id={clean_user_id}; dimensions={len(profile_embedding)} ---",
+                flush=True,
+            )
+    except Exception as embedding_error:
+        print(f"Embedding failed: {embedding_error}", flush=True)
+
+    try:
+        print(f"--- PROFILE PROCESSING: Updating Supabase profile for user_id={clean_user_id} ---", flush=True)
+        update_payload: Dict[str, Any] = {
+            "skills": normalize_profile_processing_list(extracted_fields.get("skills")),
+            "internal_keywords": normalize_profile_processing_list(extracted_fields.get("internal_keywords")),
+            "extracted_experience": normalize_profile_processing_text(
+                extracted_fields.get("extracted_experience")
+            ),
+            "extracted_preferences": normalize_profile_processing_text(
+                extracted_fields.get("extracted_preferences")
+            ),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if profile_embedding:
+            update_payload["profile_embedding"] = profile_embedding
+
+        profile_update_response = await asyncio.to_thread(
+            lambda: supabase_client.table("profiles")
+            .update(update_payload)
+            .eq("id", clean_user_id)
+            .execute()
+        )
+
+        updated_rows = profile_update_response.data if profile_update_response and hasattr(profile_update_response, "data") else []
+        print(
+            "--- PROFILE PROCESSING SUCCESS: Supabase update complete "
+            f"for user_id={clean_user_id}; rows={len(updated_rows or [])}; keys={list(update_payload.keys())} ---",
+            flush=True,
+        )
+    except Exception as update_error:
+        print(f"Supabase profile enrichment update failed: {update_error}", flush=True)
+        if "update_payload" in locals() and "profile_embedding" in update_payload:
+            try:
+                print(
+                    "--- PROFILE PROCESSING: Retrying Supabase update without profile_embedding "
+                    f"for user_id={clean_user_id} ---",
+                    flush=True,
+                )
+                fallback_payload = dict(update_payload)
+                fallback_payload.pop("profile_embedding", None)
+                fallback_response = await asyncio.to_thread(
+                    lambda: supabase_client.table("profiles")
+                    .update(fallback_payload)
+                    .eq("id", clean_user_id)
+                    .execute()
+                )
+                fallback_rows = fallback_response.data if fallback_response and hasattr(fallback_response, "data") else []
+                print(
+                    "--- PROFILE PROCESSING PARTIAL SUCCESS: Extracted fields saved without embedding "
+                    f"for user_id={clean_user_id}; rows={len(fallback_rows or [])} ---",
+                    flush=True,
+                )
+            except Exception as fallback_update_error:
+                print(f"Supabase fallback enrichment update failed: {fallback_update_error}", flush=True)
+
+
+@app.post("/api/process-profile")
+async def process_profile(
+    payload: ProcessProfileRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
+    target_user_id = str(payload.user_id or "").strip()
+    clean_bio = str(payload.bio or "").strip()
+    print(
+        f"--- PROFILE PROCESSING WEBHOOK: received user_id={target_user_id}, "
+        f"auth_user_id={current_user_id}, bio_length={len(clean_bio)} ---",
+        flush=True,
+    )
+
+    if not target_user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    if target_user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Cannot process another user's profile")
+
+    if not clean_bio:
+        return {"success": False, "message": "Profile processing skipped: empty bio."}
+
+    try:
+        supabase_client = get_supabase_service_client()
+        if supabase_client is None:
+            print(
+                "--- PROFILE PROCESSING WARNING: SUPABASE_SERVICE_ROLE_KEY is not configured; "
+                "falling back to request-scoped Supabase client. ---",
+                flush=True,
+            )
+            supabase_client = get_request_supabase_client(request)
+    except Exception as client_error:
+        print(f"Supabase client initialization failed: {client_error}", flush=True)
+        raise HTTPException(status_code=500, detail="Unable to initialize Supabase client") from client_error
+
+    background_tasks.add_task(run_profile_ai_processing, supabase_client, target_user_id, clean_bio)
+    return {"success": True, "status": "queued", "user_id": target_user_id}
 
 
 @app.post("/api/profile/sync-embedding")

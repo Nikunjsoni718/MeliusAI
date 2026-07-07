@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -38,6 +38,63 @@ function normalizeSkills(value: unknown) {
   return value
     .map((skill) => String(skill).trim().toLowerCase())
     .filter(Boolean);
+}
+
+function getProfileProcessingEndpoint() {
+  const backendBaseUrl = (
+    process.env.PYTHON_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    ''
+  )
+    .trim()
+    .replace(/\/$/, '');
+
+  return backendBaseUrl ? `${backendBaseUrl}/api/process-profile` : null;
+}
+
+async function triggerProfileProcessing({
+  accessToken,
+  bio,
+  userId,
+}: {
+  accessToken?: string | null;
+  bio: string;
+  userId: string;
+}) {
+  const endpoint = getProfileProcessingEndpoint();
+
+  if (!endpoint) {
+    console.warn('Profile AI processing skipped: Python backend URL is not configured.');
+    return;
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        bio,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      console.error(
+        `Profile AI processing failed with HTTP ${response.status}: ${errorText || response.statusText}`
+      );
+      return;
+    }
+
+    console.log('Profile AI processing triggered successfully.');
+  } catch (error) {
+    console.error('Profile AI processing trigger failed:', error);
+  }
 }
 
 export async function POST(req: Request) {
@@ -109,6 +166,20 @@ export async function POST(req: Request) {
 
     if (!profile?.id) {
       return NextResponse.json({ error: 'Profile update did not return an updated profile row.' }, { status: 400 });
+    }
+
+    if (typeof profile.bio === 'string' && profile.bio.trim()) {
+      const processingBio = profile.bio;
+      const userId = session.user.id;
+      const accessToken = session.access_token;
+
+      after(() =>
+        triggerProfileProcessing({
+          accessToken,
+          bio: processingBio,
+          userId,
+        })
+      );
     }
 
     return NextResponse.json(
