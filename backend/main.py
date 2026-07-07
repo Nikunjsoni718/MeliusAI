@@ -111,6 +111,7 @@ BIO_EXTRACTION_SYSTEM_PROMPT = (
 
 PROFILE_PROCESSING_SYSTEM_PROMPT = (
     "You are a strict Data Parser and Evaluator for a talent platform. Your job is to extract objective reality from candidate bios.\n"
+    "All extracted string arrays must be normalized to lowercase without special characters to ensure perfect string-matching with database tags.\n"
     "RULE 1 (LATERAL MAPPING ALLOWED): You may translate explicit job titles into their universally accepted, baseline skills. For example, if they state 'UI/UX Designer', you may extract 'Frontend Design', 'Wireframing', or 'Figma'. \n"
     "RULE 2 (ZERO INFLATION OR FLATTERY): You may NEVER invent vertical experience. Do not add advanced skills, leadership qualities, or unrelated tech stacks they haven't explicitly proven. No buttering up the candidate.\n"
     "RULE 3: If experience or preferences are not explicitly written, return [].\n"
@@ -119,8 +120,8 @@ PROFILE_PROCESSING_SYSTEM_PROMPT = (
 
 
 class ProfileExtraction(BaseModel):
-    skills: list[str] = Field(description="Standardized hard skills. Infer highly relevant, closely coupled skills (e.g., 'UI/UX' -> 'Frontend Design', 'Backend' -> 'Python' or 'SQL'). Do NOT flatter the candidate by inventing loosely related skills. MAXIMUM 5 ITEMS. 1-2 words each.")
-    internal_keywords: list[str] = Field(description="Broad industry terms and categorizations based on their bio (e.g., 'Web Development', 'Engineering'). Stay grounded in reality. MAXIMUM 4 ITEMS.")
+    skills: list[str] = Field(description="Standardized hard skills. Infer highly relevant, closely coupled skills (e.g., 'UI/UX' -> 'Frontend Design', 'Backend' -> 'Python' or 'SQL'). Do NOT flatter the candidate by inventing loosely related skills. MAXIMUM 5 ITEMS. 1-2 words each. FORMATTING RULE: Must be entirely lowercase. Do not use slashes or special characters (e.g., convert 'UI/UX' to 'ui ux design', 'C++' to 'cpp'). Standardize to match common lowercase job board tags.")
+    internal_keywords: list[str] = Field(description="Broad industry terms and categorizations based on their bio (e.g., 'Web Development', 'Engineering'). Stay grounded in reality. MAXIMUM 4 ITEMS. FORMATTING RULE: Must be entirely lowercase. Do not use slashes or special characters (e.g., convert 'UI/UX' to 'ui ux design', 'C++' to 'cpp'). Standardize to match common lowercase job board tags.")
     extracted_experience: list[str] = Field(description="STRICTLY EXTRACT. Only list experience explicitly stated in the text. DO NOT invent duties or responsibilities. Max 2 items.")
     extracted_preferences: list[str] = Field(description="STRICTLY EXTRACT explicitly stated preferences (e.g., 'looking for remote'). DO NOT invent cultural preferences. Max 3 items.")
 
