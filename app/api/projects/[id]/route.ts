@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectRow, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, owner_id, is_public, title, description, source_url, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, owner_id, is_public, title, description, source_url, folder_id, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
 const vaultBucketName = 'vault';
 
 type DeletableProjectRow = ProjectRow & {

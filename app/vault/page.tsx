@@ -13,7 +13,7 @@ import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-aud
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
-import type { ProjectRow } from '@/types/supabase';
+import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
 type VaultPreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'code' | 'presentation' | 'archive' | 'document' | 'generic';
 
@@ -38,6 +38,8 @@ type SpectatorVaultResponse = {
     isOwner?: boolean;
   } | null;
   projects?: ProjectRow[] | null;
+  project_folders?: ProjectFolderRow[] | null;
+  projectFolders?: ProjectFolderRow[] | null;
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
   files?: ProjectRow[] | null;
@@ -66,11 +68,24 @@ function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
   return Array.isArray(projects)
     ? projects
         .filter((project) => project.is_public !== false)
+        .filter((project) => !project.folder_id)
         .sort((a, b) => {
           const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
           const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
           return rightDate - leftDate;
         })
+    : [];
+}
+
+function getSpectatorVaultFolders(payload: SpectatorVaultResponse | null) {
+  const folders = payload?.projectFolders ?? payload?.project_folders ?? [];
+
+  return Array.isArray(folders)
+    ? folders.sort((a, b) => {
+        const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      })
     : [];
 }
 
@@ -934,6 +949,10 @@ function VaultPageContent() {
     }
   });
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
+  const [vaultFolders, setVaultFolders] = useState<ProjectFolderRow[]>([]);
+  const [activeVaultFolder, setActiveVaultFolder] = useState<ProjectFolderRow | null>(null);
+  const [folderAssets, setFolderAssets] = useState<ProjectRow[]>([]);
+  const [folderAssetsLoading, setFolderAssetsLoading] = useState(false);
   const [loading, setLoading] = useState(authEnabled);
   const [authLoading, setAuthLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
@@ -967,6 +986,9 @@ function VaultPageContent() {
       if (!targetUsername) {
         setLoading(false);
         setVaultAssets([]);
+        setVaultFolders([]);
+        setActiveVaultFolder(null);
+        setFolderAssets([]);
         setVaultError('Vault sync is unavailable until Supabase browser credentials are configured.');
       }
       return;
@@ -1013,6 +1035,9 @@ function VaultPageContent() {
           setAuthLoading(false);
           if (!targetUsername) {
             setVaultAssets([]);
+            setVaultFolders([]);
+            setActiveVaultFolder(null);
+            setFolderAssets([]);
             setLoading(false);
             router.replace('/auth');
           }
@@ -1030,6 +1055,9 @@ function VaultPageContent() {
           setAuthLoading(false);
           if (!targetUsername) {
             setVaultAssets([]);
+            setVaultFolders([]);
+            setActiveVaultFolder(null);
+            setFolderAssets([]);
             setLoading(false);
             setVaultError('Unable to verify your secure session.');
           }
@@ -1053,6 +1081,9 @@ function VaultPageContent() {
 
       if (!nextViewerId && !targetUsername) {
         setVaultAssets([]);
+        setVaultFolders([]);
+        setActiveVaultFolder(null);
+        setFolderAssets([]);
         setLoading(false);
         router.replace('/auth');
       }
@@ -1085,6 +1116,7 @@ function VaultPageContent() {
 
         if (active) {
           const spectatorAssets = getSpectatorVaultProjects(payload);
+          const spectatorFolders = getSpectatorVaultFolders(payload);
           const ownershipUsername = normalizeVaultIdentity(targetUsername) ?? targetUsername.toLowerCase();
 
           setSpectatedOwnership({
@@ -1092,6 +1124,9 @@ function VaultPageContent() {
             isOwner: payload?.isOwner === true || payload?.profile?.isOwner === true,
           });
           setVaultAssets(spectatorAssets);
+          setVaultFolders(spectatorFolders);
+          setActiveVaultFolder(null);
+          setFolderAssets([]);
           setDescriptionDrafts(
             Object.fromEntries(
               spectatorAssets.map((asset) => [asset.id, asset.description ?? ''])
@@ -1102,6 +1137,9 @@ function VaultPageContent() {
         console.error('Failed to load spectator vault assets', error);
         if (active) {
           setVaultAssets([]);
+          setVaultFolders([]);
+          setActiveVaultFolder(null);
+          setFolderAssets([]);
           setVaultError(error instanceof Error ? error.message : 'Unable to load this public vault.');
         }
       } finally {
@@ -1146,6 +1184,9 @@ function VaultPageContent() {
           if (active) {
             setViewerId(null);
             setVaultAssets([]);
+            setVaultFolders([]);
+            setActiveVaultFolder(null);
+            setFolderAssets([]);
             setVaultError(null);
             router.replace('/auth');
           }
@@ -1156,17 +1197,31 @@ function VaultPageContent() {
           .from('projects')
           .select('*')
           .eq('user_id', user.id)
+          .is('folder_id', null)
+          .order('created_at', { ascending: false });
+        const { data: foldersData, error: foldersError } = await supabase
+          .from('project_folders')
+          .select('*')
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (error) {
           throw error;
         }
 
+        if (foldersError) {
+          throw foldersError;
+        }
+
         if (active) {
           const loadedAssets = Array.isArray(data) ? data : [];
+          const loadedFolders = Array.isArray(foldersData) ? foldersData : [];
           setViewerId(user.id);
           setVaultError(null);
           setVaultAssets(loadedAssets);
+          setVaultFolders(loadedFolders);
+          setActiveVaultFolder(null);
+          setFolderAssets([]);
           setDescriptionDrafts((currentDrafts) =>
             Object.fromEntries(
               loadedAssets.map((asset) => [asset.id, currentDrafts[asset.id] ?? asset.description ?? ''])
@@ -1178,6 +1233,9 @@ function VaultPageContent() {
 
         if (active) {
           setVaultAssets([]);
+          setVaultFolders([]);
+          setActiveVaultFolder(null);
+          setFolderAssets([]);
           setVaultError('Unable to sync vault assets right now.');
         }
       } finally {
@@ -1202,6 +1260,9 @@ function VaultPageContent() {
     const channel = supabase
       .channel(`vault-assets-${viewerId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => {
+        setSyncToken((currentToken) => currentToken + 1);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_folders' }, () => {
         setSyncToken((currentToken) => currentToken + 1);
       })
       .subscribe();
@@ -1233,6 +1294,63 @@ function VaultPageContent() {
     };
   }, []);
 
+  async function handleOpenVaultFolder(folder: ProjectFolderRow) {
+    setActiveVaultFolder(folder);
+    setFolderAssets([]);
+    setFolderAssetsLoading(true);
+    setVaultError(null);
+
+    if (!supabase) {
+      setFolderAssetsLoading(false);
+      setVaultError('Vault sync is not ready.');
+      return;
+    }
+
+    try {
+      const ownerId = folder.user_id ?? folder.owner_id ?? viewerId;
+      let folderAssetsQuery = supabase
+        .from('projects')
+        .select('*')
+        .eq('folder_id', folder.id)
+        .order('created_at', { ascending: false });
+
+      if (ownerId) {
+        folderAssetsQuery = folderAssetsQuery.eq('user_id', ownerId);
+      }
+
+      if (!isOwner) {
+        folderAssetsQuery = folderAssetsQuery.eq('is_public', true);
+      }
+
+      const { data, error } = await folderAssetsQuery;
+
+      if (error) {
+        throw error;
+      }
+
+      const loadedFolderAssets = Array.isArray(data) ? data : [];
+      setFolderAssets(loadedFolderAssets);
+      setDescriptionDrafts((currentDrafts) => ({
+        ...currentDrafts,
+        ...Object.fromEntries(
+          loadedFolderAssets.map((asset) => [asset.id, currentDrafts[asset.id] ?? asset.description ?? ''])
+        ),
+      }));
+    } catch (error) {
+      console.error('Failed to load vault folder contents', error);
+      setFolderAssets([]);
+      setVaultError(error instanceof Error ? error.message : 'Unable to open this project folder.');
+    } finally {
+      setFolderAssetsLoading(false);
+    }
+  }
+
+  function handleBackToVault() {
+    setActiveVaultFolder(null);
+    setFolderAssets([]);
+    setFolderAssetsLoading(false);
+  }
+
   function handleDescriptionChange(projectId: string, textValue: string) {
     if (!isOwner) {
       return;
@@ -1243,6 +1361,9 @@ function VaultPageContent() {
       [projectId]: textValue,
     }));
     setVaultAssets((currentAssets) =>
+      currentAssets.map((asset) => (asset.id === projectId ? { ...asset, description: textValue } : asset))
+    );
+    setFolderAssets((currentAssets) =>
       currentAssets.map((asset) => (asset.id === projectId ? { ...asset, description: textValue } : asset))
     );
 
@@ -1291,6 +1412,16 @@ function VaultPageContent() {
           : asset
       )
     );
+    setFolderAssets((currentAssets) =>
+      currentAssets.map((asset) =>
+        asset.id === projectId
+          ? {
+              ...asset,
+              is_public: nextVisibilityStatus,
+            }
+          : asset
+      )
+    );
 
     try {
       const { error } = await supabase
@@ -1304,6 +1435,16 @@ function VaultPageContent() {
       }
     } catch (error) {
       setVaultAssets((currentAssets) =>
+        currentAssets.map((asset) =>
+          asset.id === projectId
+            ? {
+                ...asset,
+                is_public: currentVisibilityStatus,
+              }
+            : asset
+        )
+      );
+      setFolderAssets((currentAssets) =>
         currentAssets.map((asset) =>
           asset.id === projectId
             ? {
@@ -1407,6 +1548,16 @@ Return Markdown sections for goods, bads, project description, and a final score
             : asset
         )
       );
+      setFolderAssets((currentAssets) =>
+        currentAssets.map((asset) =>
+          asset.id === project.id
+            ? {
+                ...asset,
+                ...updatePayload,
+              }
+            : asset
+        )
+      );
       setDescriptionDrafts((currentDrafts) => ({
         ...currentDrafts,
         [project.id]: accumulatedReportText,
@@ -1473,6 +1624,7 @@ Return Markdown sections for goods, bads, project description, and a final score
       }
 
       setVaultAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== id));
+      setFolderAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== id));
       setDescriptionDrafts((currentDrafts) => {
         const nextDrafts = { ...currentDrafts };
         delete nextDrafts[id];
@@ -1490,6 +1642,8 @@ Return Markdown sections for goods, bads, project description, and a final score
       setDeletingAssetId(null);
     }
   }
+
+  const rootVaultItemCount = vaultAssets.length + vaultFolders.length;
 
   return (
     <>
@@ -1511,7 +1665,7 @@ Return Markdown sections for goods, bads, project description, and a final score
               </div>
 
               <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                Total Assets Committed: {vaultAssets.length}
+                Total Assets Committed: {rootVaultItemCount}
               </Badge>
             </div>
 
@@ -1539,7 +1693,65 @@ Return Markdown sections for goods, bads, project description, and a final score
                   </Card>
                 ))}
               </div>
-            ) : vaultError ? null : vaultAssets.length === 0 ? (
+            ) : vaultError ? null : activeVaultFolder ? (
+              <div id="nested-folder-view">
+                <div className="folder-header">
+                  <button
+                    id="back-to-vault-btn"
+                    className="btn subtle"
+                    type="button"
+                    onClick={handleBackToVault}
+                  >
+                    ← Back to Vault
+                  </button>
+                  <h2 id="current-folder-title">{activeVaultFolder.name}</h2>
+                </div>
+
+                {folderAssetsLoading ? (
+                  <div id="folder-contents-grid" className="projects-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <Card key={index} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                        <CardContent className="p-0">
+                          <div className="flex h-full flex-col p-5 sm:p-6">
+                            <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/10" />
+                            <div className="mt-5 h-36 animate-pulse rounded-2xl border border-blue-950/50 bg-[#050b1b]/60" />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div id="folder-contents-grid" className="projects-grid">
+                    <UniversalAssetGrid
+                      assets={folderAssets}
+                      emptyMessage="This project folder is empty."
+                      isSpectator={!isOwner}
+                      deletingAssetId={deletingAssetId}
+                      verifyingAssetId={verifyingAssetId}
+                      visibilityUpdatingIds={visibilityUpdatingIds}
+                      onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                      onReadProtocol={handleReadFullAuditProtocol}
+                      onToggleVisibility={(projectId, currentVisibilityStatus) =>
+                        void handleToggleVisibility(projectId, currentVisibilityStatus)
+                      }
+                      onDelete={(projectId) => void handleDeleteVaultAsset(projectId)}
+                      onProjectUpdated={(projectId, projectPatch) => {
+                        setFolderAssets((currentAssets) =>
+                          currentAssets.map((asset) =>
+                            asset.id === projectId
+                              ? {
+                                  ...asset,
+                                  ...projectPatch,
+                                }
+                              : asset
+                          )
+                        );
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : rootVaultItemCount === 0 ? (
               <Card className="w-full border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                 <CardContent className="p-8">
                   <div className="w-full rounded-2xl border border-dashed border-blue-950/60 py-20 text-center font-mono text-xs text-slate-500">
@@ -1550,10 +1762,12 @@ Return Markdown sections for goods, bads, project description, and a final score
             ) : (
               <UniversalAssetGrid
                 assets={vaultAssets}
+                folders={vaultFolders}
                 isSpectator={!isOwner}
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}
+                onFolderOpen={(folder) => void handleOpenVaultFolder(folder)}
                 onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                 onReadProtocol={handleReadFullAuditProtocol}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
@@ -1562,6 +1776,16 @@ Return Markdown sections for goods, bads, project description, and a final score
                 onDelete={(projectId) => void handleDeleteVaultAsset(projectId)}
                 onProjectUpdated={(projectId, projectPatch) => {
                   setVaultAssets((currentAssets) =>
+                    currentAssets.map((asset) =>
+                      asset.id === projectId
+                        ? {
+                            ...asset,
+                            ...projectPatch,
+                          }
+                        : asset
+                    )
+                  );
+                  setFolderAssets((currentAssets) =>
                     currentAssets.map((asset) =>
                       asset.id === projectId
                         ? {

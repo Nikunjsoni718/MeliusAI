@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, owner_id, is_public, title, description, source_url, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, owner_id, is_public, title, description, source_url, folder_id, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
 
 function isProjectStatus(value: unknown): value is ProjectStatus {
   return value === 'draft' || value === 'submitted' || value === 'reviewed' || value === 'archived';
@@ -27,6 +27,7 @@ export async function GET() {
     const { data, error } = await supabase
       .from('projects')
       .select(projectSelect)
+      .is('folder_id', null)
       .order('created_at', { ascending: false });
 
     if (error) {

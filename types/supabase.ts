@@ -53,6 +53,7 @@ export type ProjectRow = {
   name?: string | null;
   title?: string | null;
   source_url?: string | null;
+  folder_id?: string | null;
   file_name?: string | null;
   file_type?: string | null;
   file_url?: string | null;
@@ -76,6 +77,15 @@ export type ProjectRow = {
   stack?: Json[] | null;
   status?: ProjectStatus | null;
   created_at: string;
+  updated_at?: string | null;
+};
+
+export type ProjectFolderRow = {
+  id: string;
+  user_id?: string | null;
+  owner_id?: string | null;
+  name: string;
+  created_at?: string | null;
   updated_at?: string | null;
 };
 
@@ -128,6 +138,12 @@ export interface Database {
         Row: ProjectRow;
         Insert: Partial<Omit<ProjectRow, 'id'>> & Pick<ProjectRow, 'owner_id' | 'title' | 'source_url'>;
         Update: Partial<Omit<ProjectRow, 'id' | 'owner_id' | 'created_at' | 'updated_at'>>;
+        Relationships: [];
+      };
+      project_folders: {
+        Row: ProjectFolderRow;
+        Insert: Partial<Omit<ProjectFolderRow, 'id'>> & Pick<ProjectFolderRow, 'name'>;
+        Update: Partial<Omit<ProjectFolderRow, 'id' | 'created_at' | 'updated_at'>>;
         Relationships: [];
       };
       scores: {

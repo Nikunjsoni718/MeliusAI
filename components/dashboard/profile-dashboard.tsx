@@ -24,7 +24,7 @@ import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProjectRow, UserRow } from '@/types/supabase';
+import type { ProjectFolderRow, ProjectRow, UserRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
   | 'image'
@@ -41,6 +41,7 @@ type ProjectItem = {
   id: string;
   title: string;
   user_id?: string | null;
+  folder_id?: string | null;
   is_public?: boolean | null;
   source_url?: string | null;
   source_kind: string | null;
@@ -72,6 +73,10 @@ type ProjectItem = {
   asset_data_url?: string | null;
   is_local?: boolean;
 };
+
+type WorkAssetGridItem =
+  | { type: 'folder'; folder: ProjectFolderRow }
+  | { type: 'project'; project: ProjectItem };
 
 type LiveOpportunityItem = {
   id: string;
@@ -113,6 +118,8 @@ type SpectatorProfilePayload = {
   hobbies?: string[] | null;
   skills?: string[] | null;
   projects?: ProjectRow[] | null;
+  project_folders?: ProjectFolderRow[] | null;
+  projectFolders?: ProjectFolderRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
   birth_date?: string | null;
@@ -143,6 +150,7 @@ type NormalizedSpectateProfileResponse = {
   message: string | null;
   profile: SavedProfileItem | null;
   projects: ProjectRow[];
+  projectFolders: ProjectFolderRow[];
   ratings: unknown[];
   opportunities: unknown[];
   authenticationStatus: string | null;
@@ -172,7 +180,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
+  'id, user_id, folder_id, name, file_url, source_url, source_kind, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -384,6 +392,7 @@ async function fetchSpectatorProfile([
       message: 'Profile not found.',
       profile: fallbackProfile,
       projects: [],
+      projectFolders: [],
       ratings: [],
       opportunities: [],
       authenticationStatus: user ? 'authenticated' : 'anonymous',
@@ -396,6 +405,7 @@ async function fetchSpectatorProfile([
     .from('projects')
     .select(PROJECT_DASHBOARD_COLUMNS)
     .eq('user_id', savedProfile.id)
+    .is('folder_id', null)
     .order('created_at', { ascending: false })
     .limit(DASHBOARD_PROJECT_LIMIT);
 
@@ -404,12 +414,22 @@ async function fetchSpectatorProfile([
   }
 
   const { data: projectsData, error: projectsError } = await projectsQuery;
+  const { data: projectFoldersData, error: projectFoldersError } = await supabase
+    .from('project_folders')
+    .select('*')
+    .eq('user_id', savedProfile.id)
+    .order('created_at', { ascending: false });
 
   if (projectsError) {
     throw new Error(projectsError.message || `Unable to load projects for "${username}".`);
   }
 
+  if (projectFoldersError) {
+    throw new Error(projectFoldersError.message || `Unable to load project folders for "${username}".`);
+  }
+
   const projects = Array.isArray(projectsData) ? (projectsData as ProjectRow[]) : [];
+  const projectFolders = Array.isArray(projectFoldersData) ? (projectFoldersData as ProjectFolderRow[]) : [];
 
   return {
     detail: null,
@@ -417,6 +437,7 @@ async function fetchSpectatorProfile([
     message: null,
     profile: savedProfile,
     projects,
+    projectFolders,
     ratings: [],
     opportunities: [],
     authenticationStatus: user ? 'authenticated' : 'anonymous',
@@ -763,6 +784,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
   return {
     id: row.id,
     user_id: row.user_id ?? null,
+    folder_id: row.folder_id ?? null,
     is_public: row.is_public ?? null,
     title: fileName,
     source_url: fileUrl,
@@ -2133,6 +2155,44 @@ function ProjectCard({
   );
 }
 
+function ProjectFolderCard({
+  folder,
+  onOpen,
+}: {
+  folder: ProjectFolderRow;
+  onOpen: (folder: ProjectFolderRow) => void;
+}) {
+  const folderName = folder.name || 'Untitled Folder';
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onOpen(folder);
+    }
+  }
+
+  return (
+    <div
+      className="project-folder-card card min-h-[252px] rounded-2xl"
+      data-folder-id={folder.id}
+      data-folder-name={folderName}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(folder)}
+      onKeyDown={handleKeyDown}
+      aria-label={`Open ${folderName}`}
+    >
+      <div className="folder-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#00d2ff" strokeWidth="2" width="40" height="40" aria-hidden="true">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </div>
+      <h3 className="folder-name">{folderName}</h3>
+      <p className="folder-meta">Project Folder</p>
+    </div>
+  );
+}
+
 type ProfileDashboardProps = {
   profileId?: string;
   profileUsername?: string;
@@ -2157,6 +2217,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
+  const [activeProjectFolder, setActiveProjectFolder] = useState<ProjectFolderRow | null>(null);
+  const [activeFolderProjects, setActiveFolderProjects] = useState<ProjectItem[]>([]);
+  const [folderContentsLoading, setFolderContentsLoading] = useState(false);
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
@@ -2423,7 +2487,42 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }),
     [projects]
   );
+  const sortedProjectFolders = useMemo(
+    () =>
+      [...projectFolders].sort((a, b) => {
+        const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      }),
+    [projectFolders]
+  );
   const allProjects = sortedProjects;
+  const rootWorkItems = useMemo<WorkAssetGridItem[]>(
+    () =>
+      [
+        ...sortedProjectFolders.map((folder) => ({
+          type: 'folder' as const,
+          folder,
+        })),
+        ...allProjects.map((project) => ({
+          type: 'project' as const,
+          project,
+        })),
+      ].sort((left, right) => {
+        const leftDate =
+          left.type === 'folder'
+            ? left.folder.created_at
+            : left.project.created_at;
+        const rightDate =
+          right.type === 'folder'
+            ? right.folder.created_at
+            : right.project.created_at;
+        const leftTime = leftDate ? new Date(leftDate).getTime() : 0;
+        const rightTime = rightDate ? new Date(rightDate).getTime() : 0;
+        return rightTime - leftTime;
+      }),
+    [allProjects, sortedProjectFolders]
+  );
   const needsReviewCount = useMemo(() => {
     return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
   }, [allProjects]);
@@ -2469,15 +2568,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     scanCount > 0 ? Math.max(0, Math.min(100, Math.round(totalScoreSum / scanCount))) : avgProjectScore;
   const normalizedScore = scanCount > 0 ? computedAverageScore : null;
   const initialProjects = allProjects;
+  const initialWorkItems = rootWorkItems;
   const initialReviews = spectatorScanProjects.length > 0 ? spectatorScanProjects : verifiedProjects;
-  const visibleProjects = useMemo(() => {
-    return showAllWork ? initialProjects : initialProjects.slice(0, 4);
-  }, [initialProjects, showAllWork]);
+  const visibleWorkItems = useMemo(() => {
+    return showAllWork ? initialWorkItems : initialWorkItems.slice(0, 4);
+  }, [initialWorkItems, showAllWork]);
   const activePreviewProject = useMemo(() => {
+    const availableProjects = [...allProjects, ...activeFolderProjects];
+
     return activePreviewProjectId
-      ? allProjects.find((project) => project.id === activePreviewProjectId) ?? null
+      ? availableProjects.find((project) => project.id === activePreviewProjectId) ?? null
       : null;
-  }, [activePreviewProjectId, allProjects]);
+  }, [activeFolderProjects, activePreviewProjectId, allProjects]);
   const scanHistory = useMemo(() => {
     return showAllRatings ? initialReviews : initialReviews.slice(0, 3);
   }, [initialReviews, showAllRatings]);
@@ -2545,6 +2647,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setResolvedProfileId(null);
       setProfileData(null);
       setProjects([]);
+      setProjectFolders([]);
+      setActiveProjectFolder(null);
+      setActiveFolderProjects([]);
+      setFolderContentsLoading(false);
       setScans([]);
       setProjectDescriptions({});
       setProjectDescription('');
@@ -2620,6 +2726,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             .map(mapProjectRowToProjectItem)
             .filter((project) => isOwnProfile || project.is_public !== false)
         : [];
+      const payloadProjectFolders =
+        spectatorProfilePayload.projectFolders ?? spectatorProfilePayload.project_folders;
+      const loadedProjectFolders = Array.isArray(payloadProjectFolders) ? payloadProjectFolders : [];
       const payloadRatings = spectatorProfilePayload.ratings;
       const hydratedScans = payloadRatings
         .map(normalizeSpectatorRating)
@@ -2634,6 +2743,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ? mergeProjectLists(currentProjects, loadedProjects)
           : loadedProjects
       );
+      setProjectFolders(loadedProjectFolders);
       setScans(hydratedScans);
       if (!isOwnProfile || hydratedOpportunities.length > 0) {
         setLiveJobs(hydratedOpportunities);
@@ -3490,6 +3600,68 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  async function handleOpenProjectFolder(folder: ProjectFolderRow) {
+    setActiveProjectFolder(folder);
+    setActiveFolderProjects([]);
+    setFolderContentsLoading(true);
+
+    if (!supabase) {
+      setFolderContentsLoading(false);
+      showProjectVerifyError('Vault sync is not ready.');
+      return;
+    }
+
+    try {
+      const ownerId = folder.user_id ?? folder.owner_id ?? resolvedProfileId;
+      let folderProjectsQuery = supabase
+        .from('projects')
+        .select(PROJECT_DASHBOARD_COLUMNS)
+        .eq('folder_id', folder.id)
+        .order('created_at', { ascending: false });
+
+      if (ownerId) {
+        folderProjectsQuery = folderProjectsQuery.eq('user_id', ownerId);
+      }
+
+      if (!isOwner) {
+        folderProjectsQuery = folderProjectsQuery.eq('is_public', true);
+      }
+
+      const { data, error } = await folderProjectsQuery;
+
+      if (error) {
+        throw error;
+      }
+
+      const loadedFolderProjects = Array.isArray(data)
+        ? (data as ProjectRow[]).map(mapProjectRowToProjectItem)
+        : [];
+
+      setActiveFolderProjects(loadedFolderProjects);
+      setProjectDescriptions((currentDescriptions) => ({
+        ...currentDescriptions,
+        ...Object.fromEntries(
+          loadedFolderProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
+        ),
+      }));
+    } catch (error) {
+      console.error('Failed to load project folder contents', error);
+      setActiveFolderProjects([]);
+      showProjectVerifyError(error instanceof Error ? error.message : 'Unable to open this project folder.');
+    } finally {
+      setFolderContentsLoading(false);
+    }
+  }
+
+  function handleBackToVault() {
+    setActiveProjectFolder(null);
+    setActiveFolderProjects([]);
+    setFolderContentsLoading(false);
+    setActivePreviewProjectId(null);
+    setActivePreviewName(null);
+    setActivePreviewUrl(null);
+  }
+
   async function handleProjectFile(file: File, description = projectDescription) {
     if (!isOwner) {
       return;
@@ -3563,6 +3735,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
     setProjects((currentProjects) =>
+      currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
+    );
+    setActiveFolderProjects((currentProjects) =>
       currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
     );
 
@@ -3727,16 +3902,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       setProjects((currentProjects) => {
         const projectExists = currentProjects.some((currentProject) => currentProject.id === project.id);
-        const nextProjects = projectExists
+
+        if (!projectExists && project.folder_id) {
+          return currentProjects;
+        }
+
+        return projectExists
           ? currentProjects.map((currentProject) =>
               currentProject.id === project.id
                 ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
                 : currentProject
             )
           : [mergeVerifiedProject(project, verifiedProjectPatch, accumulatedReportText), ...currentProjects];
-
-        return nextProjects;
       });
+      setActiveFolderProjects((currentProjects) =>
+        currentProjects.map((currentProject) =>
+          currentProject.id === project.id
+            ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
+            : currentProject
+        )
+      );
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
         [project.id]: userContextDescription,
@@ -3803,6 +3988,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
+      setActiveFolderProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
       setProjectDescriptions((currentDescriptions) => {
         const nextDescriptions = { ...currentDescriptions };
         delete nextDescriptions[projectId];
@@ -4462,15 +4648,63 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       + Create Project Folder
                     </button>
                   ) : null}
-                  {allProjects.length > 0 ? (
+                  {rootWorkItems.length > 0 ? (
                     <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                      {allProjects.length} projects
+                      {rootWorkItems.length} items
                     </Badge>
                   ) : null}
                 </div>
               </div>
 
-              {allProjects.length === 0 ? (
+              {activeProjectFolder ? (
+                <div id="nested-folder-view">
+                  <div className="folder-header">
+                    <button
+                      id="back-to-vault-btn"
+                      className="btn subtle"
+                      type="button"
+                      onClick={handleBackToVault}
+                    >
+                      ← Back to Vault
+                    </button>
+                    <h2 id="current-folder-title">{activeProjectFolder.name}</h2>
+                  </div>
+
+                  <div id="folder-contents-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {folderContentsLoading ? (
+                      Array.from({ length: 4 }).map((_, index) => (
+                        <Card key={index} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                          <CardContent className="p-5">
+                            <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/10" />
+                            <div className="mt-5 h-32 animate-pulse rounded-2xl border border-blue-950/50 bg-[#050b1b]/60" />
+                          </CardContent>
+                        </Card>
+                      ))
+                    ) : activeFolderProjects.length > 0 ? (
+                      activeFolderProjects.map((project) => (
+                        <ProjectCard
+                          key={project.id}
+                          project={project}
+                          isSpectator={isSpectating}
+                          verifyingAssetId={verifyingAssetId}
+                          deletingProjectId={deletingProjectId}
+                          verifiedAssetId={verifiedAssetId}
+                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                          onOpen={handleOpenProject}
+                          onReadProtocol={handleReadFullAuditProtocol}
+                          onDelete={(projectId) => void handleDeleteProject(projectId)}
+                        />
+                      ))
+                    ) : (
+                      <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md md:col-span-2 lg:col-span-3 xl:col-span-4">
+                        <CardContent className="p-8 text-center text-sm text-slate-400">
+                          This project folder is empty.
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                </div>
+              ) : rootWorkItems.length === 0 ? (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                   <CardContent className="p-4 sm:p-8">
                     {isOwner ? (
@@ -4495,22 +4729,30 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </Card>
               ) : (
                 <>
-                  <div className="grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {visibleProjects.length > 0 &&
-                      visibleProjects.map((project) => (
-                        <ProjectCard
-                          key={project.id}
-                          project={project}
-                          isSpectator={isSpectating}
-                          verifyingAssetId={verifyingAssetId}
-                          deletingProjectId={deletingProjectId}
-                          verifiedAssetId={verifiedAssetId}
-                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                          onOpen={handleOpenProject}
-                          onReadProtocol={handleReadFullAuditProtocol}
-                          onDelete={(projectId) => void handleDeleteProject(projectId)}
-                        />
-                      ))}
+                  <div id="main-assets-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {visibleWorkItems.length > 0 &&
+                      visibleWorkItems.map((item) =>
+                        item.type === 'folder' ? (
+                          <ProjectFolderCard
+                            key={`folder-${item.folder.id}`}
+                            folder={item.folder}
+                            onOpen={(folder) => void handleOpenProjectFolder(folder)}
+                          />
+                        ) : (
+                          <ProjectCard
+                            key={item.project.id}
+                            project={item.project}
+                            isSpectator={isSpectating}
+                            verifyingAssetId={verifyingAssetId}
+                            deletingProjectId={deletingProjectId}
+                            verifiedAssetId={verifiedAssetId}
+                            onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                            onOpen={handleOpenProject}
+                            onReadProtocol={handleReadFullAuditProtocol}
+                            onDelete={(projectId) => void handleDeleteProject(projectId)}
+                          />
+                        )
+                      )}
 
                     {isOwner && (
                       <ProjectDropzone
@@ -4526,13 +4768,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     )}
                   </div>
 
-                  {allProjects.length > 0 ? (
+                  {rootWorkItems.length > 0 ? (
                     <button
                       type="button"
                       onClick={() => setShowAllWork((value) => !value)}
                       className="mt-6 mx-auto block px-5 py-2 bg-blue-950/40 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-900/60 hover:border-blue-500 rounded-lg font-mono text-xs tracking-wider uppercase transition-all duration-200 cursor-pointer"
                     >
-                      {showAllWork ? 'Collapse Assets' : `See All Uploaded Assets (${initialProjects.length})`}
+                      {showAllWork ? 'Collapse Assets' : `See All Uploaded Assets (${initialWorkItems.length})`}
                     </button>
                   ) : null}
                 </>

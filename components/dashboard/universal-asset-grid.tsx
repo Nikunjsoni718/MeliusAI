@@ -6,7 +6,7 @@ import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import type { ProjectRow } from '@/types/supabase';
+import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
 type AssetPreviewKind =
   | 'image'
@@ -24,16 +24,22 @@ type UniversalAssetGridProps = {
   className?: string;
   deletingAssetId?: string | null;
   emptyMessage?: string;
+  folders?: ProjectFolderRow[];
   gridClassName?: string;
   isSpectator?: boolean;
   verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
   onDelete?: (projectId: string) => void;
+  onFolderOpen?: (folder: ProjectFolderRow) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReadProtocol?: (project: ProjectRow) => void;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 };
+
+type UniversalGridItem =
+  | { type: 'folder'; folder: ProjectFolderRow }
+  | { type: 'asset'; asset: ProjectRow };
 
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
@@ -620,16 +626,60 @@ function UniversalAssetCard({
   );
 }
 
+function UniversalFolderCard({
+  folder,
+  onOpen,
+}: {
+  folder: ProjectFolderRow;
+  onOpen?: (folder: ProjectFolderRow) => void;
+}) {
+  const folderName = folder.name || 'Untitled Folder';
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!onOpen) {
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onOpen(folder);
+    }
+  }
+
+  return (
+    <div
+      className="project-folder-card card min-h-[252px] rounded-2xl"
+      data-folder-id={folder.id}
+      data-folder-name={folderName}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen?.(folder)}
+      onKeyDown={handleKeyDown}
+      aria-label={`Open ${folderName}`}
+    >
+      <div className="folder-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#00d2ff" strokeWidth="2" width="40" height="40" aria-hidden="true">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </div>
+      <h3 className="folder-name">{folderName}</h3>
+      <p className="folder-meta">Project Folder</p>
+    </div>
+  );
+}
+
 export function UniversalAssetGrid({
   assets,
   className,
   deletingAssetId = null,
   emptyMessage = 'No verified Vault assets found yet.',
+  folders = [],
   gridClassName,
   isSpectator = false,
   verifyingAssetId = null,
   visibilityUpdatingIds = [],
   onDelete,
+  onFolderOpen,
   onProjectUpdated,
   onReadProtocol,
   onToggleVisibility,
@@ -647,6 +697,35 @@ export function UniversalAssetGrid({
           return rightDate - leftDate;
         }),
     [assets, localProjectPatches]
+  );
+  const sortedFolders = useMemo(
+    () =>
+      [...folders].sort((a, b) => {
+        const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      }),
+    [folders]
+  );
+  const gridItems = useMemo<UniversalGridItem[]>(
+    () =>
+      [
+        ...sortedFolders.map((folder) => ({
+          type: 'folder' as const,
+          folder,
+        })),
+        ...patchedAssets.map((asset) => ({
+          type: 'asset' as const,
+          asset,
+        })),
+      ].sort((left, right) => {
+        const leftDate = left.type === 'folder' ? left.folder.created_at : left.asset.created_at;
+        const rightDate = right.type === 'folder' ? right.folder.created_at : right.asset.created_at;
+        const leftTime = leftDate ? new Date(leftDate).getTime() : 0;
+        const rightTime = rightDate ? new Date(rightDate).getTime() : 0;
+        return rightTime - leftTime;
+      }),
+    [patchedAssets, sortedFolders]
   );
   const activePreviewProject = activePreviewProjectId
     ? patchedAssets.find((project) => project.id === activePreviewProjectId) ?? null
@@ -669,28 +748,36 @@ export function UniversalAssetGrid({
     onProjectUpdated?.(projectId, projectPatch);
   }
 
-  if (patchedAssets.length === 0) {
+  if (gridItems.length === 0) {
     return <p className={cn('text-sm text-zinc-600', className)}>{emptyMessage}</p>;
   }
 
   return (
     <>
       <div className={cn('grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full', gridClassName, className)}>
-        {patchedAssets.map((project) => (
-          <UniversalAssetCard
-            key={project.id}
-            project={project}
-            isSpectator={isSpectator}
-            deletingAssetId={deletingAssetId}
-            isVisibilityUpdating={visibilityUpdatingIds.includes(project.id)}
-            verifyingAssetId={verifyingAssetId}
-            onDelete={onDelete}
-            onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
-            onReadProtocol={onReadProtocol}
-            onToggleVisibility={onToggleVisibility}
-            onVerify={onVerify}
-          />
-        ))}
+        {gridItems.map((item) =>
+          item.type === 'folder' ? (
+            <UniversalFolderCard
+              key={`folder-${item.folder.id}`}
+              folder={item.folder}
+              onOpen={onFolderOpen}
+            />
+          ) : (
+            <UniversalAssetCard
+              key={item.asset.id}
+              project={item.asset}
+              isSpectator={isSpectator}
+              deletingAssetId={deletingAssetId}
+              isVisibilityUpdating={visibilityUpdatingIds.includes(item.asset.id)}
+              verifyingAssetId={verifyingAssetId}
+              onDelete={onDelete}
+              onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
+              onReadProtocol={onReadProtocol}
+              onToggleVisibility={onToggleVisibility}
+              onVerify={onVerify}
+            />
+          )
+        )}
       </div>
 
       <AssetPreviewModal
