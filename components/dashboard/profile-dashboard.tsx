@@ -2190,6 +2190,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [stagingFolderName, setStagingFolderName] = useState<string>('');
   const [isStagingModalOpen, setIsStagingModalOpen] = useState(false);
+  const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
+  const [githubRepoUrl, setGithubRepoUrl] = useState("");
+  const [isFetchingGithub, setIsFetchingGithub] = useState(false);
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
@@ -3451,104 +3454,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     link.click();
   }
 
-  function getGithubProjectTitle(sourceUrl: string) {
-    try {
-      const parsedUrl = new URL(sourceUrl);
-      const [owner, repo] = parsedUrl.pathname.split('/').filter(Boolean);
-      const normalizedRepo = repo?.replace(/\.git$/i, '');
-
-      if (owner && normalizedRepo) {
-        return `${owner}/${normalizedRepo}`;
-      }
-    } catch {
-      // Fall through to a clear fallback title.
+  const handleGithubFetch = async () => {
+    if (!githubRepoUrl.includes("github.com")) {
+      return alert("Please enter a valid GitHub repository URL.");
     }
 
-    return 'GitHub project';
-  }
-
-  async function handleGithubProjectImport() {
-    if (!isOwner) {
-      return;
-    }
-
-    const sourceUrl = window.prompt('Paste your GitHub repository URL');
-    const normalizedSourceUrl = sourceUrl?.trim();
-
-    if (!normalizedSourceUrl) {
-      return;
-    }
-
-    try {
-      const parsedUrl = new URL(normalizedSourceUrl);
-
-      if (parsedUrl.hostname.toLowerCase() !== 'github.com') {
-        throw new Error('Please enter a valid github.com repository URL.');
-      }
-
-      if (uploadClearRef.current) {
-        window.clearTimeout(uploadClearRef.current);
-      }
-
-      setIsIngestionModalOpen(false);
-      setUploadState({
-        fileName: getGithubProjectTitle(normalizedSourceUrl),
-        progress: 35,
-        status: 'uploading',
-      });
-
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: getGithubProjectTitle(normalizedSourceUrl),
-          file_url: normalizedSourceUrl,
-          file_type: 'github',
-          description: projectDescription.trim() || null,
-          is_public: false,
-          status: 'draft',
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as { data?: ProjectRow; error?: string } | null;
-
-      if (!response.ok || !payload?.data) {
-        throw new Error(payload?.error || 'We could not import this GitHub project.');
-      }
-
-      const savedProject = mapProjectRowToProjectItem(payload.data);
-      setUploadState({
-        fileName: savedProject.title,
-        progress: 100,
-        status: 'done',
-      });
-      setProjects((currentProjects) => [
-        savedProject,
-        ...currentProjects.filter((project) => project.id !== savedProject.id),
-      ]);
-      setProjectDescriptions((currentDescriptions) => ({
-        ...currentDescriptions,
-        [savedProject.id]: savedProject.user_description ?? savedProject.description ?? '',
-      }));
-      setProjectDescription('');
-      router.refresh();
-
-      uploadClearRef.current = window.setTimeout(() => {
-        setUploadState(null);
-        uploadClearRef.current = null;
-      }, 450);
-    } catch (error) {
-      setUploadState({
-        fileName: getGithubProjectTitle(normalizedSourceUrl),
-        progress: 100,
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'We could not import this GitHub project.',
-      });
-      showProjectVerifyError(error instanceof Error ? error.message : 'We could not import this GitHub project.');
-    }
-  }
+    setIsFetchingGithub(true);
+    // TODO: Hit FastAPI backend to fetch the repo tree, then pass to Staging Modal
+    console.log("Fetching repo:", githubRepoUrl);
+    setTimeout(() => {
+      setIsFetchingGithub(false);
+      setIsGithubModalOpen(false);
+      alert("Backend route pending! URL captured: " + githubRepoUrl);
+    }, 1000);
+  };
 
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
@@ -5117,7 +5036,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         className="ingestion-btn"
                         id="btn-github"
                         type="button"
-                        onClick={() => void handleGithubProjectImport()}
+                        onClick={() => {
+                          setIsIngestionModalOpen(false);
+                          setIsGithubModalOpen(true);
+                        }}
                       >
                         <div className="icon-circle">
                           <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32" aria-hidden="true">
@@ -5189,6 +5111,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               }}
             />
           </main>
+
+          {isGithubModalOpen && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ background: '#0b1120', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #00d2ff', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+                <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '10px' }}>Import from GitHub</h2>
+                <p style={{ color: '#8892b0', marginBottom: '20px', fontSize: '14px' }}>Paste the public URL of the repository you want to audit.</p>
+
+                <input
+                  type="text"
+                  placeholder="https://github.com/username/repository"
+                  value={githubRepoUrl}
+                  onChange={(e) => setGithubRepoUrl(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', marginBottom: '20px', outline: 'none' }}
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
+                  <button onClick={() => setIsGithubModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button
+                    onClick={handleGithubFetch}
+                    disabled={isFetchingGithub}
+                    style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: isFetchingGithub ? 'not-allowed' : 'pointer', opacity: isFetchingGithub ? 0.7 : 1 }}
+                    type="button"
+                  >
+                    {isFetchingGithub ? 'Fetching...' : 'Fetch Repository'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {isStagingModalOpen && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
