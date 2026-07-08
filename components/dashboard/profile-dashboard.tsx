@@ -2151,44 +2151,6 @@ function ProjectCard({
   );
 }
 
-function ProjectFolderCard({
-  folder,
-  onOpen,
-}: {
-  folder: ProjectFolderRow;
-  onOpen: (folder: ProjectFolderRow) => void;
-}) {
-  const folderName = folder.name || 'Untitled Folder';
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onOpen(folder);
-    }
-  }
-
-  return (
-    <div
-      className="project-folder-card card min-h-[252px] rounded-2xl"
-      data-folder-id={folder.id}
-      data-folder-name={folderName}
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen(folder)}
-      onKeyDown={handleKeyDown}
-      aria-label={`Open ${folderName}`}
-    >
-      <div className="folder-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#00d2ff" strokeWidth="2" width="40" height="40" aria-hidden="true">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-        </svg>
-      </div>
-      <h3 className="folder-name">{folderName}</h3>
-      <p className="folder-meta">Project Folder</p>
-    </div>
-  );
-}
-
 type ProfileDashboardProps = {
   profileId?: string;
   profileUsername?: string;
@@ -4700,14 +4662,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <>
                   <div id="main-assets-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {visibleWorkItems.length > 0 &&
-                      visibleWorkItems.map((item) =>
-                        item.type === 'folder' ? (
-                          <ProjectFolderCard
-                            key={`folder-${item.folder.id}`}
-                            folder={item.folder}
-                            onOpen={(folder) => setActiveFolderId(folder.id)}
-                          />
-                        ) : (
+                      visibleWorkItems.map((item) => {
+                        if (item.type === 'folder') {
+                          const folder = item.folder;
+
+                          return (
+                            <div
+                              key={folder.id}
+                              className="project-folder-card card"
+                              onClick={() => setActiveFolderId(folder.id)}
+                            >
+                              <div className="folder-card-body">
+                                <div className="folder-icon-glow">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                  </svg>
+                                </div>
+                                <h3 className="folder-name">{folder.name}</h3>
+                                <span className="folder-badge">Project Workspace</span>
+                              </div>
+                              <div className="folder-card-footer">
+                                <button className="open-folder-btn" type="button">
+                                  Open Workspace &rarr;
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
                           <ProjectCard
                             key={item.project.id}
                             project={item.project}
@@ -4720,8 +4703,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             onReadProtocol={handleReadFullAuditProtocol}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
-                        )
-                      )}
+                        );
+                      })}
 
                     {isOwner && (
                       <ProjectDropzone

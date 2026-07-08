@@ -648,7 +648,7 @@ function UniversalFolderCard({
 
   return (
     <div
-      className="project-folder-card card min-h-[252px] rounded-2xl"
+      className="project-folder-card card"
       data-folder-id={folder.id}
       data-folder-name={folderName}
       role="button"
@@ -657,13 +657,20 @@ function UniversalFolderCard({
       onKeyDown={handleKeyDown}
       aria-label={`Open ${folderName}`}
     >
-      <div className="folder-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#00d2ff" strokeWidth="2" width="40" height="40" aria-hidden="true">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-        </svg>
+      <div className="folder-card-body">
+        <div className="folder-icon-glow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </div>
+        <h3 className="folder-name">{folderName}</h3>
+        <span className="folder-badge">Project Workspace</span>
       </div>
-      <h3 className="folder-name">{folderName}</h3>
-      <p className="folder-meta">Project Folder</p>
+      <div className="folder-card-footer">
+        <button className="open-folder-btn" type="button">
+          Open Workspace &rarr;
+        </button>
+      </div>
     </div>
   );
 }
