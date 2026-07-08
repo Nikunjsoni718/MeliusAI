@@ -3459,14 +3459,70 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return alert("Please enter a valid GitHub repository URL.");
     }
 
-    setIsFetchingGithub(true);
-    // TODO: Hit FastAPI backend to fetch the repo tree, then pass to Staging Modal
-    console.log("Fetching repo:", githubRepoUrl);
-    setTimeout(() => {
+    try {
+      setIsFetchingGithub(true);
+
+      // 1. Extract owner and repo name from the URL
+      const urlParts = githubRepoUrl.replace(/\/$/, '').split('/');
+      const repoName = urlParts.pop();
+      const owner = urlParts.pop();
+
+      if (!owner || !repoName) {
+        throw new Error("Could not parse GitHub URL. Ensure it looks like https://github.com/username/repo");
+      }
+
+      // 2. Fetch repository details to find the default branch (main vs master)
+      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}`);
+      if (!repoRes.ok) throw new Error("Repository not found or is private.");
+      const repoData = await repoRes.json();
+      const defaultBranch = repoData.default_branch;
+
+      // 3. Fetch the entire file tree recursively
+      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}/git/trees/${defaultBranch}?recursive=1`);
+      if (!treeRes.ok) throw new Error("Failed to fetch repository tree.");
+      const treeData = await treeRes.json();
+
+      // 4. Filter and process the files
+      const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build', '.env', 'package-lock.json', 'yarn.lock'];
+      const parsedFiles: any[] = [];
+      const validFiles = treeData.tree.filter((item: any) => item.type === 'blob');
+
+      for (const file of validFiles) {
+        const pathParts = file.path.split('/');
+
+        // Skip junk folders and binaries
+        if (pathParts.some((part: string) => ignoreList.includes(part))) continue;
+        if (file.path.match(/\.(png|jpe?g|gif|svg|ico|pdf|zip|mp4)$/i)) continue;
+
+        // 5. Fetch the raw text content for the valid files
+        const rawRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/${file.path}`);
+        if (!rawRes.ok) continue;
+        const content = await rawRes.text();
+
+        parsedFiles.push({
+          path: file.path,
+          name: pathParts[pathParts.length - 1],
+          content: content,
+          selected: true
+        });
+      }
+
+      if (parsedFiles.length === 0) {
+        throw new Error("No readable code files found in this repository.");
+      }
+
+      // 6. Transition to the Staging Modal
+      setStagedFiles(parsedFiles);
+      setIsGithubModalOpen(false); // Close Github URL modal
+      setGithubRepoUrl(""); // Clear the input
+      setIsStagingModalOpen(true); // Open the file checklist modal
+
+    } catch (error: any) {
+      console.error("GitHub Fetch Error:", error);
+      alert(`GitHub Import Failed: ${error.message}`);
+    } finally {
       setIsFetchingGithub(false);
-      setIsGithubModalOpen(false);
-      alert("Backend route pending! URL captured: " + githubRepoUrl);
-    }, 1000);
+    }
   };
 
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
