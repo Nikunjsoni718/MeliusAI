@@ -118,7 +118,6 @@ type SpectatorProfilePayload = {
   hobbies?: string[] | null;
   skills?: string[] | null;
   projects?: ProjectRow[] | null;
-  project_folders?: ProjectFolderRow[] | null;
   projectFolders?: ProjectFolderRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
@@ -2726,8 +2725,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             .map(mapProjectRowToProjectItem)
             .filter((project) => isOwnProfile || project.is_public !== false)
         : [];
-      const payloadProjectFolders =
-        spectatorProfilePayload.projectFolders ?? spectatorProfilePayload.project_folders;
+      const payloadProjectFolders = spectatorProfilePayload.projectFolders;
       const loadedProjectFolders = Array.isArray(payloadProjectFolders) ? payloadProjectFolders : [];
       const payloadRatings = spectatorProfilePayload.ratings;
       const hydratedScans = payloadRatings
