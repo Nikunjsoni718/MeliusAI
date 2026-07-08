@@ -1394,12 +1394,23 @@ async def review_portfolio_asset(
 # =====================================================================
 
 
+AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 0 to 100 based on code quality, architecture, security, and maintainability.
+95-100: Masterful. Highly optimized, secure, flawless edge-case handling, scalable architecture.
+85-94: Production-Ready. Clean, follows best practices, but may have minor inefficiencies.
+70-84: Standard/Functional. Good logic and works well, but may lack advanced error handling, have repetitive code, or need better state management.
+50-69: Prototype Quality. Core logic works, but suffers from hardcoded values, messy execution, or performance bottlenecks.
+30-49: Needs Major Rework. Barely functional, severe security flaws, or spaghetti code.
+0-29: Broken. Syntax errors, non-functional, or completely unreadable."""
+
+AUDIT_LIST_FIELD_DESCRIPTION = "FORMAT RULE: Use a 'Catchy Hook: Short explanation' format. Maximum 15 words per item."
+
+
 class UniversalAuditReport(BaseModel):
-    calculatedScore: int = Field(..., ge=0, le=100)
+    calculatedScore: int = Field(..., ge=0, le=100, description=AUDIT_SCORE_FIELD_DESCRIPTION)
     executiveSummary: str
-    pros: List[str]
-    cons: List[str]
-    strategicRecommendations: List[str]
+    pros: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
+    cons: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
+    strategicRecommendations: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
 
 
 class VerifyRequest(BaseModel):
@@ -1429,10 +1440,10 @@ class VerifyRequest(BaseModel):
 
 class AuditResponse(BaseModel):
     ai_summary: str
-    score: int = Field(..., ge=0, le=100)
-    strengths: List[str]
-    weaknesses: List[str]
-    recommendations: List[str]
+    score: int = Field(..., ge=0, le=100, description=AUDIT_SCORE_FIELD_DESCRIPTION)
+    strengths: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
+    weaknesses: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
+    recommendations: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
 
     @model_validator(mode="before")
     @classmethod
@@ -1926,25 +1937,11 @@ def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[st
     }
 
 
-ENHANCED_AUDIT_SYSTEM_PROMPT = """SYSTEM ROLE: You are an elite Y Combinator CTO and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
-
-RULE 1: CONTEXTUAL, FAIR GRADING (Smart, not harsh)
-Grade the file based STRICTLY on its intended scope. 
-- Do not punish a simple file for being simple. 
-- If a user uploads an HTML file, grade it out of 100 based *only* on HTML best practices (semantics, structure, accessibility). If the HTML is well-written, give it a high score (85+). Do NOT deduct points because it lacks CSS or JavaScript. Evaluate it for what it is.
-
-RULE 2: THE EXECUTIVE SUMMARY
-Write a supportive, 3-4 sentence technical analysis. Start the summary with either **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score in a constructive, encouraging tone. Do not use Markdown headers (##) in this text.
-
-RULE 3: STRICT JSON OUTPUT (Updated Keys)
-You must return ONLY a raw JSON object. Do not wrap it in markdown. Use these exact keys (Note: pros/cons are now strengths/weaknesses):
-{
-  "ai_summary": "Your supportive 3-4 sentence paragraph.",
-  "score": <Number out of 100>,
-  "strengths": ["Specific strength 1", "Specific strength 2"],
-  "weaknesses": ["Specific area to improve 1", "Specific area to improve 2"],
-  "recommendations": ["Actionable step 1", "Actionable step 2"]
-}"""
+ENHANCED_AUDIT_SYSTEM_PROMPT = """You are a meticulous Tech Lead reviewing a developer's project.
+RULE 1 (TONE): Be professional, punchy, and engaging.
+RULE 2 (FORMAT): Every bullet point MUST follow a 'Catchy Hook: Short explanation' format (e.g., 'Flawless Error Handling: Async functions use try/catch blocks perfectly').
+RULE 3 (BREVITY): No essays. Keep every item under 15 words.
+RULE 4 (LIMITS): Maximum 4 items per array."""
 
 
 AUDIT_RESPONSE_FORMAT = {"type": "json_object"}
@@ -3679,8 +3676,11 @@ async def verify_asset(
                         f"- User-provided project context: "
                         f"{user_context_description or 'No user-written project description was supplied.'}\n\n"
                         "Use the metadata only as context. Grade the artifact by its intended scope, not by raw "
-                        "file size or line count. Return the exact JSON object requested in the system prompt, "
-                        "with ai_summary as the executive summary field.\n\n"
+                        "file size or line count.\n\n"
+                        f"Score rubric:\n{AUDIT_SCORE_FIELD_DESCRIPTION}\n\n"
+                        "Return only a raw JSON object with ai_summary, score, pros, cons, and recommendations. "
+                        "Every pros, cons, and recommendations item must follow 'Catchy Hook: Short explanation', "
+                        "stay under 15 words, and each array must contain at most 4 items.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
