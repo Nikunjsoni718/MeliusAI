@@ -1402,7 +1402,7 @@ AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 0 to 100 based on code qualit
 30-49: Needs Major Rework. Barely functional, severe security flaws, or spaghetti code.
 0-29: Broken. Syntax errors, non-functional, or completely unreadable."""
 
-AUDIT_LIST_FIELD_DESCRIPTION = "FORMAT RULE: Use a 'Catchy Hook: Short explanation' format. Maximum 15 words per item."
+AUDIT_LIST_FIELD_DESCRIPTION = "CRITICAL FORMAT RULE: Must strictly follow the 'Catchy Hook: Short explanation' format. Maximum 15 words total per item. Do not write paragraphs. Example: 'Security Risk: Hardcoded API keys expose sensitive info.'"
 
 
 class UniversalAuditReport(BaseModel):
@@ -1941,7 +1941,9 @@ ENHANCED_AUDIT_SYSTEM_PROMPT = """You are a meticulous Tech Lead reviewing a dev
 RULE 1 (TONE): Be professional, punchy, and engaging.
 RULE 2 (FORMAT): Every bullet point MUST follow a 'Catchy Hook: Short explanation' format (e.g., 'Flawless Error Handling: Async functions use try/catch blocks perfectly').
 RULE 3 (BREVITY): No essays. Keep every item under 15 words.
-RULE 4 (LIMITS): Maximum 4 items per array."""
+RULE 4 (LIMITS): Maximum 4 items per array.
+RULE (FORMATTING - ABSOLUTE REQUIREMENT): You MUST use a 'Catchy Hook: Short explanation' format. NO EXCEPTIONS.
+RULE (BREVITY - ABSOLUTE REQUIREMENT): Every item MUST be under 15 words total. NO ESSAYS."""
 
 
 AUDIT_RESPONSE_FORMAT = {"type": "json_object"}
@@ -3679,8 +3681,10 @@ async def verify_asset(
                         "file size or line count.\n\n"
                         f"Score rubric:\n{AUDIT_SCORE_FIELD_DESCRIPTION}\n\n"
                         "Return only a raw JSON object with ai_summary, score, pros, cons, and recommendations. "
-                        "Every pros, cons, and recommendations item must follow 'Catchy Hook: Short explanation', "
-                        "stay under 15 words, and each array must contain at most 4 items.\n\n"
+                        "Every pros, cons, and recommendations item MUST use a "
+                        "'Catchy Hook: Short explanation' format. NO EXCEPTIONS. "
+                        "Every item MUST be under 15 words total. NO ESSAYS. "
+                        "Each array must contain at most 4 items.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"
                     ),
