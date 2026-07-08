@@ -5196,15 +5196,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <h2 style={{ color: '#fff', marginTop: 0 }}>Review Files ({stagedFiles.filter((file) => file.selected).length} selected)</h2>
                 <p style={{ color: '#8892b0' }}>Uncheck files you don&apos;t want to audit.</p>
 
-                <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '10px 0' }}>
+                <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '15px 0' }}>
                   {Object.entries(groupedFiles).map(([dirPath, filesInDir]) => {
                     const allSelected = filesInDir.every((file) => file.selected);
                     const someSelected = filesInDir.some((file) => file.selected);
 
                     return (
-                      <details key={dirPath} open style={{ marginBottom: '15px', paddingLeft: '10px' }}>
-                        <summary style={{ cursor: 'pointer', color: '#00d2ff', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px', listStyle: 'none', padding: '5px 0' }}>
-                          <span style={{ display: 'inline-block', width: '15px' }}>▶</span>
+                      <details key={dirPath} open style={{ marginBottom: '15px', paddingLeft: '5px' }}>
+                        <summary
+                          style={{
+                            cursor: 'pointer',
+                            color: '#e2e8f0',
+                            fontWeight: '500',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            listStyle: 'none',
+                            padding: '8px 0',
+                            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                          }}
+                        >
                           <input
                             type="checkbox"
                             checked={allSelected}
@@ -5213,13 +5224,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             }}
                             onChange={(event) => toggleFolderSelection(dirPath, event.target.checked)}
                             onClick={(event) => event.stopPropagation()}
+                            style={{ accentColor: '#00d2ff', width: '16px', height: '16px', cursor: 'pointer' }}
                           />
-                          📁 {dirPath} ({filesInDir.length} files)
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8892b0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                          <span style={{ flexGrow: 1, letterSpacing: '0.3px' }}>{dirPath}</span>
+                          <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 'normal', background: 'rgba(255, 255, 255, 0.05)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            {filesInDir.length} files
+                          </span>
                         </summary>
 
-                        <div style={{ paddingLeft: '35px', marginTop: '5px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        <div style={{ paddingLeft: '32px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           {filesInDir.map((file) => (
-                            <label key={file.path} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', color: '#a0aec0' }}>
+                            <label key={file.path} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: '#94a3b8', padding: '4px 0' }}>
                               <input
                                 type="checkbox"
                                 checked={file.selected}
@@ -5232,8 +5250,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     )
                                   );
                                 }}
+                                style={{ accentColor: '#00d2ff', width: '14px', height: '14px', cursor: 'pointer' }}
                               />
-                              <span style={{ fontSize: '13px', wordBreak: 'break-all' }}>📄 {file.name}</span>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                                <polyline points="13 2 13 9 20 9"></polyline>
+                              </svg>
+                              <span style={{ fontSize: '13px', letterSpacing: '0.2px' }}>{file.name}</span>
                             </label>
                           ))}
                         </div>
