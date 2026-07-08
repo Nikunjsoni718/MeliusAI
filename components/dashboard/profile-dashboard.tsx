@@ -2184,6 +2184,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editFolderName, setEditFolderName] = useState("");
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
@@ -4121,6 +4123,50 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     router.replace('/');
   }
 
+  const handleRenameFolder = async (folderId: string) => {
+    const nextFolderName = editFolderName.trim();
+
+    if (!nextFolderName) {
+      setEditingFolderId(null);
+      return;
+    }
+
+    if (!isOwner) {
+      return;
+    }
+
+    if (!supabase) {
+      alert('Failed to rename folder: Vault sync is not ready.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('project_folders')
+        .update({ name: nextFolderName })
+        .eq('id', folderId);
+
+      if (error) throw error;
+
+      setProjectFolders((prev) =>
+        prev.map((folder) =>
+          folder.id === folderId ? { ...folder, name: nextFolderName } : folder
+        )
+      );
+
+      setEditingFolderId(null);
+      setEditFolderName("");
+
+      if (spectatorProfileKey) {
+        await mutate(spectatorProfileKey);
+      }
+      router.refresh();
+    } catch (error: any) {
+      console.error("Error renaming folder:", error);
+      alert("Failed to rename folder. Please try again.");
+    }
+  };
+
   const handleDeleteFolder = async (folderId: string, event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
 
@@ -4833,7 +4879,63 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                                   </svg>
                                 </div>
-                                <h3 className="folder-name">{folder.name}</h3>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', width: '100%', gap: '10px' }}>
+                                  {editingFolderId === folder.id ? (
+                                    <div style={{ display: 'flex', gap: '10px', width: '100%' }} onClick={(event) => event.stopPropagation()}>
+                                      <input
+                                        type="text"
+                                        value={editFolderName}
+                                        onChange={(event) => setEditFolderName(event.target.value)}
+                                        style={{
+                                          flex: 1,
+                                          padding: '6px 10px',
+                                          borderRadius: '4px',
+                                          background: 'rgba(255,255,255,0.1)',
+                                          border: '1px solid #00d2ff',
+                                          color: '#fff',
+                                          outline: 'none',
+                                          fontSize: '14px',
+                                          minWidth: 0,
+                                        }}
+                                        autoFocus
+                                        onKeyDown={(event) => {
+                                          if (event.key === 'Enter') void handleRenameFolder(folder.id);
+                                          if (event.key === 'Escape') {
+                                            setEditingFolderId(null);
+                                            setEditFolderName("");
+                                          }
+                                        }}
+                                      />
+                                      <button
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void handleRenameFolder(folder.id);
+                                        }}
+                                        style={{ background: '#00d2ff', color: '#000', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        type="button"
+                                      >
+                                        Save
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <h3 className="folder-name" style={{ margin: 0 }}>{folder.name}</h3>
+                                      {isOwner ? (
+                                        <button
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setEditingFolderId(folder.id);
+                                            setEditFolderName(folder.name);
+                                          }}
+                                          style={{ background: 'transparent', border: 'none', color: '#8892b0', cursor: 'pointer', fontSize: '14px' }}
+                                          type="button"
+                                        >
+                                          Edit
+                                        </button>
+                                      ) : null}
+                                    </>
+                                  )}
+                                </div>
                                 <span className="folder-badge">Project Workspace</span>
                               </div>
                               <div className="folder-card-footer">
