@@ -177,8 +177,6 @@ Detailed Content & Project Description: ${getProjectDescription(stagedAsset)}
 
 Vault Database Row ID: ${stagedAsset.id}
 
-Source URL: ${stagedAsset.source_url || 'No source URL saved.'}
-
 File URL: ${stagedAsset.file_url || 'No file URL saved.'}
 
 ${USER_QUESTION_MARKER}

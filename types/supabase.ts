@@ -52,7 +52,6 @@ export type ProjectRow = {
   is_public?: boolean | null;
   name?: string | null;
   title?: string | null;
-  source_url?: string | null;
   folder_id?: string | null;
   file_name?: string | null;
   file_type?: string | null;
@@ -136,7 +135,7 @@ export interface Database {
       };
       projects: {
         Row: ProjectRow;
-        Insert: Partial<Omit<ProjectRow, 'id'>> & Pick<ProjectRow, 'owner_id' | 'title' | 'source_url'>;
+        Insert: Partial<Omit<ProjectRow, 'id'>> & Pick<ProjectRow, 'owner_id' | 'title' | 'file_url'>;
         Update: Partial<Omit<ProjectRow, 'id' | 'owner_id' | 'created_at' | 'updated_at'>>;
         Relationships: [];
       };

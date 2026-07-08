@@ -191,7 +191,7 @@ export function getUniversalAssetName(project: ProjectRow) {
 }
 
 export function getUniversalAssetUrl(project: ProjectRow) {
-  return project.file_url?.trim() || project.source_url?.trim() || null;
+  return project.file_url?.trim() || null;
 }
 
 function getUniversalAssetFileType(project: ProjectRow) {

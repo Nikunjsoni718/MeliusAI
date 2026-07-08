@@ -43,7 +43,6 @@ type ProjectItem = {
   user_id?: string | null;
   folder_id?: string | null;
   is_public?: boolean | null;
-  source_url?: string | null;
   source_kind: string | null;
   status: string | null;
   target_company?: string | null;
@@ -179,7 +178,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, folder_id, name, file_url, source_url, source_kind, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
+  'id, user_id, folder_id, name, file_url, source_kind, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -759,7 +758,7 @@ function getProjectFileType(project: ProjectItem) {
 }
 
 function getProjectDownloadHref(project: ProjectItem) {
-  return project.preview_url ?? project.source_url ?? null;
+  return project.preview_url ?? project.file_url ?? null;
 }
 
 function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
@@ -768,7 +767,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     summary?: string | null;
   };
   const fileName = row.file_name ?? row.name ?? row.title ?? 'Project';
-  const fileUrl = row.file_url ?? row.source_url ?? null;
+  const fileUrl = row.file_url ?? null;
   const fileType = row.file_type ?? null;
   const fileExtension = getFileExtension(fileName);
   const hydratedScore = typeof row.score === 'number' ? row.score : null;
@@ -786,7 +785,6 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     folder_id: row.folder_id ?? null,
     is_public: row.is_public ?? null,
     title: fileName,
-    source_url: fileUrl,
     source_kind: fileExtension ? fileExtension.toUpperCase() : row.source_kind ?? null,
     status: row.status ?? null,
     target_company: row.target_company ?? null,
@@ -868,7 +866,7 @@ function mergeVerifiedProject(
 }
 
 function getOfficeBridgeSourceUrl(project: ProjectItem) {
-  const href = project.source_url ?? project.preview_url ?? null;
+  const href = project.file_url ?? project.preview_url ?? null;
 
   if (!href) {
     return null;
@@ -1878,7 +1876,7 @@ function ProjectPreviewSurface({
       <CodePreview
         code={project.text_preview}
         language={project.code_language}
-        src={project.preview_url ?? project.source_url ?? null}
+        src={project.preview_url ?? project.file_url ?? null}
         expanded={expanded}
       />
     );
@@ -3525,7 +3523,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         },
         body: JSON.stringify({
           title: getGithubProjectTitle(normalizedSourceUrl),
-          source_url: normalizedSourceUrl,
+          file_url: normalizedSourceUrl,
           source_kind: 'github',
           description: projectDescription.trim() || null,
           is_public: false,

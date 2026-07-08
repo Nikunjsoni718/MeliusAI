@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
     executionPhase = 'industrial_evaluation_suite';
     const fileName = getStringValue(body?.file_name, metadata.file_name, projectTitle);
     const fileType = getStringValue(body?.file_type, body?.mime_type, metadata.file_type, metadata.mime_type, 'asset');
-    const fileUrl = getStringValue(body?.file_url, body?.source_url, metadata.file_url, metadata.source_url) || null;
+    const fileUrl = getStringValue(body?.file_url, metadata.file_url) || null;
     const analysis = await analyzeVaultProject({
       fileName,
       fileType,
@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       has_been_audited: true,
       ai_summary: JSON.stringify(analysis.audit),
       summary: analysis.audit.summary,
-      source_url: fileUrl ?? `meliusai://dynamic-ingestion/${traceId}`,
+      file_url: fileUrl ?? `meliusai://dynamic-ingestion/${traceId}`,
       source_kind: 'website',
       stack: Array.isArray(body?.stack) ? body.stack : Array.isArray(metadata.stack) ? metadata.stack : [],
       status: 'reviewed',

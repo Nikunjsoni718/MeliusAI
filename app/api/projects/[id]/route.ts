@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectRow, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, owner_id, is_public, title, description, source_url, folder_id, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, owner_id, is_public, title, description, file_url, folder_id, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
 const vaultBucketName = 'vault';
 
 type DeletableProjectRow = ProjectRow & {
@@ -83,7 +83,6 @@ function getProjectVaultStoragePaths(project: DeletableProjectRow, userId: strin
     project.file_path,
     project.object_path,
     project.file_url,
-    project.source_url,
     project.preview_url,
   ];
 
@@ -144,7 +143,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
     const body = (await request.json()) as Partial<{
       title: string;
       description: string | null;
-      source_url: string;
+      file_url: string;
       is_public: boolean;
       source_kind: PortfolioSourceKind;
       profession: string;
@@ -164,9 +163,9 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
       .update({
         title: body.title,
         description: typeof body.description === 'string' ? body.description.trim() || null : body.description,
-        source_url: body.source_url,
+        file_url: body.file_url,
         is_public: body.is_public,
-        source_kind: body.source_kind ?? (body.source_url ? inferPortfolioSourceKind(body.source_url) : undefined),
+        source_kind: body.source_kind ?? (body.file_url ? inferPortfolioSourceKind(body.file_url) : undefined),
         profession: body.profession,
         target_company: body.target_company,
         auto_apply_enabled: body.auto_apply_enabled,

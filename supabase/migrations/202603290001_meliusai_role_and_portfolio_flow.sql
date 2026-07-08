@@ -23,9 +23,9 @@ begin
     from information_schema.columns
     where table_schema = 'public'
       and table_name = 'projects'
-      and column_name = 'source_url'
+      and column_name = 'file_url'
   ) then
-    alter table public.projects rename column github_url to source_url;
+    alter table public.projects rename column github_url to file_url;
   end if;
 end $$;
 

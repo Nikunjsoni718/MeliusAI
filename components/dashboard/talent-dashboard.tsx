@@ -140,8 +140,8 @@ export function TalentDashboard() {
       try {
         const { data, error } = await supabase
           .from('projects')
-          .select(
-            'id, owner_id, user_id, source_url, source_kind, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
+            .select(
+            'id, owner_id, user_id, file_url, source_kind, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
           )
           .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
           .order('created_at', { ascending: false })
@@ -187,7 +187,7 @@ export function TalentDashboard() {
         const savedCons = Array.isArray(savedAudit.cons) ? savedAudit.cons : [];
         const savedRecommendations = Array.isArray(savedAudit.recommendations) ? savedAudit.recommendations : [];
 
-        setSourceUrl(savedAudit.source_url?.trim() || '');
+        setSourceUrl(savedAudit.file_url?.trim() || '');
         setDescription(savedAudit.description?.trim() || '');
         setProfession(savedProfession);
         setTargetCompany(savedTargetCompany ?? '');

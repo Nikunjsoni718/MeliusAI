@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const profile = profileData as { bio?: string | null } | null;
     const fileName = project.name ?? project.file_name ?? project.title ?? 'Project';
     const fileType = project.file_type ?? fileName.split('.').pop() ?? 'file';
-    const fileUrl = project.file_url ?? project.source_url ?? null;
+    const fileUrl = project.file_url ?? null;
     const description =
       typeof body.description === 'string' ? body.description.trim() : project.description?.trim() || '';
 

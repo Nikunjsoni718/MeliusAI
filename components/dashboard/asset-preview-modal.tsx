@@ -66,7 +66,6 @@ type PreviewProject = {
   title?: string;
   file_name?: string | null;
   file_url?: string | null;
-  source_url?: string | null;
   preview_url?: string | null;
   file_extension?: string | null;
   source_kind?: string | null;

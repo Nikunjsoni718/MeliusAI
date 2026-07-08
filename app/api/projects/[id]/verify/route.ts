@@ -41,7 +41,7 @@ export async function POST(_: Request, context: { params: { id: string } | Promi
     const profile = profileData as { bio?: string | null } | null;
     const fileName = project.name ?? project.file_name ?? project.title ?? 'Project';
     const fileType = project.file_type ?? fileName.split('.').pop() ?? 'file';
-    const fileUrl = project.file_url ?? project.source_url ?? null;
+    const fileUrl = project.file_url ?? null;
 
     const analysis = await analyzeVaultProject({
       fileName,

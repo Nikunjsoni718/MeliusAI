@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
             .insert({
               owner_id: sessionData.user.id,
               title: `${assessment.targetRole} verification scan`,
-              source_url: body.sourceUrl,
+              file_url: body.sourceUrl,
               description: body.description?.trim() || null,
               source_kind: assessment.sourceKind,
               profession: body.profession,
