@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
@@ -76,6 +76,13 @@ type ProjectItem = {
 type WorkAssetGridItem =
   | { type: 'folder'; folder: ProjectFolderRow }
   | { type: 'project'; project: ProjectItem };
+
+type StagedFile = {
+  path: string;
+  name: string;
+  content: string;
+  selected: boolean;
+};
 
 type LiveOpportunityItem = {
   id: string;
@@ -2180,6 +2187,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [stagingFolderName, setStagingFolderName] = useState<string>('');
+  const [isStagingModalOpen, setIsStagingModalOpen] = useState(false);
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
@@ -3540,13 +3550,57 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function handleProjectFolderFiles(files: File[]) {
-    if (!isOwner) {
+  async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
       return;
     }
 
+    const getRelativePath = (file: File) =>
+      (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+    const firstFilePath = getRelativePath(files[0]);
+    const folderName = firstFilePath.split('/')[0] || 'New Project Folder';
+    setStagingFolderName(folderName);
+
+    const parsedFiles: StagedFile[] = [];
+    const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build', '.env'];
+
+    try {
+      for (const file of Array.from(files)) {
+        const relativePath = getRelativePath(file);
+        const pathParts = relativePath.split('/');
+        if (pathParts.some((part) => ignoreList.includes(part))) {
+          continue;
+        }
+
+        if (file.name.match(/\.(png|jpe?g|gif|svg|ico|pdf|zip)$/i)) {
+          continue;
+        }
+
+        const content = await file.text();
+        parsedFiles.push({
+          path: relativePath,
+          name: file.name,
+          content,
+          selected: true,
+        });
+      }
+
+      setStagedFiles(parsedFiles);
+      setIsIngestionModalOpen(false);
+      setIsStagingModalOpen(true);
+    } catch (error) {
+      alert(`Staging Failed: ${error instanceof Error ? error.message : 'Unable to read selected folder files.'}`);
+    } finally {
+      if (projectFolderInputRef.current) {
+        projectFolderInputRef.current.value = '';
+      }
+    }
+  }
+
+  async function confirmStagedUpload() {
     if (!user || !user.id) {
-      alert('Upload Failed: User session is missing or user ID is undefined.');
+      alert('User session missing.');
       return;
     }
 
@@ -3555,61 +3609,78 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const projectFolderDescription = projectDescription;
-    const importableFiles = files.filter((file) => {
-      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      return (
-        file.size > 0 &&
-        !/[\\/]node_modules[\\/]/i.test(relativePath) &&
-        !/[\\/]\.git[\\/]/i.test(relativePath) &&
-        !/[\\/](build|dist|\.next|coverage)[\\/]/i.test(relativePath)
+    const filesToUpload = stagedFiles.filter((file) => file.selected);
+    if (filesToUpload.length === 0) {
+      alert('Please select at least one file.');
+      return;
+    }
+
+    try {
+      const { data: folderData, error: folderError } = await supabase
+        .from('project_folders')
+        .insert({ name: stagingFolderName, source: 'local', user_id: user.id })
+        .select()
+        .single();
+
+      if (folderError) {
+        throw folderError;
+      }
+
+      if (!folderData?.id) {
+        throw new Error('Folder was created without a returned ID.');
+      }
+
+      const uploadResults = await Promise.all(
+        filesToUpload.map((file) =>
+          supabase
+            .from('projects')
+            .insert({
+              name: file.name,
+              folder_id: folderData.id,
+              user_id: user.id,
+              file_type: file.name.split('.').pop(),
+              raw_content: file.content,
+              status: 'pending',
+            })
+            .select(PROJECT_DASHBOARD_COLUMNS)
+            .single()
+        )
       );
-    });
+      const projectError = uploadResults.find((result) => result.error)?.error;
 
-    if (importableFiles.length === 0) {
-      showProjectVerifyError('Folder import did not find any readable project files.');
-      return;
-    }
+      if (projectError) {
+        throw projectError;
+      }
 
-    const firstRelativePath =
-      (importableFiles[0] as File & { webkitRelativePath?: string }).webkitRelativePath || importableFiles[0].name;
-    const folderName = firstRelativePath.split(/[\\/]/).filter(Boolean)[0] || 'Project Folder';
+      const savedFolder = folderData as ProjectFolderRow;
+      const savedProjects = uploadResults
+        .map((result) => result.data)
+        .filter(Boolean)
+        .map((row) => mapProjectRowToProjectItem(row as ProjectRow));
 
-    const { data: folderData, error: folderError } = await supabase
-      .from('project_folders')
-      .insert({
-        name: folderName,
-        source: 'local',
-        user_id: user.id,
-      })
-      .select()
-      .single();
+      setProjectFolders((currentFolders) => [
+        savedFolder,
+        ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
+      ]);
+      setProjects((currentProjects) => [
+        ...savedProjects,
+        ...currentProjects.filter(
+          (project) => !savedProjects.some((savedProject) => savedProject.id === project.id)
+        ),
+      ]);
+      setActiveFolderId(savedFolder.id);
+      setIsStagingModalOpen(false);
+      setStagedFiles([]);
+      setStagingFolderName('');
+      setProjectDescription('');
 
-    if (folderError) {
-      alert(`Database Error (Folder): ${folderError.message} \nCode: ${folderError.code}`);
-      console.error('Supabase folder error:', folderError);
-      return;
-    }
-
-    if (!folderData?.id) {
-      alert('Database Error (Folder): Folder was created without a returned ID.');
-      console.error('Supabase folder insert returned no folder ID:', folderData);
-      return;
-    }
-
-    const savedFolder = folderData as ProjectFolderRow;
-    setProjectFolders((currentFolders) => [
-      savedFolder,
-      ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
-    ]);
-    setActiveFolderId(savedFolder.id);
-    setIsIngestionModalOpen(false);
-
-    for (const file of importableFiles) {
-      await handleProjectFile(file, projectFolderDescription, {
-        folderId: savedFolder.id,
-        userId: user.id,
-      });
+      if (spectatorProfileKey) {
+        await mutate(spectatorProfileKey);
+      }
+      router.refresh();
+    } catch (err) {
+      console.error('Staged folder upload failed:', err);
+      alert(`Upload Failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
@@ -4901,11 +4972,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   type="file"
                   multiple
                   className="sr-only"
-                  onChange={(event) => {
-                    const files = Array.from(event.currentTarget.files ?? []);
-                    event.currentTarget.value = '';
-                    void handleProjectFolderFiles(files);
-                  }}
+                  onChange={(event) => void handleFolderSelect(event)}
                   {...{ webkitdirectory: '', directory: '' }}
                 />
 
@@ -5013,6 +5080,37 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               }}
             />
           </main>
+
+          {isStagingModalOpen && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ background: '#0b1120', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', border: '1px solid #00d2ff' }}>
+                <h2 style={{ color: '#fff', marginTop: 0 }}>Review Files ({stagedFiles.filter((file) => file.selected).length} selected)</h2>
+                <p style={{ color: '#8892b0' }}>Uncheck files you don&apos;t want to audit.</p>
+
+                <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '10px 0' }}>
+                  {stagedFiles.map((file, index) => (
+                    <label key={file.path || index} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', cursor: 'pointer', color: '#fff' }}>
+                      <input
+                        type="checkbox"
+                        checked={file.selected}
+                        onChange={() => {
+                          const newFiles = [...stagedFiles];
+                          newFiles[index].selected = !newFiles[index].selected;
+                          setStagedFiles(newFiles);
+                        }}
+                      />
+                      <span style={{ fontSize: '14px', wordBreak: 'break-all' }}>{file.path}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
+                  <button onClick={() => setIsStagingModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button onClick={() => void confirmStagedUpload()} style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }} type="button">Confirm &amp; Upload</button>
+                </div>
+              </div>
+            </div>
+          )}
     </div>
   );
 }
