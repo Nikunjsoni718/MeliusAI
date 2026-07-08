@@ -403,7 +403,6 @@ async function fetchSpectatorProfile([
     .from('projects')
     .select(PROJECT_DASHBOARD_COLUMNS)
     .eq('user_id', savedProfile.id)
-    .is('folder_id', null)
     .order('created_at', { ascending: false })
     .limit(DASHBOARD_PROJECT_LIMIT);
 
@@ -2215,9 +2214,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
-  const [activeProjectFolder, setActiveProjectFolder] = useState<ProjectFolderRow | null>(null);
-  const [activeFolderProjects, setActiveFolderProjects] = useState<ProjectItem[]>([]);
-  const [folderContentsLoading, setFolderContentsLoading] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
@@ -2494,6 +2491,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     [projectFolders]
   );
   const allProjects = sortedProjects;
+  const standaloneProjects = useMemo(
+    () => allProjects.filter((project) => !project.folder_id),
+    [allProjects]
+  );
+  const activeFolder = useMemo(
+    () => projectFolders.find((folder) => folder.id === activeFolderId) ?? null,
+    [activeFolderId, projectFolders]
+  );
+  const activeFolderProjects = useMemo(
+    () => (activeFolderId ? allProjects.filter((project) => project.folder_id === activeFolderId) : []),
+    [activeFolderId, allProjects]
+  );
   const rootWorkItems = useMemo<WorkAssetGridItem[]>(
     () =>
       [
@@ -2501,7 +2510,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           type: 'folder' as const,
           folder,
         })),
-        ...allProjects.map((project) => ({
+        ...standaloneProjects.map((project) => ({
           type: 'project' as const,
           project,
         })),
@@ -2518,7 +2527,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const rightTime = rightDate ? new Date(rightDate).getTime() : 0;
         return rightTime - leftTime;
       }),
-    [allProjects, sortedProjectFolders]
+    [sortedProjectFolders, standaloneProjects]
   );
   const needsReviewCount = useMemo(() => {
     return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
@@ -2571,12 +2580,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return showAllWork ? initialWorkItems : initialWorkItems.slice(0, 4);
   }, [initialWorkItems, showAllWork]);
   const activePreviewProject = useMemo(() => {
-    const availableProjects = [...allProjects, ...activeFolderProjects];
-
     return activePreviewProjectId
-      ? availableProjects.find((project) => project.id === activePreviewProjectId) ?? null
+      ? allProjects.find((project) => project.id === activePreviewProjectId) ?? null
       : null;
-  }, [activeFolderProjects, activePreviewProjectId, allProjects]);
+  }, [activePreviewProjectId, allProjects]);
   const scanHistory = useMemo(() => {
     return showAllRatings ? initialReviews : initialReviews.slice(0, 3);
   }, [initialReviews, showAllRatings]);
@@ -2645,9 +2652,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProfileData(null);
       setProjects([]);
       setProjectFolders([]);
-      setActiveProjectFolder(null);
-      setActiveFolderProjects([]);
-      setFolderContentsLoading(false);
+      setActiveFolderId(null);
       setScans([]);
       setProjectDescriptions({});
       setProjectDescription('');
@@ -3596,68 +3601,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function handleOpenProjectFolder(folder: ProjectFolderRow) {
-    setActiveProjectFolder(folder);
-    setActiveFolderProjects([]);
-    setFolderContentsLoading(true);
-
-    if (!supabase) {
-      setFolderContentsLoading(false);
-      showProjectVerifyError('Vault sync is not ready.');
-      return;
-    }
-
-    try {
-      const ownerId = folder.user_id ?? folder.owner_id ?? resolvedProfileId;
-      let folderProjectsQuery = supabase
-        .from('projects')
-        .select(PROJECT_DASHBOARD_COLUMNS)
-        .eq('folder_id', folder.id)
-        .order('created_at', { ascending: false });
-
-      if (ownerId) {
-        folderProjectsQuery = folderProjectsQuery.eq('user_id', ownerId);
-      }
-
-      if (!isOwner) {
-        folderProjectsQuery = folderProjectsQuery.eq('is_public', true);
-      }
-
-      const { data, error } = await folderProjectsQuery;
-
-      if (error) {
-        throw error;
-      }
-
-      const loadedFolderProjects = Array.isArray(data)
-        ? (data as ProjectRow[]).map(mapProjectRowToProjectItem)
-        : [];
-
-      setActiveFolderProjects(loadedFolderProjects);
-      setProjectDescriptions((currentDescriptions) => ({
-        ...currentDescriptions,
-        ...Object.fromEntries(
-          loadedFolderProjects.map((project) => [project.id, project.user_description ?? project.description ?? ''])
-        ),
-      }));
-    } catch (error) {
-      console.error('Failed to load project folder contents', error);
-      setActiveFolderProjects([]);
-      showProjectVerifyError(error instanceof Error ? error.message : 'Unable to open this project folder.');
-    } finally {
-      setFolderContentsLoading(false);
-    }
-  }
-
-  function handleBackToVault() {
-    setActiveProjectFolder(null);
-    setActiveFolderProjects([]);
-    setFolderContentsLoading(false);
-    setActivePreviewProjectId(null);
-    setActivePreviewName(null);
-    setActivePreviewUrl(null);
-  }
-
   async function handleProjectFile(file: File, description = projectDescription) {
     if (!isOwner) {
       return;
@@ -3731,9 +3674,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
     setProjects((currentProjects) =>
-      currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
-    );
-    setActiveFolderProjects((currentProjects) =>
       currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
     );
 
@@ -3899,10 +3839,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProjects((currentProjects) => {
         const projectExists = currentProjects.some((currentProject) => currentProject.id === project.id);
 
-        if (!projectExists && project.folder_id) {
-          return currentProjects;
-        }
-
         return projectExists
           ? currentProjects.map((currentProject) =>
               currentProject.id === project.id
@@ -3911,13 +3847,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             )
           : [mergeVerifiedProject(project, verifiedProjectPatch, accumulatedReportText), ...currentProjects];
       });
-      setActiveFolderProjects((currentProjects) =>
-        currentProjects.map((currentProject) =>
-          currentProject.id === project.id
-            ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
-            : currentProject
-        )
-      );
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
         [project.id]: userContextDescription,
@@ -3984,7 +3913,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
-      setActiveFolderProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
       setProjectDescriptions((currentDescriptions) => {
         const nextDescriptions = { ...currentDescriptions };
         delete nextDescriptions[projectId];
@@ -4652,31 +4580,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
               </div>
 
-              {activeProjectFolder ? (
+              {activeFolderId !== null ? (
                 <div id="nested-folder-view">
                   <div className="folder-header">
                     <button
                       id="back-to-vault-btn"
                       className="btn subtle"
                       type="button"
-                      onClick={handleBackToVault}
+                      onClick={() => setActiveFolderId(null)}
                     >
-                      ← Back to Vault
+                      ← Back to Work Assets
                     </button>
-                    <h2 id="current-folder-title">{activeProjectFolder.name}</h2>
+                    <h2 id="current-folder-title">{activeFolder?.name ?? 'Project Folder'}</h2>
                   </div>
 
                   <div id="folder-contents-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {folderContentsLoading ? (
-                      Array.from({ length: 4 }).map((_, index) => (
-                        <Card key={index} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                          <CardContent className="p-5">
-                            <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/10" />
-                            <div className="mt-5 h-32 animate-pulse rounded-2xl border border-blue-950/50 bg-[#050b1b]/60" />
-                          </CardContent>
-                        </Card>
-                      ))
-                    ) : activeFolderProjects.length > 0 ? (
+                    {activeFolderProjects.length > 0 ? (
                       activeFolderProjects.map((project) => (
                         <ProjectCard
                           key={project.id}
@@ -4732,7 +4651,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           <ProjectFolderCard
                             key={`folder-${item.folder.id}`}
                             folder={item.folder}
-                            onOpen={(folder) => void handleOpenProjectFolder(folder)}
+                            onOpen={(folder) => setActiveFolderId(folder.id)}
                           />
                         ) : (
                           <ProjectCard
