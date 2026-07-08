@@ -4146,6 +4146,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     router.replace('/');
   }
 
+  // Group files by their immediate parent directory path
+  const groupedFiles = stagedFiles.reduce((acc, file) => {
+    // Extract directory path (e.g., "folder/subfolder/file.js" -> "folder/subfolder")
+    const dirPath = file.path.substring(0, file.path.lastIndexOf('/')) || stagingFolderName;
+    if (!acc[dirPath]) acc[dirPath] = [];
+    acc[dirPath].push(file);
+    return acc;
+  }, {} as Record<string, typeof stagedFiles>);
+
+  const toggleFolderSelection = (dirPath: string, isSelected: boolean) => {
+    setStagedFiles((prev) =>
+      prev.map((file) => {
+        if (file.path.startsWith(dirPath)) {
+          return { ...file, selected: isSelected };
+        }
+        return file;
+      })
+    );
+  };
 
   return (
     <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
@@ -5116,20 +5135,49 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <p style={{ color: '#8892b0' }}>Uncheck files you don&apos;t want to audit.</p>
 
                 <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '10px 0' }}>
-                  {stagedFiles.map((file, index) => (
-                    <label key={file.path || index} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', cursor: 'pointer', color: '#fff' }}>
-                      <input
-                        type="checkbox"
-                        checked={file.selected}
-                        onChange={() => {
-                          const newFiles = [...stagedFiles];
-                          newFiles[index].selected = !newFiles[index].selected;
-                          setStagedFiles(newFiles);
-                        }}
-                      />
-                      <span style={{ fontSize: '14px', wordBreak: 'break-all' }}>{file.path}</span>
-                    </label>
-                  ))}
+                  {Object.entries(groupedFiles).map(([dirPath, filesInDir]) => {
+                    const allSelected = filesInDir.every((file) => file.selected);
+                    const someSelected = filesInDir.some((file) => file.selected);
+
+                    return (
+                      <details key={dirPath} open style={{ marginBottom: '15px', paddingLeft: '10px' }}>
+                        <summary style={{ cursor: 'pointer', color: '#00d2ff', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px', listStyle: 'none', padding: '5px 0' }}>
+                          <span style={{ display: 'inline-block', width: '15px' }}>▶</span>
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = someSelected && !allSelected;
+                            }}
+                            onChange={(event) => toggleFolderSelection(dirPath, event.target.checked)}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                          📁 {dirPath} ({filesInDir.length} files)
+                        </summary>
+
+                        <div style={{ paddingLeft: '35px', marginTop: '5px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                          {filesInDir.map((file) => (
+                            <label key={file.path} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', color: '#a0aec0' }}>
+                              <input
+                                type="checkbox"
+                                checked={file.selected}
+                                onChange={() => {
+                                  setStagedFiles((prev) =>
+                                    prev.map((previousFile) =>
+                                      previousFile.path === file.path
+                                        ? { ...previousFile, selected: !previousFile.selected }
+                                        : previousFile
+                                    )
+                                  );
+                                }}
+                              />
+                              <span style={{ fontSize: '13px', wordBreak: 'break-all' }}>📄 {file.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
