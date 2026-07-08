@@ -26,8 +26,9 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import Any, Dict, List
 
 try:
-    from supabase import ClientOptions, create_client
+    from supabase import Client, ClientOptions, create_client
 except ImportError:
+    Client = Any
     create_client = None
     ClientOptions = None
 
@@ -91,14 +92,17 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 client = AsyncOpenAI()
 async_client = client
+openai_client = async_client
 sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
 supabase_service_client = None
-supabase = None
+supabase: Client | None = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
+AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
 
 BIO_EXTRACTION_SYSTEM_PROMPT = (
@@ -320,7 +324,7 @@ def get_supabase_public_config():
 
 
 def get_supabase_backend_client():
-    global supabase_backend_client
+    global supabase, supabase_backend_client
 
     if create_client is None:
         raise HTTPException(
@@ -331,6 +335,7 @@ def get_supabase_backend_client():
     if supabase_backend_client is None:
         supabase_url, supabase_key = get_supabase_public_config()
         supabase_backend_client = create_client(supabase_url, supabase_key)
+        supabase = supabase_backend_client
 
     return supabase_backend_client
 
@@ -1448,6 +1453,11 @@ class VerifyRequest(BaseModel):
         return normalized_data
 
 
+class AuditRequest(BaseModel):
+    folder_id: str
+    user_id: str
+
+
 class AuditResponse(BaseModel):
     ai_summary: str
     score: int = Field(..., ge=0, le=100, description=AUDIT_SCORE_FIELD_DESCRIPTION)
@@ -2073,6 +2083,218 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
 
     return audit_response
+
+
+def get_audit_file_name(file_record: Dict[str, Any]) -> str:
+    file_name = (
+        file_record.get("name")
+        or file_record.get("title")
+        or file_record.get("file_name")
+        or file_record.get("id")
+        or "Unknown file"
+    )
+
+    return str(file_name).strip() or "Unknown file"
+
+
+async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
+    raw_content = (
+        file_record.get("raw_content")
+        or file_record.get("content")
+        or file_record.get("asset_text_content")
+    )
+
+    if raw_content is not None and str(raw_content).strip():
+        return str(raw_content)[:AUDIT_FILE_CONTENT_CHAR_LIMIT]
+
+    file_url = str(file_record.get("file_url") or "").strip()
+    if file_url.startswith(("http://", "https://")):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as http_client:
+                response = await http_client.get(file_url)
+                response.raise_for_status()
+                fetched_content = response.text.strip()
+
+            if fetched_content:
+                return fetched_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT]
+        except Exception as fetch_error:
+            logger.warning(
+                "project_audit.file_fetch_failed file=%s error=%s",
+                get_audit_file_name(file_record),
+                fetch_error,
+            )
+
+    return "No content found"
+
+
+async def mark_project_file_audited(
+    file_record: Dict[str, Any],
+    audit_result: str,
+    supabase_client: Any,
+) -> None:
+    file_id = str(file_record.get("id") or "").strip()
+    if not file_id:
+        return
+
+    file_user_id = str(file_record.get("user_id") or "").strip()
+    update_payload = {
+        "status": "audited",
+        "has_been_audited": True,
+        "audit_summary": audit_result,
+        "ai_summary": audit_result,
+    }
+
+    try:
+        def update_project_file(payload: Dict[str, Any]):
+            query = supabase_client.table("projects").update(payload).eq("id", file_id)
+            if file_user_id:
+                query = query.eq("user_id", file_user_id)
+            return query.execute()
+
+        await asyncio.to_thread(lambda: update_project_file(update_payload))
+    except Exception as status_update_error:
+        logger.warning(
+            "project_audit.status_update_failed file=%s error=%s",
+            get_audit_file_name(file_record),
+            status_update_error,
+        )
+        fallback_payload = dict(update_payload)
+        fallback_payload.pop("status", None)
+        await asyncio.to_thread(lambda: update_project_file(fallback_payload))
+
+
+# ---------------------------------------------------------
+# THE MAP PHASE: Audit individual files concurrently
+# ---------------------------------------------------------
+async def audit_single_file(file_record: dict, supabase_client: Any | None = None) -> dict:
+    file_name = get_audit_file_name(file_record)
+
+    try:
+        if supabase_client is None:
+            supabase_client = supabase or get_supabase_service_client() or get_supabase_backend_client()
+
+        file_content = await load_audit_file_content(file_record)
+
+        prompt = f"""
+        Context: You are a Staff-level Software Engineer doing a security and architecture audit.
+        File Name: {file_name}
+
+        Do NOT comment on formatting, styling, or basic best practices.
+        Identify critical logic flaws, security vulnerabilities, state management errors, and unhandled edge cases.
+        Be concise and direct.
+
+        Code to audit:
+        {file_content}
+        """
+
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a brutal, highly technical code auditor. Return a short summary of critical issues.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=500,
+            temperature=0.1,
+        )
+
+        audit_result = response.choices[0].message.content or "No critical issues returned."
+
+        await mark_project_file_audited(file_record, audit_result, supabase_client)
+
+        return {
+            "file_name": file_name,
+            "issues": audit_result,
+        }
+    except Exception as error:
+        logger.exception("project_audit.file_failed file=%s", file_name)
+        return {"file_name": file_name, "issues": "Audit failed for this file."}
+
+
+# ---------------------------------------------------------
+# THE API ENDPOINT & REDUCE PHASE: Trigger the Audit
+# ---------------------------------------------------------
+@app.post("/api/audit-project")
+async def run_project_audit(
+    payload: AuditRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
+    folder_id = payload.folder_id.strip()
+    requested_user_id = payload.user_id.strip()
+
+    if not folder_id or not requested_user_id:
+        raise HTTPException(status_code=400, detail="folder_id and user_id are required.")
+
+    if requested_user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You can only audit your own project folder.")
+
+    try:
+        supabase_client = get_request_supabase_client(request)
+
+        db_response = await asyncio.to_thread(
+            lambda: supabase_client.table("projects")
+            .select("*")
+            .eq("folder_id", folder_id)
+            .eq("user_id", requested_user_id)
+            .execute()
+        )
+        files = db_response.data if isinstance(db_response.data, list) else []
+
+        if not files:
+            raise HTTPException(status_code=404, detail="No files found in this folder.")
+
+        tasks = [audit_single_file(file_record, supabase_client) for file_record in files]
+        file_reports = await asyncio.gather(*tasks)
+        reports_json = json.dumps(file_reports, ensure_ascii=False)
+        if len(reports_json) > AUDIT_REDUCE_REPORT_CHAR_LIMIT:
+            reports_json = reports_json[:AUDIT_REDUCE_REPORT_CHAR_LIMIT] + "\n...[truncated]"
+
+        aggregate_prompt = f"""
+        Here are the individual file audit reports for a project.
+        Analyze the connective tissue between these files.
+        Provide the top 3 most critical, high-leverage issues the developer must fix immediately.
+
+        Reports:
+        {reports_json}
+        """
+
+        final_response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a lead architect. Output a ranked list of the 3 most critical cross-file issues.",
+                },
+                {"role": "user", "content": aggregate_prompt},
+            ],
+            max_tokens=800,
+            temperature=0.1,
+        )
+
+        project_summary = final_response.choices[0].message.content or ""
+
+        await asyncio.to_thread(
+            lambda: supabase_client.table("project_folders")
+            .update({"audit_summary": project_summary})
+            .eq("id", folder_id)
+            .eq("user_id", requested_user_id)
+            .execute()
+        )
+
+        return {
+            "message": "Audit complete",
+            "file_reports": file_reports,
+            "project_summary": project_summary,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("project_audit.failed folder_id=%s", folder_id)
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 class MatchTalentRequest(BaseModel):
