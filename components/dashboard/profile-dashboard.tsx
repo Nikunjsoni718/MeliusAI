@@ -4146,6 +4146,53 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     router.replace('/');
   }
 
+  const handleDeleteFolder = async (folderId: string, event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+
+    if (!isOwner) {
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this workspace and all its files? This cannot be undone.')) {
+      return;
+    }
+
+    if (!supabase) {
+      alert('Failed to delete folder: Vault sync is not ready.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('project_folders')
+        .delete()
+        .eq('id', folderId);
+
+      if (error) {
+        throw error;
+      }
+
+      setProjectFolders((currentFolders) => currentFolders.filter((folder) => folder.id !== folderId));
+      setProjects((currentProjects) => currentProjects.filter((project) => project.folder_id !== folderId));
+      if (activeFolderId === folderId) {
+        setActiveFolderId(null);
+      }
+      if (spectatorProfileKey) {
+        await mutate(spectatorProfileKey);
+      }
+      router.refresh();
+    } catch (err) {
+      console.error('Delete failed:', err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : JSON.stringify(err);
+      alert(`Failed to delete folder: ${errorMessage}`);
+    }
+  };
+
   // Group files by their immediate parent directory path
   const groupedFiles = stagedFiles.reduce((acc, file) => {
     // Extract directory path (e.g., "folder/subfolder/file.js" -> "folder/subfolder")
@@ -4789,7 +4836,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               key={folder.id}
                               className="project-folder-card card"
                               onClick={() => setActiveFolderId(folder.id)}
+                              style={{ position: 'relative' }}
                             >
+                              {isOwner ? (
+                                <button
+                                  className="folder-delete-btn"
+                                  onClick={(event) => void handleDeleteFolder(folder.id, event)}
+                                  title="Delete Workspace"
+                                  type="button"
+                                  aria-label={`Delete ${folder.name || 'workspace'}`}
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
+                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+                                  </svg>
+                                </button>
+                              ) : null}
+
                               <div className="folder-card-body">
                                 <div className="folder-icon-glow">
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48">

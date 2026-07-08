@@ -327,6 +327,30 @@ a {
   border-color: #00d2ff;
 }
 
+.folder-delete-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(255, 50, 50, 0.1);
+  border: 1px solid rgba(255, 50, 50, 0.2);
+  color: #ff4d4d;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.folder-delete-btn:hover {
+  background: rgba(255, 50, 50, 0.2);
+  border-color: #ff4d4d;
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(255, 50, 50, 0.2);
+}
+
 .folder-header {
   display: flex;
   align-items: center;
