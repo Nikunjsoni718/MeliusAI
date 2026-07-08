@@ -3631,20 +3631,42 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       const uploadResults = await Promise.all(
-        filesToUpload.map((file) =>
-          supabase
+        filesToUpload.map(async (file) => {
+          const fileBlob = new Blob([file.content], { type: 'text/plain' });
+          const filePath = `${user.id}/${folderData.id}/${getStorageFileName(file.name)}`;
+
+          const { error: storageError } = await supabase.storage
+            .from('vault')
+            .upload(filePath, fileBlob, {
+              upsert: true,
+              contentType: 'text/plain',
+            });
+
+          if (storageError) {
+            throw storageError;
+          }
+
+          const { data: publicUrlData } = supabase.storage
+            .from('vault')
+            .getPublicUrl(filePath);
+
+          if (!publicUrlData.publicUrl) {
+            throw new Error(`Could not create a public file URL for ${file.name}.`);
+          }
+
+          return supabase
             .from('projects')
             .insert({
               name: file.name,
               folder_id: folderData.id,
               user_id: user.id,
               file_type: file.name.split('.').pop(),
-              raw_content: file.content,
+              file_url: publicUrlData.publicUrl,
               status: 'pending',
             })
             .select(PROJECT_DASHBOARD_COLUMNS)
-            .single()
-        )
+            .single();
+        })
       );
       const projectError = uploadResults.find((result) => result.error)?.error;
 
@@ -3679,8 +3701,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
       router.refresh();
     } catch (err) {
-      console.error('Staged folder upload failed:', err);
-      alert(`Upload Failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      console.error('Upload transaction failed:', err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : JSON.stringify(err);
+      alert(`Upload Failed: ${errorMessage}`);
     }
   }
 
