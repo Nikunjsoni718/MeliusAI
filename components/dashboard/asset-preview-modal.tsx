@@ -68,7 +68,6 @@ type PreviewProject = {
   file_url?: string | null;
   preview_url?: string | null;
   file_extension?: string | null;
-  source_kind?: string | null;
   mime_type?: string | null;
   file_type?: string | null;
   user_description?: string | null;
@@ -179,7 +178,7 @@ function getPreviewExtension(previewUrl: string | null, fileName: string | null,
   return (
     project?.file_extension?.trim().toLowerCase() ||
     getFileExtensionFromUrlOrName(previewUrl, fileName) ||
-    project?.source_kind?.trim().toLowerCase() ||
+    project?.file_type?.trim().toLowerCase() ||
     ''
   );
 }

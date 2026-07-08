@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, owner_id, is_public, title, description, file_url, folder_id, source_kind, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, owner_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
 
 function isProjectStatus(value: unknown): value is ProjectStatus {
   return value === 'draft' || value === 'submitted' || value === 'reviewed' || value === 'archived';
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       description?: string | null;
       file_url?: string;
       is_public?: boolean;
-      source_kind?: PortfolioSourceKind;
+      file_type?: PortfolioSourceKind;
       profession?: string;
       target_company?: string | null;
       auto_apply_enabled?: boolean;
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
         name: body.title,
         description: body.description?.trim() || null,
         file_url: body.file_url,
-        source_kind: body.source_kind ?? inferPortfolioSourceKind(body.file_url),
+        file_type: body.file_type ?? inferPortfolioSourceKind(body.file_url),
         profession: body.profession ?? 'Developer',
         target_company: body.target_company ?? null,
         auto_apply_enabled: body.auto_apply_enabled ?? false,

@@ -43,7 +43,7 @@ type ProjectItem = {
   user_id?: string | null;
   folder_id?: string | null;
   is_public?: boolean | null;
-  source_kind: string | null;
+  file_type: string | null;
   status: string | null;
   target_company?: string | null;
   preview_url?: string | null;
@@ -178,7 +178,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, folder_id, name, file_url, source_kind, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
+  'id, user_id, folder_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -754,7 +754,7 @@ function getProjectFileType(project: ProjectItem) {
     return project.mime_type.split('/').pop()?.toUpperCase() ?? 'FILE';
   }
 
-  return project.source_kind?.toUpperCase() ?? 'FILE';
+  return project.file_type?.toUpperCase() ?? 'FILE';
 }
 
 function getProjectDownloadHref(project: ProjectItem) {
@@ -785,7 +785,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     folder_id: row.folder_id ?? null,
     is_public: row.is_public ?? null,
     title: fileName,
-    source_kind: fileExtension ? fileExtension.toUpperCase() : row.source_kind ?? null,
+    file_type: fileExtension ? fileExtension.toUpperCase() : row.file_type ?? null,
     status: row.status ?? null,
     target_company: row.target_company ?? null,
     preview_url: fileUrl,
@@ -2045,7 +2045,7 @@ function ProjectCard({
   const isProjectDeleting = deletingProjectId === project.id;
   const isProjectVerified = verifiedAssetId === project.id;
   const hasCompletedAudit = Boolean(project.has_been_audited);
-  const fileExtension = getProjectExtension(project).toUpperCase() || project.source_kind || 'Asset';
+  const fileExtension = getProjectExtension(project).toUpperCase() || project.file_type || 'Asset';
   const fileName = project.file_name || project.title;
 
   function handlePreviewClick(e: MouseEvent<HTMLDivElement>) {
@@ -2543,7 +2543,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         return {
           id: scan.id,
           title: scan.title ?? relatedProject?.title ?? 'Portfolio asset',
-          source_kind: relatedProject?.source_kind ?? null,
+          file_type: relatedProject?.file_type ?? null,
           status: relatedProject?.status ?? null,
           logic_score: typeof scanScore === 'number' ? scanScore : null,
           ai_summary: scan.ai_summary ?? scan.summary ?? relatedProject?.ai_summary ?? null,
@@ -3524,7 +3524,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         body: JSON.stringify({
           title: getGithubProjectTitle(normalizedSourceUrl),
           file_url: normalizedSourceUrl,
-          source_kind: 'github',
+          file_type: 'github',
           description: projectDescription.trim() || null,
           is_public: false,
           status: 'draft',

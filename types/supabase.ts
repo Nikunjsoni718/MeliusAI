@@ -68,7 +68,6 @@ export type ProjectRow = {
   has_been_audited?: boolean | null;
   logic_score?: number | null;
   ai_summary?: string | null;
-  source_kind?: PortfolioSourceKind | null;
   profession?: string | null;
   target_company?: string | null;
   auto_apply_enabled?: boolean | null;

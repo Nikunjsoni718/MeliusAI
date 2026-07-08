@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
               title: `${assessment.targetRole} verification scan`,
               file_url: body.sourceUrl,
               description: body.description?.trim() || null,
-              source_kind: assessment.sourceKind,
+              file_type: assessment.sourceKind,
               profession: body.profession,
               target_company: assessment.targetCompany,
               auto_apply_enabled: body.autoApplyEnabled ?? false,

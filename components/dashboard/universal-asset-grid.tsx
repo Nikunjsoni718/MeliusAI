@@ -205,7 +205,7 @@ function getUniversalAssetFileType(project: ProjectRow) {
     return project.file_type.split('/').pop()?.toUpperCase() ?? 'FILE';
   }
 
-  return project.source_kind?.toUpperCase() ?? 'FILE';
+  return project.file_type?.toUpperCase() ?? 'FILE';
 }
 
 function getUniversalAssetSizeLabel(project: ProjectRow) {

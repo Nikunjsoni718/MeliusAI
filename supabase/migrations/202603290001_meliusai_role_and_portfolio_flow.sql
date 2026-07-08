@@ -1,12 +1,5 @@
 begin;
 
-do $$
-begin
-  create type public.portfolio_source_kind as enum ('github', 'behance', 'drive', 'website');
-exception
-  when duplicate_object then null;
-end $$;
-
 alter table public.users
   add column if not exists role_selected_at timestamptz;
 
@@ -30,7 +23,7 @@ begin
 end $$;
 
 alter table public.projects
-  add column if not exists source_kind public.portfolio_source_kind not null default 'github',
+  add column if not exists file_type text not null default 'github',
   add column if not exists profession text not null default 'Developer',
   add column if not exists target_company text,
   add column if not exists auto_apply_enabled boolean not null default false;

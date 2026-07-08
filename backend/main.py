@@ -2260,7 +2260,7 @@ def build_project_search_text(project: Dict[str, Any]) -> str:
         "tags",
         "skills",
         "file_name",
-        "source_kind",
+        "file_type",
         "profession",
     ]
 

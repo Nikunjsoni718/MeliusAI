@@ -141,7 +141,7 @@ export function TalentDashboard() {
         const { data, error } = await supabase
           .from('projects')
             .select(
-            'id, owner_id, user_id, file_url, source_kind, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
+            'id, owner_id, user_id, file_url, file_type, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
           )
           .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
           .order('created_at', { ascending: false })
@@ -194,7 +194,7 @@ export function TalentDashboard() {
         setAgentEnabled(Boolean(savedAudit.auto_apply_enabled));
         setReviewResult(
           normalizeReviewPayload({
-            sourceKind: savedAudit.source_kind ?? 'website',
+            sourceKind: savedAudit.file_type ?? 'website',
             meliusScore: savedScore,
             summary: savedSummary,
             verifiedHeadline: 'Saved MeliusAI audit restored.',
