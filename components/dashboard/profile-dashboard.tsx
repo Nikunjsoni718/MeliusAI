@@ -3375,7 +3375,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function uploadProjectFile(file: File, description: string) {
+  async function uploadProjectFile(
+    file: File,
+    description: string,
+    options: { folderId?: string | null; userId?: string } = {}
+  ) {
     if (!isOwner) {
       throw new Error('Only the profile owner can add work assets.');
     }
@@ -3384,7 +3388,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       throw new Error('Vault sync is not ready.');
     }
 
-    const userId = await getConfirmedUserId();
+    const userId = options.userId ?? (await getConfirmedUserId());
     if (!userId) {
       throw new Error('Vault sync is not ready.');
     }
@@ -3423,6 +3427,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       .from('projects')
       .insert({
         user_id: userId,
+        folder_id: options.folderId ?? null,
         name: file.name,
         file_url: fileUrl,
         file_type: fileExtension,
@@ -3578,6 +3583,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
+    if (!user || !user.id) {
+      alert('Upload Failed: User session is missing or user ID is undefined.');
+      return;
+    }
+
+    if (!supabase) {
+      alert('Upload Failed: Vault sync is not ready.');
+      return;
+    }
+
     const projectFolderDescription = projectDescription;
     const importableFiles = files.filter((file) => {
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
@@ -3594,14 +3609,53 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
+    const firstRelativePath =
+      (importableFiles[0] as File & { webkitRelativePath?: string }).webkitRelativePath || importableFiles[0].name;
+    const folderName = firstRelativePath.split(/[\\/]/).filter(Boolean)[0] || 'Project Folder';
+
+    const { data: folderData, error: folderError } = await supabase
+      .from('project_folders')
+      .insert({
+        name: folderName,
+        source: 'local',
+        user_id: user.id,
+      })
+      .select()
+      .single();
+
+    if (folderError) {
+      alert(`Database Error (Folder): ${folderError.message} \nCode: ${folderError.code}`);
+      console.error('Supabase folder error:', folderError);
+      return;
+    }
+
+    if (!folderData?.id) {
+      alert('Database Error (Folder): Folder was created without a returned ID.');
+      console.error('Supabase folder insert returned no folder ID:', folderData);
+      return;
+    }
+
+    const savedFolder = folderData as ProjectFolderRow;
+    setProjectFolders((currentFolders) => [
+      savedFolder,
+      ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
+    ]);
+    setActiveFolderId(savedFolder.id);
     setIsIngestionModalOpen(false);
 
     for (const file of importableFiles) {
-      await handleProjectFile(file, projectFolderDescription);
+      await handleProjectFile(file, projectFolderDescription, {
+        folderId: savedFolder.id,
+        userId: user.id,
+      });
     }
   }
 
-  async function handleProjectFile(file: File, description = projectDescription) {
+  async function handleProjectFile(
+    file: File,
+    description = projectDescription,
+    options: { folderId?: string | null; userId?: string } = {}
+  ) {
     if (!isOwner) {
       return;
     }
@@ -3622,7 +3676,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const extractedCodeContent = shouldForceUtf8CodeRead(file.name)
         ? await extractCodeAsText(file).then((text) => text.trim())
         : '';
-      const savedProject = await uploadProjectFile(file, description);
+      const savedProject = await uploadProjectFile(file, description, options);
       const projectWithExtractedCode = {
         ...savedProject,
         asset_data_url: assetDataUrl,
