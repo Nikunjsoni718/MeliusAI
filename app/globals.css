@@ -89,3 +89,163 @@ a {
     transform: translateY(0);
   }
 }
+
+#create-project-btn.btn.primary {
+  border: 1px solid rgba(0, 210, 255, 0.35);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(0, 210, 255, 0.2), rgba(37, 99, 235, 0.34));
+  color: #eff6ff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 10px 16px;
+  text-transform: uppercase;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+#create-project-btn.btn.primary:hover {
+  border-color: rgba(0, 210, 255, 0.75);
+  box-shadow: 0 0 22px rgba(0, 210, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(4, 7, 15, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  backdrop-filter: blur(4px);
+}
+
+.modal.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.modal-content {
+  background: #0b1120;
+  border: 1px solid rgba(0, 210, 255, 0.2);
+  border-radius: 12px;
+  padding: 30px;
+  width: 100%;
+  max-width: 450px;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 210, 255, 0.1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #fff;
+}
+
+.tagline {
+  color: #8892b0;
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #8892b0;
+  font-size: 24px;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #00d2ff;
+}
+
+.ingestion-grid {
+  display: flex;
+  gap: 20px;
+  margin-top: 30px;
+  justify-content: center;
+}
+
+.ingestion-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 120px;
+  transition: transform 0.2s;
+}
+
+.ingestion-btn:hover {
+  transform: translateY(-5px);
+}
+
+.icon-circle {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #fff;
+  transition: all 0.3s ease;
+}
+
+#btn-github:hover .icon-circle {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+}
+
+#btn-local:hover .icon-circle {
+  border-color: #00d2ff;
+  color: #00d2ff;
+  background: rgba(0, 210, 255, 0.1);
+  box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
+}
+
+.btn-label {
+  color: #a0aec0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+#btn-github:hover .btn-label,
+#btn-local:hover .btn-label {
+  color: #fff;
+}
+
+@media (max-width: 520px) {
+  .modal-content {
+    margin: 0 16px;
+    padding: 24px;
+  }
+
+  .ingestion-grid {
+    gap: 14px;
+  }
+
+  .ingestion-btn {
+    width: 112px;
+  }
+}

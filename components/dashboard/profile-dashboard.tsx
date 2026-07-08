@@ -2166,6 +2166,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [liveJobs, setLiveJobs] = useState<LiveOpportunityItem[]>([]);
   const [loadingState, setLoadingState] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isIngestionModalOpen, setIsIngestionModalOpen] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
@@ -2211,6 +2212,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   });
   const [portfolioSaveState, setPortfolioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const uploadClearRef = useRef<number | null>(null);
+  const projectFolderInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
   const verifiedAssetTimerRef = useRef<number | null>(null);
@@ -3361,7 +3363,134 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     link.click();
   }
 
-  async function handleProjectFile(file: File) {
+  function getGithubProjectTitle(sourceUrl: string) {
+    try {
+      const parsedUrl = new URL(sourceUrl);
+      const [owner, repo] = parsedUrl.pathname.split('/').filter(Boolean);
+      const normalizedRepo = repo?.replace(/\.git$/i, '');
+
+      if (owner && normalizedRepo) {
+        return `${owner}/${normalizedRepo}`;
+      }
+    } catch {
+      // Fall through to a clear fallback title.
+    }
+
+    return 'GitHub project';
+  }
+
+  async function handleGithubProjectImport() {
+    if (!isOwner) {
+      return;
+    }
+
+    const sourceUrl = window.prompt('Paste your GitHub repository URL');
+    const normalizedSourceUrl = sourceUrl?.trim();
+
+    if (!normalizedSourceUrl) {
+      return;
+    }
+
+    try {
+      const parsedUrl = new URL(normalizedSourceUrl);
+
+      if (parsedUrl.hostname.toLowerCase() !== 'github.com') {
+        throw new Error('Please enter a valid github.com repository URL.');
+      }
+
+      if (uploadClearRef.current) {
+        window.clearTimeout(uploadClearRef.current);
+      }
+
+      setIsIngestionModalOpen(false);
+      setUploadState({
+        fileName: getGithubProjectTitle(normalizedSourceUrl),
+        progress: 35,
+        status: 'uploading',
+      });
+
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: getGithubProjectTitle(normalizedSourceUrl),
+          source_url: normalizedSourceUrl,
+          source_kind: 'github',
+          description: projectDescription.trim() || null,
+          is_public: false,
+          status: 'draft',
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { data?: ProjectRow; error?: string } | null;
+
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.error || 'We could not import this GitHub project.');
+      }
+
+      const savedProject = mapProjectRowToProjectItem(payload.data);
+      setUploadState({
+        fileName: savedProject.title,
+        progress: 100,
+        status: 'done',
+      });
+      setProjects((currentProjects) => [
+        savedProject,
+        ...currentProjects.filter((project) => project.id !== savedProject.id),
+      ]);
+      setProjectDescriptions((currentDescriptions) => ({
+        ...currentDescriptions,
+        [savedProject.id]: savedProject.user_description ?? savedProject.description ?? '',
+      }));
+      setProjectDescription('');
+      router.refresh();
+
+      uploadClearRef.current = window.setTimeout(() => {
+        setUploadState(null);
+        uploadClearRef.current = null;
+      }, 450);
+    } catch (error) {
+      setUploadState({
+        fileName: getGithubProjectTitle(normalizedSourceUrl),
+        progress: 100,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'We could not import this GitHub project.',
+      });
+      showProjectVerifyError(error instanceof Error ? error.message : 'We could not import this GitHub project.');
+    }
+  }
+
+  async function handleProjectFolderFiles(files: File[]) {
+    if (!isOwner) {
+      return;
+    }
+
+    const projectFolderDescription = projectDescription;
+    const importableFiles = files.filter((file) => {
+      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      return (
+        file.size > 0 &&
+        !/[\\/]node_modules[\\/]/i.test(relativePath) &&
+        !/[\\/]\.git[\\/]/i.test(relativePath) &&
+        !/[\\/](build|dist|\.next|coverage)[\\/]/i.test(relativePath)
+      );
+    });
+
+    if (importableFiles.length === 0) {
+      showProjectVerifyError('Folder import did not find any readable project files.');
+      return;
+    }
+
+    setIsIngestionModalOpen(false);
+
+    for (const file of importableFiles) {
+      await handleProjectFile(file, projectFolderDescription);
+    }
+  }
+
+  async function handleProjectFile(file: File, description = projectDescription) {
     if (!isOwner) {
       return;
     }
@@ -3382,7 +3511,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const extractedCodeContent = shouldForceUtf8CodeRead(file.name)
         ? await extractCodeAsText(file).then((text) => text.trim())
         : '';
-      const savedProject = await uploadProjectFile(file, projectDescription);
+      const savedProject = await uploadProjectFile(file, description);
       const projectWithExtractedCode = {
         ...savedProject,
         asset_data_url: assetDataUrl,
@@ -4322,11 +4451,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <h2 className="text-2xl font-semibold text-white">My Work Assets</h2>
                   <p className="mt-1 text-sm text-slate-400">Your projects live here.</p>
                 </div>
-                {allProjects.length > 0 ? (
-                  <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                    {allProjects.length} projects
-                  </Badge>
-                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {isOwner ? (
+                    <button
+                      id="create-project-btn"
+                      className="btn primary"
+                      type="button"
+                      onClick={() => setIsIngestionModalOpen(true)}
+                    >
+                      + Create Project Folder
+                    </button>
+                  ) : null}
+                  {allProjects.length > 0 ? (
+                    <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
+                      {allProjects.length} projects
+                    </Badge>
+                  ) : null}
+                </div>
               </div>
 
               {allProjects.length === 0 ? (
@@ -4558,6 +4699,90 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
             </Suspense>
             )}
+
+            {isOwner ? (
+              <>
+                <input
+                  ref={projectFolderInputRef}
+                  type="file"
+                  multiple
+                  className="sr-only"
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = '';
+                    void handleProjectFolderFiles(files);
+                  }}
+                  {...{ webkitdirectory: '', directory: '' }}
+                />
+
+                <div
+                  id="ingestion-modal"
+                  className={`modal ${isIngestionModalOpen ? '' : 'hidden'}`}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="ingestion-modal-title"
+                  onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setIsIngestionModalOpen(false);
+                    }
+                  }}
+                >
+                  <div className="modal-content card">
+                    <div className="modal-header">
+                      <h2 id="ingestion-modal-title">Import Project</h2>
+                      <button
+                        className="close-btn"
+                        id="close-modal"
+                        aria-label="Close"
+                        type="button"
+                        onClick={() => setIsIngestionModalOpen(false)}
+                      >
+                        &times;
+                      </button>
+                    </div>
+                    <p className="tagline">Where is your code located?</p>
+
+                    <div className="ingestion-grid">
+                      <button
+                        className="ingestion-btn"
+                        id="btn-github"
+                        type="button"
+                        onClick={() => void handleGithubProjectImport()}
+                      >
+                        <div className="icon-circle">
+                          <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32" aria-hidden="true">
+                            <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z"></path>
+                          </svg>
+                        </div>
+                        <span className="btn-label">GitHub URL</span>
+                      </button>
+
+                      <button
+                        className="ingestion-btn"
+                        id="btn-local"
+                        type="button"
+                        onClick={() => projectFolderInputRef.current?.click()}
+                      >
+                        <div className="icon-circle">
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            width="32"
+                            height="32"
+                            aria-hidden="true"
+                          >
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                        </div>
+                        <span className="btn-label">Browse Folder</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
 
             {viewingAuditAsset ? (
               <AuditReviewModal
