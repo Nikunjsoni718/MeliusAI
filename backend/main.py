@@ -937,10 +937,20 @@ async def evaluate_code(
         )
 
         logger.info("code_evaluation.openai.start filename=%s", filename)
+        # --- NEW INJECTED SYSTEM PROMPT ---
+        strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
+
+CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
+1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
+
+BAD EXAMPLE (DO NOT DO THIS): 'The code effectively encapsulates data with private member variables and provides public methods...'
+GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using private variables.'
+"""
         completion = await async_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
+                {"role": "system", "content": strict_system_prompt},
                 {
                     "role": "user",
                     "content": (
