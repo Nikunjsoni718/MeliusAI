@@ -4860,17 +4860,37 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               style={{ position: 'relative' }}
                             >
                               {isOwner ? (
-                                <button
-                                  className="folder-delete-btn"
-                                  onClick={(event) => void handleDeleteFolder(folder.id, event)}
-                                  title="Delete Workspace"
-                                  type="button"
-                                  aria-label={`Delete ${folder.name || 'workspace'}`}
-                                >
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
-                                  </svg>
-                                </button>
+                                <div style={{ position: 'absolute', top: '15px', right: '15px', display: 'flex', gap: '8px', zIndex: 10 }}>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setEditingFolderId(folder.id);
+                                      setEditFolderName(folder.name);
+                                    }}
+                                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#8892b0', cursor: 'pointer', padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Rename Folder"
+                                    type="button"
+                                    aria-label={`Rename ${folder.name || 'workspace'}`}
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                  </button>
+
+                                  <button
+                                    className="folder-delete-btn"
+                                    onClick={(event) => void handleDeleteFolder(folder.id, event)}
+                                    style={{ position: 'static', top: 'auto', right: 'auto', padding: '6px', borderRadius: '6px' }}
+                                    title="Delete Workspace"
+                                    type="button"
+                                    aria-label={`Delete ${folder.name || 'workspace'}`}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+                                      <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+                                    </svg>
+                                  </button>
+                                </div>
                               ) : null}
 
                               <div className="folder-card-body">
@@ -4879,23 +4899,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                                   </svg>
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', width: '100%', gap: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '10px', width: '100%', textAlign: 'center' }}>
                                   {editingFolderId === folder.id ? (
-                                    <div style={{ display: 'flex', gap: '10px', width: '100%' }} onClick={(event) => event.stopPropagation()}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }} onClick={(event) => event.stopPropagation()}>
                                       <input
                                         type="text"
                                         value={editFolderName}
                                         onChange={(event) => setEditFolderName(event.target.value)}
                                         style={{
-                                          flex: 1,
+                                          width: '80%',
                                           padding: '6px 10px',
                                           borderRadius: '4px',
                                           background: 'rgba(255,255,255,0.1)',
                                           border: '1px solid #00d2ff',
                                           color: '#fff',
                                           outline: 'none',
-                                          fontSize: '14px',
-                                          minWidth: 0,
+                                          fontSize: '16px',
+                                          textAlign: 'center',
                                         }}
                                         autoFocus
                                         onKeyDown={(event) => {
@@ -4911,29 +4931,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                           event.stopPropagation();
                                           void handleRenameFolder(folder.id);
                                         }}
-                                        style={{ background: '#00d2ff', color: '#000', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        style={{ background: '#00d2ff', color: '#000', border: 'none', padding: '4px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
                                         type="button"
                                       >
                                         Save
                                       </button>
                                     </div>
                                   ) : (
-                                    <>
-                                      <h3 className="folder-name" style={{ margin: 0 }}>{folder.name}</h3>
-                                      {isOwner ? (
-                                        <button
-                                          onClick={(event) => {
-                                            event.stopPropagation();
-                                            setEditingFolderId(folder.id);
-                                            setEditFolderName(folder.name);
-                                          }}
-                                          style={{ background: 'transparent', border: 'none', color: '#8892b0', cursor: 'pointer', fontSize: '14px' }}
-                                          type="button"
-                                        >
-                                          Edit
-                                        </button>
-                                      ) : null}
-                                    </>
+                                    <h3 style={{ color: '#fff', margin: 0, fontSize: '18px', textAlign: 'center', fontWeight: 'bold' }}>
+                                      {folder.name}
+                                    </h3>
                                   )}
                                 </div>
                                 <span className="folder-badge">Project Workspace</span>
