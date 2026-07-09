@@ -190,6 +190,8 @@ function parseAuditReport(rawText: string) {
 type StructuredAuditData = {
   id?: string | null;
   score?: number | null;
+  evaluation_score?: number | null;
+  logic_score?: number | null;
   ai_summary?: string | null;
   user_description?: string | null;
   audit_summary?: string | null;
@@ -220,34 +222,6 @@ function getStructuredSummary(auditData?: StructuredAuditData | null) {
     .replace(/^\s*#{1,6}\s*executive summary\s*/i, '')
     .split(/\n\s*(?:#{1,6}\s*)?(?:pros|strengths|cons|weaknesses|strategic recommendations|recommendations|scorecard)\b/i)[0]
     .trim();
-}
-
-function AuditBulletList({
-  items,
-  tone,
-  emptyText,
-}: {
-  items: string[];
-  tone: 'emerald' | 'rose' | 'cyan';
-  emptyText: string;
-}) {
-  const indicatorClass =
-    tone === 'emerald' ? 'bg-emerald-400' : tone === 'rose' ? 'bg-rose-400' : 'bg-cyan-400';
-
-  if (items.length === 0) {
-    return <p className="text-xs italic text-slate-500">{emptyText}</p>;
-  }
-
-  return (
-    <ul className="space-y-2.5">
-      {items.map((item, index) => (
-        <li key={`${item}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-slate-300">
-          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${indicatorClass}`} />
-          <span>{item}</span>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 export function AuditReviewModal({
@@ -287,7 +261,7 @@ export function AuditReviewModal({
         const supabase = createSupabaseBrowserClient();
         const { data, error } = await supabase
           .from('projects')
-          .select('score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
+          .select('score, evaluation_score, logic_score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
           .eq('id', resolvedProjectId)
           .maybeSingle();
 
@@ -305,7 +279,7 @@ export function AuditReviewModal({
         }
 
         setHydratedProjectId(resolvedProjectId);
-        setScore(data.score ?? null);
+        setScore(data.score ?? data.evaluation_score ?? data.logic_score ?? null);
         setAuditSummary(data.audit_summary ?? null);
         setAiSummary(data.ai_summary ?? null);
         setPros(Array.isArray(data.pros) ? data.pros : []);
@@ -329,7 +303,9 @@ export function AuditReviewModal({
   const hasHydratedProject = Boolean(resolvedProjectId && hydratedProjectId === resolvedProjectId);
   const hydratedAuditData: StructuredAuditData = {
     ...(auditData ?? {}),
-    score: hasHydratedProject ? score ?? auditData?.score ?? null : auditData?.score ?? null,
+    score: hasHydratedProject
+      ? score ?? auditData?.score ?? auditData?.evaluation_score ?? auditData?.logic_score ?? null
+      : auditData?.score ?? auditData?.evaluation_score ?? auditData?.logic_score ?? null,
     audit_summary: hasHydratedProject ? auditSummary ?? auditData?.audit_summary ?? null : auditData?.audit_summary ?? null,
     ai_summary: hasHydratedProject ? aiSummary ?? auditData?.ai_summary ?? null : auditData?.ai_summary ?? null,
     pros: hasHydratedProject ? pros ?? auditData?.pros ?? null : auditData?.pros ?? null,
@@ -347,115 +323,75 @@ export function AuditReviewModal({
   const structuredPros = getStructuredItems(hydratedAuditData.pros);
   const structuredCons = getStructuredItems(hydratedAuditData.cons);
   const structuredRecommendations = getStructuredItems(hydratedAuditData.recommendations);
-  const hasStructuredAudit = Boolean(
-    structuredSummary || structuredPros.length || structuredCons.length || structuredRecommendations.length
-  );
+  const activeFile = {
+    name: assetTitle,
+    evaluated_score: hydratedAuditData.score ?? 0,
+    executive_summary: structuredSummary || cleanDescriptionText || 'Audit complete. Review the insights below.',
+    pros: structuredPros.length > 0 ? structuredPros : leftSideGoods,
+    cons: structuredCons.length > 0 ? structuredCons : rightSideBads,
+    recommendations: structuredRecommendations,
+  };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-      <div className="bg-[#05091b] border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col p-6 shadow-2xl relative">
-        <div className="flex items-center justify-between border-b border-slate-900 pb-4 mb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxWidth: '1200px', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
           <div>
-            <h2 className="text-base font-bold text-slate-100 tracking-wide">Technical Audit Protocol</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Asset Identification: {assetTitle}</p>
+            <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{activeFile.name}</h2>
+            <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '14px' }}>{activeFile.name}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-7 h-7 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
-            aria-label="Close audit protocol"
-          >
-            ×
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+              {activeFile.name.split('.').pop()} FILE
+            </span>
+            <button style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px' }} type="button">Full Focus Mode</button>
+            <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} type="button" aria-label="Close audit protocol">×</button>
+          </div>
+        </div>
+
+        <div style={{ border: '1px solid #1a2332', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>AI Executive Summary</h3>
+          <p style={{ margin: 0, color: '#ccc', fontSize: '14px', lineHeight: '1.6', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+            {activeFile.executive_summary || 'Audit complete. Review the insights below.'}
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
+          <button style={{ background: 'transparent', border: '1px solid #00d2ff', color: '#00d2ff', padding: '8px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }} type="button">
+            Verify with MeliusAI
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-2 space-y-6">
-          {hasStructuredAudit ? (
-            <>
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Executive Summary</h4>
-                <p className="text-sm text-slate-300 mb-6 line-clamp-4 leading-relaxed">
-                  {structuredSummary || 'Verification summary pending.'}
-                </p>
-              </div>
+        <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+          <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '30px' }}>
+            <svg viewBox="0 0 36 36" style={{ width: '100%', maxWidth: '120px', height: 'auto' }}>
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#1a2332" strokeWidth="4" />
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#00d2ff" strokeWidth="4" strokeDasharray={`${activeFile.evaluated_score || 0}, 100`} />
+              <text x="18" y="20.5" style={{ fill: '#fff', fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' }}>{activeFile.evaluated_score || 0}</text>
+              <text x="18" y="26" style={{ fill: '#666', fontSize: '4px', textAnchor: 'middle' }}>/ 100</text>
+            </svg>
+          </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-5">
-                  <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                    Strengths
-                  </h4>
-                  <AuditBulletList
-                    items={structuredPros}
-                    tone="emerald"
-                    emptyText="No structural strengths identified yet."
-                  />
-                </div>
+          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#00ff88', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Strengths</h3>
+            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
+              {activeFile.pros?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            </ul>
+          </div>
 
-                <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-5">
-                  <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-rose-300">
-                    Weaknesses
-                  </h4>
-                  <AuditBulletList
-                    items={structuredCons}
-                    tone="rose"
-                    emptyText="No critical weaknesses identified yet."
-                  />
-                </div>
-              </div>
+          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#ff4444', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Weaknesses</h3>
+            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
+              {activeFile.cons?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            </ul>
+          </div>
 
-              <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] p-5">
-                <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-cyan-300">
-                  Strategic Recommendations
-                </h4>
-                <AuditBulletList
-                  items={structuredRecommendations}
-                  tone="cyan"
-                  emptyText="No strategic recommendations generated yet."
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-900">
-                <h4 className="text-xs font-bold text-cyan-500 uppercase tracking-widest mb-2">Asset Description</h4>
-                <p className="text-sm leading-relaxed text-slate-300">{cleanDescriptionText}</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-xl bg-emerald-950/5 border border-emerald-900/20 flex flex-col">
-                  <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-emerald-900/10">
-                    Strengths
-                  </div>
-                  <AuditBulletList
-                    items={leftSideGoods}
-                    tone="emerald"
-                    emptyText="No structural strengths identified yet."
-                  />
-                </div>
-
-                <div className="p-5 rounded-xl bg-rose-950/5 border border-rose-900/20 flex flex-col">
-                  <div className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-3 pb-1.5 border-b border-rose-900/10">
-                    Weaknesses
-                  </div>
-                  <AuditBulletList
-                    items={rightSideBads}
-                    tone="rose"
-                    emptyText="No critical vulnerabilities or flaws identified."
-                  />
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="border-t border-slate-900 pt-4 mt-4 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            Close Review Protocol
-          </button>
+          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Recommendations</h3>
+            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
+              {activeFile.recommendations?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            </ul>
+          </div>
         </div>
       </div>
     </div>

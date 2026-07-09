@@ -5393,6 +5393,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             {viewingAuditAsset ? (
               <AuditReviewModal
                 assetTitle={viewingAuditAsset.title}
+                projectId={viewingAuditAsset.id}
                 onClose={() => setViewingAuditAsset(null)}
                 reportText={
                   verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
@@ -5406,6 +5407,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   description: viewingAuditAsset.description,
                   executive_summary: viewingAuditAsset.audit_summary,
                   summary: viewingAuditAsset.ai_summary,
+                  score: viewingAuditAsset.score ?? viewingAuditAsset.evaluation_score ?? viewingAuditAsset.logic_score,
                   pros: viewingAuditAsset.pros,
                   cons: viewingAuditAsset.cons,
                   recommendations: viewingAuditAsset.recommendations,
