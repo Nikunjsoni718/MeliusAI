@@ -2252,26 +2252,36 @@ async def run_project_audit(
         if len(reports_json) > AUDIT_REDUCE_REPORT_CHAR_LIMIT:
             reports_json = reports_json[:AUDIT_REDUCE_REPORT_CHAR_LIMIT] + "\n...[truncated]"
 
-        aggregate_prompt = f"""
-        Here are the individual file audit reports for a project.
-        Analyze the connective tissue between these files.
-        Provide the top 3 most critical, high-leverage issues the developer must fix immediately.
-
-        Reports:
-        {reports_json}
-        """
+        aggregated_file_summaries = reports_json
 
         final_response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
+            response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a lead architect. Output a ranked list of the 3 most critical cross-file issues.",
+                    "content": (
+                        "You are a Principal Software Architect hovering 10,000 feet above a codebase. Your job is to analyze the aggregated file audits "
+                        "and deliver a high-level system blueprint review.\n\n"
+                        "CRITICAL RULES:\n"
+                        "1. THE BIRD'S-EYE VIEW: Do not just trace the 'wires' (how data moves from A to B). Analyze HOW the wires are built. "
+                        "Are they using clean design patterns (MVC, Layered Architecture, Factory patterns), or is it a tangled mess of spaghetti code?\n"
+                        "2. DO NOT comment on line-by-line syntax, formatting, or local variable names.\n"
+                        "3. Focus 100% on macro-architecture: separation of concerns, global redundancy, missing abstraction layers, and directory structure.\n\n"
+                        "You must return a strict JSON object with this exact structure:\n"
+                        "{\n"
+                        "  \"melius_score\": (integer from 1 to 100 representing overall structural integrity and system health),\n"
+                        "  \"strengths\": [\"list of 3 macro-architectural strong suits (e.g., 'Excellent separation of database logic from route handlers')\"],\n"
+                        "  \"weaknesses\": [\"list of 3 system-wide structural flaws (e.g., 'Business logic is tightly coupled to the UI layer')\"],\n"
+                        "  \"top_recommendations\": [\"list of 3 actionable, code-level structural fixes to reorganize the project patterns\"]\n"
+                        "}"
+                    ),
                 },
-                {"role": "user", "content": aggregate_prompt},
+                {
+                    "role": "user",
+                    "content": f"Here is the directory structure map and the individual file-level audit summaries for this project:\n\n{aggregated_file_summaries}\n\nPlease perform the whole-folder system audit now.",
+                },
             ],
-            max_tokens=800,
-            temperature=0.1,
         )
 
         project_summary = final_response.choices[0].message.content or ""
