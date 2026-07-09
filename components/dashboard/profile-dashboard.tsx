@@ -90,6 +90,7 @@ const BLOCKED_FILES = [
   'package.json',
   'package-lock.json',
   'pnpm-lock.yaml',
+  'pipfile',
   '.env',
   '.ds_store',
 ];
@@ -107,6 +108,8 @@ const BLOCKED_EXTENSIONS = [
   '.pyc',
   '.o',
   '.obj',
+  '.pickle',
+  '.pkl',
 ];
 
 function isBlockedStagedFile(sourceFileName: string) {
@@ -2230,6 +2233,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
   const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
@@ -2477,12 +2481,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   );
 
   const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
-  const isUploading = uploadState?.status === 'uploading';
+  const isProjectUploading = uploadState?.status === 'uploading';
   const isSyncing =
     profileSyncState === 'syncing' ||
     bioSaveState === 'saving' ||
     verifyingAssetId !== null ||
     deletingProjectId !== null ||
+    isProjectUploading ||
     isUploading;
   const sortedProjects = useMemo(
     () =>
@@ -3616,7 +3621,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function confirmStagedUpload() {
+  async function handleConfirmUpload() {
+    if (isUploading) {
+      return;
+    }
+
     if (!user || !user.id) {
       alert('User session missing.');
       return;
@@ -3644,6 +3653,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
+      setIsUploading(true);
+
       const { data: folderData, error: folderError } = await supabase
         .from('project_folders')
         .insert({ name: stagingFolderName, source: 'local', user_id: user.id })
@@ -3710,6 +3721,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .filter(Boolean)
         .map((row) => mapProjectRowToProjectItem(row as ProjectRow));
 
+      setIsStagingModalOpen(false);
+      setStagedFiles([]);
+      setGithubRepoUrl("");
+
       setProjectFolders((currentFolders) => [
         savedFolder,
         ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
@@ -3721,7 +3736,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ),
       ]);
       setActiveFolderId(savedFolder.id);
-      setStagedFiles([]);
       setStagingFolderName('');
       setProjectDescription('');
 
@@ -3729,16 +3743,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         await mutate(spectatorProfileKey);
       }
       router.refresh();
-      setIsStagingModalOpen(false);
-    } catch (err) {
-      console.error('Upload transaction failed:', err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : typeof err === 'string'
-            ? err
-            : JSON.stringify(err);
-      alert(`Upload Failed: ${errorMessage}`);
+    } catch (error: any) {
+      console.error("Upload Error:", error);
+      alert(`Upload failed: ${error.message}`);
+    } finally {
+      setIsUploading(false);
     }
   }
 
@@ -4449,7 +4458,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            {isUploading ? (
+            {isProjectUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
                 <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-4 text-center backdrop-blur-md sm:p-6">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/10 text-sky-100">
@@ -5438,7 +5447,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
                   <button onClick={() => setIsStagingModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
-                  <button onClick={() => void confirmStagedUpload()} style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }} type="button">Confirm &amp; Upload</button>
+                  <button
+                    onClick={() => void handleConfirmUpload()}
+                    disabled={isUploading}
+                    style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: isUploading ? 'not-allowed' : 'pointer', opacity: isUploading ? 0.5 : 1 }}
+                    type="button"
+                  >
+                    {isUploading ? "Uploading..." : "Confirm & Upload"}
+                  </button>
                 </div>
               </div>
             </div>
