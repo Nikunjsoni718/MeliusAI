@@ -2274,19 +2274,19 @@ async def run_project_audit(
                         "OUTPUT FORMAT:\n"
                         "You must return a strict JSON object with the exact following structure:\n"
                         "{\n"
-                        "  \"melius_score\": (integer 1-100, a blended score of structural beauty and functional brains. Be brutal but fair. 90+ is production-ready, <50 is a structural mess),\n"
+                        "  \"evaluation_score\": (integer 1-100, a blended score of structural beauty and functional brains. Be brutal but fair.),\n"
                         "  \"executive_summary\": \"A 3-4 sentence overall assessment of the project's architecture and code quality.\",\n"
-                        "  \"strengths\": [\n"
+                        "  \"pros\": [\n"
                         "    \"Detailed architectural or functional strength #1, referencing specific patterns or files.\",\n"
                         "    \"Strength #2...\",\n"
                         "    \"Strength #3...\"\n"
                         "  ],\n"
-                        "  \"weaknesses\": [\n"
+                        "  \"cons\": [\n"
                         "    \"Severe structural flaw or area where code quality degrades, referencing specific files.\",\n"
                         "    \"Weakness #2...\",\n"
                         "    \"Weakness #3...\"\n"
                         "  ],\n"
-                        "  \"top_recommendations\": [\n"
+                        "  \"recommendations\": [\n"
                         "    \"Actionable, code-level architectural fix #1 (e.g., 'Extract DB queries from api.py into a centralized service layer').\",\n"
                         "    \"Actionable fix #2...\",\n"
                         "    \"Actionable fix #3...\"\n"
@@ -2301,11 +2301,26 @@ async def run_project_audit(
             ],
         )
 
-        project_summary = final_response.choices[0].message.content or ""
+        project_summary = final_response.choices[0].message.content or "{}"
+        try:
+            parsed_project_summary = json.loads(project_summary)
+        except json.JSONDecodeError as parse_error:
+            raise HTTPException(
+                status_code=502,
+                detail="Folder audit response was not valid JSON.",
+            ) from parse_error
+
+        folder_audit_payload = {
+            "evaluation_score": parsed_project_summary.get("evaluation_score"),
+            "executive_summary": parsed_project_summary.get("executive_summary"),
+            "pros": parsed_project_summary.get("pros"),
+            "cons": parsed_project_summary.get("cons"),
+            "recommendations": parsed_project_summary.get("recommendations"),
+        }
 
         await asyncio.to_thread(
             lambda: supabase_client.table("project_folders")
-            .update({"audit_summary": project_summary})
+            .update(folder_audit_payload)
             .eq("id", folder_id)
             .eq("user_id", requested_user_id)
             .execute()
@@ -2314,7 +2329,7 @@ async def run_project_audit(
         return {
             "message": "Audit complete",
             "file_reports": file_reports,
-            "project_summary": project_summary,
+            "project_summary": parsed_project_summary,
         }
 
     except HTTPException:

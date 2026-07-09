@@ -218,6 +218,7 @@ type AuthStorageDebugState = {
 const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
+const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
@@ -2246,6 +2247,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [auditingFolders, setAuditingFolders] = useState<Record<string, boolean>>({});
   const [projectVerifyError, setProjectVerifyError] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
@@ -4229,6 +4231,55 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   };
 
+  const handleVerifyFolder = async (folderId: string) => {
+    if (!isOwner || auditingFolders[folderId]) {
+      return;
+    }
+
+    try {
+      setAuditingFolders((prev) => ({ ...prev, [folderId]: true }));
+
+      const userId = user?.id ?? (await getConfirmedUserId());
+      const accessToken = session?.access_token ?? (await getCurrentAccessToken());
+
+      if (!userId || !accessToken) {
+        throw new Error('User session missing.');
+      }
+
+      const response = await fetch(FOLDER_AUDIT_ENDPOINT, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          folder_id: folderId,
+          user_id: userId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorPayload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(errorPayload?.detail || 'Failed to audit folder');
+      }
+
+      const data = await response.json();
+      console.log("Audit complete:", data);
+      alert("Folder audit completed successfully!");
+
+      if (spectatorProfileKey) {
+        await mutate(spectatorProfileKey);
+      }
+      router.refresh();
+    } catch (error) {
+      console.error("Error verifying folder:", error);
+      alert("An error occurred during the AI audit.");
+    } finally {
+      setAuditingFolders((prev) => ({ ...prev, [folderId]: false }));
+    }
+  };
+
   const handleDeleteFolder = async (folderId: string) => {
     if (!isOwner) {
       return;
@@ -5010,9 +5061,43 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 <span className="folder-badge">Project Workspace</span>
                               </div>
                               <div className="folder-card-footer">
-                                <button className="open-folder-btn" type="button">
-                                  Open Workspace &rarr;
-                                </button>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '15px' }}>
+                                  <button
+                                    className="open-folder-btn"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setActiveFolderId(folder.id);
+                                    }}
+                                    type="button"
+                                  >
+                                    Open Workspace &rarr;
+                                  </button>
+
+                                  {isOwner ? (
+                                    <button
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleVerifyFolder(folder.id);
+                                      }}
+                                      disabled={auditingFolders[folder.id]}
+                                      style={{
+                                        background: auditingFolders[folder.id] ? 'rgba(255,255,255,0.05)' : 'transparent',
+                                        border: '1px solid #00d2ff',
+                                        color: '#00d2ff',
+                                        padding: '10px',
+                                        borderRadius: '6px',
+                                        cursor: auditingFolders[folder.id] ? 'not-allowed' : 'pointer',
+                                        width: '100%',
+                                        fontWeight: 'bold',
+                                        fontSize: '14px',
+                                        transition: 'all 0.2s',
+                                      }}
+                                      type="button"
+                                    >
+                                      {auditingFolders[folder.id] ? 'Auditing via GPT Engine...' : 'Verify with MeliusAI'}
+                                    </button>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                           );
