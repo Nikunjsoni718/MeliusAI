@@ -89,17 +89,13 @@ type StagedFile = {
 const BLOCKED_FILES = [
   'package.json',
   'package-lock.json',
-  'yarn.lock',
   'pnpm-lock.yaml',
-  'composer.lock',
-  'cargo.lock',
-  'pipfile.lock',
-  'poetry.lock',
   '.env',
   '.ds_store',
 ];
 
 const BLOCKED_EXTENSIONS = [
+  '.lock',
   '.exe',
   '.dll',
   '.bin',
@@ -113,13 +109,12 @@ const BLOCKED_EXTENSIONS = [
   '.obj',
 ];
 
-function isBlockedStagedFile(fileName: string) {
-  const normalizedFileName = fileName.toLowerCase();
-  const baseName = normalizedFileName.split('/').pop() || normalizedFileName;
+function isBlockedStagedFile(sourceFileName: string) {
+  const fileName = sourceFileName.split('/').pop()?.toLowerCase() || "";
   const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) =>
-    normalizedFileName.endsWith(extension)
+    fileName.endsWith(extension)
   );
-  const isBlockedFile = BLOCKED_FILES.includes(baseName);
+  const isBlockedFile = BLOCKED_FILES.includes(fileName);
 
   return isBlockedExtension || isBlockedFile;
 }
@@ -3632,25 +3627,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const originalSelectedCount = stagedFiles.filter((file) => file.selected).length;
-    if (originalSelectedCount === 0) {
-      alert('Please select at least one file.');
-      return;
-    }
-
     const safeFilesToUpload = stagedFiles.filter((file) => {
       if (!file.selected) return false;
 
-      return !isBlockedStagedFile(file.name);
+      const fileName = file.name.split('/').pop()?.toLowerCase() || "";
+
+      const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+      const isBlockedFile = BLOCKED_FILES.includes(fileName);
+
+      return !isBlockedExtension && !isBlockedFile;
     });
 
-    if (safeFilesToUpload.length < originalSelectedCount) {
-      console.warn(`Blocked ${originalSelectedCount - safeFilesToUpload.length} token-wasting or unsafe files.`);
-      alert("We automatically removed files like package.json to save AI processing time.");
-    }
-
     if (safeFilesToUpload.length === 0) {
-      alert("No valid files left to upload.");
+      alert("No valid code files selected to upload.");
       return;
     }
 
@@ -3732,7 +3721,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ),
       ]);
       setActiveFolderId(savedFolder.id);
-      setIsStagingModalOpen(false);
       setStagedFiles([]);
       setStagingFolderName('');
       setProjectDescription('');
@@ -3741,6 +3729,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         await mutate(spectatorProfileKey);
       }
       router.refresh();
+      setIsStagingModalOpen(false);
     } catch (err) {
       console.error('Upload transaction failed:', err);
       const errorMessage =
