@@ -2261,25 +2261,42 @@ async def run_project_audit(
                 {
                     "role": "system",
                     "content": (
-                        "You are a Principal Software Architect hovering 10,000 feet above a codebase. Your job is to analyze the aggregated file audits "
-                        "and deliver a high-level system blueprint review.\n\n"
-                        "CRITICAL RULES:\n"
-                        "1. THE BIRD'S-EYE VIEW: Do not just trace the 'wires' (how data moves from A to B). Analyze HOW the wires are built. "
-                        "Are they using clean design patterns (MVC, Layered Architecture, Factory patterns), or is it a tangled mess of spaghetti code?\n"
-                        "2. DO NOT comment on line-by-line syntax, formatting, or local variable names.\n"
-                        "3. Focus 100% on macro-architecture: separation of concerns, global redundancy, missing abstraction layers, and directory structure.\n\n"
-                        "You must return a strict JSON object with this exact structure:\n"
+                        "You are an elite Tech Lead and Principal Software Architect conducting a comprehensive repository-level code audit for MeliusAI. "
+                        "Your objective is to evaluate this codebase on two fronts: 'Beauty' (Macro-Architecture) and 'Brains' (Practical Execution).\n\n"
+                        "CRITICAL EVALUATION RULES:\n"
+                        "1. THE BEAUTY (Architecture & Wires): Analyze the connective tissue of the project. Are they using clean design patterns? "
+                        "Is there a logical separation of concerns (e.g., UI vs. Business Logic vs. Database Access)? Identify circular dependencies, missing abstraction layers, or poor structural organization.\n"
+                        "2. THE BRAINS (Execution & Logic): Evaluate if the files actually serve their intended purpose effectively. Look for severe logic flaws, "
+                        "unhandled edge cases, security vulnerabilities (e.g., missing auth, exposed data), and performance bottlenecks.\n"
+                        "3. PINPOINT QUALITY DEGRADATION: Explicitly identify where the project is strong and where it falls apart. "
+                        "(Example: 'The React UI components are modular and clean, but the API routing degrades in quality because it is tightly coupled to raw database queries.')\n"
+                        "4. NO NITPICKING: Ignore minor formatting, missing semicolons, or local variable naming choices. Focus entirely on structural integrity and critical execution failures.\n\n"
+                        "OUTPUT FORMAT:\n"
+                        "You must return a strict JSON object with the exact following structure:\n"
                         "{\n"
-                        "  \"melius_score\": (integer from 1 to 100 representing overall structural integrity and system health),\n"
-                        "  \"strengths\": [\"list of 3 macro-architectural strong suits (e.g., 'Excellent separation of database logic from route handlers')\"],\n"
-                        "  \"weaknesses\": [\"list of 3 system-wide structural flaws (e.g., 'Business logic is tightly coupled to the UI layer')\"],\n"
-                        "  \"top_recommendations\": [\"list of 3 actionable, code-level structural fixes to reorganize the project patterns\"]\n"
+                        "  \"melius_score\": (integer 1-100, a blended score of structural beauty and functional brains. Be brutal but fair. 90+ is production-ready, <50 is a structural mess),\n"
+                        "  \"executive_summary\": \"A 3-4 sentence overall assessment of the project's architecture and code quality.\",\n"
+                        "  \"strengths\": [\n"
+                        "    \"Detailed architectural or functional strength #1, referencing specific patterns or files.\",\n"
+                        "    \"Strength #2...\",\n"
+                        "    \"Strength #3...\"\n"
+                        "  ],\n"
+                        "  \"weaknesses\": [\n"
+                        "    \"Severe structural flaw or area where code quality degrades, referencing specific files.\",\n"
+                        "    \"Weakness #2...\",\n"
+                        "    \"Weakness #3...\"\n"
+                        "  ],\n"
+                        "  \"top_recommendations\": [\n"
+                        "    \"Actionable, code-level architectural fix #1 (e.g., 'Extract DB queries from api.py into a centralized service layer').\",\n"
+                        "    \"Actionable fix #2...\",\n"
+                        "    \"Actionable fix #3...\"\n"
+                        "  ]\n"
                         "}"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"Here is the directory structure map and the individual file-level audit summaries for this project:\n\n{aggregated_file_summaries}\n\nPlease perform the whole-folder system audit now.",
+                    "content": f"Here is the directory structure map and the individual file-level audit summaries for this project:\n\n{aggregated_file_summaries}\n\nPlease perform the comprehensive MeliusAI Tech Lead audit now.",
                 },
             ],
         )
