@@ -338,23 +338,40 @@ export function AuditReviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-      <div style={{ width: '100%', maxWidth: '1200px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
-          <button onClick={onOpenFullFocus} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }} type="button">
-            Full Focus Mode
-          </button>
-          <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} type="button" aria-label="Close audit protocol">×</button>
-        </div>
-
-        <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxHeight: 'calc(90vh - 42px)', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '24px' }}>
+      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxWidth: '1200px', maxHeight: '90vh', overflowY: 'auto' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{activeFile.name}</h2>
-            <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '14px' }}>{activeFile.name}</p>
+            <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '14px' }}>
+              {activeFile.name.includes('.') ? 'Single File Audit' : 'Project Directory Audit'}
+            </p>
           </div>
-          <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-            {activeFile.name.split('.').pop()} FILE
-          </span>
+          
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+             {/* Smart Badge: Checks if it's a folder (no extension) or a file */}
+            <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+              {activeFile.name.includes('.') ? `${activeFile.name.split('.').pop()} FILE` : 'PROJECT WORKSPACE'}
+            </span>
+
+            {/* Conditionally show Full Focus Mode ONLY if it's a file */}
+            {activeFile.name.includes('.') && (
+              <button 
+                onClick={onOpenFullFocus} 
+                style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
+              >
+                Full Focus Mode
+              </button>
+            )}
+
+            {/* Close Button - Ensure this sits nicely inline */}
+            <button 
+              onClick={onClose} 
+              style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div style={{ border: '1px solid #1a2332', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
@@ -405,7 +422,6 @@ export function AuditReviewModal({
           </div>
         </div>
       </div>
-    </div>
     </div>
   );
 }
