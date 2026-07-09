@@ -81,8 +81,34 @@ type StagedFile = {
   path: string;
   name: string;
   content: string;
+  sourceFile?: File;
+  contentType?: string;
   selected: boolean;
 };
+
+const BLOCKED_FILES = [
+  'package.json',
+  'package-lock.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  'composer.lock',
+  'cargo.lock',
+  '.env',
+  '.ds_store',
+];
+
+const BLOCKED_EXTENSIONS = ['.exe', '.dll', '.bin', '.iso', '.dmg'];
+
+function isBlockedStagedFile(fileName: string) {
+  const normalizedFileName = fileName.toLowerCase();
+  const baseName = normalizedFileName.split('/').pop() || normalizedFileName;
+  const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) =>
+    normalizedFileName.endsWith(extension)
+  );
+  const isBlockedFile = BLOCKED_FILES.includes(baseName);
+
+  return isBlockedExtension || isBlockedFile;
+}
 
 type LiveOpportunityItem = {
   id: string;
@@ -3485,26 +3511,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const treeData = await treeRes.json();
 
       // 4. Filter and process the files
-      const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build', '.env', 'package-lock.json', 'yarn.lock'];
+      const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build'];
       const parsedFiles: any[] = [];
       const validFiles = treeData.tree.filter((item: any) => item.type === 'blob');
 
       for (const file of validFiles) {
         const pathParts = file.path.split('/');
 
-        // Skip junk folders and binaries
+        // Skip junk folders and files we never want to import
         if (pathParts.some((part: string) => ignoreList.includes(part))) continue;
-        if (file.path.match(/\.(png|jpe?g|gif|svg|ico|pdf|zip|mp4)$/i)) continue;
+        if (isBlockedStagedFile(file.path)) continue;
 
-        // 5. Fetch the raw text content for the valid files
+        // 5. Fetch the raw content for the valid files
         const rawRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/${file.path}`);
         if (!rawRes.ok) continue;
-        const content = await rawRes.text();
+        const fileName = pathParts[pathParts.length - 1];
+        const rawBlob = await rawRes.blob();
+        const shouldReadAsText = shouldForceUtf8CodeRead(file.path) || rawBlob.type.startsWith('text/');
+        const content = shouldReadAsText ? await rawBlob.text() : '';
+        const sourceFile = shouldReadAsText
+          ? undefined
+          : new File([rawBlob], fileName, { type: rawBlob.type || 'application/octet-stream' });
 
         parsedFiles.push({
           path: file.path,
-          name: pathParts[pathParts.length - 1],
-          content: content,
+          name: fileName,
+          content,
+          sourceFile,
+          contentType: rawBlob.type || undefined,
           selected: true
         });
       }
@@ -3540,7 +3574,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setStagingFolderName(folderName);
 
     const parsedFiles: StagedFile[] = [];
-    const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build', '.env'];
+    const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build'];
 
     try {
       for (const file of Array.from(files)) {
@@ -3550,15 +3584,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           continue;
         }
 
-        if (file.name.match(/\.(png|jpe?g|gif|svg|ico|pdf|zip)$/i)) {
-          continue;
-        }
-
-        const content = await file.text();
+        const content = shouldForceUtf8CodeRead(relativePath) ? await file.text() : '';
         parsedFiles.push({
           path: relativePath,
           name: file.name,
           content,
+          sourceFile: file,
+          contentType: file.type || undefined,
           selected: true,
         });
       }
@@ -3586,9 +3618,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const filesToUpload = stagedFiles.filter((file) => file.selected);
-    if (filesToUpload.length === 0) {
+    const originalSelectedCount = stagedFiles.filter((file) => file.selected).length;
+    if (originalSelectedCount === 0) {
       alert('Please select at least one file.');
+      return;
+    }
+
+    const safeFilesToUpload = stagedFiles.filter((file) => {
+      if (!file.selected) return false;
+
+      return !isBlockedStagedFile(file.name);
+    });
+
+    if (safeFilesToUpload.length < originalSelectedCount) {
+      console.warn(`Blocked ${originalSelectedCount - safeFilesToUpload.length} token-wasting or unsafe files.`);
+      alert("We automatically removed files like package.json to save AI processing time.");
+    }
+
+    if (safeFilesToUpload.length === 0) {
+      alert("No valid files left to upload.");
       return;
     }
 
@@ -3608,15 +3656,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       const uploadResults = await Promise.all(
-        filesToUpload.map(async (file) => {
-          const fileBlob = new Blob([file.content], { type: 'text/plain' });
+        safeFilesToUpload.map(async (file) => {
+          const uploadBody = file.sourceFile ?? new Blob([file.content], { type: 'text/plain; charset=utf-8' });
           const filePath = `${user.id}/${folderData.id}/${getStorageFileName(file.name)}`;
+          const contentType =
+            file.contentType || (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') || 'application/octet-stream';
 
           const { error: storageError } = await supabase.storage
             .from('vault')
-            .upload(filePath, fileBlob, {
+            .upload(filePath, uploadBody, {
               upsert: true,
-              contentType: 'text/plain',
+              contentType,
             });
 
           if (storageError) {
