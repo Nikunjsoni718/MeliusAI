@@ -2160,7 +2160,6 @@ function ProjectCard({
   verifiedAssetId,
   onVerify,
   onOpen,
-  onReadProtocol,
   onDelete,
 }: {
   project: ProjectItem;
@@ -2170,7 +2169,6 @@ function ProjectCard({
   verifiedAssetId: string | null;
   onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
   onOpen: (project: ProjectItem) => void;
-  onReadProtocol: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
   const isProjectVerifying = verifyingAssetId === project.id;
@@ -2230,7 +2228,7 @@ function ProjectCard({
           <div className="flex flex-col gap-2 mt-auto pt-4 w-full">
             <button
               type="button"
-              onClick={() => onReadProtocol(project)}
+              onClick={() => onOpen(project)}
               className="w-full py-2 px-4 rounded-full bg-[#11162d] border border-slate-800/60 hover:border-slate-700 text-slate-300 hover:text-white font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
             >
               Read Full Audit Protocol
@@ -3567,7 +3565,22 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return mapProjectRowToProjectItem(data);
   }
 
-  function handleOpenProject(project: ProjectItem) {
+  function handleOpenProject(asset: AuditModalAsset) {
+    const hasCompletedAudit = isProjectAuditAsset(asset)
+      ? Boolean(asset.has_been_audited || getAuditAssetScore(asset))
+      : Boolean(getFolderAuditScore(asset));
+
+    if (!hasCompletedAudit) {
+      window.alert(
+        "This asset has not been verified yet. Please click 'Verify with MeliusAI' to run the scanner first!"
+      );
+      return;
+    }
+
+    setViewingAuditAsset(asset);
+  }
+
+  function handleOpenProjectPreview(project: ProjectItem) {
     const previewUrl = getProjectDownloadHref(project);
 
     if (!previewUrl) {
@@ -4126,21 +4139,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     } finally {
       setVerifyingAssetId(null);
     }
-  }
-
-  function handleReadFullAuditProtocol(asset: AuditModalAsset) {
-    const hasCompletedAudit = isProjectAuditAsset(asset)
-      ? Boolean(asset.has_been_audited || getAuditAssetScore(asset))
-      : Boolean(getFolderAuditScore(asset));
-
-    if (!hasCompletedAudit) {
-      window.alert(
-        "This asset has not been verified yet. Please click 'Verify with MeliusAI' to run the scanner first!"
-      );
-      return;
-    }
-
-    setViewingAuditAsset(asset);
   }
 
   async function handleDeleteProject(projectId: string) {
@@ -5028,8 +5026,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
                           onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                          onOpen={handleReadFullAuditProtocol}
-                          onReadProtocol={handleReadFullAuditProtocol}
+                          onOpen={handleOpenProject}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
                       ))
@@ -5075,7 +5072,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           const folderAudit = folder as FolderAuditItem;
                           const folderAuditScore = getFolderAuditScore(folderAudit);
                           const openFolderAuditProtocol = () => {
-                            handleReadFullAuditProtocol(folderAudit);
+                            handleOpenProject(folderAudit);
                           };
                           const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
                             event.stopPropagation();
@@ -5236,7 +5233,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <button
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        handleReadFullAuditProtocol(folderAudit);
+                                        handleOpenProject(folderAudit);
                                       }}
                                       style={{
                                         background: 'rgba(255,255,255,0.05)',
@@ -5271,8 +5268,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
                             onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                            onOpen={handleReadFullAuditProtocol}
-                            onReadProtocol={handleReadFullAuditProtocol}
+                            onOpen={handleOpenProject}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
                         );
@@ -5558,7 +5554,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   const auditAsset = viewingAuditAsset;
                   setViewingAuditAsset(null);
                   if (isProjectAuditAsset(auditAsset) && getProjectDownloadHref(auditAsset)) {
-                    handleOpenProject(auditAsset);
+                    handleOpenProjectPreview(auditAsset);
                   } else if (!isProjectAuditAsset(auditAsset)) {
                     setActiveFolderId(auditAsset.id);
                   }
