@@ -5428,6 +5428,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 assetTitle={viewingAuditAsset.title}
                 projectId={viewingAuditAsset.id}
                 onClose={() => setViewingAuditAsset(null)}
+                onOpenFullFocus={() => {
+                  const auditAsset = viewingAuditAsset;
+                  setViewingAuditAsset(null);
+                  handleOpenProject(auditAsset);
+                }}
                 reportText={
                   verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
                     ? liveStreamText

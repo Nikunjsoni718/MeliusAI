@@ -204,6 +204,16 @@ type StructuredAuditData = {
   has_been_audited?: boolean | null;
 };
 
+interface AuditReviewModalProps {
+  assetTitle: string;
+  projectId?: string | null;
+  id?: string | null;
+  onClose: () => void;
+  onOpenFullFocus: () => void;
+  reportText: string;
+  auditData?: StructuredAuditData | null;
+}
+
 function getStructuredItems(value?: string[] | null) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && Boolean(item.trim())) : [];
 }
@@ -229,16 +239,10 @@ export function AuditReviewModal({
   projectId,
   id,
   onClose,
+  onOpenFullFocus,
   reportText,
   auditData,
-}: {
-  assetTitle: string;
-  projectId?: string | null;
-  id?: string | null;
-  onClose: () => void;
-  reportText: string;
-  auditData?: StructuredAuditData | null;
-}) {
+}: AuditReviewModalProps) {
   const resolvedProjectId = projectId ?? id ?? auditData?.id ?? null;
   const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null);
   const [score, setScore] = useState<number | null>(null);
@@ -344,7 +348,7 @@ export function AuditReviewModal({
             <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
               {activeFile.name.split('.').pop()} FILE
             </span>
-            <button style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px' }} type="button">Full Focus Mode</button>
+            <button onClick={onOpenFullFocus} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }} type="button">Full Focus Mode</button>
             <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} type="button" aria-label="Close audit protocol">×</button>
           </div>
         </div>
@@ -372,24 +376,27 @@ export function AuditReviewModal({
             </svg>
           </div>
 
+          {/* Box 2: Strengths */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#00ff88', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Strengths</h3>
-            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
-              {activeFile.pros?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            <h3 style={{ margin: '0 0 15px 0', color: '#00ff88', textShadow: '0 0 10px rgba(0, 255, 136, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Strengths</h3>
+            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
+              {activeFile.pros?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
             </ul>
           </div>
 
+          {/* Box 3: Weaknesses */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#ff4444', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Weaknesses</h3>
-            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
-              {activeFile.cons?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            <h3 style={{ margin: '0 0 15px 0', color: '#ff4444', textShadow: '0 0 10px rgba(255, 68, 68, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Weaknesses</h3>
+            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
+              {activeFile.cons?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
             </ul>
           </div>
 
+          {/* Box 4: Recommendations */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Recommendations</h3>
-            <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '13px', lineHeight: '1.6' }}>
-              {activeFile.recommendations?.map((item, i) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal' }}>{item}</li>)}
+            <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', textShadow: '0 0 10px rgba(0, 210, 255, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Recommendations</h3>
+            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
+              {activeFile.recommendations?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
             </ul>
           </div>
         </div>

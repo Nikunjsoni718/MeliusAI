@@ -5,6 +5,7 @@ import { Suspense, useEffect, useRef, useState, type MouseEvent, type ReactNode 
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
+import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -965,6 +966,9 @@ function VaultPageContent() {
   const [syncToken, setSyncToken] = useState(0);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectRow | null>(null);
+  const [activePreviewAsset, setActivePreviewAsset] = useState<ProjectRow | null>(null);
+  const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
+  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
   const [visibilityUpdatingIds, setVisibilityUpdatingIds] = useState<string[]>([]);
   const [visibilityToast, setVisibilityToast] = useState<VaultToastState | null>(null);
@@ -1592,6 +1596,19 @@ Return Markdown sections for goods, bads, project description, and a final score
     setViewingAuditAsset(project);
   }
 
+  function handleOpenFullFocusPreview(project: ProjectRow) {
+    const previewUrl = getVaultAssetUrl(project);
+
+    if (!previewUrl) {
+      window.alert('Preview unavailable: this asset does not contain a valid file URL.');
+      return;
+    }
+
+    setActivePreviewAsset(project);
+    setActivePreviewName(getVaultAssetName(project));
+    setActivePreviewUrl(previewUrl);
+  }
+
   async function handleDeleteVaultAsset(id: string) {
     if (!isOwner) {
       return;
@@ -1820,6 +1837,11 @@ Return Markdown sections for goods, bads, project description, and a final score
         <AuditReviewModal
           assetTitle={getVaultAssetName(viewingAuditAsset)}
           onClose={() => setViewingAuditAsset(null)}
+          onOpenFullFocus={() => {
+            const auditAsset = viewingAuditAsset;
+            setViewingAuditAsset(null);
+            handleOpenFullFocusPreview(auditAsset);
+          }}
           reportText={
             verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
               ? liveStreamText
@@ -1838,6 +1860,62 @@ Return Markdown sections for goods, bads, project description, and a final score
           }}
         />
       ) : null}
+
+      <AssetPreviewModal
+        activePreviewName={activePreviewName}
+        activePreviewUrl={activePreviewUrl}
+        canVerify={isOwner}
+        previewProject={
+          activePreviewAsset
+            ? {
+                id: activePreviewAsset.id,
+                name: activePreviewAsset.name,
+                title: getVaultAssetName(activePreviewAsset),
+                file_name: activePreviewAsset.file_name ?? activePreviewAsset.name ?? activePreviewAsset.title ?? null,
+                file_url: activePreviewAsset.file_url,
+                file_type: activePreviewAsset.file_type,
+                user_description: activePreviewAsset.user_description,
+                description: activePreviewAsset.description,
+                executive_summary: activePreviewAsset.audit_summary,
+                summary: activePreviewAsset.summary,
+                ai_summary: activePreviewAsset.ai_summary,
+                audit_summary: activePreviewAsset.audit_summary,
+                score: activePreviewAsset.score,
+                evaluation_score: activePreviewAsset.evaluation_score,
+                logic_score: activePreviewAsset.logic_score,
+                pros: activePreviewAsset.pros,
+                cons: activePreviewAsset.cons,
+                recommendations: activePreviewAsset.recommendations,
+              }
+            : null
+        }
+        onProjectUpdated={(projectId, projectPatch) => {
+          setVaultAssets((currentAssets) =>
+            currentAssets.map((asset) =>
+              asset.id === projectId
+                ? { ...asset, ...projectPatch, id: asset.id, created_at: asset.created_at }
+                : asset
+            )
+          );
+          setFolderAssets((currentAssets) =>
+            currentAssets.map((asset) =>
+              asset.id === projectId
+                ? { ...asset, ...projectPatch, id: asset.id, created_at: asset.created_at }
+                : asset
+            )
+          );
+          setActivePreviewAsset((currentAsset) =>
+            currentAsset?.id === projectId
+              ? { ...currentAsset, ...projectPatch, id: currentAsset.id, created_at: currentAsset.created_at }
+              : currentAsset
+          );
+        }}
+        onClose={() => {
+          setActivePreviewAsset(null);
+          setActivePreviewName(null);
+          setActivePreviewUrl(null);
+        }}
+      />
     </>
   );
 }
