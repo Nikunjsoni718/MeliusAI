@@ -335,26 +335,33 @@ export function AuditReviewModal({
     cons: structuredCons.length > 0 ? structuredCons : rightSideBads,
     recommendations: structuredRecommendations,
   };
+  const isFile = activeFile?.name?.includes('.');
+  const badgeText = isFile ? `${activeFile.name.split('.').pop()} FILE`.toUpperCase() : 'PROJECT FOLDER';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxWidth: '1200px', maxHeight: '90vh', overflowY: 'auto' }}>
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+    }}>
+      {/* Unified Main Container - Same width and styling for everything */}
+      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxWidth: '1000px', maxHeight: '90vh', overflowY: 'auto' }}>
+        
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{activeFile.name}</h2>
             <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '14px' }}>
-              {activeFile.name.includes('.') ? activeFile.name : 'Project Directory Audit'}
+              {isFile ? activeFile.name : 'Project Directory Audit'}
             </p>
           </div>
+          
+          {/* Top Right Button Group */}
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-             {/* Dynamic Badge */}
             <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-              {activeFile.name.includes('.') ? `${activeFile.name.split('.').pop()} FILE` : 'PROJECT FOLDER'}
+              {badgeText}
             </span>
             
-            {/* Conditionally show Full Focus Mode ONLY for files, but keep the layout stable */}
-            {activeFile.name.includes('.') && (
+            {isFile && (
               <button 
                 onClick={onOpenFullFocus} 
                 style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
@@ -367,20 +374,24 @@ export function AuditReviewModal({
           </div>
         </div>
 
+        {/* AI Executive Summary Box */}
         <div style={{ border: '1px solid #1a2332', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
           <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>AI Executive Summary</h3>
           <p style={{ margin: 0, color: '#ccc', fontSize: '14px', lineHeight: '1.6', wordWrap: 'break-word', whiteSpace: 'normal' }}>
-            {activeFile.executive_summary || 'Audit complete. Review the insights below.'}
+            {activeFile.executive_summary || "Audit complete. Review the insights below."}
           </p>
         </div>
 
+        {/* Verify Button Row */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
-          <button style={{ background: 'transparent', border: '1px solid #00d2ff', color: '#00d2ff', padding: '8px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }} type="button">
+          <button style={{ background: 'transparent', border: '1px solid #00d2ff', color: '#00d2ff', padding: '8px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
             Verify with MeliusAI
           </button>
         </div>
 
+        {/* 4-Column Bottom Grid */}
         <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+          
           <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '30px' }}>
             <svg viewBox="0 0 36 36" style={{ width: '100%', maxWidth: '120px', height: 'auto' }}>
               <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#1a2332" strokeWidth="4" />
@@ -390,7 +401,6 @@ export function AuditReviewModal({
             </svg>
           </div>
 
-          {/* Box 2: Strengths */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#00ff88', textShadow: '0 0 10px rgba(0, 255, 136, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Strengths</h3>
             <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
@@ -398,7 +408,6 @@ export function AuditReviewModal({
             </ul>
           </div>
 
-          {/* Box 3: Weaknesses */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#ff4444', textShadow: '0 0 10px rgba(255, 68, 68, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Weaknesses</h3>
             <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
@@ -406,13 +415,13 @@ export function AuditReviewModal({
             </ul>
           </div>
 
-          {/* Box 4: Recommendations */}
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', textShadow: '0 0 10px rgba(0, 210, 255, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Recommendations</h3>
             <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
               {activeFile.recommendations?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
             </ul>
           </div>
+
         </div>
       </div>
     </div>
