@@ -80,6 +80,18 @@ type WorkAssetGridItem =
 type FolderAuditItem = ProjectFolderRow & {
   evaluated_score?: number | string | null;
   melius_score?: number | string | null;
+  score?: number | string | null;
+  evaluation_score?: number | string | null;
+  logic_score?: number | string | null;
+  executive_summary?: string | null;
+  audit_summary?: string | null;
+  ai_summary?: string | null;
+  description?: string | null;
+  summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
+  has_been_audited?: boolean | null;
 };
 
 type AuditScoreItem = {
@@ -173,6 +185,38 @@ function getAuditAssetScore(asset: AuditScoreItem | null | undefined) {
 
 function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
   return getAuditAssetScore(folder);
+}
+
+function mapFolderToAuditProject(folder: FolderAuditItem): ProjectItem {
+  const folderScore = getFolderAuditScore(folder) ?? 0;
+  const folderSummary =
+    folder.executive_summary?.trim() ||
+    folder.audit_summary?.trim() ||
+    folder.ai_summary?.trim() ||
+    folder.summary?.trim() ||
+    folder.description?.trim() ||
+    'Folder-level audit complete. Review the workspace architecture insights below.';
+
+  return {
+    id: `folder-${folder.id}`,
+    title: folder.name,
+    folder_id: folder.id,
+    file_type: 'folder',
+    status: 'audited',
+    description: folderSummary,
+    executive_summary: folderSummary,
+    summary: folderSummary,
+    audit_summary: folderSummary,
+    ai_summary: folderSummary,
+    score: folderScore,
+    evaluation_score: folderScore,
+    logic_score: folderScore,
+    has_been_audited: true,
+    pros: Array.isArray(folder.pros) ? folder.pros : null,
+    cons: Array.isArray(folder.cons) ? folder.cons : null,
+    recommendations: Array.isArray(folder.recommendations) ? folder.recommendations : null,
+    created_at: folder.created_at ?? null,
+  };
 }
 
 type LiveOpportunityItem = {
@@ -5030,6 +5074,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       visibleWorkItems.map((item) => {
                         if (item.type === 'folder') {
                           const folder = item.folder;
+                          const folderAudit = folder as FolderAuditItem;
+                          const folderAuditScore = getFolderAuditScore(folderAudit);
 
                           return (
                             <div
@@ -5160,7 +5206,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                       }}
                                       type="button"
                                     >
-                                      {auditingFolders[folder.id] ? 'Auditing via GPT Engine...' : 'Verify with MeliusAI'}
+                                      {auditingFolders[folder.id] ? 'Auditing via GPT Engine...' : (folderAuditScore ? 'Re-Verify with MeliusAI' : 'Verify with MeliusAI')}
+                                    </button>
+                                  ) : null}
+
+                                  {folderAuditScore ? (
+                                    <button
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setViewingAuditAsset(mapFolderToAuditProject(folderAudit));
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.05)',
+                                        border: '1px solid #444',
+                                        color: '#fff',
+                                        padding: '10px',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        width: '100%',
+                                        fontWeight: 'bold',
+                                        fontSize: '14px',
+                                        transition: 'all 0.2s',
+                                        marginTop: '2px',
+                                      }}
+                                      type="button"
+                                    >
+                                      Read Full Audit Protocol
                                     </button>
                                   ) : null}
                                 </div>
@@ -5464,7 +5535,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 onOpenFullFocus={() => {
                   const auditAsset = viewingAuditAsset;
                   setViewingAuditAsset(null);
-                  handleOpenProject(auditAsset);
+                  if (getProjectDownloadHref(auditAsset)) {
+                    handleOpenProject(auditAsset);
+                  } else if (auditAsset.folder_id) {
+                    setActiveFolderId(auditAsset.folder_id);
+                  }
                 }}
                 reportText={
                   verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
