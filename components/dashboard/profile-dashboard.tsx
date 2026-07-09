@@ -5076,6 +5076,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           const folder = item.folder;
                           const folderAudit = folder as FolderAuditItem;
                           const folderAuditScore = getFolderAuditScore(folderAudit);
+                          const openFolderAuditProtocol = () => {
+                            setViewingAuditAsset(mapFolderToAuditProject(folderAudit));
+                          };
+                          const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
+                            event.stopPropagation();
+                            openFolderAuditProtocol();
+                          };
 
                           return (
                             <div
@@ -5121,7 +5128,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               ) : null}
 
                               <div className="folder-card-body">
-                                <div className="folder-icon-glow">
+                                <div
+                                  className="folder-icon-glow"
+                                  onClick={folderAuditScore ? handleOpenFolderAuditProtocol : undefined}
+                                  onKeyDown={(event) => {
+                                    if (!folderAuditScore) {
+                                      return;
+                                    }
+
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      openFolderAuditProtocol();
+                                    }
+                                  }}
+                                  role={folderAuditScore ? 'button' : undefined}
+                                  tabIndex={folderAuditScore ? 0 : undefined}
+                                  aria-label={folderAuditScore ? `Read full audit protocol for ${folder.name}` : undefined}
+                                >
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48">
                                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                                   </svg>
@@ -5212,10 +5236,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                                   {folderAuditScore ? (
                                     <button
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        setViewingAuditAsset(mapFolderToAuditProject(folderAudit));
-                                      }}
+                                      onClick={handleOpenFolderAuditProtocol}
                                       style={{
                                         background: 'rgba(255,255,255,0.05)',
                                         border: '1px solid #444',
