@@ -335,11 +335,6 @@ export function AuditReviewModal({
     cons: structuredCons.length > 0 ? structuredCons : rightSideBads,
     recommendations: structuredRecommendations,
   };
-  // A simple check: if the name has no period, it's a folder. If it has a period, it's a file.
-  const isFolder = !activeFile.name.includes('.');
-  const badgeText = isFolder
-    ? 'PROJECT FOLDER'
-    : `${activeFile.name.split('.').pop()} FILE`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
@@ -349,18 +344,17 @@ export function AuditReviewModal({
           <div>
             <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{activeFile.name}</h2>
             <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '14px' }}>
-              {isFolder ? 'Project Directory Audit' : 'Single File Audit'}
+              {activeFile.name.includes('.') ? activeFile.name : 'Project Directory Audit'}
             </p>
           </div>
-          
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-             {/* Smart Badge: Checks if it's a folder (no extension) or a file */}
+             {/* Dynamic Badge */}
             <span style={{ background: 'rgba(0, 210, 255, 0.1)', color: '#00d2ff', border: '1px solid rgba(0, 210, 255, 0.2)', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-              {badgeText}
+              {activeFile.name.includes('.') ? `${activeFile.name.split('.').pop()} FILE` : 'PROJECT FOLDER'}
             </span>
-
-            {/* Conditionally show Full Focus Mode ONLY if it's a file */}
-            {!isFolder && (
+            
+            {/* Conditionally show Full Focus Mode ONLY for files, but keep the layout stable */}
+            {activeFile.name.includes('.') && (
               <button 
                 onClick={onOpenFullFocus} 
                 style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
@@ -368,14 +362,8 @@ export function AuditReviewModal({
                 Full Focus Mode
               </button>
             )}
-
-            {/* Close Button - Ensure this sits nicely inline */}
-            <button 
-              onClick={onClose} 
-              style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}
-            >
-              ×
-            </button>
+            
+            <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         </div>
 
