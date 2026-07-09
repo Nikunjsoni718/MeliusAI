@@ -5028,7 +5028,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
                           onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                          onOpen={handleOpenProject}
+                          onOpen={handleReadFullAuditProtocol}
                           onReadProtocol={handleReadFullAuditProtocol}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
@@ -5271,7 +5271,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
                             onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                            onOpen={handleOpenProject}
+                            onOpen={handleReadFullAuditProtocol}
                             onReadProtocol={handleReadFullAuditProtocol}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
