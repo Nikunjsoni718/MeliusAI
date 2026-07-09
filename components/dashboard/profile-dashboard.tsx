@@ -93,11 +93,25 @@ const BLOCKED_FILES = [
   'pnpm-lock.yaml',
   'composer.lock',
   'cargo.lock',
+  'pipfile.lock',
+  'poetry.lock',
   '.env',
   '.ds_store',
 ];
 
-const BLOCKED_EXTENSIONS = ['.exe', '.dll', '.bin', '.iso', '.dmg'];
+const BLOCKED_EXTENSIONS = [
+  '.exe',
+  '.dll',
+  '.bin',
+  '.iso',
+  '.dmg',
+  '.sqlite',
+  '.sqlite3',
+  '.db',
+  '.pyc',
+  '.o',
+  '.obj',
+];
 
 function isBlockedStagedFile(fileName: string) {
   const normalizedFileName = fileName.toLowerCase();
