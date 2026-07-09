@@ -4128,15 +4128,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  function handleReadFullAuditProtocol(project: ProjectItem) {
-    if (!project.has_been_audited) {
+  function handleReadFullAuditProtocol(asset: AuditModalAsset) {
+    const hasCompletedAudit = isProjectAuditAsset(asset)
+      ? Boolean(asset.has_been_audited || getAuditAssetScore(asset))
+      : Boolean(getFolderAuditScore(asset));
+
+    if (!hasCompletedAudit) {
       window.alert(
-        "This asset file has not been verified yet. Please click 'Verify Asset' to run the scanner first!"
+        "This asset has not been verified yet. Please click 'Verify with MeliusAI' to run the scanner first!"
       );
       return;
     }
 
-    setViewingAuditAsset(project);
+    setViewingAuditAsset(asset);
   }
 
   async function handleDeleteProject(projectId: string) {
@@ -5071,7 +5075,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           const folderAudit = folder as FolderAuditItem;
                           const folderAuditScore = getFolderAuditScore(folderAudit);
                           const openFolderAuditProtocol = () => {
-                            setViewingAuditAsset(folderAudit);
+                            handleReadFullAuditProtocol(folderAudit);
                           };
                           const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
                             event.stopPropagation();
@@ -5232,7 +5236,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <button
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        setViewingAuditAsset(folderAudit);
+                                        handleReadFullAuditProtocol(folderAudit);
                                       }}
                                       style={{
                                         background: 'rgba(255,255,255,0.05)',
