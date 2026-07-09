@@ -94,6 +94,8 @@ type FolderAuditItem = ProjectFolderRow & {
   has_been_audited?: boolean | null;
 };
 
+type AuditModalAsset = ProjectItem | FolderAuditItem;
+
 type AuditScoreItem = {
   id?: string | null;
   evaluated_score?: number | string | null;
@@ -187,36 +189,24 @@ function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
   return getAuditAssetScore(folder);
 }
 
-function mapFolderToAuditProject(folder: FolderAuditItem): ProjectItem {
-  const folderScore = getFolderAuditScore(folder) ?? 0;
-  const folderSummary =
-    folder.executive_summary?.trim() ||
-    folder.audit_summary?.trim() ||
-    folder.ai_summary?.trim() ||
-    folder.summary?.trim() ||
-    folder.description?.trim() ||
-    'Folder-level audit complete. Review the workspace architecture insights below.';
+function isProjectAuditAsset(asset: AuditModalAsset | null | undefined): asset is ProjectItem {
+  return Boolean(asset && 'title' in asset);
+}
 
-  return {
-    id: `folder-${folder.id}`,
-    title: folder.name,
-    folder_id: folder.id,
-    file_type: 'folder',
-    status: 'audited',
-    description: folderSummary,
-    executive_summary: folderSummary,
-    summary: folderSummary,
-    audit_summary: folderSummary,
-    ai_summary: folderSummary,
-    score: folderScore,
-    evaluation_score: folderScore,
-    logic_score: folderScore,
-    has_been_audited: true,
-    pros: Array.isArray(folder.pros) ? folder.pros : null,
-    cons: Array.isArray(folder.cons) ? folder.cons : null,
-    recommendations: Array.isArray(folder.recommendations) ? folder.recommendations : null,
-    created_at: folder.created_at ?? null,
-  };
+function getAuditModalAssetTitle(asset: AuditModalAsset) {
+  return isProjectAuditAsset(asset) ? asset.title : asset.name;
+}
+
+function getAuditModalAssetSummary(asset: AuditModalAsset) {
+  return (
+    asset.ai_summary?.trim() ||
+    asset.audit_summary?.trim() ||
+    asset.executive_summary?.trim() ||
+    asset.summary?.trim() ||
+    asset.description?.trim() ||
+    (isProjectAuditAsset(asset) ? asset.user_description?.trim() : '') ||
+    'Audit complete. Review the insights below.'
+  );
 }
 
 type LiveOpportunityItem = {
@@ -2341,7 +2331,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isIngestionModalOpen, setIsIngestionModalOpen] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
-  const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectItem | null>(null);
+  const [viewingAuditAsset, setViewingAuditAsset] = useState<AuditModalAsset | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [auditingFolders, setAuditingFolders] = useState<Record<string, boolean>>({});
@@ -3951,7 +3941,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     setViewingAuditAsset((currentAsset) =>
-      currentAsset?.id === projectId ? { ...currentAsset, ...projectPatch } : currentAsset
+      currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === projectId
+        ? { ...currentAsset, ...projectPatch }
+        : currentAsset
     );
   }
 
@@ -4118,7 +4110,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         [project.id]: userContextDescription,
       }));
       setViewingAuditAsset((currentAsset) =>
-        currentAsset?.id === project.id
+        currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === project.id
           ? mergeVerifiedProject(currentAsset, verifiedProjectPatch, accumulatedReportText)
           : currentAsset
       );
@@ -4188,7 +4180,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
         delete descriptionSaveTimersRef.current[projectId];
       }
-      setViewingAuditAsset((currentAsset) => (currentAsset?.id === projectId ? null : currentAsset));
+      setViewingAuditAsset((currentAsset) =>
+        currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === projectId ? null : currentAsset
+      );
       setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
       if (activePreviewProjectId === projectId) {
         setActivePreviewName(null);
@@ -5077,7 +5071,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           const folderAudit = folder as FolderAuditItem;
                           const folderAuditScore = getFolderAuditScore(folderAudit);
                           const openFolderAuditProtocol = () => {
-                            setViewingAuditAsset(mapFolderToAuditProject(folderAudit));
+                            setViewingAuditAsset(folderAudit);
                           };
                           const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
                             event.stopPropagation();
@@ -5236,7 +5230,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                                   {folderAuditScore ? (
                                     <button
-                                      onClick={handleOpenFolderAuditProtocol}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setViewingAuditAsset(folderAudit);
+                                      }}
                                       style={{
                                         background: 'rgba(255,255,255,0.05)',
                                         border: '1px solid #444',
@@ -5550,31 +5547,31 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
             {viewingAuditAsset ? (
               <AuditReviewModal
-                assetTitle={viewingAuditAsset.title}
-                projectId={viewingAuditAsset.id}
+                assetTitle={getAuditModalAssetTitle(viewingAuditAsset)}
+                projectId={isProjectAuditAsset(viewingAuditAsset) ? viewingAuditAsset.id : null}
                 onClose={() => setViewingAuditAsset(null)}
                 onOpenFullFocus={() => {
                   const auditAsset = viewingAuditAsset;
                   setViewingAuditAsset(null);
-                  if (getProjectDownloadHref(auditAsset)) {
+                  if (isProjectAuditAsset(auditAsset) && getProjectDownloadHref(auditAsset)) {
                     handleOpenProject(auditAsset);
-                  } else if (auditAsset.folder_id) {
-                    setActiveFolderId(auditAsset.folder_id);
+                  } else if (!isProjectAuditAsset(auditAsset)) {
+                    setActiveFolderId(auditAsset.id);
                   }
                 }}
                 reportText={
-                  verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
+                  isProjectAuditAsset(viewingAuditAsset) && verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
                     ? liveStreamText
-                    : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
+                    : getAuditModalAssetSummary(viewingAuditAsset)
                 }
                 auditData={{
                   ai_summary: viewingAuditAsset.ai_summary,
-                  user_description: viewingAuditAsset.user_description,
+                  user_description: isProjectAuditAsset(viewingAuditAsset) ? viewingAuditAsset.user_description : null,
                   audit_summary: viewingAuditAsset.audit_summary,
                   description: viewingAuditAsset.description,
-                  executive_summary: viewingAuditAsset.audit_summary,
-                  summary: viewingAuditAsset.ai_summary,
-                  score: viewingAuditAsset.score ?? viewingAuditAsset.evaluation_score ?? viewingAuditAsset.logic_score,
+                  executive_summary: viewingAuditAsset.executive_summary ?? viewingAuditAsset.audit_summary,
+                  summary: viewingAuditAsset.summary ?? viewingAuditAsset.ai_summary,
+                  score: getAuditAssetScore(viewingAuditAsset),
                   pros: viewingAuditAsset.pros,
                   cons: viewingAuditAsset.cons,
                   recommendations: viewingAuditAsset.recommendations,
