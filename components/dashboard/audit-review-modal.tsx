@@ -343,8 +343,8 @@ export function AuditReviewModal({
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
       backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
     }}>
-      {/* Unified Main Container - Same width and styling for everything */}
-      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '24px', color: '#fff', width: '100%', maxWidth: '1000px', maxHeight: '90vh', overflowY: 'auto' }}>
+      {/* Unified Main Container - Polished Wide Version */}
+      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '30px', color: '#fff', width: '90%', maxWidth: '1100px', maxHeight: '90vh', overflowY: 'auto' }}>
         
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
