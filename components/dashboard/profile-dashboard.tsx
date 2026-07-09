@@ -4231,14 +4231,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   };
 
-  const handleDeleteFolder = async (folderId: string, event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-
+  const handleDeleteFolder = async (folderId: string) => {
     if (!isOwner) {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this workspace and all its files? This cannot be undone.')) {
+    if (!window.confirm("Are you sure you want to delete this project? All files inside will be permanently lost.")) {
       return;
     }
 
@@ -4248,33 +4246,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
-      const { error } = await supabase
+      const { error: filesError } = await supabase
+        .from('projects')
+        .delete()
+        .eq('folder_id', folderId);
+
+      if (filesError) {
+        throw filesError;
+      }
+
+      const { error: folderError } = await supabase
         .from('project_folders')
         .delete()
         .eq('id', folderId);
 
-      if (error) {
-        throw error;
+      if (folderError) {
+        throw folderError;
       }
 
-      setProjectFolders((currentFolders) => currentFolders.filter((folder) => folder.id !== folderId));
-      setProjects((currentProjects) => currentProjects.filter((project) => project.folder_id !== folderId));
+      setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));
+      setProjects((prev) => prev.filter((project) => project.folder_id !== folderId));
       if (activeFolderId === folderId) {
         setActiveFolderId(null);
       }
       if (spectatorProfileKey) {
         await mutate(spectatorProfileKey);
       }
-      router.refresh();
-    } catch (err) {
-      console.error('Delete failed:', err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : typeof err === 'string'
-            ? err
-            : JSON.stringify(err);
-      alert(`Failed to delete folder: ${errorMessage}`);
+    } catch (error: any) {
+      console.error("Delete Error:", error);
+      alert(`Failed to delete folder: ${error.message}`);
     }
   };
 
@@ -4943,7 +4943,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                                   <button
                                     className="folder-delete-btn"
-                                    onClick={(event) => void handleDeleteFolder(folder.id, event)}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleDeleteFolder(folder.id);
+                                    }}
                                     style={{ position: 'static', top: 'auto', right: 'auto', padding: '6px', borderRadius: '6px' }}
                                     title="Delete Workspace"
                                     type="button"
