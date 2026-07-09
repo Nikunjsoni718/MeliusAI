@@ -10,7 +10,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import useSWR, { useSWRConfig } from 'swr';
 
 import faviconLogo from '@/app/favicon.png';
-import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
 import { Badge } from '@/components/ui/badge';
@@ -207,6 +206,27 @@ function getAuditModalAssetSummary(asset: AuditModalAsset) {
     (isProjectAuditAsset(asset) ? asset.user_description?.trim() : '') ||
     'Audit complete. Review the insights below.'
   );
+}
+
+function getAuditModalAssetReportText(asset: AuditModalAsset) {
+  const score = getAuditAssetScore(asset) ?? 0;
+  const pros = Array.isArray(asset.pros) ? asset.pros : [];
+  const cons = Array.isArray(asset.cons) ? asset.cons : [];
+  const recommendations = Array.isArray(asset.recommendations) ? asset.recommendations : [];
+
+  return [
+    getAuditModalAssetSummary(asset),
+    pros.length > 0 ? `Strengths\n${pros.map((item) => `- ${item}`).join('\n')}` : '',
+    cons.length > 0 ? `Weaknesses\n${cons.map((item) => `- ${item}`).join('\n')}` : '',
+    recommendations.length > 0 ? `Recommendations\n${recommendations.map((item) => `- ${item}`).join('\n')}` : '',
+    `MeliusAI Score: ${score}/100`,
+  ]
+    .filter((section) => section.trim().length > 0)
+    .join('\n\n');
+}
+
+function getAuditReportDataUrl(asset: AuditModalAsset) {
+  return `data:text/plain;charset=utf-8,${encodeURIComponent(getAuditModalAssetReportText(asset))}`;
 }
 
 type LiveOpportunityItem = {
@@ -2329,13 +2349,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isIngestionModalOpen, setIsIngestionModalOpen] = useState(false);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
   const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
-  const [viewingAuditAsset, setViewingAuditAsset] = useState<AuditModalAsset | null>(null);
   const [liveStreamText, setLiveStreamText] = useState('');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [auditingFolders, setAuditingFolders] = useState<Record<string, boolean>>({});
   const [projectVerifyError, setProjectVerifyError] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
+  const [activePreviewProjectOverride, setActivePreviewProjectOverride] = useState<ProjectItem | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -2697,10 +2717,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return showAllWork ? initialWorkItems : initialWorkItems.slice(0, 4);
   }, [initialWorkItems, showAllWork]);
   const activePreviewProject = useMemo(() => {
+    if (activePreviewProjectOverride) {
+      return activePreviewProjectOverride;
+    }
+
     return activePreviewProjectId
       ? allProjects.find((project) => project.id === activePreviewProjectId) ?? null
       : null;
-  }, [activePreviewProjectId, allProjects]);
+  }, [activePreviewProjectId, activePreviewProjectOverride, allProjects]);
   const scanHistory = useMemo(() => {
     return showAllRatings ? initialReviews : initialReviews.slice(0, 3);
   }, [initialReviews, showAllRatings]);
@@ -2776,8 +2800,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setLiveJobs([]);
       setLoadingState(true);
       setFetchError(null);
-      setViewingAuditAsset(null);
       setActivePreviewProjectId(null);
+      setActivePreviewProjectOverride(null);
       setActivePreviewName(null);
       setActivePreviewUrl(null);
       setShowAllWork(false);
@@ -3565,30 +3589,52 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return mapProjectRowToProjectItem(data);
   }
 
-  function handleOpenProject(asset: AuditModalAsset) {
-    const hasCompletedAudit = isProjectAuditAsset(asset)
-      ? Boolean(asset.has_been_audited || getAuditAssetScore(asset))
-      : Boolean(getFolderAuditScore(asset));
+  function handleOpenProjectPreview(asset: AuditModalAsset) {
+    if (isProjectAuditAsset(asset)) {
+      const previewUrl = getProjectDownloadHref(asset) ?? getAuditReportDataUrl(asset);
+      const previewFileName = getProjectDownloadHref(asset)
+        ? asset.title
+        : `${asset.title || 'Audit Report'}.txt`;
 
-    if (!hasCompletedAudit) {
-      window.alert(
-        "This asset has not been verified yet. Please click 'Verify with MeliusAI' to run the scanner first!"
-      );
+      setActivePreviewProjectOverride(null);
+      setActivePreviewProjectId(asset.id);
+      setActivePreviewName(previewFileName);
+      setActivePreviewUrl(previewUrl);
       return;
     }
 
-    setViewingAuditAsset(asset);
-  }
+    const auditReportText = getAuditModalAssetReportText(asset);
+    const previewUrl = getAuditReportDataUrl(asset);
+    const previewName = `${asset.name || 'Project Directory Audit'}.txt`;
+    const folderPreviewProject: ProjectItem = {
+      id: `folder-preview-${asset.id}`,
+      title: asset.name,
+      folder_id: asset.id,
+      file_type: 'txt',
+      status: 'audited',
+      preview_url: previewUrl,
+      preview_kind: 'code',
+      text_preview: auditReportText,
+      file_name: previewName,
+      file_url: previewUrl,
+      description: getAuditModalAssetSummary(asset),
+      executive_summary: asset.executive_summary ?? asset.audit_summary ?? asset.ai_summary ?? null,
+      summary: asset.summary ?? asset.ai_summary ?? null,
+      score: getFolderAuditScore(asset),
+      audit_summary: asset.audit_summary ?? asset.executive_summary ?? asset.ai_summary ?? null,
+      pros: Array.isArray(asset.pros) ? asset.pros : null,
+      cons: Array.isArray(asset.cons) ? asset.cons : null,
+      recommendations: Array.isArray(asset.recommendations) ? asset.recommendations : null,
+      evaluation_score: getFolderAuditScore(asset),
+      has_been_audited: true,
+      logic_score: getFolderAuditScore(asset),
+      ai_summary: asset.ai_summary ?? asset.executive_summary ?? asset.audit_summary ?? null,
+      created_at: asset.created_at ?? null,
+    };
 
-  function handleOpenProjectPreview(project: ProjectItem) {
-    const previewUrl = getProjectDownloadHref(project);
-
-    if (!previewUrl) {
-      return;
-    }
-
-    setActivePreviewProjectId(project.id);
-    setActivePreviewName(project.title);
+    setActivePreviewProjectOverride(folderPreviewProject);
+    setActivePreviewProjectId(folderPreviewProject.id);
+    setActivePreviewName(previewName);
     setActivePreviewUrl(previewUrl);
   }
 
@@ -3953,10 +3999,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }));
     }
 
-    setViewingAuditAsset((currentAsset) =>
-      currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === projectId
-        ? { ...currentAsset, ...projectPatch }
-        : currentAsset
+    setActivePreviewProjectOverride((currentProject) =>
+      currentProject?.id === projectId ? { ...currentProject, ...projectPatch } : currentProject
     );
   }
 
@@ -4122,10 +4166,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ...currentDescriptions,
         [project.id]: userContextDescription,
       }));
-      setViewingAuditAsset((currentAsset) =>
-        currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === project.id
-          ? mergeVerifiedProject(currentAsset, verifiedProjectPatch, accumulatedReportText)
-          : currentAsset
+      setActivePreviewProjectOverride((currentProject) =>
+        currentProject?.id === project.id
+          ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
+          : currentProject
       );
       setVerifiedAssetId(project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
@@ -4182,8 +4226,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
         delete descriptionSaveTimersRef.current[projectId];
       }
-      setViewingAuditAsset((currentAsset) =>
-        currentAsset && isProjectAuditAsset(currentAsset) && currentAsset.id === projectId ? null : currentAsset
+      setActivePreviewProjectOverride((currentProject) =>
+        currentProject?.id === projectId ? null : currentProject
       );
       setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
       if (activePreviewProjectId === projectId) {
@@ -5026,7 +5070,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
                           onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                          onOpen={handleOpenProject}
+                          onOpen={handleOpenProjectPreview}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
                       ))
@@ -5072,7 +5116,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           const folderAudit = folder as FolderAuditItem;
                           const folderAuditScore = getFolderAuditScore(folderAudit);
                           const openFolderAuditProtocol = () => {
-                            handleOpenProject(folderAudit);
+                            handleOpenProjectPreview(folderAudit);
                           };
                           const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
                             event.stopPropagation();
@@ -5233,7 +5277,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <button
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        handleOpenProject(folderAudit);
+                                        handleOpenProjectPreview(folderAudit);
                                       }}
                                       style={{
                                         background: 'rgba(255,255,255,0.05)',
@@ -5268,7 +5312,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
                             onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                            onOpen={handleOpenProject}
+                            onOpen={handleOpenProjectPreview}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
                         );
@@ -5545,40 +5589,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </>
             ) : null}
 
-            {viewingAuditAsset ? (
-              <AuditReviewModal
-                assetTitle={getAuditModalAssetTitle(viewingAuditAsset)}
-                projectId={isProjectAuditAsset(viewingAuditAsset) ? viewingAuditAsset.id : null}
-                onClose={() => setViewingAuditAsset(null)}
-                onOpenFullFocus={() => {
-                  const auditAsset = viewingAuditAsset;
-                  setViewingAuditAsset(null);
-                  if (isProjectAuditAsset(auditAsset) && getProjectDownloadHref(auditAsset)) {
-                    handleOpenProjectPreview(auditAsset);
-                  } else if (!isProjectAuditAsset(auditAsset)) {
-                    setActiveFolderId(auditAsset.id);
-                  }
-                }}
-                reportText={
-                  isProjectAuditAsset(viewingAuditAsset) && verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
-                    ? liveStreamText
-                    : getAuditModalAssetSummary(viewingAuditAsset)
-                }
-                auditData={{
-                  ai_summary: viewingAuditAsset.ai_summary,
-                  user_description: isProjectAuditAsset(viewingAuditAsset) ? viewingAuditAsset.user_description : null,
-                  audit_summary: viewingAuditAsset.audit_summary,
-                  description: viewingAuditAsset.description,
-                  executive_summary: viewingAuditAsset.executive_summary ?? viewingAuditAsset.audit_summary,
-                  summary: viewingAuditAsset.summary ?? viewingAuditAsset.ai_summary,
-                  score: getAuditAssetScore(viewingAuditAsset),
-                  pros: viewingAuditAsset.pros,
-                  cons: viewingAuditAsset.cons,
-                  recommendations: viewingAuditAsset.recommendations,
-                }}
-              />
-            ) : null}
-
             <AssetPreviewModal
               activePreviewName={activePreviewName}
               activePreviewUrl={activePreviewUrl}
@@ -5586,6 +5596,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               onProjectUpdated={handlePreviewProjectUpdated}
               onClose={() => {
                 setActivePreviewProjectId(null);
+                setActivePreviewProjectOverride(null);
                 setActivePreviewName(null);
                 setActivePreviewUrl(null);
               }}
