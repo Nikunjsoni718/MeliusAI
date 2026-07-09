@@ -82,6 +82,15 @@ type FolderAuditItem = ProjectFolderRow & {
   melius_score?: number | string | null;
 };
 
+type AuditScoreItem = {
+  id?: string | null;
+  evaluated_score?: number | string | null;
+  melius_score?: number | string | null;
+  score?: number | string | null;
+  evaluation_score?: number | string | null;
+  logic_score?: number | string | null;
+};
+
 type StagedFile = {
   path: string;
   name: string;
@@ -127,9 +136,7 @@ function isBlockedStagedFile(sourceFileName: string) {
   return isBlockedExtension || isBlockedFile;
 }
 
-function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
-  const rawScore = folder?.evaluated_score ?? folder?.melius_score;
-
+function normalizeAuditScore(rawScore: number | string | null | undefined) {
   if (typeof rawScore === 'number' && Number.isFinite(rawScore)) {
     return Math.max(0, Math.min(100, Math.round(rawScore)));
   }
@@ -142,6 +149,30 @@ function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
   }
 
   return null;
+}
+
+function getAuditAssetScore(asset: AuditScoreItem | null | undefined) {
+  const scoreCandidates = [
+    asset?.evaluated_score,
+    asset?.melius_score,
+    asset?.score,
+    asset?.evaluation_score,
+    asset?.logic_score,
+  ];
+
+  for (const scoreCandidate of scoreCandidates) {
+    const normalizedScore = normalizeAuditScore(scoreCandidate);
+
+    if (normalizedScore !== null && normalizedScore > 0) {
+      return normalizedScore;
+    }
+  }
+
+  return null;
+}
+
+function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
+  return getAuditAssetScore(folder);
 }
 
 type LiveOpportunityItem = {
@@ -2607,24 +2638,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         return rightDate - leftDate;
       });
   }, [allProjects, scans]);
-  const auditedFolders = useMemo(
-    () =>
-      projectFolders.filter((folder) => {
-        const folderScore = getFolderAuditScore(folder as FolderAuditItem);
-        return folderScore !== null && folderScore > 0;
-      }),
-    [projectFolders]
+  const allAuditableAssets = useMemo<AuditScoreItem[]>(
+    () => [...projectFolders, ...allProjects],
+    [projectFolders, allProjects]
   );
-  const folderScoreSum = useMemo(() => {
-    return auditedFolders.reduce(
-      (sum, folder) => sum + (getFolderAuditScore(folder as FolderAuditItem) ?? 0),
-      0
-    );
-  }, [auditedFolders]);
-  const averageMeliusScore =
-    auditedFolders.length > 0 ? Math.round(folderScoreSum / auditedFolders.length) : 0;
-  const computedAverageScore = averageMeliusScore;
-  const normalizedScore = auditedFolders.length > 0 ? averageMeliusScore : null;
+  const auditedAssets = useMemo(
+    () =>
+      allAuditableAssets.filter((asset) => {
+        const assetScore = getAuditAssetScore(asset);
+        return assetScore !== null && assetScore > 0;
+      }),
+    [allAuditableAssets]
+  );
+  const totalScore = useMemo(
+    () => auditedAssets.reduce((sum, asset) => sum + (getAuditAssetScore(asset) ?? 0), 0),
+    [auditedAssets]
+  );
+  const globalAverageScore =
+    auditedAssets.length > 0 ? Math.round(totalScore / auditedAssets.length) : 0;
+  const computedAverageScore = globalAverageScore;
+  const normalizedScore = auditedAssets.length > 0 ? globalAverageScore : null;
   const initialProjects = allProjects;
   const initialWorkItems = rootWorkItems;
   const initialReviews = spectatorScanProjects.length > 0 ? spectatorScanProjects : verifiedProjects;
