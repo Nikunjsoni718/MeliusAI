@@ -77,6 +77,11 @@ type WorkAssetGridItem =
   | { type: 'folder'; folder: ProjectFolderRow }
   | { type: 'project'; project: ProjectItem };
 
+type FolderAuditItem = ProjectFolderRow & {
+  evaluated_score?: number | string | null;
+  melius_score?: number | string | null;
+};
+
 type StagedFile = {
   path: string;
   name: string;
@@ -120,6 +125,23 @@ function isBlockedStagedFile(sourceFileName: string) {
   const isBlockedFile = BLOCKED_FILES.includes(fileName);
 
   return isBlockedExtension || isBlockedFile;
+}
+
+function getFolderAuditScore(folder: FolderAuditItem | null | undefined) {
+  const rawScore = folder?.evaluated_score ?? folder?.melius_score;
+
+  if (typeof rawScore === 'number' && Number.isFinite(rawScore)) {
+    return Math.max(0, Math.min(100, Math.round(rawScore)));
+  }
+
+  if (typeof rawScore === 'string' && rawScore.trim()) {
+    const parsedScore = Number.parseInt(rawScore, 10);
+    if (Number.isFinite(parsedScore)) {
+      return Math.max(0, Math.min(100, parsedScore));
+    }
+  }
+
+  return null;
 }
 
 type LiveOpportunityItem = {
@@ -2585,13 +2607,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         return rightDate - leftDate;
       });
   }, [allProjects, scans]);
-  const totalScoreSum = useMemo(() => {
-    return verifiedProjects.reduce((total, project) => total + (project.logic_score ?? 0), 0);
-  }, [verifiedProjects]);
-  const scanCount = verifiedProjects.length;
-  const computedAverageScore =
-    scanCount > 0 ? Math.max(0, Math.min(100, Math.round(totalScoreSum / scanCount))) : avgProjectScore;
-  const normalizedScore = scanCount > 0 ? computedAverageScore : null;
+  const auditedFolders = useMemo(
+    () =>
+      projectFolders.filter((folder) => {
+        const folderScore = getFolderAuditScore(folder as FolderAuditItem);
+        return folderScore !== null && folderScore > 0;
+      }),
+    [projectFolders]
+  );
+  const folderScoreSum = useMemo(() => {
+    return auditedFolders.reduce(
+      (sum, folder) => sum + (getFolderAuditScore(folder as FolderAuditItem) ?? 0),
+      0
+    );
+  }, [auditedFolders]);
+  const averageMeliusScore =
+    auditedFolders.length > 0 ? Math.round(folderScoreSum / auditedFolders.length) : 0;
+  const computedAverageScore = averageMeliusScore;
+  const normalizedScore = auditedFolders.length > 0 ? averageMeliusScore : null;
   const initialProjects = allProjects;
   const initialWorkItems = rootWorkItems;
   const initialReviews = spectatorScanProjects.length > 0 ? spectatorScanProjects : verifiedProjects;
