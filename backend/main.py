@@ -2141,10 +2141,97 @@ def truncate_audit_text(value: Any, limit: int) -> str:
     return text[:limit] + "\n...[truncated]"
 
 
+def get_blueprint_file_priority(loaded_file: Dict[str, Any]) -> tuple[int, int, str]:
+    file_record = loaded_file.get("record") or {}
+    raw_file_name = str(loaded_file.get("file_name") or get_audit_file_name(file_record))
+    normalized_path = raw_file_name.replace("\\", "/").strip().lower()
+    file_basename = normalized_path.rsplit("/", 1)[-1]
+    config_names = {
+        ".env",
+        ".env.example",
+        ".env.local",
+        "composer.json",
+        "docker-compose.yml",
+        "dockerfile",
+        "gemfile",
+        "go.mod",
+        "package-lock.json",
+        "package.json",
+        "pipfile",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "pyproject.toml",
+        "requirements.txt",
+        "tsconfig.json",
+        "vite.config.js",
+        "vite.config.ts",
+        "yarn.lock",
+    }
+    config_suffixes = (
+        ".config.js",
+        ".config.ts",
+        ".config.mjs",
+        ".config.cjs",
+        ".toml",
+        ".yaml",
+        ".yml",
+    )
+    entrypoint_names = {
+        "app.py",
+        "index.html",
+        "index.js",
+        "index.jsx",
+        "index.ts",
+        "index.tsx",
+        "main.js",
+        "main.jsx",
+        "main.py",
+        "main.ts",
+        "main.tsx",
+        "server.js",
+        "server.ts",
+        "wsgi.py",
+    }
+    source_suffixes = {
+        ".css",
+        ".go",
+        ".html",
+        ".java",
+        ".js",
+        ".jsx",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".sql",
+        ".ts",
+        ".tsx",
+    }
+
+    if file_basename in config_names or file_basename.endswith(config_suffixes):
+        priority = 0
+    elif file_basename in entrypoint_names:
+        priority = 1
+    elif Path(file_basename).suffix in source_suffixes:
+        priority = 2
+    else:
+        priority = 3
+
+    return (priority, len(normalized_path), normalized_path)
+
+
+def format_system_blueprint_context(system_blueprint: str) -> str:
+    return (
+        "--- BEGIN SYSTEM BLUEPRINT CONTEXT ---\n"
+        f"{truncate_audit_text(system_blueprint, AUDIT_REDUCE_REPORT_CHAR_LIMIT)}\n"
+        "--- END SYSTEM BLUEPRINT CONTEXT ---"
+    )
+
+
 def build_folder_audit_source(loaded_files: List[Dict[str, Any]]) -> str:
     file_sections: List[str] = []
 
-    for loaded_file in loaded_files:
+    for loaded_file in sorted(loaded_files, key=get_blueprint_file_priority):
         file_record = loaded_file.get("record") or {}
         file_name = str(loaded_file.get("file_name") or get_audit_file_name(file_record))
         file_type = (
@@ -2335,9 +2422,9 @@ def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
-# PHASE 1: THE SYSTEM ARCHITECT - Understand the whole project
+# Phase 1: The System Architect (Zero-README Protocol)
 async def generate_system_blueprint(loaded_files: List[Dict[str, Any]]) -> str:
-    project_source = build_folder_audit_source(loaded_files)
+    all_files_content = build_folder_audit_source(loaded_files)
 
     response = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
@@ -2345,15 +2432,17 @@ async def generate_system_blueprint(loaded_files: List[Dict[str, Any]]) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are a Principal Systems Architect. You are being handed the raw code for an entire project. "
-                    "Your ONLY job is to read all the files, figure out how they connect, and output a detailed 'System Blueprint'. "
-                    "Explain the architecture, the data flow, the frameworks used (strictly based on syntax), and the ultimate goal of the system. "
-                    "Do not audit or look for bugs yet. Just explain what this machine is and how the gears fit together."
+                    "You are a Principal Systems Architect. The user has uploaded a repository of raw code. "
+                    "Your job is to forensically analyze these files. Look at the file extensions, package managers (e.g., package.json, requirements.txt), and import statements. "
+                    "Deduce the exact frontend and backend frameworks being used, the database structure, and the overall purpose of the application.\n\n"
+                    "CRITICAL ANTI-HALLUCINATION RULE: Do not guess frameworks. If a file uses `document.getElementById` or `.innerHTML`, it is Vanilla JS, not React or Angular. "
+                    "Rely strictly on the syntax provided.\n\n"
+                    "Output a comprehensive 'System Blueprint' explaining the architecture, data flow, and exact tech stack. Do not audit for bugs yet; just explain how the machine works."
                 ),
             },
             {
                 "role": "user",
-                "content": f"Here is the raw code for the entire project folder, grouped by file:\n\n{project_source}",
+                "content": f"Here is the raw codebase:\n\n{all_files_content}",
             },
         ],
         max_tokens=1800,
@@ -2369,6 +2458,7 @@ async def generate_final_folder_report(
     system_blueprint: str,
     file_audits: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    system_blueprint_context = format_system_blueprint_context(system_blueprint)
     file_audits_json = truncate_audit_text(
         json.dumps(file_audits, ensure_ascii=False),
         AUDIT_REDUCE_REPORT_CHAR_LIMIT,
@@ -2382,7 +2472,7 @@ async def generate_final_folder_report(
                 "role": "system",
                 "content": (
                     "You are the Lead Tech Director. You are giving the final 'Beauty and Brains' score for an entire codebase. \n"
-                    f"SYSTEM BLUEPRINT: \n{system_blueprint}\n"
+                    f"SYSTEM BLUEPRINT: \n{system_blueprint_context}\n"
                     f"INDIVIDUAL FILE AUDITS:\n{file_audits_json}\n\n"
                     "Based on what this system is supposed to do, and the individual flaws/strengths found in the files, generate the final repository-level JSON report.\n"
                     "Use the exact JSON schema required by our database: evaluated_score, executive_summary, pros, cons, recommendations.\n"
@@ -2467,7 +2557,7 @@ async def audit_single_file(
                     "role": "system",
                     "content": (
                         "You are a Senior Code Reviewer. You are reviewing a single file, but you must judge it strictly based on its role in the overall system.\n"
-                        f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
+                        f"SYSTEM BLUEPRINT:\n{format_system_blueprint_context(system_blueprint)}\n\n"
                         "Review the provided file. Does it perfectly execute its intended role in this system? "
                         "Does it introduce security flaws (like XSS or exposed keys) that compromise the system? "
                         "Return a JSON object with evaluated_score, executive_summary, pros, cons, and recommendations."
