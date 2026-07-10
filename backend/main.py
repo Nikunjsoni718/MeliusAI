@@ -1020,7 +1020,9 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     )
     system_blueprint = blueprint_resp.choices[0].message.content.strip()
 
-    # --- PHASE 2: THE INSPECTOR ---
+    # --- PHASE 2: THE INSPECTOR (9.9/10 Parity with Single-File) ---
+    import os
+
     file_audits = {}
     for f in downloaded_files:
         if f.get("is_binary"):
@@ -1028,62 +1030,81 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             file_audits[f['filename']] = {
                 "evaluated_score": 100,
                 "description": "Binary/Media asset safe by default.",
-                "pros": [],
-                "cons": [],
-                "recommendations": [],
+                "pros": [], "cons": [], "recommendations": []
             }
             continue
 
-        # 1. Use the language detected during the download/content verification step
-        detected_language = f["language"]
+        # 1. Map the Language (Crucial for context)
+        _, ext = os.path.splitext(f['filename'].lower())
+        detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
 
-        # 2. Build the exact strict system prompt used in single-file audits
+        # 2. Build the Strict System Prompt
         strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
 
 CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
 1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
 2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
+
+BAD EXAMPLE (DO NOT DO THIS): 'The code effectively encapsulates data with private member variables...'
+GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using private variables.'
 """
 
-        # 3. Call OpenAI using the single-file format, but inject the Blueprint context
-        inspector_resp = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": strict_system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        f"SYSTEM BLUEPRINT CONTEXT:\n{system_blueprint}\n\n"
-                        f"File Name: {f['filename']}\n"
-                        f"Language: {detected_language}\n\n"
-                        "Mandatory output reminder: include a detailed, non-empty JSON "
-                        "'description' explaining this file's architecture and purpose. "
-                        "If this is a web file, describe its architecture with backend-level depth.\n\n"
-                        "Evaluate this file exactly as you normally would for its language, but factor in its role and security within the SYSTEM BLUEPRINT above.\n\n"
-                        f"Raw Code:\n{f['content']}"
-                    ),
-                },
-            ],
-            response_format=EVALUATION_RESPONSE_FORMAT,
-            temperature=0,
-        )
+        # 3. Call OpenAI with Blueprint Context and Strict Formatting
+        try:
+            inspector_resp = await async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": strict_system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"SYSTEM BLUEPRINT CONTEXT:\n{system_blueprint}\n\n"
+                            f"File Name: {f['filename']}\n"
+                            f"Language: {detected_language}\n\n"
+                            "Mandatory output reminder: include a detailed, non-empty JSON "
+                            "'description' explaining this file's architecture and purpose. "
+                            "If this is a web file, describe its architecture with backend-level depth.\n\n"
+                            "CRITICAL INSTRUCTION: Evaluate this file exactly as you normally would for its language (e.g., UI/UX for CSS/HTML, Security for Backend). However, you MUST also factor in its role, security, and integration within the SYSTEM BLUEPRINT above.\n\n"
+                            f"Raw Code:\n{f['content']}"
+                        ),
+                    },
+                ],
+                response_format=EVALUATION_RESPONSE_FORMAT,
+                temperature=0,  # Zero temperature for logical consistency
+            )
 
-        raw_content = inspector_resp.choices[0].message.content or "{}"
-        parsed_content = clean_and_parse_json(raw_content)
+            raw_content = inspector_resp.choices[0].message.content or "{}"
+            parsed_content = clean_and_parse_json(raw_content)
 
-        # 4. Normalize the text arrays exactly like the single-file logic
-        def normalize_text_array(value):
-            if not isinstance(value, list):
-                return []
-            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+            # 4. Normalize Arrays (Matches single-file logic)
+            def normalize_text_array(value):
+                if not isinstance(value, list):
+                    return []
+                return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
-        file_audits[f['filename']] = {
-            "description": parsed_content.get("description", ""),
-            "pros": normalize_text_array(parsed_content.get("pros")),
-            "cons": normalize_text_array(parsed_content.get("cons")),
-            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
-            "evaluated_score": parsed_content.get("score", 0),
-        }
+            # 5. Extract score safely (handling both 'score' and 'evaluated_score' keys)
+            raw_score = parsed_content.get("score", parsed_content.get("evaluated_score", 0))
+            try:
+                final_score = int(round(float(raw_score)))
+                final_score = max(0, min(100, final_score))
+            except (TypeError, ValueError):
+                final_score = 0
+
+            file_audits[f['filename']] = {
+                "description": parsed_content.get("description", "No description provided.").strip(),
+                "pros": normalize_text_array(parsed_content.get("pros")),
+                "cons": normalize_text_array(parsed_content.get("cons")),
+                "recommendations": normalize_text_array(parsed_content.get("recommendations")),
+                "evaluated_score": final_score
+            }
+
+        except Exception as e:
+            logger.error(f"Phase 2 AI Error on {f['filename']}: {e}")
+            file_audits[f['filename']] = {
+                "evaluated_score": 0,
+                "description": f"Audit failed: {str(e)}",
+                "pros": [], "cons": ["Failed to process this file due to an execution error."], "recommendations": []
+            }
 
     # --- PHASE 3: THE JUDGE ---
     judge_resp = await async_client.chat.completions.create(
