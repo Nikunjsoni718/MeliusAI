@@ -23,7 +23,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, model_validator
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     from supabase import Client, ClientOptions, create_client
@@ -105,6 +105,22 @@ AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
 AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT = 90000
 AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
+
+
+def clean_and_parse_json(raw_string: str) -> dict:
+    cleaned = re.sub(r"^```json\s*", "", raw_string, flags=re.MULTILINE)
+    cleaned = re.sub(r"^```\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = cleaned.strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "evaluated_score": 0,
+            "description": "Parse error",
+            "pros": [],
+            "cons": ["The AI generated an invalid response format."],
+            "recommendations": [],
+        }
 
 BIO_EXTRACTION_SYSTEM_PROMPT = (
     "You are an expert technical recruiter. Analyze the following candidate biography. "
@@ -859,12 +875,149 @@ EVALUATION_RESPONSE_FORMAT = {
 
 
 class EvaluationRequest(BaseModel):
-    fileUrl: str
-    filename: str
+    fileUrl: str = ""
+    filename: str = ""
     projectId: str | None = None
     project_id: str | None = None
     fileId: str | None = None
     file_id: str | None = None
+    folder_files: Optional[List[dict]] = None
+
+
+async def evaluate_folder_workflow(payload: EvaluationRequest, project_id: str):
+    folder_files = payload.folder_files or []
+
+    def get_folder_file_name(file_payload: dict, index: int) -> str:
+        return str(
+            file_payload.get("name")
+            or file_payload.get("filename")
+            or file_payload.get("file_name")
+            or file_payload.get("path")
+            or f"folder_file_{index + 1}"
+        ).strip()
+
+    def get_folder_file_content(file_payload: dict) -> str:
+        return str(
+            file_payload.get("content")
+            or file_payload.get("code")
+            or file_payload.get("raw_content")
+            or file_payload.get("asset_text_content")
+            or ""
+        )
+
+    all_file_sections = []
+    for index, file_payload in enumerate(folder_files):
+        if not isinstance(file_payload, dict):
+            continue
+
+        file_name = get_folder_file_name(file_payload, index)
+        file_content = get_folder_file_content(file_payload)
+        all_file_sections.append(
+            "\n".join(
+                [
+                    f"--- FILE: {file_name}",
+                    "CONTENT:",
+                    file_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT],
+                    f"--- END FILE: {file_name}",
+                ]
+            )
+        )
+
+    all_files_content = "\n\n".join(all_file_sections)[:AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT]
+
+    architect_response = await async_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Principal Systems Architect. Analyze this folder of raw code and produce a System Blueprint. "
+                    "Deduce the tech stack, architecture, data flow, and project purpose from extensions, imports, package files, and syntax. "
+                    "Do not audit for bugs yet. Do not guess frameworks. If the code uses raw DOM APIs such as document.getElementById or .innerHTML, classify it as Vanilla JS."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Here is the combined folder code:\n\n{all_files_content}",
+            },
+        ],
+        max_tokens=1800,
+        temperature=0.1,
+    )
+    system_blueprint = (architect_response.choices[0].message.content or "").strip()
+
+    file_audits = {}
+    skipped_extensions = (".css", ".png", ".jpg", ".svg", ".md")
+
+    for index, file_payload in enumerate(folder_files):
+        if not isinstance(file_payload, dict):
+            continue
+
+        file_name = get_folder_file_name(file_payload, index)
+        file_content = get_folder_file_content(file_payload)
+
+        if file_name.lower().endswith(skipped_extensions):
+            file_audits[file_name] = {
+                "evaluated_score": 100,
+                "description": "Static or documentation asset skipped to preserve audit tokens.",
+                "pros": ["Safe supporting asset."],
+                "cons": [],
+                "recommendations": [],
+            }
+            continue
+
+        inspector_response = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a Senior Code Inspector. Audit this individual file strictly according to its role in the System Blueprint. "
+                        "Return JSON with evaluated_score, description, pros, cons, and recommendations. "
+                        "Do not guess frameworks; rely only on the provided blueprint and file syntax."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
+                        f"FILE NAME: {file_name}\n\n"
+                        f"FILE CONTENT:\n{file_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT]}"
+                    ),
+                },
+            ],
+            max_tokens=1000,
+            temperature=0.1,
+        )
+        file_audits[file_name] = clean_and_parse_json(inspector_response.choices[0].message.content or "{}")
+
+    judge_response = await async_client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the Lead Tech Director. Give the final Beauty and Brains folder score for the whole system. "
+                    "Return JSON with evaluated_score, description, pros, cons, and recommendations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
+                    f"FILE AUDITS:\n{json.dumps(file_audits, ensure_ascii=False)[:AUDIT_REDUCE_REPORT_CHAR_LIMIT]}\n\n"
+                    "Generate the final folder audit now."
+                ),
+            },
+        ],
+        max_tokens=1000,
+        temperature=0.1,
+    )
+    judge_output = clean_and_parse_json(judge_response.choices[0].message.content or "{}")
+
+    return {"folder_audit": judge_output, "file_audits": file_audits}
 
 
 @app.post("/api/evaluate")
@@ -885,16 +1038,22 @@ async def evaluate_code(
     _, ext = os.path.splitext(filename.lower())
     detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
 
-    if not file_url:
-        raise HTTPException(
-            status_code=400,
-            detail="fileUrl is required.",
-        )
-
     if not project_id:
         raise HTTPException(
             status_code=400,
             detail="projectId is required so evaluation metrics can be persisted.",
+        )
+
+    # --- NEW ROUTING CHECK ---
+    if payload.folder_files and len(payload.folder_files) > 0:
+        logger.info("code_evaluation.folder_workflow.start project_id=%s", project_id)
+        return await evaluate_folder_workflow(payload, project_id)
+    # -------------------------
+
+    if not file_url:
+        raise HTTPException(
+            status_code=400,
+            detail="fileUrl is required.",
         )
 
     logger.info(
