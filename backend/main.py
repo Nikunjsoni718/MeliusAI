@@ -907,7 +907,9 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
 
     payload_files = payload.files or payload.folder_files or []
 
-    # --- 1. CONCURRENT DOWNLOADS ---
+    # --- 1. CONCURRENT DOWNLOADS WITH AGGRESSIVE LOGGING ---
+    import os
+
     downloaded_files = []
     normalized_files = []
     for index, file_payload in enumerate(payload_files):
@@ -931,20 +933,65 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         responses = await asyncio.gather(*tasks, return_exceptions=True)
 
         for file, response in zip(normalized_files, responses):
-            if isinstance(response, Exception) or response.status_code != 200:
+            if isinstance(response, Exception):
+                logger.error(f"Failed to download {file['filename']}: {str(response)}")
                 continue
+            if response.status_code != 200:
+                logger.error(
+                    f"Bad status {response.status_code} for {file['filename']}. URL might be expired/protected."
+                )
+                continue
+
+            content = response.content.decode("utf-8", errors="replace").strip()
+
+            # DEBUG LOG: Print the first 150 characters to the terminal to PROVE we have the actual code!
+            logger.info(
+                f"--- CONTENT CHECK FOR {file['filename']} ---\n{content[:150]}...\n-------------------------------------"
+            )
 
             # Identify binary files to skip decoding and AI processing
             is_binary = file["filename"].lower().endswith(
                 (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".woff", ".woff2", ".ttf")
             )
-            content = "Binary Asset" if is_binary else response.content.decode("utf-8", errors="replace")
+
+            # Map the language properly using the existing map
+            _, ext = os.path.splitext(file["filename"].lower())
+            detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+
+            content_lower = content.lower()
+            looks_like_protected_html = (
+                not is_binary
+                and (
+                    "<html" in content_lower
+                    or "<!doctype html" in content_lower
+                    or "<body" in content_lower
+                )
+                and any(
+                    marker in content_lower
+                    for marker in (
+                        "access denied",
+                        "authorization required",
+                        "sign in",
+                        "login",
+                        "not authorized",
+                        "jwt",
+                        "supabase",
+                    )
+                )
+            )
+            if looks_like_protected_html:
+                logger.error(
+                    "Protected/error HTML detected for %s. Skipping AI audit for this file.",
+                    file["filename"],
+                )
+                continue
 
             downloaded_files.append(
                 {
                     "filename": file["filename"],
-                    "content": content,
+                    "content": content if not is_binary else "Binary Asset",
                     "is_binary": is_binary,
+                    "language": detected_language,
                 }
             )
 
@@ -974,8 +1021,6 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     system_blueprint = blueprint_resp.choices[0].message.content.strip()
 
     # --- PHASE 2: THE INSPECTOR ---
-    import os
-
     file_audits = {}
     for f in downloaded_files:
         if f.get("is_binary"):
@@ -989,9 +1034,8 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             }
             continue
 
-        # 1. Detect language using our existing map
-        _, ext = os.path.splitext(f['filename'].lower())
-        detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+        # 1. Use the language detected during the download/content verification step
+        detected_language = f["language"]
 
         # 2. Build the exact strict system prompt used in single-file audits
         strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
