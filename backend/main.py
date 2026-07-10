@@ -1045,6 +1045,14 @@ CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
 1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
 2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
 
+THE SCORING RUBRIC (ABSOLUTE REQUIREMENT):
+You must assign the 'evaluated_score' (0-100) strictly based on this scale:
+- 90-100 (Elite): Production-ready. Flawless architecture, highly optimized, secure, and follows best practices perfectly.
+- 75-89 (Solid): Good code. Functional and secure, but has minor stylistic issues, slight bloat, or small optimization opportunities.
+- 50-74 (Passable but Flawed): Works, but contains architectural anti-patterns, poor naming, unhandled edge cases, or bad UI/UX practices.
+- 25-49 (Critical Warning): Severely broken logic, massive performance bottlenecks, or complete lack of standard structure.
+- 0-24 (Lethal): Contains severe security vulnerabilities (e.g., eval(), exposed API tokens, XSS), remote code execution risks, or is completely non-functional.
+
 BAD EXAMPLE (DO NOT DO THIS): 'The code effectively encapsulates data with private member variables...'
 GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using private variables.'
 """
@@ -1113,7 +1121,17 @@ GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using 
         messages=[
             {
                 "role": "system",
-                "content": 'You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits. Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}',
+                "content": (
+                    "You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits.\n\n"
+                    "THE SCORING RUBRIC (ABSOLUTE REQUIREMENT):\n"
+                    "You must assign the 'evaluated_score' (0-100) strictly based on this scale:\n"
+                    "- 90-100 (Elite): Production-ready. Flawless architecture, highly optimized, secure, and follows best practices perfectly.\n"
+                    "- 75-89 (Solid): Good code. Functional and secure, but has minor stylistic issues, slight bloat, or small optimization opportunities.\n"
+                    "- 50-74 (Passable but Flawed): Works, but contains architectural anti-patterns, poor naming, unhandled edge cases, or bad UI/UX practices.\n"
+                    "- 25-49 (Critical Warning): Severely broken logic, massive performance bottlenecks, or complete lack of standard structure.\n"
+                    "- 0-24 (Lethal): Contains severe security vulnerabilities (e.g., eval(), exposed API tokens, XSS), remote code execution risks, or is completely non-functional.\n\n"
+                    'Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}'
+                ),
             },
             {
                 "role": "user",
