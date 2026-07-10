@@ -8,6 +8,7 @@ import math
 import re
 import time
 import uuid
+import ast
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -889,10 +890,74 @@ class EvaluationRequest(BaseModel):
     folder_files: Optional[List[dict]] = None
 
 
+class NativeCodeParser:
+    @staticmethod
+    def parse(filename: str, content: str) -> dict:
+        ext = filename.lower().split(".")[-1]
+        metadata = {
+            "imports_or_dependencies": [],
+            "detected_functions": [],
+            "hardcoded_secrets_detected": False,
+            "lines_of_code": len(content.splitlines()),
+        }
+
+        # 1. Native Secret Detection (Language Agnostic)
+        secret_pattern = re.compile(r'(?i)(bearer|api[_-]?key|password|secret|token)\s*[:=]\s*["\'][a-zA-Z0-9_\-]+["\']')
+        if secret_pattern.search(content):
+            metadata["hardcoded_secrets_detected"] = True
+
+        # 2. Native Python Parsing (Using AST)
+        if ext == "py":
+            try:
+                tree = ast.parse(content)
+                metadata["imports_or_dependencies"] = [
+                    node.names[0].name for node in ast.walk(tree) if isinstance(node, ast.Import)
+                ]
+                metadata["detected_functions"] = [
+                    node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                ]
+            except SyntaxError:
+                metadata["syntax_error"] = True
+
+        # 3. Native JavaScript/TypeScript Parsing
+        elif ext in ["js", "ts", "jsx", "tsx"]:
+            metadata["imports_or_dependencies"] = re.findall(r'import\s+.*?\s+from\s+["\'](.*?)["\']', content)
+            metadata["detected_functions"] = re.findall(
+                r'(?:function\s+([a-zA-Z0-9_]+))|(?:const\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>)',
+                content,
+            )
+            metadata["detected_functions"] = [
+                f[0] or f[1] for f in metadata["detected_functions"] if f[0] or f[1]
+            ]
+
+        # 4. Native C/C++ Parsing
+        elif ext in ["c", "cpp", "h", "hpp"]:
+            metadata["imports_or_dependencies"] = re.findall(r'#include\s*[<"](.*?)[>"]', content)
+
+        # 5. Native CSS Parsing
+        elif ext == "css":
+            metadata["detected_functions"] = re.findall(r"\.([a-zA-Z0-9_-]+)\s*\{", content)
+
+        return metadata
+
+
 async def perform_ai_file_audit(filename: str, content: str, detected_language: str, async_client, system_blueprint: str = None) -> dict:
     """The universal brain for auditing a single file, optionally aware of a wider system blueprint."""
 
+    # RUN NATIVE PYTHON PARSING FIRST
+    native_analysis = NativeCodeParser.parse(filename, content)
+
+    # If Python natively caught a secret, bypass AI leniency completely for the score floor
+    has_lethal_secret = native_analysis.get("hardcoded_secrets_detected", False)
+
+    system_message = (
+        "You are an Elite Systems Architect. Evaluate this file using the provided Native Python Analysis metadata and the raw code.\n"
+        "If the Native Analysis indicates hardcoded secrets, your evaluated_score MUST be below 24."
+    )
+
     strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
+
+{system_message}
 
 CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
 1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
@@ -905,9 +970,18 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 - For Backend/JS files: Grade ruthlessly on security, XSS, tokens, and logic.
 """
 
-    user_content = f"File Name: {filename}\nLanguage: {detected_language}\n\n"
+    user_content = (
+        f"File: {filename}\nLanguage: {detected_language}\n\n"
+        f"--- NATIVE PYTHON PRE-ANALYSIS ---\n"
+        f"Imports/Dependencies: {native_analysis['imports_or_dependencies']}\n"
+        f"Key Functions/Classes: {native_analysis['detected_functions']}\n"
+        f"Hardcoded Secrets Found by Regex: {has_lethal_secret}\n"
+        f"Lines of Code: {native_analysis['lines_of_code']}\n"
+        f"----------------------------------\n\n"
+    )
+
     if system_blueprint:
-        user_content += f"SYSTEM BLUEPRINT CONTEXT:\n{system_blueprint}\nCRITICAL: Evaluate this file exactly as you normally would for its language, but factor in its role within this overall system.\n\n"
+        user_content += f"System Context: {system_blueprint}\n\n"
 
     user_content += (
         "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
@@ -938,16 +1012,22 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
         except (TypeError, ValueError):
             final_score = 0
 
-        return {
+        parsed_data = {
             "description": parsed_content.get("description", "No description provided.").strip(),
             "pros": normalize_text_array(parsed_content.get("pros")),
             "cons": normalize_text_array(parsed_content.get("cons")),
             "recommendations": normalize_text_array(parsed_content.get("recommendations")),
             "evaluated_score": final_score
         }
+
+        # PYTHON VETO: Absolute enforcement
+        if has_lethal_secret and parsed_data["evaluated_score"] > 24:
+            parsed_data["evaluated_score"] = 15
+            parsed_data["cons"].append("CRITICAL: Hardcoded secrets detected by native scanner.")
+
+        return parsed_data
     except Exception as e:
-        import logging
-        logging.error(f"AI Audit Failed for {filename}: {str(e)}")
+        logger.error(f"AI Audit Failed for {filename}: {str(e)}")
         return {
             "evaluated_score": 0,
             "description": f"Audit execution failed: {str(e)}",
