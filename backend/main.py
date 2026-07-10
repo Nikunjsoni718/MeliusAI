@@ -974,34 +974,72 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     system_blueprint = blueprint_resp.choices[0].message.content.strip()
 
     # --- PHASE 2: THE INSPECTOR ---
+    import os
+
     file_audits = {}
     for f in downloaded_files:
-        if f["is_binary"]:
-            # HARD SKIP BINARY FILES: LLMs cannot read raw pixels/fonts.
-            file_audits[f["filename"]] = {
+        if f.get("is_binary"):
+            # HARD SKIP BINARY FILES
+            file_audits[f['filename']] = {
                 "evaluated_score": 100,
-                "pros": ["Binary/Media asset safe by default."],
+                "description": "Binary/Media asset safe by default.",
+                "pros": [],
                 "cons": [],
                 "recommendations": [],
             }
             continue
 
-        # Send ALL text files (PY, JS, HTML, CSS, MD) to the AI
+        # 1. Detect language using our existing map
+        _, ext = os.path.splitext(f['filename'].lower())
+        detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+
+        # 2. Build the exact strict system prompt used in single-file audits
+        strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
+
+CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
+1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
+"""
+
+        # 3. Call OpenAI using the single-file format, but inject the Blueprint context
         inspector_resp = await async_client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type": "json_object"},
             messages=[
-                {
-                    "role": "system",
-                    "content": 'You are a Senior Code Reviewer. Audit this file STRICTLY based on its role in the System Blueprint. Even CSS and HTML must be audited for best practices and security. Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}',
-                },
+                {"role": "system", "content": strict_system_prompt},
                 {
                     "role": "user",
-                    "content": f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\nFILE TO AUDIT: {f['filename']}\nCONTENT:\n{f['content'][:AUDIT_FILE_CONTENT_CHAR_LIMIT]}",
+                    "content": (
+                        f"SYSTEM BLUEPRINT CONTEXT:\n{system_blueprint}\n\n"
+                        f"File Name: {f['filename']}\n"
+                        f"Language: {detected_language}\n\n"
+                        "Mandatory output reminder: include a detailed, non-empty JSON "
+                        "'description' explaining this file's architecture and purpose. "
+                        "If this is a web file, describe its architecture with backend-level depth.\n\n"
+                        "Evaluate this file exactly as you normally would for its language, but factor in its role and security within the SYSTEM BLUEPRINT above.\n\n"
+                        f"Raw Code:\n{f['content']}"
+                    ),
                 },
             ],
+            response_format=EVALUATION_RESPONSE_FORMAT,
+            temperature=0,
         )
-        file_audits[f["filename"]] = clean_and_parse_json(inspector_resp.choices[0].message.content)
+
+        raw_content = inspector_resp.choices[0].message.content or "{}"
+        parsed_content = clean_and_parse_json(raw_content)
+
+        # 4. Normalize the text arrays exactly like the single-file logic
+        def normalize_text_array(value):
+            if not isinstance(value, list):
+                return []
+            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+        file_audits[f['filename']] = {
+            "description": parsed_content.get("description", ""),
+            "pros": normalize_text_array(parsed_content.get("pros")),
+            "cons": normalize_text_array(parsed_content.get("cons")),
+            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
+            "evaluated_score": parsed_content.get("score", 0),
+        }
 
     # --- PHASE 3: THE JUDGE ---
     judge_resp = await async_client.chat.completions.create(
