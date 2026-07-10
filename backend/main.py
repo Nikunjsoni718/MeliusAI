@@ -985,7 +985,7 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 
     user_content += (
         "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
-        f"Raw Code:\n{content}"
+        f"Raw Code:\n{truncate_audit_text(content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
     )
 
     try:
@@ -1033,6 +1033,207 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
             "description": f"Audit execution failed: {str(e)}",
             "pros": [], "cons": ["Failed to process file."], "recommendations": []
         }
+
+
+def detect_audit_language(filename: str) -> str:
+    _, ext = os.path.splitext(str(filename or "").lower())
+    return EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+
+
+def normalize_orchestrator_text_array(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def normalize_folder_audit_report(raw_report: Dict[str, Any], fallback_score: int) -> Dict[str, Any]:
+    if not isinstance(raw_report, dict):
+        raw_report = {}
+
+    summary = (
+        str(
+            raw_report.get("description")
+            or raw_report.get("executive_summary")
+            or raw_report.get("summary")
+            or "Folder audit complete."
+        )
+        .strip()
+    )
+    if not summary:
+        summary = "Folder audit complete."
+
+    return {
+        "evaluated_score": fallback_score,
+        "description": summary,
+        "executive_summary": summary,
+        "pros": normalize_orchestrator_text_array(raw_report.get("pros")),
+        "cons": normalize_orchestrator_text_array(raw_report.get("cons")),
+        "recommendations": normalize_orchestrator_text_array(raw_report.get("recommendations")),
+    }
+
+
+async def orchestrate_audit(files_data: list, async_client):
+    """
+    files_data should be a list of dicts:
+    [{"filename": "...", "content": "...", "language": "...", "is_binary": bool}]
+    """
+    normalized_files = [
+        {
+            **file_data,
+            "filename": str(file_data.get("filename") or file_data.get("file_name") or "Unknown file"),
+            "content": str(file_data.get("content") or ""),
+            "language": file_data.get("language") or detect_audit_language(
+                str(file_data.get("filename") or file_data.get("file_name") or "")
+            ),
+            "is_binary": bool(file_data.get("is_binary", False)),
+        }
+        for file_data in files_data
+        if isinstance(file_data, dict)
+    ]
+
+    if not normalized_files:
+        raise ValueError("No files were provided for audit orchestration.")
+
+    # SCENARIO A: SINGLE FILE
+    if len(normalized_files) == 1:
+        file = normalized_files[0]
+        return await perform_ai_file_audit(
+            filename=file["filename"],
+            content=file["content"],
+            detected_language=file["language"],
+            async_client=async_client,
+        )
+
+    # SCENARIO B: FOLDER (MULTI-FILE)
+    readme_content = None
+    for file in normalized_files:
+        if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
+            readme_content = file["content"]
+            break
+
+    directory_tree = "\n".join(file["filename"] for file in normalized_files)
+
+    if readme_content:
+        architect_prompt = (
+            "You are a Systems Architect. The developer has provided a README.md. "
+            "Use this README as the absolute source of truth for the system's purpose. "
+            "Do not override the README's declared intent with guesses from filenames. "
+            "Use the directory tree only to understand structure around that declared purpose.\n\n"
+            f"README:\n{truncate_audit_text(readme_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}\n\n"
+            f"Directory Tree:\n{directory_tree}"
+        )
+    else:
+        architect_prompt = (
+            "You are a Systems Architect. The developer FAILED to provide a README.md. "
+            "You must deduce the overarching purpose of this system based ONLY on the directory tree. "
+            "Do not invent frameworks or product goals that are not implied by filenames and extensions.\n\n"
+            f"Directory Tree:\n{directory_tree}"
+        )
+
+    system_blueprint_resp = await async_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "system", "content": architect_prompt}],
+        temperature=0,
+    )
+    system_blueprint = (
+        system_blueprint_resp.choices[0].message.content or "No system blueprint was generated."
+    ).strip()
+
+    semaphore = asyncio.Semaphore(5)
+    file_audits: Dict[str, Dict[str, Any]] = {}
+
+    async def bound_audit(file: Dict[str, Any]):
+        async with semaphore:
+            if file.get("is_binary"):
+                return None
+
+            if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
+                return file["filename"], {
+                    "evaluated_score": 100,
+                    "description": "System Documentation.",
+                    "pros": ["Documentation Anchor: README defines the system purpose."],
+                    "cons": [],
+                    "recommendations": [],
+                }
+
+            audit_result = await perform_ai_file_audit(
+                filename=file["filename"],
+                content=file["content"],
+                detected_language=file["language"],
+                async_client=async_client,
+                system_blueprint=system_blueprint,
+            )
+            return file["filename"], audit_result
+
+    results = await asyncio.gather(
+        *[bound_audit(file) for file in normalized_files if not file.get("is_binary")],
+        return_exceptions=True,
+    )
+    phase_two_failures = []
+    for result in results:
+        if isinstance(result, Exception):
+            phase_two_failures.append(str(result))
+            continue
+        if result is None:
+            continue
+        filename, audit_result = result
+        file_audits[filename] = audit_result
+
+    if phase_two_failures:
+        raise RuntimeError(f"Phase 2 Inspector failed: {phase_two_failures}")
+
+    scored_audits = [
+        audit.get("evaluated_score", 0)
+        for audit in file_audits.values()
+        if isinstance(audit, dict) and isinstance(audit.get("evaluated_score"), (int, float))
+    ]
+    exact_average = int(round(sum(scored_audits) / len(scored_audits))) if scored_audits else 0
+
+    judge_prompt = (
+        f"Review this system based on the blueprint:\n{system_blueprint}\n\n"
+        f"INDIVIDUAL FILE AUDITS:\n"
+        f"{truncate_audit_text(json.dumps(file_audits, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}\n\n"
+        f"The calculated exact average is {exact_average}/100. "
+        "Generate the final system-wide report around that score."
+    )
+    if not readme_content:
+        judge_prompt += " CRITICAL: Deduct system quality points in your analysis for the lack of a README.md."
+
+    try:
+        judge_resp = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are the Lead Tech Director. Return strict JSON with exactly these useful fields: "
+                        '{"evaluated_score": int, "description": "string", "pros": ["string"], '
+                        '"cons": ["string"], "recommendations": ["string"]}. '
+                        "NEVER guess a framework. Rely strictly on the README-anchored blueprint and file audits."
+                    ),
+                },
+                {"role": "user", "content": judge_prompt},
+            ],
+            temperature=0,
+        )
+        folder_audit = normalize_folder_audit_report(
+            clean_and_parse_json(judge_resp.choices[0].message.content),
+            exact_average,
+        )
+    except Exception as error:
+        logger.error("orchestrate_audit.phase3_failed error=%s", error)
+        folder_audit = normalize_folder_audit_report({}, exact_average)
+
+    # The LLM may write narrative, but Python owns the math.
+    folder_audit["evaluated_score"] = exact_average
+
+    return {
+        "folder_score": exact_average,
+        "blueprint": system_blueprint,
+        "folder_audit": folder_audit,
+        "file_audits": file_audits,
+    }
 
 
 async def evaluate_folder_workflow(payload, project_id: str, supabase_client, async_client):
@@ -1153,99 +1354,221 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     if not downloaded_files:
         raise HTTPException(status_code=400, detail="Failed to download folder files.")
 
-    # --- PHASE 1: THE SYSTEM ARCHITECT ---
-    # Combine only text files for the architect
-    text_files = [f for f in downloaded_files if not f["is_binary"]]
-    combined_code = "\n\n".join(
-        [
-            f"--- {f['filename']} ---\n{f['content'][:AUDIT_FILE_CONTENT_CHAR_LIMIT]}"
-            for f in text_files
-        ]
-    )[:AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT]
+    # --- PHASE 1: GENERATE THE SYSTEM BLUEPRINT ---
+    directory_tree = "\n".join(file["filename"] for file in downloaded_files)
+    readme_content = None
+    for file in downloaded_files:
+        if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
+            readme_content = file["content"]
+            break
+
+    blueprint_user_content = f"Directory Tree:\n{directory_tree}"
+    if readme_content:
+        blueprint_user_content += (
+            "\n\nREADME.md:\n"
+            f"{truncate_audit_text(readme_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+        )
+    else:
+        blueprint_user_content += (
+            "\n\nNo README.md was provided. Deduce the blueprint solely from the file extensions and names."
+        )
 
     blueprint_resp = await async_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a Principal Systems Architect. Analyze the raw code from these files as a collective unit. First, determine their overarching purpose (e.g., 'This is a React exam prep dashboard connected to a Node backend'). Second, map out the tech stack and data flow. Output this as a comprehensive 'System Blueprint'. Do not audit for bugs yet."},
-            {"role": "user", "content": combined_code},
+            {
+                "role": "system",
+                "content": (
+                    "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
+                    "Write a strict, 3-sentence blueprint explaining what this entire application is, "
+                    "what its tech stack is, and how the frontend and backend connect. "
+                    "If no README exists, deduce the blueprint solely from the file extensions and names."
+                ),
+            },
+            {"role": "user", "content": blueprint_user_content},
         ],
+        temperature=0,
     )
-    system_blueprint = blueprint_resp.choices[0].message.content.strip()
+    system_blueprint = (
+        blueprint_resp.choices[0].message.content or "No system blueprint was generated."
+    ).strip()
 
-    # --- PHASE 2: THE INSPECTOR ---
-    import os
+    # --- PHASE 2: THE CONTEXTUAL FILE AUDIT ---
+    async def audit_folder_file(file_record: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        filename = file_record["filename"]
+        content = file_record["content"]
+        detected_language = file_record["language"]
+        native_analysis = NativeCodeParser.parse(filename, content)
+        has_lethal_secret = native_analysis.get("hardcoded_secrets_detected", False)
+
+        system_message = (
+            "You are an Elite Systems Architect. Evaluate this file using the provided Native Python Analysis metadata and the raw code.\n"
+            "If the Native Analysis indicates hardcoded secrets, your evaluated_score MUST be below 24."
+        )
+
+        strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
+
+{system_message}
+
+CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
+1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
+
+MANDATORY SCORING & LANGUAGE ISOLATION RULE:
+- The 'evaluated_score' MUST be between 0-100.
+- 90-100: Elite | 75-89: Solid | 50-74: Passable | 25-49: Critical | 0-24: Lethal.
+- For CSS, HTML, and UI files: Do NOT lower scores for missing backend security. Grade them purely on UI/UX, responsiveness, and clean maintainable code. A clean CSS file should score 75-100.
+- For Backend/JS files: Grade ruthlessly on security, XSS, tokens, and logic.
+"""
+
+        user_content = (
+            "SYSTEM CONTEXT: You are auditing a file that is part of a larger application. "
+            "Here is the blueprint of the whole app:\n"
+            f"{system_blueprint}\n\n"
+            "CRITICAL INSTRUCTION: Grade this file based ONLY on its specific role within this system. "
+            "Do not penalize a frontend UI file for lacking backend security if the blueprint shows a separate backend exists.\n\n"
+            "--- RAW FILE ---\n"
+            f"File: {filename}\nLanguage: {detected_language}\n\n"
+            f"--- NATIVE PYTHON PRE-ANALYSIS ---\n"
+            f"Imports/Dependencies: {native_analysis['imports_or_dependencies']}\n"
+            f"Key Functions/Classes: {native_analysis['detected_functions']}\n"
+            f"Hardcoded Secrets Found by Regex: {has_lethal_secret}\n"
+            f"Lines of Code: {native_analysis['lines_of_code']}\n"
+            f"----------------------------------\n\n"
+            "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
+            f"Raw Code:\n{truncate_audit_text(content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+        )
+
+        completion = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": strict_system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            response_format=EVALUATION_RESPONSE_FORMAT,
+            temperature=0,
+        )
+
+        parsed_content = clean_and_parse_json(completion.choices[0].message.content or "{}")
+
+        def normalize_text_array(value):
+            if not isinstance(value, list):
+                return []
+            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+        raw_score = parsed_content.get("score", parsed_content.get("evaluated_score", 0))
+        try:
+            final_score = max(0, min(100, int(round(float(raw_score)))))
+        except (TypeError, ValueError):
+            final_score = 0
+
+        parsed_data = {
+            "description": str(parsed_content.get("description") or "No description provided.").strip(),
+            "pros": normalize_text_array(parsed_content.get("pros")),
+            "cons": normalize_text_array(parsed_content.get("cons")),
+            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
+            "evaluated_score": final_score,
+        }
+
+        if has_lethal_secret and parsed_data["evaluated_score"] > 24:
+            parsed_data["evaluated_score"] = 15
+            parsed_data["cons"].append("CRITICAL: Hardcoded secrets detected by native scanner.")
+
+        return filename, parsed_data
 
     file_audits = {}
-    for f in downloaded_files:
-        if f.get("is_binary"):
-            file_audits[f['filename']] = {"evaluated_score": 100, "description": "Binary asset safe by default.", "pros": [], "cons": [], "recommendations": []}
+    audit_results = await asyncio.gather(
+        *(audit_folder_file(file) for file in downloaded_files if not file.get("is_binary")),
+        return_exceptions=True,
+    )
+    phase_two_failures = []
+    for audit_result in audit_results:
+        if isinstance(audit_result, Exception):
+            phase_two_failures.append(str(audit_result))
             continue
+        filename, parsed_audit = audit_result
+        file_audits[filename] = parsed_audit
 
-        _, ext = os.path.splitext(f['filename'].lower())
-        detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
-
-        # Execute the unified brain!
-        file_audits[f['filename']] = await perform_ai_file_audit(
-            filename=f['filename'],
-            content=f['content'],
-            detected_language=detected_language,
-            async_client=async_client,
-            system_blueprint=system_blueprint
+    if phase_two_failures:
+        logger.error("folder_workflow.phase2_failed project_id=%s failures=%s", project_id, phase_two_failures)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "One or more contextual file audits failed.",
+                "failures": phase_two_failures,
+            },
         )
 
-    # --- CALCULATE EXACT MATHEMATICAL AVERAGE ---
-    # We only want to average the scores of actual code/text files, not the skipped binary assets
-    code_file_scores = []
-    for f in downloaded_files:
-        if not f.get("is_binary") and f['filename'] in file_audits:
-            code_file_scores.append(file_audits[f['filename']].get("evaluated_score", 0))
+    # --- PHASE 3: THE SYSTEM JUDGE ---
+    file_scores = [
+        audit.get("evaluated_score", 0)
+        for audit in file_audits.values()
+        if isinstance(audit.get("evaluated_score"), (int, float))
+    ]
+    folder_score = int(round(sum(file_scores) / len(file_scores))) if file_scores else 0
 
-    if code_file_scores:
-        exact_average = int(round(sum(code_file_scores) / len(code_file_scores)))
-    else:
-        exact_average = 0
+    list_of_all_cons = []
+    list_of_all_pros = []
+    list_of_all_recommendations = []
+    for audit in file_audits.values():
+        list_of_all_cons.extend(audit.get("cons") if isinstance(audit.get("cons"), list) else [])
+        list_of_all_pros.extend(audit.get("pros") if isinstance(audit.get("pros"), list) else [])
+        list_of_all_recommendations.extend(
+            audit.get("recommendations") if isinstance(audit.get("recommendations"), list) else []
+        )
 
-    # --- PHASE 3: THE JUDGE ---
     try:
-        judge_resp = await async_client.chat.completions.create(
+        summary_resp = await async_client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": (
-                    "You are the Lead Tech Director. You have the System Blueprint and the line-by-line Inspector Audits. "
-                    "Your job is to review the WHOLE system as a single working unit. How good is this machine?\n\n"
-                    "THE SCORING RUBRIC:\n"
-                    "- 90-100: Elite/Production-ready.\n"
-                    "- 75-89: Solid, minor optimization needed.\n"
-                    "- 50-74: Passable but contains architectural flaws.\n"
-                    "- 25-49: Severely broken logic or bad structure.\n"
-                    "- 0-24: Lethal security vulnerabilities or non-functional.\n\n"
-                    'Return strict JSON: {"evaluated_score": int, "description": "string", "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}'
-                )},
-                {"role": "user", "content": (
-                    f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
-                    f"INSPECTOR AUDITS:\n{json.dumps(file_audits)}\n\n"
-                    f"CRITICAL: The mathematical average of the individual files is exactly {exact_average}/100. Write your system-wide summary, pros, and cons to reflect this specific quality level."
-                )}
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are a Tech Lead. Here is the blueprint of the app: {system_blueprint}. "
+                        f"Here are the weaknesses found across all files: "
+                        f"{truncate_audit_text(json.dumps(list_of_all_cons, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}. "
+                        "Write a 3-sentence executive summary of the overall system health."
+                    ),
+                }
             ],
-            temperature=0
+            temperature=0,
         )
-        folder_audit = clean_and_parse_json(judge_resp.choices[0].message.content)
-    except Exception as e:
-        logger.error(f"Phase 3 Judge Failed: {e}")
-        folder_audit = {"evaluated_score": exact_average, "description": "Folder audit complete.", "pros": [], "cons": [], "recommendations": []}
+        folder_summary = (
+            summary_resp.choices[0].message.content or "Folder audit complete."
+        ).strip()
+    except Exception as error:
+        logger.error("folder_workflow.phase3_summary_failed project_id=%s error=%s", project_id, error)
+        folder_summary = "Folder audit complete."
 
-    # OVERRIDE AI GUESS WITH STRICT MATH
-    folder_audit["evaluated_score"] = exact_average
+    folder_audit = {
+        "evaluated_score": folder_score,
+        "description": folder_summary,
+        "executive_summary": folder_summary,
+        "pros": list_of_all_pros[:5],
+        "cons": list_of_all_cons[:5],
+        "recommendations": list_of_all_recommendations[:5],
+    }
+    orchestration_result = {
+        "folder_score": folder_score,
+        "blueprint": system_blueprint,
+        "folder_audit": folder_audit,
+        "file_audits": file_audits,
+    }
+
+    folder_summary = (
+        folder_audit.get("description")
+        or folder_audit.get("executive_summary")
+        or "Folder audit complete."
+    )
 
     # --- CONCURRENT DATABASE UPDATES ---
     parent_update_payload = {
         "evaluation_score": folder_audit.get("evaluated_score", 0),
         "score": folder_audit.get("evaluated_score", 0),
         "logic_score": folder_audit.get("evaluated_score", 0),
-        "audit_summary": folder_audit.get("description") or "Folder audit complete.",
-        "ai_summary": folder_audit.get("description") or "Folder audit complete.",
-        "description": folder_audit.get("description") or "Folder audit complete.",
+        "audit_summary": folder_summary,
+        "ai_summary": folder_summary,
+        "description": folder_summary,
         "pros": folder_audit.get("pros") if isinstance(folder_audit.get("pros"), list) else [],
         "cons": folder_audit.get("cons") if isinstance(folder_audit.get("cons"), list) else [],
         "recommendations": folder_audit.get("recommendations") if isinstance(folder_audit.get("recommendations"), list) else [],
@@ -1269,7 +1592,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
 
         audit = file_audits[file_name]
         score = audit.get("evaluated_score", 0)
-        summary = audit.get("description") or "File audit complete."
+        summary = audit.get("description") or audit.get("executive_summary") or "File audit complete."
         file_update_payload = {
             "evaluation_score": score,
             "score": score,
@@ -1295,7 +1618,29 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     database_update_tasks.extend(update_individual_file(file_record) for file_record in downloaded_files)
     await asyncio.gather(*database_update_tasks)
 
-    return {"status": "success", "folder_audit": folder_audit, "file_audits": file_audits}
+    return {"status": "success", **orchestration_result}
+
+
+@app.post("/api/evaluate_folder_workflow")
+async def evaluate_folder_workflow_route(
+    request: Request,
+    payload: EvaluationRequest,
+    current_user_id: str = Depends(verify_user),
+):
+    project_id = (
+        payload.projectId
+        or payload.project_id
+        or payload.fileId
+        or payload.file_id
+        or ""
+    ).strip()
+    logger.info(
+        "code_evaluation.evaluate_folder_workflow_route.start user_id=%s project_id=%s",
+        current_user_id,
+        project_id,
+    )
+    supabase_client = get_request_supabase_client(request)
+    return await evaluate_folder_workflow(payload, project_id, supabase_client, async_client)
 
 
 @app.post("/api/evaluate")
@@ -1314,15 +1659,14 @@ async def evaluate_code(
         or ""
     ).strip()
 
-    # --- TRAFFIC COP: Route folder audits to the Multi-Pass Engine ---
-    if getattr(payload, "is_folder_audit", False):
-        logger.info("code_evaluation.folder_workflow.start project_id=%s", project_id)
+    # --- TRAFFIC COP: Route multi-file payloads to the unified orchestrator wrapper ---
+    if getattr(payload, "is_folder_audit", False) or payload.files or payload.folder_files:
+        logger.info("code_evaluation.orchestrator.folder.start project_id=%s", project_id)
         supabase_client = get_request_supabase_client(request)
         return await evaluate_folder_workflow(payload, project_id, supabase_client, async_client)
     # -----------------------------------------------------------------
 
-    _, ext = os.path.splitext(filename.lower())
-    detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+    detected_language = detect_audit_language(filename)
 
     if not project_id:
         raise HTTPException(
@@ -1382,12 +1726,16 @@ async def evaluate_code(
         )
 
         logger.info("code_evaluation.openai.start filename=%s", filename)
-        # Call the unified brain for a single file (no blueprint needed)
-        parsed_audit_data = await perform_ai_file_audit(
-            filename=filename,
-            content=code_content,
-            detected_language=detected_language,
-            async_client=async_client
+        parsed_audit_data = await orchestrate_audit(
+            [
+                {
+                    "filename": filename,
+                    "content": code_content,
+                    "language": detected_language,
+                    "is_binary": False,
+                }
+            ],
+            async_client,
         )
         logger.info("code_evaluation.openai.complete filename=%s", filename)
 
@@ -2707,6 +3055,7 @@ def normalize_agentic_audit_report(parsed_report: Dict[str, Any], fallback_summa
     return {
         "evaluated_score": evaluated_score,
         "executive_summary": executive_summary,
+        "description": executive_summary,
         "pros": normalize_audit_list(get_first_present_value(parsed_report, ["pros", "strengths"])),
         "cons": normalize_audit_list(get_first_present_value(parsed_report, ["cons", "weaknesses"])),
         "recommendations": normalize_audit_list(
@@ -2742,43 +3091,16 @@ def decode_single_file_audit_content(raw_content: str) -> str:
 
 
 async def audit_standalone_file(asset_name: str, asset_text_content: str) -> Dict[str, Any]:
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format=AUDIT_RESPONSE_FORMAT,
-        messages=[
+    return await orchestrate_audit(
+        [
             {
-                "role": "system",
-                "content": (
-                    "You are an elite Tech Lead auditing a standalone code file. Because this file was uploaded in isolation, you must evaluate its 'Beauty and Brains' strictly on its own merits. \n"
-                    "1. Determine its apparent purpose based on syntax and logic.\n"
-                    "2. Do not hallucinate frameworks (e.g., if it uses `.innerHTML`, it is Vanilla JS, not React).\n"
-                    "3. Evaluate its security, efficiency, and structural cleanliness.\n\n"
-                    "Return a strict JSON object matching this schema:\n"
-                    "{\n"
-                    "  \"evaluated_score\": (integer 1-100),\n"
-                    "  \"executive_summary\": \"3-4 sentences evaluating this standalone file's quality and purpose.\",\n"
-                    "  \"pros\": [\"Strength 1\", \"Strength 2\"],\n"
-                    "  \"cons\": [\"Weakness 1\", \"Weakness 2\"],\n"
-                    "  \"recommendations\": [\"Fix 1\", \"Fix 2\"]\n"
-                    "}"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"File Name: {asset_name}\n\n"
-                    f"Standalone file content:\n{truncate_audit_text(asset_text_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
-                ),
-            },
+                "filename": asset_name,
+                "content": asset_text_content,
+                "language": detect_audit_language(asset_name),
+                "is_binary": False,
+            }
         ],
-        max_tokens=1000,
-        temperature=0.1,
-    )
-
-    parsed_file_report = parse_audit_json_object(response.choices[0].message.content)
-    return normalize_agentic_audit_report(
-        parsed_file_report,
-        fallback_summary="No standalone file audit summary was generated.",
+        openai_client,
     )
 
 
@@ -2792,7 +3114,7 @@ async def persist_single_file_audit(
         return
 
     score = audit_report.get("evaluated_score")
-    summary = audit_report.get("executive_summary")
+    summary = audit_report.get("executive_summary") or audit_report.get("description")
     update_payload = {
         "score": score,
         "evaluation_score": score,
@@ -2821,7 +3143,7 @@ async def persist_single_file_audit(
 def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
     sections = [
         f"Score: {file_audit.get('evaluated_score', 0)}/100",
-        f"Summary: {file_audit.get('executive_summary') or 'No summary provided.'}",
+        f"Summary: {file_audit.get('executive_summary') or file_audit.get('description') or 'No summary provided.'}",
     ]
 
     for label, field_name in (
@@ -2836,79 +3158,6 @@ def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
-# Phase 1: The System Architect (Zero-README Protocol)
-async def generate_system_blueprint(loaded_files: List[Dict[str, Any]]) -> str:
-    all_files_content = build_folder_audit_source(loaded_files)
-
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a Principal Systems Architect. The user has uploaded a repository of raw code. "
-                    "Your job is to forensically analyze these files. Look at the file extensions, package managers (e.g., package.json, requirements.txt), and import statements. "
-                    "Deduce the exact frontend and backend frameworks being used, the database structure, and the overall purpose of the application.\n\n"
-                    "CRITICAL ANTI-HALLUCINATION RULE: Do not guess frameworks. If a file uses `document.getElementById` or `.innerHTML`, it is Vanilla JS, not React or Angular. "
-                    "Rely strictly on the syntax provided.\n\n"
-                    "Output a comprehensive 'System Blueprint' explaining the architecture, data flow, and exact tech stack. Do not audit for bugs yet; just explain how the machine works."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Here is the raw codebase:\n\n{all_files_content}",
-            },
-        ],
-        max_tokens=1800,
-        temperature=0.1,
-    )
-
-    system_blueprint = (response.choices[0].message.content or "").strip()
-    return system_blueprint or "No system blueprint was generated."
-
-
-# PHASE 3: THE JUDGE - Produce the final folder score
-async def generate_final_folder_report(
-    system_blueprint: str,
-    file_audits: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    system_blueprint_context = format_system_blueprint_context(system_blueprint)
-    file_audits_json = truncate_audit_text(
-        json.dumps(file_audits, ensure_ascii=False),
-        AUDIT_REDUCE_REPORT_CHAR_LIMIT,
-    )
-
-    final_response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format=AUDIT_RESPONSE_FORMAT,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are the Lead Tech Director. You are giving the final 'Beauty and Brains' score for an entire codebase. \n"
-                    f"SYSTEM BLUEPRINT: \n{system_blueprint_context}\n"
-                    f"INDIVIDUAL FILE AUDITS:\n{file_audits_json}\n\n"
-                    "Based on what this system is supposed to do, and the individual flaws/strengths found in the files, generate the final repository-level JSON report.\n"
-                    "Use the exact JSON schema required by our database: evaluated_score, executive_summary, pros, cons, recommendations.\n"
-                    "NEVER guess a framework. Rely strictly on the blueprint and file audits."
-                ),
-            },
-            {
-                "role": "user",
-                "content": "Generate the final fact-based MeliusAI folder audit report now.",
-            },
-        ],
-        max_tokens=1200,
-        temperature=0.1,
-    )
-
-    parsed_final_report = parse_audit_json_object(final_response.choices[0].message.content)
-    return normalize_agentic_audit_report(
-        parsed_final_report,
-        fallback_summary="No folder-level audit summary was generated.",
-    )
-
-
 async def mark_project_file_audited(
     file_record: Dict[str, Any],
     file_audit: Dict[str, Any],
@@ -2920,7 +3169,7 @@ async def mark_project_file_audited(
 
     file_user_id = str(file_record.get("user_id") or "").strip()
     score = file_audit.get("evaluated_score")
-    summary = file_audit.get("executive_summary")
+    summary = file_audit.get("executive_summary") or file_audit.get("description")
     audit_result = format_file_audit_for_storage(file_audit)
     update_payload = {
         "score": score,
@@ -2977,37 +3226,12 @@ async def audit_single_file(
     if file_content is None:
         file_content = await load_audit_file_content(file_record)
 
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format=AUDIT_RESPONSE_FORMAT,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a Senior Code Reviewer. You are reviewing a single file, but you must judge it strictly based on its role in the overall system.\n"
-                    f"SYSTEM BLUEPRINT:\n{format_system_blueprint_context(system_blueprint)}\n\n"
-                    "Review the provided file. Does it perfectly execute its intended role in this system? "
-                    "Does it introduce security flaws (like XSS or exposed keys) that compromise the system? "
-                    "Return a strict JSON object using exactly these keys: evaluated_score, executive_summary, pros, cons, and recommendations. "
-                    "Do not use score instead of evaluated_score."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"File Name: {file_name}\n\n"
-                    f"Code to review:\n{truncate_audit_text(file_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
-                ),
-            },
-        ],
-        max_tokens=1000,
-        temperature=0.1,
-    )
-
-    parsed_file_audit = parse_audit_json_object(response.choices[0].message.content)
-    file_audit = normalize_agentic_audit_report(
-        parsed_file_audit,
-        fallback_summary="No file-level audit summary was generated.",
+    file_audit = await perform_ai_file_audit(
+        filename=file_name,
+        content=file_content,
+        detected_language=detect_audit_language(file_name),
+        async_client=openai_client,
+        system_blueprint=system_blueprint,
     )
     file_audit["file_name"] = file_name
 
@@ -3038,7 +3262,17 @@ async def run_single_file_audit(
         raise HTTPException(status_code=400, detail="Uploaded content cannot be empty.")
 
     try:
-        audit_report = await audit_standalone_file(asset_name, asset_text_content)
+        audit_report = await orchestrate_audit(
+            [
+                {
+                    "filename": asset_name,
+                    "content": asset_text_content,
+                    "language": detect_audit_language(asset_name),
+                    "is_binary": False,
+                }
+            ],
+            async_client,
+        )
     except (ValueError, json.JSONDecodeError) as parse_error:
         raise HTTPException(
             status_code=502,
@@ -3099,53 +3333,67 @@ async def run_project_audit(
             for file_record, file_content in zip(files, file_contents)
         ]
 
-        system_blueprint = await generate_system_blueprint(loaded_files)
+        files_data = [
+            {
+                "filename": loaded_file["file_name"],
+                "content": loaded_file["content"],
+                "language": detect_audit_language(loaded_file["file_name"]),
+                "is_binary": loaded_file["file_name"].lower().endswith(
+                    (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".woff", ".woff2", ".ttf")
+                ),
+                "record": loaded_file["record"],
+            }
+            for loaded_file in loaded_files
+        ]
 
-        file_audit_results = await asyncio.gather(
+        orchestration_result = await orchestrate_audit(files_data, async_client)
+        if "folder_audit" in orchestration_result:
+            parsed_project_summary = orchestration_result["folder_audit"]
+            file_audits_by_name = orchestration_result.get("file_audits", {})
+        else:
+            parsed_project_summary = normalize_folder_audit_report(
+                orchestration_result,
+                orchestration_result.get("evaluated_score", 0),
+            )
+            file_audits_by_name = {loaded_files[0]["file_name"]: parsed_project_summary}
+
+        file_update_results = await asyncio.gather(
             *(
-                audit_single_file(
+                mark_project_file_audited(
                     loaded_file["record"],
-                    system_blueprint,
+                    {**file_audits_by_name[loaded_file["file_name"]], "file_name": loaded_file["file_name"]},
                     supabase_client,
-                    loaded_file["content"],
                 )
                 for loaded_file in loaded_files
+                if loaded_file["file_name"] in file_audits_by_name
             ),
             return_exceptions=True,
         )
-
-        phase_two_failures = [
-            {
-                "file_name": loaded_file["file_name"],
-                "error": str(file_audit_result),
-            }
-            for loaded_file, file_audit_result in zip(loaded_files, file_audit_results)
-            if isinstance(file_audit_result, Exception)
+        file_update_failures = [
+            str(file_update_result)
+            for file_update_result in file_update_results
+            if isinstance(file_update_result, Exception)
         ]
-        if phase_two_failures:
-            logger.error("project_audit.phase2_failed folder_id=%s failures=%s", folder_id, phase_two_failures)
+        if file_update_failures:
+            logger.error("project_audit.file_update_failed folder_id=%s failures=%s", folder_id, file_update_failures)
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "message": "One or more file-level audits failed before the final folder judge phase.",
-                    "failures": phase_two_failures,
+                    "message": "One or more file-level audit results failed to save.",
+                    "failures": file_update_failures,
                 },
             )
 
-        file_audits = [file_audit for file_audit in file_audit_results if isinstance(file_audit, dict)]
-
-        try:
-            parsed_project_summary = await generate_final_folder_report(system_blueprint, file_audits)
-        except (ValueError, json.JSONDecodeError) as parse_error:
-            raise HTTPException(
-                status_code=502,
-                detail="Folder audit response was not valid JSON.",
-            ) from parse_error
+        folder_summary = (
+            parsed_project_summary.get("executive_summary")
+            or parsed_project_summary.get("description")
+            or "Folder audit complete."
+        )
 
         # Supabase uses evaluation_score while the agentic JSON contract uses evaluated_score.
         folder_audit_payload = {
             "evaluation_score": parsed_project_summary.get("evaluated_score"),
-            "executive_summary": parsed_project_summary.get("executive_summary"),
+            "executive_summary": folder_summary,
             "pros": parsed_project_summary.get("pros"),
             "cons": parsed_project_summary.get("cons"),
             "recommendations": parsed_project_summary.get("recommendations"),
@@ -3159,7 +3407,7 @@ async def run_project_audit(
             .execute()
         )
 
-        return parsed_project_summary
+        return orchestration_result
 
     except HTTPException:
         raise
