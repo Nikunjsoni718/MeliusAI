@@ -1114,32 +1114,44 @@ GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using 
                 "pros": [], "cons": ["Failed to process this file due to an execution error."], "recommendations": []
             }
 
+    # --- CALCULATE EXACT MATHEMATICAL AVERAGE ---
+    # We only want to average the scores of actual code/text files, not the skipped binary assets
+    code_file_scores = []
+    for f in downloaded_files:
+        if not f.get("is_binary") and f['filename'] in file_audits:
+            code_file_scores.append(file_audits[f['filename']].get("evaluated_score", 0))
+
+    if code_file_scores:
+        exact_average = int(round(sum(code_file_scores) / len(code_file_scores)))
+    else:
+        exact_average = 0
+
     # --- PHASE 3: THE JUDGE ---
-    judge_resp = await async_client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits.\n\n"
-                    "THE SCORING RUBRIC (ABSOLUTE REQUIREMENT):\n"
-                    "You must assign the 'evaluated_score' (0-100) strictly based on this scale:\n"
-                    "- 90-100 (Elite): Production-ready. Flawless architecture, highly optimized, secure, and follows best practices perfectly.\n"
-                    "- 75-89 (Solid): Good code. Functional and secure, but has minor stylistic issues, slight bloat, or small optimization opportunities.\n"
-                    "- 50-74 (Passable but Flawed): Works, but contains architectural anti-patterns, poor naming, unhandled edge cases, or bad UI/UX practices.\n"
-                    "- 25-49 (Critical Warning): Severely broken logic, massive performance bottlenecks, or complete lack of standard structure.\n"
-                    "- 0-24 (Lethal): Contains severe security vulnerabilities (e.g., eval(), exposed API tokens, XSS), remote code execution risks, or is completely non-functional.\n\n"
-                    'Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}'
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\nINSPECTOR AUDITS:\n{json.dumps(file_audits)[:AUDIT_REDUCE_REPORT_CHAR_LIMIT]}",
-            },
-        ],
-    )
-    folder_audit = clean_and_parse_json(judge_resp.choices[0].message.content)
+    try:
+        judge_resp = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": (
+                    "You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits. "
+                    "Write an executive summary, pros, cons, and recommendations for the SYSTEM AS A WHOLE.\n\n"
+                    'Return strict JSON: {"evaluated_score": int, "description": "string", "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}'
+                )},
+                {"role": "user", "content": (
+                    f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
+                    f"INSPECTOR AUDITS:\n{json.dumps(file_audits)}\n\n"
+                    f"CRITICAL: The mathematical average of these files is {exact_average}/100. Write your summary to reflect this overall quality level."
+                )}
+            ],
+            temperature=0
+        )
+        folder_audit = clean_and_parse_json(judge_resp.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"Phase 3 Judge Failed: {e}")
+        folder_audit = {"evaluated_score": exact_average, "description": "Folder audit complete.", "pros": [], "cons": [], "recommendations": []}
+
+    # OVERRIDE AI GUESS WITH STRICT MATH
+    folder_audit["evaluated_score"] = exact_average
 
     # --- DATABASE UPDATE ---
     await asyncio.to_thread(
