@@ -102,6 +102,7 @@ supabase: Client | None = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
+AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT = 90000
 AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
 
@@ -2127,6 +2128,178 @@ async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
     return "No content found"
 
 
+def truncate_audit_text(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+
+    return text[:limit] + "\n...[truncated]"
+
+
+def build_folder_audit_source(loaded_files: List[Dict[str, Any]]) -> str:
+    file_sections: List[str] = []
+
+    for loaded_file in loaded_files:
+        file_record = loaded_file.get("record") or {}
+        file_name = str(loaded_file.get("file_name") or get_audit_file_name(file_record))
+        file_type = (
+            file_record.get("file_type")
+            or file_record.get("mime_type")
+            or Path(file_name).suffix
+            or "unknown"
+        )
+        file_content = truncate_audit_text(loaded_file.get("content"), AUDIT_FILE_CONTENT_CHAR_LIMIT)
+
+        file_sections.append(
+            "\n".join(
+                [
+                    f"--- FILE: {file_name}",
+                    f"TYPE: {file_type}",
+                    "CONTENT:",
+                    file_content,
+                    f"--- END FILE: {file_name}",
+                ]
+            )
+        )
+
+    return truncate_audit_text("\n\n".join(file_sections), AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT)
+
+
+def parse_audit_json_object(raw_content: str | None) -> Dict[str, Any]:
+    if not raw_content or not raw_content.strip():
+        raise ValueError("Audit response was empty.")
+
+    cleaned_content = raw_content.strip()
+    cleaned_content = re.sub(r"^\s*```(?:json)?\s*", "", cleaned_content, flags=re.IGNORECASE)
+    cleaned_content = re.sub(r"\s*```\s*$", "", cleaned_content)
+
+    try:
+        parsed_content = json.loads(cleaned_content)
+    except json.JSONDecodeError:
+        object_start = cleaned_content.find("{")
+        object_end = cleaned_content.rfind("}")
+        if object_start < 0 or object_end <= object_start:
+            raise
+        parsed_content = json.loads(cleaned_content[object_start : object_end + 1])
+
+    if not isinstance(parsed_content, dict):
+        raise ValueError("Audit response was not a JSON object.")
+
+    return parsed_content
+
+
+def normalize_agentic_audit_report(parsed_report: Dict[str, Any], fallback_summary: str) -> Dict[str, Any]:
+    raw_score = (
+        parsed_report.get("evaluated_score")
+        if parsed_report.get("evaluated_score") is not None
+        else parsed_report.get("evaluation_score")
+    )
+
+    try:
+        evaluated_score = int(round(float(raw_score)))
+    except (TypeError, ValueError):
+        evaluated_score = 0
+
+    evaluated_score = max(0, min(100, evaluated_score))
+    executive_summary = sanitize_audit_summary(parsed_report.get("executive_summary")) or fallback_summary
+
+    return {
+        "evaluated_score": evaluated_score,
+        "executive_summary": executive_summary,
+        "pros": normalize_audit_list(parsed_report.get("pros")),
+        "cons": normalize_audit_list(parsed_report.get("cons")),
+        "recommendations": normalize_audit_list(parsed_report.get("recommendations")),
+    }
+
+
+def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
+    sections = [
+        f"Score: {file_audit.get('evaluated_score', 0)}/100",
+        f"Summary: {file_audit.get('executive_summary') or 'No summary provided.'}",
+    ]
+
+    for label, field_name in (
+        ("Pros", "pros"),
+        ("Cons", "cons"),
+        ("Recommendations", "recommendations"),
+    ):
+        values = normalize_audit_list(file_audit.get(field_name))
+        if values:
+            sections.append(f"{label}:\n" + "\n".join(f"- {value}" for value in values))
+
+    return "\n\n".join(sections)
+
+
+# PHASE 1: THE SYSTEM ARCHITECT - Understand the whole project
+async def generate_system_blueprint(loaded_files: List[Dict[str, Any]]) -> str:
+    project_source = build_folder_audit_source(loaded_files)
+
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Principal Systems Architect. You are being handed the raw code for an entire project. "
+                    "Your ONLY job is to read all the files, figure out how they connect, and output a detailed 'System Blueprint'. "
+                    "Explain the architecture, the data flow, the frameworks used (strictly based on syntax), and the ultimate goal of the system. "
+                    "Do not audit or look for bugs yet. Just explain what this machine is and how the gears fit together."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Here is the raw code for the entire project folder, grouped by file:\n\n{project_source}",
+            },
+        ],
+        max_tokens=1800,
+        temperature=0.1,
+    )
+
+    system_blueprint = (response.choices[0].message.content or "").strip()
+    return system_blueprint or "No system blueprint was generated."
+
+
+# PHASE 3: THE JUDGE - Produce the final folder score
+async def generate_final_folder_report(
+    system_blueprint: str,
+    file_audits: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    file_audits_json = truncate_audit_text(
+        json.dumps(file_audits, ensure_ascii=False),
+        AUDIT_REDUCE_REPORT_CHAR_LIMIT,
+    )
+
+    final_response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format=AUDIT_RESPONSE_FORMAT,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the Lead Tech Director. You are giving the final 'Beauty and Brains' score for an entire codebase. \n"
+                    f"SYSTEM BLUEPRINT: \n{system_blueprint}\n"
+                    f"INDIVIDUAL FILE AUDITS:\n{file_audits_json}\n\n"
+                    "Based on what this system is supposed to do, and the individual flaws/strengths found in the files, generate the final repository-level JSON report.\n"
+                    "Use the exact JSON schema required by our database: evaluated_score, executive_summary, pros, cons, recommendations.\n"
+                    "NEVER guess a framework. Rely strictly on the blueprint and file audits."
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Generate the final fact-based MeliusAI folder audit report now.",
+            },
+        ],
+        max_tokens=1200,
+        temperature=0.1,
+    )
+
+    parsed_final_report = parse_audit_json_object(final_response.choices[0].message.content)
+    return normalize_agentic_audit_report(
+        parsed_final_report,
+        fallback_summary="No folder-level audit summary was generated.",
+    )
+
+
 async def mark_project_file_audited(
     file_record: Dict[str, Any],
     audit_result: str,
@@ -2164,57 +2337,77 @@ async def mark_project_file_audited(
 
 
 # ---------------------------------------------------------
-# THE MAP PHASE: Audit individual files concurrently
+# PHASE 2: THE INSPECTOR - Audit individual files concurrently
 # ---------------------------------------------------------
-async def audit_single_file(file_record: dict, supabase_client: Any | None = None) -> dict:
+async def audit_single_file(
+    file_record: dict,
+    system_blueprint: str = "",
+    supabase_client: Any | None = None,
+    file_content: str | None = None,
+) -> dict:
     file_name = get_audit_file_name(file_record)
 
     try:
         if supabase_client is None:
             supabase_client = supabase or get_supabase_service_client() or get_supabase_backend_client()
 
-        file_content = await load_audit_file_content(file_record)
-
-        prompt = f"""
-        Context: You are a Staff-level Software Engineer doing a security and architecture audit.
-        File Name: {file_name}
-
-        Do NOT comment on formatting, styling, or basic best practices.
-        Identify critical logic flaws, security vulnerabilities, state management errors, and unhandled edge cases.
-        Be concise and direct.
-
-        Code to audit:
-        {file_content}
-        """
+        if file_content is None:
+            file_content = await load_audit_file_content(file_record)
 
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
+            response_format=AUDIT_RESPONSE_FORMAT,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a brutal, highly technical code auditor. Return a short summary of critical issues.",
+                    "content": (
+                        "You are a Senior Code Reviewer. You are reviewing a single file, but you must judge it strictly based on its role in the overall system.\n"
+                        f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
+                        "Review the provided file. Does it perfectly execute its intended role in this system? "
+                        "Does it introduce security flaws (like XSS or exposed keys) that compromise the system? "
+                        "Return a JSON object with evaluated_score, executive_summary, pros, cons, and recommendations."
+                    ),
                 },
-                {"role": "user", "content": prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"File Name: {file_name}\n\n"
+                        f"Code to review:\n{truncate_audit_text(file_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+                    ),
+                },
             ],
-            max_tokens=500,
+            max_tokens=1000,
             temperature=0.1,
         )
 
-        audit_result = response.choices[0].message.content or "No critical issues returned."
+        parsed_file_audit = parse_audit_json_object(response.choices[0].message.content)
+        file_audit = normalize_agentic_audit_report(
+            parsed_file_audit,
+            fallback_summary="No file-level audit summary was generated.",
+        )
+        file_audit["file_name"] = file_name
 
-        await mark_project_file_audited(file_record, audit_result, supabase_client)
+        await mark_project_file_audited(
+            file_record,
+            format_file_audit_for_storage(file_audit),
+            supabase_client,
+        )
 
-        return {
-            "file_name": file_name,
-            "issues": audit_result,
-        }
+        return file_audit
     except Exception as error:
         logger.exception("project_audit.file_failed file=%s", file_name)
-        return {"file_name": file_name, "issues": "Audit failed for this file."}
+        return {
+            "file_name": file_name,
+            "evaluated_score": 0,
+            "executive_summary": "Audit failed for this file.",
+            "pros": [],
+            "cons": [f"{file_name} could not be audited due to an internal processing error."],
+            "recommendations": ["Retry this file audit after confirming the file content is readable."],
+        }
 
 
 # ---------------------------------------------------------
-# THE API ENDPOINT & REDUCE PHASE: Trigger the Audit
+# THE API ENDPOINT: Multi-pass agentic folder audit
 # ---------------------------------------------------------
 @app.post("/api/audit-project")
 async def run_project_audit(
@@ -2246,71 +2439,43 @@ async def run_project_audit(
         if not files:
             raise HTTPException(status_code=404, detail="No files found in this folder.")
 
-        tasks = [audit_single_file(file_record, supabase_client) for file_record in files]
-        file_reports = await asyncio.gather(*tasks)
-        reports_json = json.dumps(file_reports, ensure_ascii=False)
-        if len(reports_json) > AUDIT_REDUCE_REPORT_CHAR_LIMIT:
-            reports_json = reports_json[:AUDIT_REDUCE_REPORT_CHAR_LIMIT] + "\n...[truncated]"
+        file_contents = await asyncio.gather(
+            *(load_audit_file_content(file_record) for file_record in files)
+        )
+        loaded_files = [
+            {
+                "record": file_record,
+                "file_name": get_audit_file_name(file_record),
+                "content": file_content,
+            }
+            for file_record, file_content in zip(files, file_contents)
+        ]
 
-        aggregated_file_summaries = reports_json
+        system_blueprint = await generate_system_blueprint(loaded_files)
 
-        final_response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an elite Tech Lead and Principal Software Architect conducting a comprehensive repository-level code audit for MeliusAI. "
-                        "Your objective is to evaluate this codebase on two fronts: 'Beauty' (Macro-Architecture) and 'Brains' (Practical Execution).\n\n"
-                        "CRITICAL ANTI-HALLUCINATION PROTOCOL:\n"
-                        "1. NEVER GUESS THE STACK: You must identify technologies strictly by their syntax. If a file uses `document.getElementById` or `.innerHTML`, it is Vanilla JavaScript. Do not call it React, Vue, or Angular unless you see explicit import statements for those frameworks.\n"
-                        "2. GROUND YOUR CLAIMS: When citing a strength or weakness, you must accurately reference the actual code or file extension. Do not invent files or patterns that do not exist in the provided text.\n\n"
-                        "CRITICAL EVALUATION RULES:\n"
-                        "1. THE BEAUTY (Architecture & Wires): Analyze the connective tissue. Are they using clean design patterns? Identify circular dependencies, missing abstraction layers, or poor structural organization.\n"
-                        "2. THE BRAINS (Execution & Logic): Look for severe logic flaws, unhandled edge cases, missing input validation, and security vulnerabilities (e.g., XSS via raw DOM insertion, exposed API keys in .env files, missing backend sanitization).\n"
-                        "3. NO NITPICKING: Ignore minor formatting or local variable names. Focus entirely on structural integrity and critical execution failures.\n\n"
-                        "OUTPUT FORMAT:\n"
-                        "You must return a strict JSON object with the exact following structure:\n"
-                        "{\n"
-                        "  \"evaluation_score\": (integer 1-100, a blended score of structural beauty and functional brains. Be brutal but accurate.),\n"
-                        "  \"executive_summary\": \"A 3-4 sentence overall assessment of the project's architecture, pinpointing the actual frameworks used and core vulnerabilities.\",\n"
-                        "  \"pros\": [\n"
-                        "    \"Detailed architectural or functional strength #1, referencing specific files.\",\n"
-                        "    \"Strength #2...\",\n"
-                        "    \"Strength #3...\"\n"
-                        "  ],\n"
-                        "  \"cons\": [\n"
-                        "    \"Severe structural flaw, security vulnerability, or logic failure, referencing specific files.\",\n"
-                        "    \"Weakness #2...\",\n"
-                        "    \"Weakness #3...\"\n"
-                        "  ],\n"
-                        "  \"recommendations\": [\n"
-                        "    \"Actionable, code-level architectural fix #1.\",\n"
-                        "    \"Actionable fix #2...\",\n"
-                        "    \"Actionable fix #3...\"\n"
-                        "  ]\n"
-                        "}"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Here is the directory structure map and the individual file-level audit summaries for this project:\n\n{aggregated_file_summaries}\n\nPlease perform the comprehensive MeliusAI Tech Lead audit now.",
-                },
-            ],
+        file_audits = await asyncio.gather(
+            *(
+                audit_single_file(
+                    loaded_file["record"],
+                    system_blueprint,
+                    supabase_client,
+                    loaded_file["content"],
+                )
+                for loaded_file in loaded_files
+            )
         )
 
-        project_summary = final_response.choices[0].message.content or "{}"
         try:
-            parsed_project_summary = json.loads(project_summary)
-        except json.JSONDecodeError as parse_error:
+            parsed_project_summary = await generate_final_folder_report(system_blueprint, file_audits)
+        except (ValueError, json.JSONDecodeError) as parse_error:
             raise HTTPException(
                 status_code=502,
                 detail="Folder audit response was not valid JSON.",
             ) from parse_error
 
+        # Supabase uses evaluation_score while the agentic JSON contract uses evaluated_score.
         folder_audit_payload = {
-            "evaluation_score": parsed_project_summary.get("evaluation_score"),
+            "evaluation_score": parsed_project_summary.get("evaluated_score"),
             "executive_summary": parsed_project_summary.get("executive_summary"),
             "pros": parsed_project_summary.get("pros"),
             "cons": parsed_project_summary.get("cons"),
@@ -2327,7 +2492,9 @@ async def run_project_audit(
 
         return {
             "message": "Audit complete",
-            "file_reports": file_reports,
+            "system_blueprint": system_blueprint,
+            "file_audits": file_audits,
+            "file_reports": file_audits,
             "project_summary": parsed_project_summary,
         }
 
