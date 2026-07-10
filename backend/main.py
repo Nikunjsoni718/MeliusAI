@@ -925,8 +925,16 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             or get_file_value(file_payload, "url")
             or ""
         ).strip()
+        file_id = str(
+            get_file_value(file_payload, "fileId")
+            or get_file_value(file_payload, "file_id")
+            or get_file_value(file_payload, "projectId")
+            or get_file_value(file_payload, "project_id")
+            or get_file_value(file_payload, "id")
+            or ""
+        ).strip()
         if file_url:
-            normalized_files.append({"filename": filename, "fileUrl": file_url})
+            normalized_files.append({"filename": filename, "fileUrl": file_url, "file_id": file_id})
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
         tasks = [client.get(file["fileUrl"]) for file in normalized_files]
@@ -992,6 +1000,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     "content": content if not is_binary else "Binary Asset",
                     "is_binary": is_binary,
                     "language": detected_language,
+                    "file_id": file.get("file_id") or "",
                 }
             )
 
@@ -1011,10 +1020,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     blueprint_resp = await async_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {
-                "role": "system",
-                "content": "You are a Principal Systems Architect. Analyze the raw code to deduce the frameworks and system architecture. Output a 'System Blueprint'. Do not guess frameworks—if it relies on raw DOM manipulation, it is Vanilla JS. Do not audit for bugs yet.",
-            },
+            {"role": "system", "content": "You are a Principal Systems Architect. Analyze the raw code from these files as a collective unit. First, determine their overarching purpose (e.g., 'This is a React exam prep dashboard connected to a Node backend'). Second, map out the tech stack and data flow. Output this as a comprehensive 'System Blueprint'. Do not audit for bugs yet."},
             {"role": "user", "content": combined_code},
         ],
     )
@@ -1041,20 +1047,9 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         # 2. Build the Strict System Prompt
         strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
 
-CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
-1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
-2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
-
-THE SCORING RUBRIC (ABSOLUTE REQUIREMENT):
-You must assign the 'evaluated_score' (0-100) strictly based on this scale:
-- 90-100 (Elite): Production-ready. Flawless architecture, highly optimized, secure, and follows best practices perfectly.
-- 75-89 (Solid): Good code. Functional and secure, but has minor stylistic issues, slight bloat, or small optimization opportunities.
-- 50-74 (Passable but Flawed): Works, but contains architectural anti-patterns, poor naming, unhandled edge cases, or bad UI/UX practices.
-- 25-49 (Critical Warning): Severely broken logic, massive performance bottlenecks, or complete lack of standard structure.
-- 0-24 (Lethal): Contains severe security vulnerabilities (e.g., eval(), exposed API tokens, XSS), remote code execution risks, or is completely non-functional.
-
-BAD EXAMPLE (DO NOT DO THIS): 'The code effectively encapsulates data with private member variables...'
-GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using private variables.'
+CRITICAL FORMATTING RULES:
+1. For the 'pros', 'cons', and 'recommendations' arrays, use the exact format: 'Catchy Hook: Short explanation'.
+2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS.
 """
 
         # 3. Call OpenAI with Blueprint Context and Strict Formatting
@@ -1066,13 +1061,14 @@ GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using 
                     {
                         "role": "user",
                         "content": (
-                            f"SYSTEM BLUEPRINT CONTEXT:\n{system_blueprint}\n\n"
+                            f"OVERARCHING SYSTEM PURPOSE & BLUEPRINT:\n{system_blueprint}\n\n"
                             f"File Name: {f['filename']}\n"
                             f"Language: {detected_language}\n\n"
-                            "Mandatory output reminder: include a detailed, non-empty JSON "
-                            "'description' explaining this file's architecture and purpose. "
-                            "If this is a web file, describe its architecture with backend-level depth.\n\n"
-                            "CRITICAL INSTRUCTION: Evaluate this file exactly as you normally would for its language (e.g., UI/UX for CSS/HTML, Security for Backend). However, you MUST also factor in its role, security, and integration within the SYSTEM BLUEPRINT above.\n\n"
+                            "YOUR MISSION:\n"
+                            "1. Conduct a rigorous, line-by-line audit of this specific file.\n"
+                            "2. Evaluate it exactly as you normally would for its language (e.g., UI/UX & responsiveness for CSS/HTML, security & logic for backend Python/JS).\n"
+                            "3. Evaluate how well this file serves the overarching System Purpose. Does it introduce vulnerabilities or friction to the rest of the machine?\n\n"
+                            "Include a detailed 'description' explaining this file's architecture.\n\n"
                             f"Raw Code:\n{f['content']}"
                         ),
                     },
@@ -1133,14 +1129,20 @@ GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using 
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": (
-                    "You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits. "
-                    "Write an executive summary, pros, cons, and recommendations for the SYSTEM AS A WHOLE.\n\n"
+                    "You are the Lead Tech Director. You have the System Blueprint and the line-by-line Inspector Audits. "
+                    "Your job is to review the WHOLE system as a single working unit. How good is this machine?\n\n"
+                    "THE SCORING RUBRIC:\n"
+                    "- 90-100: Elite/Production-ready.\n"
+                    "- 75-89: Solid, minor optimization needed.\n"
+                    "- 50-74: Passable but contains architectural flaws.\n"
+                    "- 25-49: Severely broken logic or bad structure.\n"
+                    "- 0-24: Lethal security vulnerabilities or non-functional.\n\n"
                     'Return strict JSON: {"evaluated_score": int, "description": "string", "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}'
                 )},
                 {"role": "user", "content": (
                     f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
                     f"INSPECTOR AUDITS:\n{json.dumps(file_audits)}\n\n"
-                    f"CRITICAL: The mathematical average of these files is {exact_average}/100. Write your summary to reflect this overall quality level."
+                    f"CRITICAL: The mathematical average of the individual files is exactly {exact_average}/100. Write your system-wide summary, pros, and cons to reflect this specific quality level."
                 )}
             ],
             temperature=0
@@ -1153,19 +1155,62 @@ GOOD EXAMPLE (DO THIS): 'Strong Encapsulation: Class correctly hides data using 
     # OVERRIDE AI GUESS WITH STRICT MATH
     folder_audit["evaluated_score"] = exact_average
 
-    # --- DATABASE UPDATE ---
-    await asyncio.to_thread(
-        lambda: supabase_client.table("projects")
-        .update(
-            {
-                "evaluation_score": folder_audit.get("evaluated_score", 0),
-                "status": "Verified",
-                "has_been_audited": True,
-            }
+    # --- CONCURRENT DATABASE UPDATES ---
+    parent_update_payload = {
+        "evaluation_score": folder_audit.get("evaluated_score", 0),
+        "score": folder_audit.get("evaluated_score", 0),
+        "logic_score": folder_audit.get("evaluated_score", 0),
+        "audit_summary": folder_audit.get("description") or "Folder audit complete.",
+        "ai_summary": folder_audit.get("description") or "Folder audit complete.",
+        "description": folder_audit.get("description") or "Folder audit complete.",
+        "pros": folder_audit.get("pros") if isinstance(folder_audit.get("pros"), list) else [],
+        "cons": folder_audit.get("cons") if isinstance(folder_audit.get("cons"), list) else [],
+        "recommendations": folder_audit.get("recommendations") if isinstance(folder_audit.get("recommendations"), list) else [],
+        "status": "Verified",
+        "has_been_audited": True,
+    }
+
+    async def update_parent_project():
+        return await asyncio.to_thread(
+            lambda: supabase_client.table("projects")
+            .update(parent_update_payload)
+            .eq("id", project_id)
+            .execute()
         )
-        .eq("id", project_id)
-        .execute()
-    )
+
+    async def update_individual_file(file_record: Dict[str, Any]):
+        file_id = str(file_record.get("file_id") or "").strip()
+        file_name = file_record.get("filename")
+        if not file_id or file_name not in file_audits:
+            return None
+
+        audit = file_audits[file_name]
+        score = audit.get("evaluated_score", 0)
+        summary = audit.get("description") or "File audit complete."
+        file_update_payload = {
+            "evaluation_score": score,
+            "score": score,
+            "logic_score": score,
+            "audit_summary": summary,
+            "ai_summary": summary,
+            "description": summary,
+            "pros": audit.get("pros") if isinstance(audit.get("pros"), list) else [],
+            "cons": audit.get("cons") if isinstance(audit.get("cons"), list) else [],
+            "recommendations": audit.get("recommendations") if isinstance(audit.get("recommendations"), list) else [],
+            "status": "Verified",
+            "has_been_audited": True,
+        }
+
+        return await asyncio.to_thread(
+            lambda: supabase_client.table("projects")
+            .update(file_update_payload)
+            .eq("id", file_id)
+            .execute()
+        )
+
+    database_update_tasks = [update_parent_project()]
+    database_update_tasks.extend(update_individual_file(file_record) for file_record in downloaded_files)
+    await asyncio.gather(*database_update_tasks)
 
     return {"status": "success", "folder_audit": folder_audit, "file_audits": file_audits}
 
