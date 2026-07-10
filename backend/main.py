@@ -2280,27 +2280,48 @@ def parse_audit_json_object(raw_content: str | None) -> Dict[str, Any]:
     return parsed_content
 
 
+def get_first_present_value(source: Dict[str, Any], field_names: List[str]) -> Any:
+    for field_name in field_names:
+        value = source.get(field_name)
+        if value is not None:
+            return value
+
+    return None
+
+
 def normalize_agentic_audit_report(parsed_report: Dict[str, Any], fallback_summary: str) -> Dict[str, Any]:
-    raw_score = (
-        parsed_report.get("evaluated_score")
-        if parsed_report.get("evaluated_score") is not None
-        else parsed_report.get("evaluation_score")
+    raw_score = get_first_present_value(
+        parsed_report,
+        ["evaluated_score", "evaluation_score", "score", "calculatedScore", "calculated_score"],
     )
 
     try:
         evaluated_score = int(round(float(raw_score)))
     except (TypeError, ValueError):
-        evaluated_score = 0
+        raise ValueError("Audit response was missing a valid score.")
 
     evaluated_score = max(0, min(100, evaluated_score))
-    executive_summary = sanitize_audit_summary(parsed_report.get("executive_summary")) or fallback_summary
+    executive_summary = (
+        sanitize_audit_summary(
+            get_first_present_value(
+                parsed_report,
+                ["executive_summary", "executiveSummary", "ai_summary", "summary", "description"],
+            )
+        )
+        or fallback_summary
+    )
 
     return {
         "evaluated_score": evaluated_score,
         "executive_summary": executive_summary,
-        "pros": normalize_audit_list(parsed_report.get("pros")),
-        "cons": normalize_audit_list(parsed_report.get("cons")),
-        "recommendations": normalize_audit_list(parsed_report.get("recommendations")),
+        "pros": normalize_audit_list(get_first_present_value(parsed_report, ["pros", "strengths"])),
+        "cons": normalize_audit_list(get_first_present_value(parsed_report, ["cons", "weaknesses"])),
+        "recommendations": normalize_audit_list(
+            get_first_present_value(
+                parsed_report,
+                ["recommendations", "strategicRecommendations", "strategic_recommendations"],
+            )
+        ),
     }
 
 
@@ -2497,29 +2518,40 @@ async def generate_final_folder_report(
 
 async def mark_project_file_audited(
     file_record: Dict[str, Any],
-    audit_result: str,
+    file_audit: Dict[str, Any],
     supabase_client: Any,
 ) -> None:
     file_id = str(file_record.get("id") or "").strip()
     if not file_id:
-        return
+        raise ValueError("Cannot save file audit because the project file row is missing an id.")
 
     file_user_id = str(file_record.get("user_id") or "").strip()
+    score = file_audit.get("evaluated_score")
+    summary = file_audit.get("executive_summary")
+    audit_result = format_file_audit_for_storage(file_audit)
     update_payload = {
-        "status": "audited",
+        "score": score,
+        "evaluation_score": score,
+        "logic_score": score,
+        "status": "reviewed",
         "has_been_audited": True,
         "audit_summary": audit_result,
-        "ai_summary": audit_result,
+        "ai_summary": summary,
+        "description": summary,
+        "pros": file_audit.get("pros"),
+        "cons": file_audit.get("cons"),
+        "recommendations": file_audit.get("recommendations"),
+        "user_description": summary,
     }
 
-    try:
-        def update_project_file(payload: Dict[str, Any]):
-            query = supabase_client.table("projects").update(payload).eq("id", file_id)
-            if file_user_id:
-                query = query.eq("user_id", file_user_id)
-            return query.execute()
+    def update_project_file(payload: Dict[str, Any]):
+        query = supabase_client.table("projects").update(payload).eq("id", file_id)
+        if file_user_id:
+            query = query.eq("user_id", file_user_id)
+        return query.execute()
 
-        await asyncio.to_thread(lambda: update_project_file(update_payload))
+    try:
+        update_response = await asyncio.to_thread(lambda: update_project_file(update_payload))
     except Exception as status_update_error:
         logger.warning(
             "project_audit.status_update_failed file=%s error=%s",
@@ -2528,7 +2560,11 @@ async def mark_project_file_audited(
         )
         fallback_payload = dict(update_payload)
         fallback_payload.pop("status", None)
-        await asyncio.to_thread(lambda: update_project_file(fallback_payload))
+        update_response = await asyncio.to_thread(lambda: update_project_file(fallback_payload))
+
+    updated_rows = getattr(update_response, "data", None)
+    if isinstance(updated_rows, list) and not updated_rows:
+        raise RuntimeError(f"No Supabase project row was updated for audited file {file_id}.")
 
 
 # ---------------------------------------------------------
@@ -2542,63 +2578,49 @@ async def audit_single_file(
 ) -> dict:
     file_name = get_audit_file_name(file_record)
 
-    try:
-        if supabase_client is None:
-            supabase_client = supabase or get_supabase_service_client() or get_supabase_backend_client()
+    if supabase_client is None:
+        supabase_client = supabase or get_supabase_service_client() or get_supabase_backend_client()
 
-        if file_content is None:
-            file_content = await load_audit_file_content(file_record)
+    if file_content is None:
+        file_content = await load_audit_file_content(file_record)
 
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format=AUDIT_RESPONSE_FORMAT,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a Senior Code Reviewer. You are reviewing a single file, but you must judge it strictly based on its role in the overall system.\n"
-                        f"SYSTEM BLUEPRINT:\n{format_system_blueprint_context(system_blueprint)}\n\n"
-                        "Review the provided file. Does it perfectly execute its intended role in this system? "
-                        "Does it introduce security flaws (like XSS or exposed keys) that compromise the system? "
-                        "Return a JSON object with evaluated_score, executive_summary, pros, cons, and recommendations."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"File Name: {file_name}\n\n"
-                        f"Code to review:\n{truncate_audit_text(file_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
-                    ),
-                },
-            ],
-            max_tokens=1000,
-            temperature=0.1,
-        )
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format=AUDIT_RESPONSE_FORMAT,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Senior Code Reviewer. You are reviewing a single file, but you must judge it strictly based on its role in the overall system.\n"
+                    f"SYSTEM BLUEPRINT:\n{format_system_blueprint_context(system_blueprint)}\n\n"
+                    "Review the provided file. Does it perfectly execute its intended role in this system? "
+                    "Does it introduce security flaws (like XSS or exposed keys) that compromise the system? "
+                    "Return a strict JSON object using exactly these keys: evaluated_score, executive_summary, pros, cons, and recommendations. "
+                    "Do not use score instead of evaluated_score."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"File Name: {file_name}\n\n"
+                    f"Code to review:\n{truncate_audit_text(file_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+                ),
+            },
+        ],
+        max_tokens=1000,
+        temperature=0.1,
+    )
 
-        parsed_file_audit = parse_audit_json_object(response.choices[0].message.content)
-        file_audit = normalize_agentic_audit_report(
-            parsed_file_audit,
-            fallback_summary="No file-level audit summary was generated.",
-        )
-        file_audit["file_name"] = file_name
+    parsed_file_audit = parse_audit_json_object(response.choices[0].message.content)
+    file_audit = normalize_agentic_audit_report(
+        parsed_file_audit,
+        fallback_summary="No file-level audit summary was generated.",
+    )
+    file_audit["file_name"] = file_name
 
-        await mark_project_file_audited(
-            file_record,
-            format_file_audit_for_storage(file_audit),
-            supabase_client,
-        )
+    await mark_project_file_audited(file_record, file_audit, supabase_client)
 
-        return file_audit
-    except Exception as error:
-        logger.exception("project_audit.file_failed file=%s", file_name)
-        return {
-            "file_name": file_name,
-            "evaluated_score": 0,
-            "executive_summary": "Audit failed for this file.",
-            "pros": [],
-            "cons": [f"{file_name} could not be audited due to an internal processing error."],
-            "recommendations": ["Retry this file audit after confirming the file content is readable."],
-        }
+    return file_audit
 
 
 # ---------------------------------------------------------
@@ -2686,7 +2708,7 @@ async def run_project_audit(
 
         system_blueprint = await generate_system_blueprint(loaded_files)
 
-        file_audits = await asyncio.gather(
+        file_audit_results = await asyncio.gather(
             *(
                 audit_single_file(
                     loaded_file["record"],
@@ -2695,8 +2717,29 @@ async def run_project_audit(
                     loaded_file["content"],
                 )
                 for loaded_file in loaded_files
-            )
+            ),
+            return_exceptions=True,
         )
+
+        phase_two_failures = [
+            {
+                "file_name": loaded_file["file_name"],
+                "error": str(file_audit_result),
+            }
+            for loaded_file, file_audit_result in zip(loaded_files, file_audit_results)
+            if isinstance(file_audit_result, Exception)
+        ]
+        if phase_two_failures:
+            logger.error("project_audit.phase2_failed folder_id=%s failures=%s", folder_id, phase_two_failures)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "One or more file-level audits failed before the final folder judge phase.",
+                    "failures": phase_two_failures,
+                },
+            )
+
+        file_audits = [file_audit for file_audit in file_audit_results if isinstance(file_audit, dict)]
 
         try:
             parsed_project_summary = await generate_final_folder_report(system_blueprint, file_audits)
