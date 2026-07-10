@@ -108,12 +108,15 @@ AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "org
 
 
 def clean_and_parse_json(raw_string: str) -> dict:
+    import re, json
+
+    raw_string = raw_string or ""
     cleaned = re.sub(r"^```json\s*", "", raw_string, flags=re.MULTILINE)
     cleaned = re.sub(r"^```\s*", "", cleaned, flags=re.MULTILINE)
     cleaned = cleaned.strip()
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         return {
             "evaluated_score": 0,
             "description": "Parse error",
@@ -881,143 +884,157 @@ class EvaluationRequest(BaseModel):
     project_id: str | None = None
     fileId: str | None = None
     file_id: str | None = None
+    is_folder_audit: bool = False
+    files: Optional[list] = None
     folder_files: Optional[List[dict]] = None
 
 
-async def evaluate_folder_workflow(payload: EvaluationRequest, project_id: str):
-    folder_files = payload.folder_files or []
+async def evaluate_folder_workflow(payload, project_id: str, supabase_client, async_client):
+    import httpx
+    import asyncio
+    import json
 
-    def get_folder_file_name(file_payload: dict, index: int) -> str:
-        return str(
-            file_payload.get("name")
-            or file_payload.get("filename")
-            or file_payload.get("file_name")
-            or file_payload.get("path")
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="projectId is required so evaluation metrics can be persisted.",
+        )
+
+    def get_file_value(file_payload: Any, field_name: str) -> Any:
+        if isinstance(file_payload, dict):
+            return file_payload.get(field_name)
+        return getattr(file_payload, field_name, None)
+
+    payload_files = payload.files or payload.folder_files or []
+
+    # --- 1. CONCURRENT DOWNLOADS ---
+    downloaded_files = []
+    normalized_files = []
+    for index, file_payload in enumerate(payload_files):
+        filename = str(
+            get_file_value(file_payload, "filename")
+            or get_file_value(file_payload, "name")
+            or get_file_value(file_payload, "file_name")
             or f"folder_file_{index + 1}"
         ).strip()
-
-    def get_folder_file_content(file_payload: dict) -> str:
-        return str(
-            file_payload.get("content")
-            or file_payload.get("code")
-            or file_payload.get("raw_content")
-            or file_payload.get("asset_text_content")
+        file_url = str(
+            get_file_value(file_payload, "fileUrl")
+            or get_file_value(file_payload, "file_url")
+            or get_file_value(file_payload, "url")
             or ""
-        )
+        ).strip()
+        if file_url:
+            normalized_files.append({"filename": filename, "fileUrl": file_url})
 
-    all_file_sections = []
-    for index, file_payload in enumerate(folder_files):
-        if not isinstance(file_payload, dict):
-            continue
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+        tasks = [client.get(file["fileUrl"]) for file in normalized_files]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-        file_name = get_folder_file_name(file_payload, index)
-        file_content = get_folder_file_content(file_payload)
-        all_file_sections.append(
-            "\n".join(
-                [
-                    f"--- FILE: {file_name}",
-                    "CONTENT:",
-                    file_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT],
-                    f"--- END FILE: {file_name}",
-                ]
+        for file, response in zip(normalized_files, responses):
+            if isinstance(response, Exception) or response.status_code != 200:
+                continue
+
+            # Identify binary files to skip decoding and AI processing
+            is_binary = file["filename"].lower().endswith(
+                (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".woff", ".woff2", ".ttf")
             )
-        )
+            content = "Binary Asset" if is_binary else response.content.decode("utf-8", errors="replace")
 
-    all_files_content = "\n\n".join(all_file_sections)[:AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT]
+            downloaded_files.append(
+                {
+                    "filename": file["filename"],
+                    "content": content,
+                    "is_binary": is_binary,
+                }
+            )
 
-    architect_response = await async_client.chat.completions.create(
+    if not downloaded_files:
+        raise HTTPException(status_code=400, detail="Failed to download folder files.")
+
+    # --- PHASE 1: THE SYSTEM ARCHITECT ---
+    # Combine only text files for the architect
+    text_files = [f for f in downloaded_files if not f["is_binary"]]
+    combined_code = "\n\n".join(
+        [
+            f"--- {f['filename']} ---\n{f['content'][:AUDIT_FILE_CONTENT_CHAR_LIMIT]}"
+            for f in text_files
+        ]
+    )[:AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT]
+
+    blueprint_resp = await async_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a Principal Systems Architect. Analyze this folder of raw code and produce a System Blueprint. "
-                    "Deduce the tech stack, architecture, data flow, and project purpose from extensions, imports, package files, and syntax. "
-                    "Do not audit for bugs yet. Do not guess frameworks. If the code uses raw DOM APIs such as document.getElementById or .innerHTML, classify it as Vanilla JS."
-                ),
+                "content": "You are a Principal Systems Architect. Analyze the raw code to deduce the frameworks and system architecture. Output a 'System Blueprint'. Do not guess frameworks—if it relies on raw DOM manipulation, it is Vanilla JS. Do not audit for bugs yet.",
             },
-            {
-                "role": "user",
-                "content": f"Here is the combined folder code:\n\n{all_files_content}",
-            },
+            {"role": "user", "content": combined_code},
         ],
-        max_tokens=1800,
-        temperature=0.1,
     )
-    system_blueprint = (architect_response.choices[0].message.content or "").strip()
+    system_blueprint = blueprint_resp.choices[0].message.content.strip()
 
+    # --- PHASE 2: THE INSPECTOR ---
     file_audits = {}
-    skipped_extensions = (".css", ".png", ".jpg", ".svg", ".md")
-
-    for index, file_payload in enumerate(folder_files):
-        if not isinstance(file_payload, dict):
-            continue
-
-        file_name = get_folder_file_name(file_payload, index)
-        file_content = get_folder_file_content(file_payload)
-
-        if file_name.lower().endswith(skipped_extensions):
-            file_audits[file_name] = {
+    for f in downloaded_files:
+        if f["is_binary"]:
+            # HARD SKIP BINARY FILES: LLMs cannot read raw pixels/fonts.
+            file_audits[f["filename"]] = {
                 "evaluated_score": 100,
-                "description": "Static or documentation asset skipped to preserve audit tokens.",
-                "pros": ["Safe supporting asset."],
+                "pros": ["Binary/Media asset safe by default."],
                 "cons": [],
                 "recommendations": [],
             }
             continue
 
-        inspector_response = await async_client.chat.completions.create(
+        # Send ALL text files (PY, JS, HTML, CSS, MD) to the AI
+        inspector_resp = await async_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a Senior Code Inspector. Audit this individual file strictly according to its role in the System Blueprint. "
-                        "Return JSON with evaluated_score, description, pros, cons, and recommendations. "
-                        "Do not guess frameworks; rely only on the provided blueprint and file syntax."
-                    ),
+                    "content": 'You are a Senior Code Reviewer. Audit this file STRICTLY based on its role in the System Blueprint. Even CSS and HTML must be audited for best practices and security. Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}',
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
-                        f"FILE NAME: {file_name}\n\n"
-                        f"FILE CONTENT:\n{file_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT]}"
-                    ),
+                    "content": f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\nFILE TO AUDIT: {f['filename']}\nCONTENT:\n{f['content'][:AUDIT_FILE_CONTENT_CHAR_LIMIT]}",
                 },
             ],
-            max_tokens=1000,
-            temperature=0.1,
         )
-        file_audits[file_name] = clean_and_parse_json(inspector_response.choices[0].message.content or "{}")
+        file_audits[f["filename"]] = clean_and_parse_json(inspector_resp.choices[0].message.content)
 
-    judge_response = await async_client.chat.completions.create(
+    # --- PHASE 3: THE JUDGE ---
+    judge_resp = await async_client.chat.completions.create(
         model="gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are the Lead Tech Director. Give the final Beauty and Brains folder score for the whole system. "
-                    "Return JSON with evaluated_score, description, pros, cons, and recommendations."
-                ),
+                "content": 'You are the Lead Tech Director. Evaluate the entire codebase based on the Blueprint and Inspector Audits. Return strict JSON: {"evaluated_score": int, "pros": ["string"], "cons": ["string"], "recommendations": ["string"]}',
             },
             {
                 "role": "user",
-                "content": (
-                    f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\n"
-                    f"FILE AUDITS:\n{json.dumps(file_audits, ensure_ascii=False)[:AUDIT_REDUCE_REPORT_CHAR_LIMIT]}\n\n"
-                    "Generate the final folder audit now."
-                ),
+                "content": f"SYSTEM BLUEPRINT:\n{system_blueprint}\n\nINSPECTOR AUDITS:\n{json.dumps(file_audits)[:AUDIT_REDUCE_REPORT_CHAR_LIMIT]}",
             },
         ],
-        max_tokens=1000,
-        temperature=0.1,
     )
-    judge_output = clean_and_parse_json(judge_response.choices[0].message.content or "{}")
+    folder_audit = clean_and_parse_json(judge_resp.choices[0].message.content)
 
-    return {"folder_audit": judge_output, "file_audits": file_audits}
+    # --- DATABASE UPDATE ---
+    await asyncio.to_thread(
+        lambda: supabase_client.table("projects")
+        .update(
+            {
+                "evaluation_score": folder_audit.get("evaluated_score", 0),
+                "status": "Verified",
+                "has_been_audited": True,
+            }
+        )
+        .eq("id", project_id)
+        .execute()
+    )
+
+    return {"status": "success", "folder_audit": folder_audit, "file_audits": file_audits}
 
 
 @app.post("/api/evaluate")
@@ -1035,6 +1052,14 @@ async def evaluate_code(
         or payload.file_id
         or ""
     ).strip()
+
+    # --- TRAFFIC COP: Route folder audits to the Multi-Pass Engine ---
+    if getattr(payload, "is_folder_audit", False):
+        logger.info("code_evaluation.folder_workflow.start project_id=%s", project_id)
+        supabase_client = get_request_supabase_client(request)
+        return await evaluate_folder_workflow(payload, project_id, supabase_client, async_client)
+    # -----------------------------------------------------------------
+
     _, ext = os.path.splitext(filename.lower())
     detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
 
@@ -1043,12 +1068,6 @@ async def evaluate_code(
             status_code=400,
             detail="projectId is required so evaluation metrics can be persisted.",
         )
-
-    # --- NEW ROUTING CHECK ---
-    if payload.folder_files and len(payload.folder_files) > 0:
-        logger.info("code_evaluation.folder_workflow.start project_id=%s", project_id)
-        return await evaluate_folder_workflow(payload, project_id)
-    # -------------------------
 
     if not file_url:
         raise HTTPException(
