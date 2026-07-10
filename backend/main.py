@@ -1454,6 +1454,11 @@ class VerifyRequest(BaseModel):
         return normalized_data
 
 
+class SingleFileAuditRequest(VerifyRequest):
+    filename: str | None = None
+    fileName: str | None = None
+
+
 class AuditRequest(BaseModel):
     folder_id: str
     user_id: str
@@ -2212,6 +2217,106 @@ def normalize_agentic_audit_report(parsed_report: Dict[str, Any], fallback_summa
     }
 
 
+def decode_single_file_audit_content(raw_content: str) -> str:
+    stripped_content = str(raw_content or "").strip()
+    if not stripped_content:
+        return ""
+
+    try:
+        base64_payload = (
+            stripped_content.split(",", 1)[1]
+            if stripped_content.startswith("data:") and "," in stripped_content
+            else stripped_content
+        )
+        decoded_content = base64.b64decode("".join(base64_payload.split()), validate=True).decode(
+            "utf-8",
+            errors="replace",
+        )
+        if decoded_content.strip():
+            return decoded_content.strip()
+    except Exception:
+        pass
+
+    return stripped_content
+
+
+async def audit_standalone_file(asset_name: str, asset_text_content: str) -> Dict[str, Any]:
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format=AUDIT_RESPONSE_FORMAT,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an elite Tech Lead auditing a standalone code file. Because this file was uploaded in isolation, you must evaluate its 'Beauty and Brains' strictly on its own merits. \n"
+                    "1. Determine its apparent purpose based on syntax and logic.\n"
+                    "2. Do not hallucinate frameworks (e.g., if it uses `.innerHTML`, it is Vanilla JS, not React).\n"
+                    "3. Evaluate its security, efficiency, and structural cleanliness.\n\n"
+                    "Return a strict JSON object matching this schema:\n"
+                    "{\n"
+                    "  \"evaluated_score\": (integer 1-100),\n"
+                    "  \"executive_summary\": \"3-4 sentences evaluating this standalone file's quality and purpose.\",\n"
+                    "  \"pros\": [\"Strength 1\", \"Strength 2\"],\n"
+                    "  \"cons\": [\"Weakness 1\", \"Weakness 2\"],\n"
+                    "  \"recommendations\": [\"Fix 1\", \"Fix 2\"]\n"
+                    "}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"File Name: {asset_name}\n\n"
+                    f"Standalone file content:\n{truncate_audit_text(asset_text_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+                ),
+            },
+        ],
+        max_tokens=1000,
+        temperature=0.1,
+    )
+
+    parsed_file_report = parse_audit_json_object(response.choices[0].message.content)
+    return normalize_agentic_audit_report(
+        parsed_file_report,
+        fallback_summary="No standalone file audit summary was generated.",
+    )
+
+
+async def persist_single_file_audit(
+    request: Request,
+    current_user_id: str,
+    project_id: str,
+    audit_report: Dict[str, Any],
+) -> None:
+    if not project_id:
+        return
+
+    score = audit_report.get("evaluated_score")
+    summary = audit_report.get("executive_summary")
+    update_payload = {
+        "score": score,
+        "evaluation_score": score,
+        "logic_score": score,
+        "audit_summary": summary,
+        "ai_summary": summary,
+        "description": summary,
+        "pros": audit_report.get("pros"),
+        "cons": audit_report.get("cons"),
+        "recommendations": audit_report.get("recommendations"),
+        "user_description": summary,
+        "has_been_audited": True,
+        "status": "Verified",
+    }
+    supabase_client = get_request_supabase_client(request)
+
+    await asyncio.to_thread(
+        lambda: supabase_client.table("projects")
+        .update(update_payload)
+        .eq("id", project_id)
+        .eq("user_id", current_user_id)
+        .execute()
+    )
+
+
 def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
     sections = [
         f"Score: {file_audit.get('evaluated_score', 0)}/100",
@@ -2407,8 +2512,46 @@ async def audit_single_file(
 
 
 # ---------------------------------------------------------
-# THE API ENDPOINT: Multi-pass agentic folder audit
+# ROUTE B: Single-pass standalone file audit
 # ---------------------------------------------------------
+@app.post("/audit/file")
+@app.post("/audit/file/")
+async def run_single_file_audit(
+    payload: SingleFileAuditRequest,
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
+    asset_name = (
+        payload.assetName
+        or payload.filename
+        or payload.fileName
+        or "Standalone code file"
+    )
+    asset_text_content = decode_single_file_audit_content(payload.code)
+
+    if not asset_text_content:
+        raise HTTPException(status_code=400, detail="Uploaded content cannot be empty.")
+
+    try:
+        audit_report = await audit_standalone_file(asset_name, asset_text_content)
+    except (ValueError, json.JSONDecodeError) as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail="Single-file audit response was not valid JSON.",
+        ) from parse_error
+
+    project_id = (payload.projectId or "").strip()
+    if project_id:
+        await persist_single_file_audit(request, current_user_id, project_id, audit_report)
+
+    return audit_report
+
+
+# ---------------------------------------------------------
+# ROUTE A: Multi-pass agentic folder audit
+# ---------------------------------------------------------
+@app.post("/audit/folder")
+@app.post("/audit/folder/")
 @app.post("/api/audit-project")
 async def run_project_audit(
     payload: AuditRequest,
@@ -2490,13 +2633,7 @@ async def run_project_audit(
             .execute()
         )
 
-        return {
-            "message": "Audit complete",
-            "system_blueprint": system_blueprint,
-            "file_audits": file_audits,
-            "file_reports": file_audits,
-            "project_summary": parsed_project_summary,
-        }
+        return parsed_project_summary
 
     except HTTPException:
         raise
