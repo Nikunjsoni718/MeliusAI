@@ -786,6 +786,104 @@ def secure_filename(filename: str | None) -> str:
     return sanitized_name or "upload"
 
 
+JUPYTER_NOTEBOOK_DATA_URI_PATTERN = re.compile(
+    r"^data:application/(?:x-ipynb\+json|x-jupyter-notebook|vnd\.jupyter(?:\+json)?)(?:;[^,;]+)*;base64,",
+    flags=re.IGNORECASE,
+)
+JUPYTER_NOTEBOOK_CELL_HEADER_PATTERN = re.compile(
+    r"^--- \[[A-Z][A-Z0-9_-]* CELL \d+\] ---$"
+)
+
+
+def is_jupyter_notebook_asset(asset_name: str, raw_content: Any = "") -> bool:
+    normalized_name = str(asset_name or "").split("?", 1)[0].lower()
+    if isinstance(raw_content, bytes):
+        content_prefix = raw_content[:160].decode("ascii", errors="ignore").lstrip()
+    else:
+        content_prefix = str(raw_content or "").lstrip()[:160]
+    return normalized_name.endswith(".ipynb") or bool(
+        JUPYTER_NOTEBOOK_DATA_URI_PATTERN.match(content_prefix)
+    )
+
+
+def extract_jupyter_notebook_content(raw_content: str | bytes) -> str:
+    """Return only cell sources from a notebook, excluding outputs and metadata."""
+    if isinstance(raw_content, bytes):
+        notebook_text = raw_content.decode("utf-8-sig", errors="strict")
+    else:
+        notebook_text = str(raw_content or "").strip()
+
+    if JUPYTER_NOTEBOOK_DATA_URI_PATTERN.match(notebook_text):
+        encoded_payload = notebook_text.split(",", 1)[1]
+        try:
+            notebook_text = base64.b64decode(
+                "".join(encoded_payload.split()),
+                validate=True,
+            ).decode("utf-8-sig", errors="strict")
+        except (ValueError, UnicodeDecodeError) as decode_error:
+            raise ValueError("Jupyter Notebook base64 content is invalid.") from decode_error
+
+    try:
+        notebook_data = json.loads(notebook_text)
+    except json.JSONDecodeError as json_error:
+        # Some clients submit filename-identified notebooks as bare base64 rather than data URIs.
+        try:
+            decoded_text = base64.b64decode(
+                "".join(notebook_text.split()),
+                validate=True,
+            ).decode("utf-8-sig", errors="strict")
+            notebook_data = json.loads(decoded_text)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as decode_error:
+            raise ValueError("Jupyter Notebook content is not valid JSON.") from decode_error
+
+    if not isinstance(notebook_data, dict) or not isinstance(notebook_data.get("cells"), list):
+        raise ValueError("Jupyter Notebook JSON must contain a cells array.")
+
+    extracted_blocks = []
+    for cell_index, cell in enumerate(notebook_data["cells"], start=1):
+        if not isinstance(cell, dict):
+            continue
+
+        cell_type = str(cell.get("cell_type") or "unknown").strip().upper() or "UNKNOWN"
+        source = cell.get("source", "")
+        if isinstance(source, list):
+            source_text = "".join(part for part in source if isinstance(part, str))
+        elif isinstance(source, str):
+            source_text = source
+        else:
+            continue
+
+        if not source_text.strip():
+            continue
+
+        extracted_blocks.append(
+            f"--- [{cell_type} CELL {cell_index}] ---\n{source_text.rstrip()}"
+        )
+
+    if not extracted_blocks:
+        raise ValueError("Jupyter Notebook contains no readable code or markdown cells.")
+
+    return "\n\n".join(extracted_blocks)
+
+
+def prepare_audit_content(asset_name: str, raw_content: str | bytes) -> str:
+    """Normalize special audit assets before any content is sent to an AI model."""
+    if isinstance(raw_content, bytes):
+        decoded_content = raw_content.decode("utf-8-sig", errors="replace")
+    else:
+        decoded_content = str(raw_content or "")
+
+    if not is_jupyter_notebook_asset(asset_name, decoded_content):
+        return decoded_content
+
+    # Folder and shared-orchestrator boundaries can both invoke this middleware.
+    first_line = decoded_content.lstrip().splitlines()[0] if decoded_content.strip() else ""
+    if JUPYTER_NOTEBOOK_CELL_HEADER_PATTERN.fullmatch(first_line):
+        return decoded_content
+
+    return extract_jupyter_notebook_content(decoded_content)
+
+
 EVALUATION_LANGUAGE_MAP = {
     ".c": "C",
     ".cc": "C++",
@@ -798,6 +896,7 @@ EVALUATION_LANGUAGE_MAP = {
     ".h": "C/C++ Header",
     ".hpp": "C++ Header",
     ".html": "HTML",
+    ".ipynb": "Jupyter Notebook",
     ".java": "Java",
     ".jsx": "JavaScript React (JSX)",
     ".js": "JavaScript",
@@ -1113,19 +1212,29 @@ async def orchestrate_audit(files_data: list, async_client):
     files_data should be a list of dicts:
     [{"filename": "...", "content": "...", "language": "...", "is_binary": bool}]
     """
-    normalized_files = [
-        {
-            **file_data,
-            "filename": str(file_data.get("filename") or file_data.get("file_name") or "Unknown file"),
-            "content": str(file_data.get("content") or ""),
-            "language": file_data.get("language") or detect_audit_language(
-                str(file_data.get("filename") or file_data.get("file_name") or "")
-            ),
-            "is_binary": bool(file_data.get("is_binary", False)),
-        }
-        for file_data in files_data
-        if isinstance(file_data, dict)
-    ]
+    normalized_files = []
+    for file_data in files_data:
+        if not isinstance(file_data, dict):
+            continue
+
+        filename = str(
+            file_data.get("filename") or file_data.get("file_name") or "Unknown file"
+        )
+        raw_content = file_data.get("content") or ""
+        is_notebook = is_jupyter_notebook_asset(filename, raw_content)
+        normalized_files.append(
+            {
+                **file_data,
+                "filename": filename,
+                "content": prepare_audit_content(filename, raw_content),
+                "language": (
+                    "Jupyter Notebook"
+                    if is_notebook
+                    else file_data.get("language") or detect_audit_language(filename)
+                ),
+                "is_binary": bool(file_data.get("is_binary", False)),
+            }
+        )
 
     if not normalized_files:
         raise ValueError("No files were provided for audit orchestration.")
@@ -1148,6 +1257,15 @@ async def orchestrate_audit(files_data: list, async_client):
             break
 
     directory_tree = "\n".join(file["filename"] for file in normalized_files)
+    notebook_blueprint_sections = [
+        f"--- NOTEBOOK: {file['filename']} ---\n{file['content']}\n--- END NOTEBOOK ---"
+        for file in normalized_files
+        if file["language"] == "Jupyter Notebook"
+    ]
+    notebook_blueprint_context = truncate_audit_text(
+        "\n\n".join(notebook_blueprint_sections),
+        AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT,
+    )
 
     if readme_content:
         architect_prompt = (
@@ -1161,9 +1279,15 @@ async def orchestrate_audit(files_data: list, async_client):
     else:
         architect_prompt = (
             "You are a Systems Architect. The developer FAILED to provide a README.md. "
-            "You must deduce the overarching purpose of this system based ONLY on the directory tree. "
+            "Deduce the overarching purpose from the directory tree and any extracted notebook cells. "
             "Do not invent frameworks or product goals that are not implied by filenames and extensions.\n\n"
             f"Directory Tree:\n{directory_tree}"
+        )
+
+    if notebook_blueprint_context:
+        architect_prompt += (
+            "\n\nExtracted Jupyter Notebook cells (outputs and metadata removed):\n"
+            f"{notebook_blueprint_context}"
         )
 
     system_blueprint_resp = await async_client.chat.completions.create(
@@ -1333,8 +1457,15 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                 )
                 continue
 
-            # Preserve the complete source exactly as downloaded for the line-by-line audit.
-            content = response.content.decode("utf-8", errors="replace")
+            # Normalize special formats before either the blueprint or file auditor sees them.
+            is_notebook = is_jupyter_notebook_asset(file["filename"], response.content)
+            try:
+                content = prepare_audit_content(file["filename"], response.content)
+            except ValueError as notebook_error:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unable to parse Jupyter Notebook {file['filename']}: {notebook_error}",
+                ) from notebook_error
 
             # DEBUG LOG: Print the first 150 characters to the terminal to PROVE we have the actual code!
             logger.info(
@@ -1348,7 +1479,11 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
 
             # Map the language properly using the existing map
             _, ext = os.path.splitext(file["filename"].lower())
-            detected_language = EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+            detected_language = (
+                "Jupyter Notebook"
+                if is_notebook
+                else EVALUATION_LANGUAGE_MAP.get(ext, "Unknown/Generic Text")
+            )
 
             content_lower = content.lower()
             looks_like_protected_html = (
@@ -1407,7 +1542,22 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         )
     else:
         blueprint_user_content += (
-            "\n\nNo README.md was provided. Deduce the blueprint solely from the file extensions and names."
+            "\n\nNo README.md was provided. Deduce the blueprint from filenames, extensions, "
+            "and any extracted notebook cells supplied below."
+        )
+
+    notebook_blueprint_sections = [
+        f"--- NOTEBOOK: {file['filename']} ---\n{file['content']}\n--- END NOTEBOOK ---"
+        for file in downloaded_files
+        if file["language"] == "Jupyter Notebook"
+    ]
+    if notebook_blueprint_sections:
+        blueprint_user_content += (
+            "\n\nExtracted Jupyter Notebook cells (outputs and metadata removed):\n"
+            + truncate_audit_text(
+                "\n\n".join(notebook_blueprint_sections),
+                AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT,
+            )
         )
 
     blueprint_resp = await async_client.chat.completions.create(
@@ -1419,7 +1569,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
                     "Write a strict, 3-sentence blueprint explaining what this entire application is, "
                     "what its tech stack is, and how the frontend and backend connect. "
-                    "If no README exists, deduce the blueprint solely from the file extensions and names."
+                    "If no README exists, use filenames, extensions, and extracted notebook cells only."
                 ),
             },
             {"role": "user", "content": blueprint_user_content},
@@ -1690,7 +1840,13 @@ async def evaluate_code(
                 detail="Downloaded files must be 5 MB or smaller.",
         )
 
-        code_content = file_bytes.decode("utf-8", errors="replace")
+        try:
+            code_content = prepare_audit_content(filename, file_bytes)
+        except ValueError as notebook_error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to parse Jupyter Notebook {filename}: {notebook_error}",
+            ) from notebook_error
         if len(code_content.strip()) == 0:
             logger.error("code_evaluation.empty_file filename=%s", filename)
             raise HTTPException(
@@ -1822,6 +1978,7 @@ async def analyze_code(
         ".tsx": "TypeScript (React/JSX)",
         ".js": "JavaScript",
         ".jsx": "JavaScript (React/JSX)",
+        ".ipynb": "Jupyter Notebook",
     }
     detected_language = extension_map.get(ext, "Unknown/Generic Text")
 
@@ -1840,9 +1997,12 @@ async def analyze_code(
             )
 
         try:
-            code_content = file_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            code_content = file_bytes.decode("utf-8", errors="ignore")
+            code_content = prepare_audit_content(filename, file_bytes)
+        except ValueError as notebook_error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to parse Jupyter Notebook {filename}: {notebook_error}",
+            ) from notebook_error
 
         if not code_content.strip():
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
@@ -2251,6 +2411,7 @@ LANGUAGE_BY_EXTENSION = {
     ".hpp": "C++ Header",
     ".html": "HTML",
     ".htm": "HTML",
+    ".ipynb": "Jupyter Notebook",
     ".java": "Java",
     ".js": "JavaScript",
     ".jsx": "JavaScript React (JSX)",
@@ -2335,6 +2496,7 @@ CODE_EXTENSIONS = {
     ".hpp",
     ".html",
     ".htm",
+    ".ipynb",
     ".java",
     ".js",
     ".jsx",
@@ -2824,6 +2986,7 @@ def get_audit_file_name(file_record: Dict[str, Any]) -> str:
 
 
 async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
+    file_name = get_audit_file_name(file_record)
     raw_content = (
         file_record.get("raw_content")
         or file_record.get("content")
@@ -2831,7 +2994,8 @@ async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
     )
 
     if raw_content is not None and str(raw_content).strip():
-        return str(raw_content)[:AUDIT_FILE_CONTENT_CHAR_LIMIT]
+        prepared_content = prepare_audit_content(file_name, str(raw_content))
+        return truncate_audit_text(prepared_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)
 
     file_url = str(file_record.get("file_url") or "").strip()
     if file_url.startswith(("http://", "https://")):
@@ -2839,10 +3003,12 @@ async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
             async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as http_client:
                 response = await http_client.get(file_url)
                 response.raise_for_status()
-                fetched_content = response.text.strip()
+                fetched_content = prepare_audit_content(file_name, response.content)
 
             if fetched_content:
-                return fetched_content[:AUDIT_FILE_CONTENT_CHAR_LIMIT]
+                return truncate_audit_text(fetched_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)
+        except ValueError:
+            raise
         except Exception as fetch_error:
             logger.warning(
                 "project_audit.file_fetch_failed file=%s error=%s",
@@ -3235,7 +3401,16 @@ async def run_single_file_audit(
         or payload.fileName
         or "Standalone code file"
     )
-    asset_text_content = decode_single_file_audit_content(payload.code)
+    try:
+        asset_text_content = prepare_audit_content(
+            asset_name,
+            decode_single_file_audit_content(payload.code),
+        )
+    except ValueError as notebook_error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unable to parse Jupyter Notebook {asset_name}: {notebook_error}",
+        ) from notebook_error
 
     if not asset_text_content:
         raise HTTPException(status_code=400, detail="Uploaded content cannot be empty.")
@@ -4904,7 +5079,16 @@ async def verify_asset(
             )
             return base64.b64decode("".join(base64_payload.split()), validate=True)
 
-        if asset_name_lower.endswith(".pdf") or asset_text_content.startswith("data:application/pdf;base64,"):
+        if is_jupyter_notebook_asset(asset_name, asset_text_content):
+            try:
+                asset_text_content = prepare_audit_content(asset_name, asset_text_content)
+            except ValueError as notebook_error:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unable to parse Jupyter Notebook {asset_name}: {notebook_error}",
+                ) from notebook_error
+
+        elif asset_name_lower.endswith(".pdf") or asset_text_content.startswith("data:application/pdf;base64,"):
             pdf_reader = pypdf.PdfReader(io.BytesIO(decode_asset_bytes(asset_text_content)))
             extracted_page_blocks = []
             extracted_page_text = []
