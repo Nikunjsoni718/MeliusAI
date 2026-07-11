@@ -806,64 +806,85 @@ def is_jupyter_notebook_asset(asset_name: str, raw_content: Any = "") -> bool:
     )
 
 
+def parse_jupyter_notebook(raw_decoded_text: str) -> str:
+    """Safely extracts code and markdown from a decoded Jupyter Notebook string."""
+    try:
+        notebook_json = json.loads(raw_decoded_text)
+        extracted_cells = []
+
+        # Safely get cells array
+        cells = notebook_json.get("cells", [])
+        if not isinstance(cells, list):
+            return ""
+
+        for idx, cell in enumerate(cells, start=1):
+            if not isinstance(cell, dict):
+                continue
+
+            cell_type = cell.get("cell_type", "unknown").upper()
+            source = cell.get("source", "")
+
+            # Handle Jupyter's format where 'source' is often a list of strings
+            if isinstance(source, list):
+                cell_text = "".join(str(line) for line in source)
+            else:
+                cell_text = str(source)
+
+            if cell_text.strip():
+                extracted_cells.append(
+                    f"--- [{cell_type} CELL {idx}] ---\n{cell_text.strip()}"
+                )
+
+        return "\n\n".join(extracted_cells).strip()
+
+    except json.JSONDecodeError:
+        # If it is not valid JSON, return empty so the endpoint handles the error.
+        return ""
+    except Exception as error:
+        logging.error(f"IPYNB Extraction failed: {str(error)}")
+        return ""
+
+
 def extract_jupyter_notebook_content(raw_content: str | bytes) -> str:
-    """Return only cell sources from a notebook, excluding outputs and metadata."""
+    """Decode a notebook payload, then return only its hardened cell extraction."""
     if isinstance(raw_content, bytes):
-        notebook_text = raw_content.decode("utf-8-sig", errors="strict")
+        notebook_text = raw_content.decode("utf-8-sig", errors="ignore")
     else:
         notebook_text = str(raw_content or "").strip()
 
-    if JUPYTER_NOTEBOOK_DATA_URI_PATTERN.match(notebook_text):
-        encoded_payload = notebook_text.split(",", 1)[1]
+    if notebook_text.startswith("data:") and "," in notebook_text:
+        data_header, encoded_payload = notebook_text.split(",", 1)
         try:
-            notebook_text = base64.b64decode(
-                "".join(encoded_payload.split()),
-                validate=True,
-            ).decode("utf-8-sig", errors="strict")
-        except (ValueError, UnicodeDecodeError) as decode_error:
-            raise ValueError("Jupyter Notebook base64 content is invalid.") from decode_error
+            if ";base64" in data_header.lower():
+                notebook_text = base64.b64decode(
+                    "".join(encoded_payload.split()),
+                    validate=True,
+                ).decode("utf-8-sig", errors="ignore")
+            else:
+                notebook_text = unquote(encoded_payload)
+        except ValueError as decode_error:
+            raise ValueError("Jupyter Notebook encoded content is invalid.") from decode_error
 
+    extracted_content = parse_jupyter_notebook(notebook_text)
+    if extracted_content:
+        return extracted_content
+
+    # Some clients submit filename-identified notebooks as bare base64.
     try:
-        notebook_data = json.loads(notebook_text)
-    except json.JSONDecodeError as json_error:
-        # Some clients submit filename-identified notebooks as bare base64 rather than data URIs.
-        try:
-            decoded_text = base64.b64decode(
-                "".join(notebook_text.split()),
-                validate=True,
-            ).decode("utf-8-sig", errors="strict")
-            notebook_data = json.loads(decoded_text)
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as decode_error:
-            raise ValueError("Jupyter Notebook content is not valid JSON.") from decode_error
+        decoded_text = base64.b64decode(
+            "".join(notebook_text.split()),
+            validate=True,
+        ).decode("utf-8-sig", errors="ignore")
+    except ValueError as decode_error:
+        raise ValueError("Jupyter Notebook content is not valid JSON.") from decode_error
 
-    if not isinstance(notebook_data, dict) or not isinstance(notebook_data.get("cells"), list):
-        raise ValueError("Jupyter Notebook JSON must contain a cells array.")
-
-    extracted_blocks = []
-    for cell_index, cell in enumerate(notebook_data["cells"], start=1):
-        if not isinstance(cell, dict):
-            continue
-
-        cell_type = str(cell.get("cell_type") or "unknown").strip().upper() or "UNKNOWN"
-        source = cell.get("source", "")
-        if isinstance(source, list):
-            source_text = "".join(part for part in source if isinstance(part, str))
-        elif isinstance(source, str):
-            source_text = source
-        else:
-            continue
-
-        if not source_text.strip():
-            continue
-
-        extracted_blocks.append(
-            f"--- [{cell_type} CELL {cell_index}] ---\n{source_text.rstrip()}"
+    extracted_content = parse_jupyter_notebook(decoded_text)
+    if not extracted_content:
+        raise ValueError(
+            "Unable to extract any valid code or markdown from the Jupyter Notebook."
         )
 
-    if not extracted_blocks:
-        raise ValueError("Jupyter Notebook contains no readable code or markdown cells.")
-
-    return "\n\n".join(extracted_blocks)
+    return extracted_content
 
 
 def prepare_audit_content(asset_name: str, raw_content: str | bytes) -> str:
@@ -1840,13 +1861,25 @@ async def evaluate_code(
                 detail="Downloaded files must be 5 MB or smaller.",
         )
 
-        try:
-            code_content = prepare_audit_content(filename, file_bytes)
-        except ValueError as notebook_error:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unable to parse Jupyter Notebook {filename}: {notebook_error}",
-            ) from notebook_error
+        if filename.lower().endswith(".ipynb"):
+            decoded_text = file_bytes.decode("utf-8", errors="ignore")
+            code_content = parse_jupyter_notebook(decoded_text)
+            if not code_content:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Unable to extract any valid code or markdown from the "
+                        "Jupyter Notebook."
+                    ),
+                )
+        else:
+            try:
+                code_content = prepare_audit_content(filename, file_bytes)
+            except ValueError as notebook_error:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unable to parse Jupyter Notebook {filename}: {notebook_error}",
+                ) from notebook_error
         if len(code_content.strip()) == 0:
             logger.error("code_evaluation.empty_file filename=%s", filename)
             raise HTTPException(
@@ -5081,12 +5114,39 @@ async def verify_asset(
 
         if is_jupyter_notebook_asset(asset_name, asset_text_content):
             try:
-                asset_text_content = prepare_audit_content(asset_name, asset_text_content)
-            except ValueError as notebook_error:
+                if asset_text_content.startswith("data:"):
+                    decoded_text = decode_asset_bytes(asset_text_content).decode(
+                        "utf-8",
+                        errors="ignore",
+                    )
+                else:
+                    decoded_text = asset_text_content
+
+                extracted_content = parse_jupyter_notebook(decoded_text)
+                if not extracted_content and not asset_text_content.lstrip().startswith("{"):
+                    decoded_text = decode_asset_bytes(asset_text_content).decode(
+                        "utf-8",
+                        errors="ignore",
+                    )
+                    extracted_content = parse_jupyter_notebook(decoded_text)
+            except Exception as notebook_error:
+                logger.warning(
+                    "verify_asset.ipynb_decode_failed asset=%s error=%s",
+                    asset_name,
+                    notebook_error,
+                )
+                extracted_content = parse_jupyter_notebook(asset_text_content)
+
+            if not extracted_content:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"Unable to parse Jupyter Notebook {asset_name}: {notebook_error}",
-                ) from notebook_error
+                    detail=(
+                        "Unable to extract any valid code or markdown from the "
+                        "Jupyter Notebook."
+                    ),
+                )
+
+            asset_text_content = extracted_content
 
         elif asset_name_lower.endswith(".pdf") or asset_text_content.startswith("data:application/pdf;base64,"):
             pdf_reader = pypdf.PdfReader(io.BytesIO(decode_asset_bytes(asset_text_content)))
