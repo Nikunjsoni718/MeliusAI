@@ -122,6 +122,7 @@ const backendExtensions = new Set([
   '.cpp',
   '.cs',
   '.go',
+  '.ipynb',
   '.java',
   '.js',
   '.mjs',
@@ -172,6 +173,8 @@ function isTextLikeContentType(contentType: string) {
   return (
     normalizedType.startsWith('text/') ||
     normalizedType === 'application/json' ||
+    normalizedType === 'application/x-ipynb+json' ||
+    normalizedType === 'application/x-jupyter-notebook' ||
     normalizedType === 'application/javascript' ||
     normalizedType === 'application/typescript' ||
     normalizedType === 'application/xml' ||
@@ -181,6 +184,51 @@ function isTextLikeContentType(contentType: string) {
 
 function isTextLikeAsset(assetName: string, contentType: string) {
   return isTextLikeContentType(contentType) || textExtensions.has(getExtension(assetName));
+}
+
+function isJupyterNotebookAsset(assetName: string, contentType: string) {
+  const normalizedType = getNormalizedContentType(contentType);
+
+  return (
+    getExtension(assetName) === '.ipynb' ||
+    normalizedType === 'application/x-ipynb+json' ||
+    normalizedType === 'application/x-jupyter-notebook'
+  );
+}
+
+function extractJupyterNotebookCells(rawNotebookText: string) {
+  try {
+    const notebook = JSON.parse(rawNotebookText) as { cells?: unknown };
+    const cells = notebook && typeof notebook === 'object' ? notebook.cells : null;
+
+    if (!Array.isArray(cells)) {
+      return '';
+    }
+
+    return cells
+      .map((cell, index) => {
+        if (!cell || typeof cell !== 'object') {
+          return '';
+        }
+
+        const notebookCell = cell as { cell_type?: unknown; source?: unknown };
+        const cellType = String(notebookCell.cell_type || 'unknown').trim().toUpperCase() || 'UNKNOWN';
+        const source = notebookCell.source ?? '';
+        const cellText = Array.isArray(source)
+          ? source.map((line) => String(line)).join('')
+          : String(source);
+
+        return cellText.trim()
+          ? `--- [${cellType} CELL ${index + 1}] ---\n${cellText.trim()}`
+          : '';
+      })
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
+  } catch (error) {
+    console.warn('Unable to extract Jupyter Notebook cells for verification:', error);
+    return '';
+  }
 }
 
 function isPdfAsset(assetName: string, contentType: string) {
@@ -291,6 +339,17 @@ async function extractOpenXmlText(buffer: Buffer, assetName: string) {
 async function normalizeProvidedAssetContent(content: string, assetName: string) {
   const parsedDataUrl = parseDataUrl(content);
 
+  if (isJupyterNotebookAsset(assetName, parsedDataUrl?.mediaType ?? '')) {
+    const notebookText = parsedDataUrl ? parsedDataUrl.buffer.toString('utf8') : content;
+    const extractedNotebookCells = extractJupyterNotebookCells(notebookText);
+
+    if (!extractedNotebookCells) {
+      throw new Error('Unable to extract code or markdown cells from the Jupyter Notebook.');
+    }
+
+    return extractedNotebookCells;
+  }
+
   if (!parsedDataUrl) {
     return content;
   }
@@ -335,6 +394,16 @@ async function loadAssetContent({
 
   const responseContentType = assetResponse.headers.get('content-type') ?? '';
   const assetBuffer = Buffer.from(await assetResponse.arrayBuffer());
+
+  if (isJupyterNotebookAsset(assetName, responseContentType)) {
+    const extractedNotebookCells = extractJupyterNotebookCells(assetBuffer.toString('utf8'));
+
+    if (!extractedNotebookCells) {
+      throw new Error('Unable to extract code or markdown cells from the Jupyter Notebook.');
+    }
+
+    return extractedNotebookCells;
+  }
 
   if (isPptxAsset(assetName, responseContentType) || isDocxAsset(assetName, responseContentType)) {
     const extractedText = await extractOpenXmlText(assetBuffer, assetName);

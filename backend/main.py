@@ -102,6 +102,7 @@ supabase_service_client = None
 supabase: Client | None = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_NOTEBOOK_UPLOAD_BYTES = 25 * 1024 * 1024
 AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
 AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT = 90000
 AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
@@ -1855,10 +1856,19 @@ async def evaluate_code(
         response.raise_for_status()
 
         file_bytes = response.content
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
+        max_download_bytes = (
+            MAX_NOTEBOOK_UPLOAD_BYTES
+            if filename.lower().endswith(".ipynb")
+            else MAX_UPLOAD_BYTES
+        )
+        if len(file_bytes) > max_download_bytes:
             raise HTTPException(
                 status_code=413,
-                detail="Downloaded files must be 5 MB or smaller.",
+                detail=(
+                    "Downloaded Jupyter Notebooks must be 25 MB or smaller."
+                    if filename.lower().endswith(".ipynb")
+                    else "Downloaded files must be 5 MB or smaller."
+                ),
         )
 
         code_content = file_bytes.decode("utf-8", errors="replace")
@@ -2111,19 +2121,29 @@ async def review_portfolio_asset(
 ):
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
-    if file.size is None or file.size > MAX_UPLOAD_BYTES:
+    safe_name = secure_filename(file.filename)
+    max_upload_bytes = (
+        MAX_NOTEBOOK_UPLOAD_BYTES
+        if safe_name.lower().endswith(".ipynb")
+        else MAX_UPLOAD_BYTES
+    )
+    if file.size is None or file.size > max_upload_bytes:
         raise HTTPException(
             status_code=413,
-            detail="Uploaded files must be 5 MB or smaller.",
+            detail=(
+                "Uploaded Jupyter Notebooks must be 25 MB or smaller."
+                if safe_name.lower().endswith(".ipynb")
+                else "Uploaded files must be 5 MB or smaller."
+            ),
         )
 
-    safe_name = secure_filename(file.filename)
     temp_file_path = upload_dir / f"{uuid.uuid4().hex}_{safe_name}"
     temporary_processing_paths = []
     code_extensions = [
         ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json",
         ".cpp", ".c", ".h", ".cs", ".java", ".go", ".rs", ".php",
-        ".rb", ".swift", ".kt", ".sql", ".sh", ".yaml", ".yml", ".md"
+        ".rb", ".swift", ".kt", ".sql", ".sh", ".yaml", ".yml", ".md",
+        ".ipynb"
     ]
 
     try:
@@ -2136,7 +2156,7 @@ async def review_portfolio_asset(
                     break
 
                 bytes_written += len(chunk)
-                if bytes_written > MAX_UPLOAD_BYTES:
+                if bytes_written > max_upload_bytes:
                     if temp_file_path.exists():
                         temp_file_path.unlink()
                     raise HTTPException(
@@ -2164,6 +2184,10 @@ async def review_portfolio_asset(
         elif extension in [".xls", ".xlsx"]:
             content_stream = parse_excel(temp_file_path)
             agent_mode = "Data Operations Auditor (Excel Spreadsheet)"
+        elif extension == ".ipynb":
+            decoded_notebook = temp_file_path.read_text(encoding="utf-8", errors="ignore")
+            content_stream = parse_jupyter_notebook(decoded_notebook)
+            agent_mode = "Jupyter Notebook Python Architecture Validator"
         elif extension in code_extensions:
             agent_mode = "Source Code Engineering Architecture Validator"
             content_stream = temp_file_path.read_text(errors="ignore")

@@ -27,6 +27,7 @@ const auditTextFileExtensions = new Set([
   'hs',
   'htm',
   'html',
+  'ipynb',
   'java',
   'js',
   'json',

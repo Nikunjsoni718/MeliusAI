@@ -743,6 +743,7 @@ const codeLanguageMap: Record<string, string> = {
   hpp: 'cpp',
   htm: 'html',
   html: 'html',
+  ipynb: 'python',
   java: 'java',
   js: 'javascript',
   json: 'json',
@@ -2248,7 +2249,17 @@ function ProjectCard({
           <div className="flex flex-col gap-2 mt-auto pt-4 w-full">
             <button
               type="button"
-              onClick={() => onOpen(project)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (!hasCompletedAudit && !isSpectator) {
+                  onVerify(project, event);
+                  return;
+                }
+
+                onOpen(project);
+              }}
               className="w-full py-2 px-4 rounded-full bg-[#11162d] border border-slate-800/60 hover:border-slate-700 text-slate-300 hover:text-white font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
             >
               Read Full Audit Protocol
@@ -4040,10 +4051,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('Verification Failed: This asset does not contain a valid file URL.');
       }
 
+      const isJupyterNotebook = getFileExtensionFromSource(filename) === 'ipynb';
       const shouldReadAssetAsText = shouldForceUtf8CodeRead(filename) || project.mime_type?.startsWith('text/');
-      let assetTextContent = shouldReadAssetAsText ? project.text_preview || '' : project.asset_data_url || '';
+      let assetTextContent = isJupyterNotebook
+        ? ''
+        : shouldReadAssetAsText
+          ? project.text_preview || ''
+          : project.asset_data_url || '';
 
-      if (!assetTextContent) {
+      if (!assetTextContent && !isJupyterNotebook) {
         const assetResponse = await fetch(projectSourceHref);
 
         if (!assetResponse.ok) {
@@ -4061,6 +4077,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         },
         body: JSON.stringify({
           projectId: project.id,
+          fileUrl: projectSourceHref,
+          filename,
           assetName: filename,
           assetTextContent,
           userContextDescription,

@@ -112,6 +112,7 @@ const codeLanguageMap: Record<string, string> = {
   hpp: 'cpp',
   htm: 'html',
   html: 'html',
+  ipynb: 'python',
   java: 'java',
   js: 'javascript',
   json: 'json',
