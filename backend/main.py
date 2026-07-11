@@ -942,7 +942,7 @@ class NativeCodeParser:
 
 
 async def perform_ai_file_audit(filename: str, content: str, detected_language: str, async_client, system_blueprint: str = None) -> dict:
-    """The universal brain for auditing a single file, optionally aware of a wider system blueprint."""
+    """Audit one file independently, using the blueprint only as descriptive context."""
 
     # RUN NATIVE PYTHON PARSING FIRST
     native_analysis = NativeCodeParser.parse(filename, content)
@@ -951,8 +951,12 @@ async def perform_ai_file_audit(filename: str, content: str, detected_language: 
     has_lethal_secret = native_analysis.get("hardcoded_secrets_detected", False)
 
     system_message = (
-        "You are an Elite Systems Architect. Evaluate this file using the provided Native Python Analysis metadata and the raw code.\n"
-        "If the Native Analysis indicates hardcoded secrets, your evaluated_score MUST be below 24."
+        "You are an Elite Systems Architect and a Ruthless Security Auditor.\n"
+        "CRITICAL FIREWALL RULE: You will receive a System Blueprint. Use it ONLY to understand the app's purpose so you can write the description.\n"
+        "DO NOT let the Blueprint inflate this file's score. You MUST evaluate THIS SPECIFIC FILE line-by-line.\n"
+        "If this file contains XSS, missing input validation, or broken links, grade it severely based strictly on its own flaws.\n"
+        "If the Native Analysis indicates hardcoded secrets, your evaluated_score MUST be below 24.\n"
+        "90-100: Flawless | 75-89: Solid | 50-74: Passable | 25-49: Critical Flaws | 0-24: Lethal Failure."
     )
 
     strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
@@ -965,13 +969,13 @@ CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
 
 MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 - The 'evaluated_score' MUST be between 0-100.
-- 90-100: Elite | 75-89: Solid | 50-74: Passable | 25-49: Critical | 0-24: Lethal.
-- For CSS, HTML, and UI files: Do NOT lower scores for missing backend security. Grade them purely on UI/UX, responsiveness, and clean maintainable code. A clean CSS file should score 75-100.
-- For Backend/JS files: Grade ruthlessly on security, XSS, tokens, and logic.
+- The score must reflect only this file's code quality, security, correctness, and role-specific behavior.
+- Do not transfer architectural strengths, features, or quality claims from the System Blueprint into this score.
+- Review every line of the raw code. Grade security, XSS, broken references, validation, and logic ruthlessly where applicable.
 """
 
     user_content = (
-        f"File: {filename}\nLanguage: {detected_language}\n\n"
+        f"File to Audit: {filename}\nLanguage: {detected_language}\n\n"
         f"--- NATIVE PYTHON PRE-ANALYSIS ---\n"
         f"Imports/Dependencies: {native_analysis['imports_or_dependencies']}\n"
         f"Key Functions/Classes: {native_analysis['detected_functions']}\n"
@@ -981,11 +985,16 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
     )
 
     if system_blueprint:
-        user_content += f"System Context: {system_blueprint}\n\n"
+        user_content += (
+            f"--- OVERALL SYSTEM CONTEXT ---\n{system_blueprint}\n"
+            "(Remember: Do NOT use this context to inflate the score of the raw code below.)\n"
+            "------------------------------\n\n"
+        )
 
     user_content += (
         "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
-        f"Raw Code:\n{truncate_audit_text(content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
+        f"--- RAW CODE TO READ LINE-BY-LINE ---\n{content}\n"
+        "-------------------------------------"
     )
 
     try:
@@ -1013,7 +1022,9 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
             final_score = 0
 
         parsed_data = {
-            "description": parsed_content.get("description", "No description provided.").strip(),
+            "description": str(
+                parsed_content.get("description") or "No description provided."
+            ).strip(),
             "pros": normalize_text_array(parsed_content.get("pros")),
             "cons": normalize_text_array(parsed_content.get("cons")),
             "recommendations": normalize_text_array(parsed_content.get("recommendations")),
@@ -1024,6 +1035,31 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
         if has_lethal_secret and parsed_data["evaluated_score"] > 24:
             parsed_data["evaluated_score"] = 15
             parsed_data["cons"].append("CRITICAL: Hardcoded secrets detected by native scanner.")
+
+        # NATIVE ERROR FINDING VETOES
+        content_lower = content.lower()
+
+        # 1. Catch XSS (Direct DOM Injection)
+        if "innerhtml" in content_lower or "dangerouslysetinnerhtml" in content_lower:
+            if parsed_data["evaluated_score"] > 35:
+                parsed_data["evaluated_score"] = 20
+                parsed_data["cons"].append(
+                    "CRITICAL: DOM-based XSS risk detected via direct HTML injection."
+                )
+
+        # 2. Catch Missing Validation on parseInt
+        if "parseint(" in content_lower and "math.max" not in content_lower and "if" not in content_lower:
+            if parsed_data["evaluated_score"] > 60:
+                parsed_data["evaluated_score"] -= 20
+                parsed_data["cons"].append(
+                    "Logic Flaw: Missing boundary validation on parsed integers."
+                )
+
+        # 3. Catch Broken Script Tags in HTML
+        if detected_language == "HTML" and "<script" in content_lower:
+            parsed_data["recommendations"].append(
+                "Verify all <script> src attributes exactly match existing filenames."
+            )
 
         return parsed_data
     except Exception as e:
@@ -1297,7 +1333,8 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                 )
                 continue
 
-            content = response.content.decode("utf-8", errors="replace").strip()
+            # Preserve the complete source exactly as downloaded for the line-by-line audit.
+            content = response.content.decode("utf-8", errors="replace")
 
             # DEBUG LOG: Print the first 150 characters to the terminal to PROVE we have the actual code!
             logger.info(
@@ -1393,92 +1430,34 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         blueprint_resp.choices[0].message.content or "No system blueprint was generated."
     ).strip()
 
-    # --- PHASE 2: THE CONTEXTUAL FILE AUDIT ---
-    async def audit_folder_file(file_record: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-        filename = file_record["filename"]
-        content = file_record["content"]
-        detected_language = file_record["language"]
-        native_analysis = NativeCodeParser.parse(filename, content)
-        has_lethal_secret = native_analysis.get("hardcoded_secrets_detected", False)
-
-        system_message = (
-            "You are an Elite Systems Architect. Evaluate this file using the provided Native Python Analysis metadata and the raw code.\n"
-            "If the Native Analysis indicates hardcoded secrets, your evaluated_score MUST be below 24."
-        )
-
-        strict_system_prompt = f"""{EVALUATION_SYSTEM_MESSAGE}
-
-{system_message}
-
-CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
-1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
-2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
-
-MANDATORY SCORING & LANGUAGE ISOLATION RULE:
-- The 'evaluated_score' MUST be between 0-100.
-- 90-100: Elite | 75-89: Solid | 50-74: Passable | 25-49: Critical | 0-24: Lethal.
-- For CSS, HTML, and UI files: Do NOT lower scores for missing backend security. Grade them purely on UI/UX, responsiveness, and clean maintainable code. A clean CSS file should score 75-100.
-- For Backend/JS files: Grade ruthlessly on security, XSS, tokens, and logic.
-"""
-
-        user_content = (
-            "SYSTEM CONTEXT: You are auditing a file that is part of a larger application. "
-            "Here is the blueprint of the whole app:\n"
-            f"{system_blueprint}\n\n"
-            "CRITICAL INSTRUCTION: Grade this file based ONLY on its specific role within this system. "
-            "Do not penalize a frontend UI file for lacking backend security if the blueprint shows a separate backend exists.\n\n"
-            "--- RAW FILE ---\n"
-            f"File: {filename}\nLanguage: {detected_language}\n\n"
-            f"--- NATIVE PYTHON PRE-ANALYSIS ---\n"
-            f"Imports/Dependencies: {native_analysis['imports_or_dependencies']}\n"
-            f"Key Functions/Classes: {native_analysis['detected_functions']}\n"
-            f"Hardcoded Secrets Found by Regex: {has_lethal_secret}\n"
-            f"Lines of Code: {native_analysis['lines_of_code']}\n"
-            f"----------------------------------\n\n"
-            "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
-            f"Raw Code:\n{truncate_audit_text(content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"
-        )
-
-        completion = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": strict_system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            response_format=EVALUATION_RESPONSE_FORMAT,
-            temperature=0,
-        )
-
-        parsed_content = clean_and_parse_json(completion.choices[0].message.content or "{}")
-
-        def normalize_text_array(value):
-            if not isinstance(value, list):
-                return []
-            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
-
-        raw_score = parsed_content.get("score", parsed_content.get("evaluated_score", 0))
-        try:
-            final_score = max(0, min(100, int(round(float(raw_score)))))
-        except (TypeError, ValueError):
-            final_score = 0
-
-        parsed_data = {
-            "description": str(parsed_content.get("description") or "No description provided.").strip(),
-            "pros": normalize_text_array(parsed_content.get("pros")),
-            "cons": normalize_text_array(parsed_content.get("cons")),
-            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
-            "evaluated_score": final_score,
-        }
-
-        if has_lethal_secret and parsed_data["evaluated_score"] > 24:
-            parsed_data["evaluated_score"] = 15
-            parsed_data["cons"].append("CRITICAL: Hardcoded secrets detected by native scanner.")
-
-        return filename, parsed_data
-
+    # --- PHASE 2: AUDIT EVERY NON-BINARY FILE IN ISOLATION ---
+    semaphore = asyncio.Semaphore(5)
     file_audits = {}
+
+    async def bound_audit(file_record: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        async with semaphore:
+            filename = file_record["filename"]
+            if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
+                return filename, {
+                    "evaluated_score": 100,
+                    "description": "System Documentation.",
+                    "pros": [],
+                    "cons": [],
+                    "recommendations": [],
+                }
+
+            # Pass this file's complete raw content to the isolated audit function.
+            audit_result = await perform_ai_file_audit(
+                filename=filename,
+                content=file_record["content"],
+                detected_language=file_record["language"],
+                async_client=async_client,
+                system_blueprint=system_blueprint,
+            )
+            return filename, audit_result
+
     audit_results = await asyncio.gather(
-        *(audit_folder_file(file) for file in downloaded_files if not file.get("is_binary")),
+        *(bound_audit(file) for file in downloaded_files if not file.get("is_binary")),
         return_exceptions=True,
     )
     phase_two_failures = []
