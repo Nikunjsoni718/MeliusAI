@@ -961,7 +961,18 @@ EVALUATION_SYSTEM_MESSAGE = (
     "'pros': [string, string, string], 'cons': [string, string, string], "
     "'recommendations': [string, string, string]}. "
     "The 'description' key is mandatory, must be a string, and must never be null, empty, "
-    "or a generic placeholder."
+    "or a generic placeholder.\n"
+    "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, "
+    "you MUST use the exact format: 'Catchy Hook: Short explanation'.\n"
+    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'\n"
+    "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
+)
+
+EVALUATION_ITEM_FORMAT_DESCRIPTION = (
+    "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` "
+    "arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. "
+    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' "
+    "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
 )
 
 EVALUATION_RESPONSE_FORMAT = {
@@ -982,9 +993,27 @@ EVALUATION_RESPONSE_FORMAT = {
                 },
                 "score": {"type": "number"},
                 "grade": {"type": "string", "enum": ["A", "B", "C", "D", "F"]},
-                "pros": {"type": "array", "items": {"type": "string"}},
-                "cons": {"type": "array", "items": {"type": "string"}},
-                "recommendations": {"type": "array", "items": {"type": "string"}},
+                "pros": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
+                    },
+                },
+                "cons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
+                    },
+                },
+                "recommendations": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
+                    },
+                },
             },
             "required": [
                 "description",
@@ -1084,9 +1113,9 @@ async def perform_ai_file_audit(filename: str, content: str, detected_language: 
 
 {system_message}
 
-CRITICAL FORMATTING RULES (ABSOLUTE REQUIREMENT):
-1. For the 'pros', 'cons', and 'recommendations' arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
-2. MAXIMUM 15 WORDS TOTAL PER ITEM. NO ESSAYS. NO PARAGRAPHS.
+FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
+MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
 
 MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 - The 'evaluated_score' MUST be between 0-100.
@@ -2072,12 +2101,17 @@ CRITICAL MULTI-LANGUAGE RULES:
 - All languages: Scan for leaked API keys, hardcoded credentials, broken access controls, unsafe filesystem handling, and SQL injection risks.
 - SCORING PRECISION: Do NOT default to lazy round numbers (e.g., 40, 70, 80, 90). You must calculate a highly precise, granular score out of 100 (e.g., 34, 78, 93) based on a strict deduction system. Deduct exact points for every missing dependency, unclosed connection, or type safety violation.
 
+FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
+MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
+For this response schema, apply the same rule to goods_and_strengths, bads_and_flaws, and strategic_recommendations.
+
 OUTPUT FORMAT (Strict JSON matching the dashboard UI):
 {{
   "executive_summary": "Deeply technical summary evaluating the architecture of this {detected_language} asset.",
-  "goods_and_strengths": ["Line-level engineering praise 1", "Line-level engineering praise 2"],
-  "bads_and_flaws": ["Line-level architectural or security flaw 1", "Line-level architectural or security flaw 2"],
-  "strategic_recommendations": ["Actionable refactoring strategy 1", "Actionable refactoring strategy 2"],
+  "goods_and_strengths": ["Strong Boundary: Validation isolates unsafe input."],
+  "bads_and_flaws": ["XSS Vulnerability: Using innerHTML allows malicious script injection."],
+  "strategic_recommendations": ["Validate Inputs: Reject malformed values before processing."],
   "overall_score": 87
 }}
 """
@@ -2298,6 +2332,9 @@ async def review_portfolio_asset(
             "✨ The Good Stuff: [Provide a bulleted list using encouraging emojis of the absolute wins, awesome architecture choices, or beautiful logic patterns in their work! 🙌]\n\n"
             "🌱 Growth Areas: [Provide a bulleted list of helpful, constructive tips on what can be improved or refactored. Frame it like a friendly tip over coffee! ☕]\n\n"
             "🏆 Mentor Score: [Provide an objective engineering mark out of 100 based on the quality of the asset, followed by an encouraging high-five sentence! Example: '85/100 — You are building a rock-solid foundation here, keep pushing!']\n\n"
+            "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.\n"
+            "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'\n"
+            "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS. Apply this rule to every Good Stuff and Growth Areas bullet.\n\n"
             "Remember: Never output rigid markdown table grids or boring raw blocks. Speak like a real human teammate who has their back!"
         )
 
@@ -2366,7 +2403,7 @@ AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 0 to 100 based on code qualit
 30-49: Needs Major Rework. Barely functional, severe security flaws, or spaghetti code.
 0-29: Broken. Syntax errors, non-functional, or completely unreadable."""
 
-AUDIT_LIST_FIELD_DESCRIPTION = "CRITICAL FORMAT RULE: Must strictly follow the 'Catchy Hook: Short explanation' format. Maximum 15 words total per item. Do not write paragraphs. Example: 'Security Risk: Hardcoded API keys expose sensitive info.'"
+AUDIT_LIST_FIELD_DESCRIPTION = "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
 
 
 class UniversalAuditReport(BaseModel):
@@ -2915,14 +2952,43 @@ def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[st
 
 ENHANCED_AUDIT_SYSTEM_PROMPT = """You are a meticulous Tech Lead reviewing a developer's project.
 RULE 1 (TONE): Be professional, punchy, and engaging.
-RULE 2 (FORMAT): Every bullet point MUST follow a 'Catchy Hook: Short explanation' format (e.g., 'Flawless Error Handling: Async functions use try/catch blocks perfectly').
-RULE 3 (BREVITY): No essays. Keep every item under 15 words.
 RULE 4 (LIMITS): Maximum 4 items per array.
-RULE (FORMATTING - ABSOLUTE REQUIREMENT): You MUST use a 'Catchy Hook: Short explanation' format. NO EXCEPTIONS.
-RULE (BREVITY - ABSOLUTE REQUIREMENT): Every item MUST be under 15 words total. NO ESSAYS."""
+FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
+MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."""
 
 
-AUDIT_RESPONSE_FORMAT = {"type": "json_object"}
+AUDIT_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "melius_single_file_audit",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "ai_summary": {"type": "string"},
+                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                "pros": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
+                },
+                "cons": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
+                },
+                "recommendations": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
+                },
+            },
+            "required": ["ai_summary", "score", "pros", "cons", "recommendations"],
+        },
+    },
+}
 
 
 def normalize_audit_list(value: Any) -> List[str]:
@@ -5290,9 +5356,11 @@ async def verify_asset(
                         "file size or line count.\n\n"
                         f"Score rubric:\n{AUDIT_SCORE_FIELD_DESCRIPTION}\n\n"
                         "Return only a raw JSON object with ai_summary, score, pros, cons, and recommendations. "
-                        "Every pros, cons, and recommendations item MUST use a "
-                        "'Catchy Hook: Short explanation' format. NO EXCEPTIONS. "
-                        "Every item MUST be under 15 words total. NO ESSAYS. "
+                        "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and "
+                        "`recommendations` arrays, you MUST use the exact format: "
+                        "'Catchy Hook: Short explanation'. "
+                        "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' "
+                        "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS. "
                         "Each array must contain at most 4 items.\n\n"
                         "Uploaded Content To Audit:\n"
                         f"{asset_text_content[:24000]}"

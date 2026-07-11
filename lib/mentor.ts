@@ -348,6 +348,10 @@ function buildVaultProjectPrompt(input: VaultProjectAnalysisInput) {
     "- summary must be exactly 2 concise sentences",
     "- breakdown.strengths must contain 2 to 4 specific points",
     "- breakdown.weaknesses must contain 2 to 4 specific vulnerabilities",
+    "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.",
+    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'",
+    "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.",
+    "Apply the same absolute rule to breakdown.strengths and breakdown.weaknesses as pros and cons aliases.",
     "- do not include markdown, code fences, or extra keys",
   ].join("\n");
 }

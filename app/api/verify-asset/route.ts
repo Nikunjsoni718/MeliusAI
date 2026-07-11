@@ -25,23 +25,72 @@ RULE 3: THE EXECUTIVE SUMMARY
 Write a supportive, highly detailed 4-5 sentence technical analysis. Start with **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score by referencing the specific architecture and logic of the uploaded file. 
 
 RULE 4: STRICT JSON OUTPUT & LENGTH ENFORCEMENT
-Return ONLY a raw JSON object. Use these exact keys. You MUST write at least 15-25 words for EVERY bullet point in the arrays to ensure maximum technical depth.
+Return ONLY a raw JSON object. Use these exact keys.
+
+FORMATTING RULE (ABSOLUTE COMPULSION): For the \`pros\`, \`cons\`, and \`recommendations\` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
+Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
+MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
+The strengths and weaknesses keys are aliases for pros and cons, so the same absolute rule applies.
 {
   "ai_summary": "Your elite 4-5 sentence paragraph.",
   "score": <Number out of 100>,
   "strengths": [
-    "Highly detailed, specific strength referencing exact code concepts (min 15 words).",
-    "Highly detailed, specific strength referencing exact code concepts (min 15 words)."
+    "Strong Semantics: Landmark elements create a clear document hierarchy.",
+    "Clean Boundaries: Validation isolates unsafe input before processing."
   ],
   "weaknesses": [
-    "Deeply technical weakness explaining the exact flaw (min 15 words).",
-    "Deeply technical weakness explaining the exact flaw (min 15 words)."
+    "XSS Vulnerability: Using innerHTML allows malicious script injection.",
+    "Missing Guard: Parsed values lack boundary validation."
   ],
   "recommendations": [
-    "Actionable, senior-level next step with exact implementation advice (min 15 words).",
-    "Actionable, senior-level next step with exact implementation advice (min 15 words)."
+    "Sanitize Output: Replace direct HTML injection with safe text rendering.",
+    "Validate Inputs: Reject malformed values before processing."
   ]
 }`;
+
+const VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION =
+  "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.";
+
+const VERIFY_ASSET_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'melius_verify_asset_audit',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ai_summary: { type: 'string' },
+        score: { type: 'integer', minimum: 0, maximum: 100 },
+        strengths: {
+          type: 'array',
+          maxItems: 5,
+          items: {
+            type: 'string',
+            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
+          },
+        },
+        weaknesses: {
+          type: 'array',
+          maxItems: 5,
+          items: {
+            type: 'string',
+            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
+          },
+        },
+        recommendations: {
+          type: 'array',
+          maxItems: 5,
+          items: {
+            type: 'string',
+            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
+          },
+        },
+      },
+      required: ['ai_summary', 'score', 'strengths', 'weaknesses', 'recommendations'],
+    },
+  },
+} as const;
 
 type VerifyAssetPayload = {
   fileUrl?: unknown;
@@ -594,7 +643,10 @@ function buildUserPrompt({
     '',
     'Use the scope hint only as context. Grade the artifact by its intended scope, not by file size or line count.',
     'Return only the raw JSON object with ai_summary, score, strengths, weaknesses, and recommendations.',
-    'Every strengths, weaknesses, and recommendations item must be specific to the uploaded code and at least 15-25 words long.',
+    'FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: \'Catchy Hook: Short explanation\'.',
+    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'",
+    'MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.',
+    'The strengths and weaknesses keys are aliases for pros and cons, so the same absolute rule applies.',
     '',
     auditText
       ? `Uploaded Content To Audit:\n<<<ASSET_CONTENT_START\n${auditText}\nASSET_CONTENT_END>>>`
@@ -690,7 +742,7 @@ async function runOpenAIAudit({
           }),
         },
       ],
-      response_format: { type: 'json_object' },
+      response_format: VERIFY_ASSET_RESPONSE_FORMAT,
       max_tokens: 2200,
       temperature: 0.05,
     }),
