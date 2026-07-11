@@ -1861,25 +1861,36 @@ async def evaluate_code(
                 detail="Downloaded files must be 5 MB or smaller.",
         )
 
+        code_content = file_bytes.decode("utf-8", errors="replace")
+
+        # --- INLINE JUPYTER PARSER ---
         if filename.lower().endswith(".ipynb"):
-            decoded_text = file_bytes.decode("utf-8", errors="ignore")
-            code_content = parse_jupyter_notebook(decoded_text)
-            if not code_content:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "Unable to extract any valid code or markdown from the "
-                        "Jupyter Notebook."
-                    ),
-                )
-        else:
+            import json
             try:
-                code_content = prepare_audit_content(filename, file_bytes)
-            except ValueError as notebook_error:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Unable to parse Jupyter Notebook {filename}: {notebook_error}",
-                ) from notebook_error
+                notebook_json = json.loads(code_content)
+                extracted_cells = []
+                for idx, cell in enumerate(notebook_json.get("cells", [])):
+                    c_type = cell.get("cell_type", "unknown").upper()
+                    src = cell.get("source", "")
+
+                    # Flatten list to string if necessary
+                    text = "".join(str(x) for x in src) if isinstance(src, list) else str(src)
+
+                    if text.strip():
+                        extracted_cells.append(f"--- [{c_type} CELL {idx+1}] ---\n{text.strip()}")
+
+                if extracted_cells:
+                    # Overwrite the raw JSON with the clean extracted code
+                    code_content = "\n\n".join(extracted_cells)
+                    # Force the AI to read this as Python, not JSON
+                    detected_language = "Python"
+                else:
+                    logger.warning("Jupyter Notebook inline extraction yielded empty cells.")
+            except Exception as e:
+                logger.error(f"Failed to parse IPYNB inline: {str(e)}")
+                # If it fails, do not crash. Let code_content remain the raw JSON so AI sees something.
+        # -----------------------------
+
         if len(code_content.strip()) == 0:
             logger.error("code_evaluation.empty_file filename=%s", filename)
             raise HTTPException(
