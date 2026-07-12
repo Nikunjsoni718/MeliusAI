@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
@@ -2061,118 +2061,6 @@ function ProjectPreviewSurface({
   );
 }
 
-function ProjectDropzone({
-  upload,
-  onFileSelect,
-  onRetry,
-  compact = false,
-}: {
-  upload: UploadState | null;
-  onFileSelect: (file: File) => void;
-  onRetry?: () => void;
-  compact?: boolean;
-}) {
-  const inputId = useId();
-  const [isDragActive, setIsDragActive] = useState(false);
-  const disabled = upload !== null && upload.status === 'uploading';
-
-  function handleDrop(event: DragEvent<HTMLLabelElement>) {
-    event.preventDefault();
-    setIsDragActive(false);
-    if (disabled) {
-      return;
-    }
-    const file = event.dataTransfer.files?.[0];
-    if (file) {
-      onFileSelect(file);
-    }
-  }
-
-  return (
-    <label
-      htmlFor={inputId}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        if (!disabled) {
-          setIsDragActive(true);
-        }
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        if (!disabled) {
-          setIsDragActive(true);
-        }
-      }}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setIsDragActive(false);
-        }
-      }}
-      onDrop={handleDrop}
-      className={cn(
-        'flex w-full cursor-pointer flex-col rounded-[1.75rem] border border-dashed bg-[#050b1b]/40 p-4 transition sm:p-6',
-        compact ? 'min-h-[252px] justify-center' : 'min-h-[240px] justify-center',
-        disabled ? 'cursor-default border-sky-400/30 bg-sky-500/[0.06]' : 'border-white/20 hover:border-sky-400/40 hover:bg-white/[0.03]',
-        isDragActive && !disabled ? 'border-sky-400/50 bg-sky-500/[0.08]' : null
-      )}
-    >
-      <input
-        id={inputId}
-        type="file"
-        accept="*/*"
-        disabled={disabled}
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = '';
-          if (file) {
-            onFileSelect(file);
-          }
-        }}
-      />
-
-      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sky-100">
-        <UploadIcon className="h-6 w-6" />
-      </div>
-
-      {upload ? (
-        <div className="mt-5 space-y-3">
-          <p className="text-base font-semibold text-white">{upload.fileName}</p>
-          <p className="text-sm text-slate-400">
-            {upload.status === 'done' ? 'Done' : upload.status === 'failed' ? 'Save failed' : 'Uploading'}
-          </p>
-          <Progress value={upload.progress} className="bg-slate-900/90" />
-          {upload.status === 'failed' ? (
-            <div className="space-y-3">
-              {upload.error ? <p className="text-sm text-rose-200">{upload.error}</p> : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onRetry?.();
-                }}
-              >
-                Retry
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="mt-5 space-y-2">
-          <p className="text-base font-semibold text-white">Upload</p>
-          <p className="max-w-sm text-sm text-slate-400">
-            Drag and drop your project here, or click to browse
-          </p>
-        </div>
-      )}
-    </label>
-  );
-}
-
 function ProjectCard({
   project,
   isSpectator,
@@ -2351,7 +2239,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [projectRetryFile, setProjectRetryFile] = useState<File | null>(null);
+  const [, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<LiveOpportunityItem[]>([]);
@@ -2404,6 +2292,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   });
   const [portfolioSaveState, setPortfolioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const uploadClearRef = useRef<number | null>(null);
+  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
   const projectFolderInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
@@ -5046,14 +4935,38 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {isOwner ? (
-                    <button
-                      id="create-project-btn"
-                      className="btn primary"
-                      type="button"
-                      onClick={() => setIsIngestionModalOpen(true)}
-                    >
-                      + Create Project Folder
-                    </button>
+                    <>
+                      <button
+                        id="create-project-btn"
+                        className="btn primary"
+                        type="button"
+                        onClick={() => setIsIngestionModalOpen(true)}
+                      >
+                        + Create Project Folder
+                      </button>
+                      <input
+                        ref={projectFileInputRef}
+                        type="file"
+                        accept="*/*"
+                        disabled={isProjectUploading}
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = '';
+                          if (file) {
+                            void handleProjectFile(file);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn subtle disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={isProjectUploading}
+                        onClick={() => projectFileInputRef.current?.click()}
+                      >
+                        + UPLOAD FILE
+                      </button>
+                    </>
                   ) : null}
                   {rootWorkItems.length > 0 ? (
                     <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
@@ -5102,28 +5015,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   </div>
                 </div>
               ) : rootWorkItems.length === 0 ? (
-                <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                  <CardContent className="p-4 sm:p-8">
-                    {isOwner ? (
-                      <ProjectDropzone
-                        upload={uploadState}
-                        onFileSelect={(file) => void handleProjectFile(file)}
-                        onRetry={() => {
-                          if (projectRetryFile) {
-                            void handleProjectFile(projectRetryFile);
-                          }
-                        }}
-                      />
-                    ) : (
+                isOwner ? null : (
+                  <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+                    <CardContent className="p-4 sm:p-8">
                       <div className="rounded-[1.75rem] border border-blue-950/40 bg-[#050b1b]/35 p-4 text-center sm:p-8">
                         <p className="text-base font-semibold text-white">No public work assets yet.</p>
                         <p className="mt-2 text-sm text-slate-400">
                           This profile owner has not shared portfolio files in this workspace.
                         </p>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                )
               ) : (
                 <>
                   <div id="main-assets-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -5336,18 +5239,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         );
                       })}
 
-                    {isOwner && (
-                      <ProjectDropzone
-                        upload={uploadState}
-                        onFileSelect={(file) => void handleProjectFile(file)}
-                        onRetry={() => {
-                          if (projectRetryFile) {
-                            void handleProjectFile(projectRetryFile);
-                          }
-                        }}
-                        compact
-                      />
-                    )}
                   </div>
 
                   {rootWorkItems.length > 0 ? (
