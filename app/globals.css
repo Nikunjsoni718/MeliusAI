@@ -90,7 +90,7 @@ a {
   }
 }
 
-#create-project-btn.btn.primary {
+.btn.primary {
   border: 1px solid rgba(0, 210, 255, 0.35);
   border-radius: 999px;
   background: linear-gradient(135deg, rgba(0, 210, 255, 0.2), rgba(37, 99, 235, 0.34));
@@ -107,7 +107,7 @@ a {
     transform 0.2s ease;
 }
 
-#create-project-btn.btn.primary:hover {
+.btn.primary:hover {
   border-color: rgba(0, 210, 255, 0.75);
   box-shadow: 0 0 22px rgba(0, 210, 255, 0.2);
   transform: translateY(-1px);

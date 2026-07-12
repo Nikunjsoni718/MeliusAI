@@ -4933,7 +4933,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <h2 className="text-2xl font-semibold text-white">My Work Assets</h2>
                   <p className="mt-1 text-sm text-slate-400">Your projects live here.</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-4">
                   {isOwner ? (
                     <>
                       <button
@@ -4960,7 +4960,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       />
                       <button
                         type="button"
-                        className="btn subtle disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn primary"
                         disabled={isProjectUploading}
                         onClick={() => projectFileInputRef.current?.click()}
                       >
