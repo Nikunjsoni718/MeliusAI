@@ -2080,7 +2080,7 @@ function ProjectCard({
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
   onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
-  handleReUpload: (event: ChangeEvent<HTMLInputElement>, projectId: string) => Promise<void>;
+  handleReUpload: (event: ChangeEvent<HTMLInputElement>, project: ProjectItem) => Promise<void>;
   onOpen: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
@@ -2190,7 +2190,7 @@ function ProjectCard({
                   accept="*/*"
                   className="sr-only"
                   aria-label={`Choose a replacement file for ${project.title}`}
-                  onChange={(event) => void handleReUpload(event, project.id)}
+                  onChange={(event) => void handleReUpload(event, project)}
                 />
                 <Button
                   type="button"
@@ -3910,34 +3910,110 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   async function handleReUpload(
     event: ChangeEvent<HTMLInputElement>,
-    projectId: string
+    project: ProjectItem
   ) {
     const input = event.currentTarget;
     const file = input.files?.[0];
 
     if (!file || !supabase) return;
 
-    try {
-      const assetContent = await file.text();
+    const bucketName = "projects";
+    const projectBucket = supabase.storage.from(bucketName);
+    let uploadedPath: string | null = null;
+    let projectRowUpdated = false;
 
-      if (!assetContent.trim()) {
-        throw new Error("The selected file is empty.");
+    try {
+      const userId = project.user_id ?? (await getConfirmedUserId());
+      if (!userId) {
+        throw new Error("Your project storage session is not ready.");
       }
 
-      const { error } = await supabase
+      setUploadState({
+        fileName: file.name,
+        progress: 10,
+        status: "uploading",
+      });
+
+      const safeFileName = getStorageFileName(file.name);
+      uploadedPath = `${userId}/${project.id}/${Date.now()}-${safeFileName}`;
+
+      const { error: uploadError } = await projectBucket.upload(uploadedPath, file, {
+        cacheControl: "0",
+        contentType: getUploadContentType(file),
+        upsert: false,
+      });
+
+      if (uploadError) throw uploadError;
+
+      setUploadState({
+        fileName: file.name,
+        progress: 65,
+        status: "uploading",
+      });
+
+      const { data: publicUrlData } = projectBucket.getPublicUrl(uploadedPath);
+      const newFileUrl = publicUrlData.publicUrl;
+      if (!newFileUrl) {
+        throw new Error("Unable to create a public URL for the replacement asset.");
+      }
+
+      const { error: updateError } = await supabase
         .from("projects")
         .update({
-          asset_content: assetContent,
+          file_url: newFileUrl,
+          name: file.name,
+          file_name: file.name,
         })
-        .eq("id", projectId);
+        .eq("id", project.id);
 
-      if (error) throw error;
+      if (updateError) throw updateError;
+      projectRowUpdated = true;
+
+      const oldFileUrl = project.file_url ?? project.preview_url;
+      if (oldFileUrl) {
+        let oldStoragePath: string | null = null;
+
+        try {
+          const parsedUrl = new URL(oldFileUrl);
+          const publicPathMarker = `/storage/v1/object/public/${bucketName}/`;
+          const markerIndex = parsedUrl.pathname.indexOf(publicPathMarker);
+
+          if (markerIndex >= 0) {
+            oldStoragePath = decodeURIComponent(
+              parsedUrl.pathname.slice(markerIndex + publicPathMarker.length)
+            );
+          }
+        } catch {
+          oldStoragePath = null;
+        }
+
+        if (oldStoragePath && oldStoragePath !== uploadedPath) {
+          const { error: removeError } = await projectBucket.remove([oldStoragePath]);
+
+          if (removeError) {
+            console.warn("Replacement saved, but the previous storage object could not be removed.", removeError);
+            showProjectVerifyError(
+              "Asset replaced successfully, but the previous file could not be cleaned up."
+            );
+          }
+        }
+      }
 
       setProjects((projects) =>
-        projects.map((project) =>
-          project.id === projectId
-            ? { ...project, text_preview: assetContent }
-            : project
+        projects.map((currentProject) =>
+          currentProject.id === project.id
+            ? {
+                ...currentProject,
+                title: file.name,
+                file_name: file.name,
+                file_url: newFileUrl,
+                preview_url: newFileUrl,
+                file_extension: getFileExtension(file.name) || null,
+                file_type: getFileExtension(file.name) || "file",
+                text_preview: null,
+                asset_data_url: null,
+              }
+            : currentProject
         )
       );
 
@@ -3947,6 +4023,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: "done",
       });
     } catch (error) {
+      if (uploadedPath && !projectRowUpdated) {
+        const { error: rollbackError } = await projectBucket.remove([uploadedPath]);
+        if (rollbackError) {
+          console.warn("Unable to clean up failed replacement upload.", rollbackError);
+        }
+      }
+
+      setUploadState({
+        fileName: file.name,
+        progress: 100,
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unable to replace the asset.",
+      });
       showProjectVerifyError(
         error instanceof Error ? error.message : "Unable to replace the asset."
       );
