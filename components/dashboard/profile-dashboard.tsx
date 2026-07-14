@@ -67,6 +67,7 @@ type ProjectItem = {
   has_been_audited?: boolean | null;
   logic_score?: number | null;
   ai_summary?: string | null;
+  last_improvement_summary?: string | null;
   created_at?: string | null;
   asset_data_url?: string | null;
   is_local?: boolean;
@@ -964,6 +965,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
       row.has_been_audited ?? Boolean(hydratedScore !== null || hydratedAuditSummary || hydratedAiSummary),
     logic_score: typeof row.logic_score === 'number' ? row.logic_score : hydratedScore,
     ai_summary: hydratedAiSummary,
+    last_improvement_summary: row.last_improvement_summary ?? null,
     created_at: row.created_at ?? null,
     is_local: false,
   };
@@ -3935,8 +3937,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     try {
       const userId = await getConfirmedUserId();
+      const accessToken = session?.access_token ?? (await getCurrentAccessToken());
       if (!userId) {
         throw new Error('Vault sync is not ready.');
+      }
+      if (!accessToken) {
+        throw new Error('Your session expired. Please sign in again.');
       }
 
       const storagePath = `${userId}/project-${project.id}-${Date.now()}-${getStorageFileName(file.name)}`;
@@ -3961,14 +3967,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('Could not create a public file URL for the replacement asset.');
       }
 
-      const [assetDataUrl, extractedCodeContent] = await Promise.all([
-        readAssetAsDataURL(file),
-        shouldForceUtf8CodeRead(file.name)
-          ? extractCodeAsText(file).then((text) => text.trim())
-          : Promise.resolve(''),
-      ]);
-      const preservedDescription = projectDescriptions[project.id]?.trim() || null;
-      const { data, error } = await supabase
+      const { error: replacementError } = await supabase
         .from('projects')
         .update({
           name: file.name,
@@ -3976,46 +3975,71 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           file_url: fileUrl,
           file_type: getFileExtension(file.name) || 'file',
           file_size: file.size,
-          description: preservedDescription,
-          user_description: preservedDescription,
-          score: null,
-          evaluation_score: null,
-          logic_score: null,
-          audit_summary: null,
-          ai_summary: null,
-          pros: null,
-          cons: null,
-          recommendations: null,
-          has_been_audited: false,
-          status: 'draft',
         })
-        .eq('id', project.id)
-        .select('*')
-        .single();
+        .eq('id', project.id);
 
-      if (error) {
-        throw error;
+      if (replacementError) {
+        throw replacementError;
       }
 
-      const replacementProject: ProjectItem = {
-        ...mapProjectRowToProjectItem(data),
+      const [newContent, assetDataUrl] = await Promise.all([
+        extractCodeAsText(file).then((text) => text.trim()),
+        readAssetAsDataURL(file),
+      ]);
+      if (!newContent) {
+        throw new Error('The replacement asset does not contain readable text to audit.');
+      }
+
+      const response = await fetch(
+        `${PROFILE_SPECTATOR_BASE_URL}/api/projects/${encodeURIComponent(project.id)}/re-audit`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ new_content: newContent }),
+        }
+      );
+      const reAuditPayload = (await response.json().catch(() => null)) as {
+        detail?: string;
+        new_score?: number;
+        score_delta?: number;
+        improvement_summary?: string;
+        strengths?: string[];
+        weaknesses?: string[];
+        project?: ProjectRow & { score_delta?: number };
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(reAuditPayload?.detail || 'The replacement asset could not be re-audited.');
+      }
+      if (!reAuditPayload?.project) {
+        throw new Error('The re-audit completed without an updated project record.');
+      }
+
+      const reAuditedProject: ProjectItem = {
+        ...mapProjectRowToProjectItem(reAuditPayload.project),
         asset_data_url: assetDataUrl,
-        ...(extractedCodeContent ? { text_preview: extractedCodeContent } : {}),
+        text_preview: newContent,
+        last_improvement_summary:
+          reAuditPayload.improvement_summary ?? reAuditPayload.project.last_improvement_summary ?? null,
       };
 
       setProjects((currentProjects) =>
         currentProjects.map((currentProject) =>
-          currentProject.id === project.id ? replacementProject : currentProject
+          currentProject.id === project.id ? reAuditedProject : currentProject
         )
       );
       setActivePreviewProjectOverride((currentProject) =>
-        currentProject?.id === project.id ? replacementProject : currentProject
+        currentProject?.id === project.id ? reAuditedProject : currentProject
       );
       if (activePreviewProjectId === project.id) {
         setActivePreviewName(file.name);
         setActivePreviewUrl(fileUrl);
       }
-      setVerifiedAssetId(null);
+      setVerifiedAssetId(project.id);
       setUploadState({
         fileName: file.name,
         progress: 100,
