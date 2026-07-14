@@ -3912,7 +3912,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     event: ChangeEvent<HTMLInputElement>,
     project: ProjectItem
   ) {
-    const BUCKET_NAME = 'projects';
+    const BUCKET_NAME = 'vault';
     const input = event.currentTarget;
     const file = input.files?.[0];
 
