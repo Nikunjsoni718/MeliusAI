@@ -2497,6 +2497,7 @@ class ReAuditEndpointResponse(BaseModel):
     improvement_summary: str
     strengths: List[str]
     weaknesses: List[str]
+    project: Dict[str, Any]
 
 
 ALLOWED_DETECTED_TYPES = {
@@ -5261,6 +5262,47 @@ async def re_audit_project(
     current_user_id: str = Depends(verify_user),
 ):
     try:
+        filename = secure_filename(file.filename) or "replacement-asset"
+        max_upload_bytes = (
+            MAX_NOTEBOOK_UPLOAD_BYTES
+            if filename.lower().endswith(".ipynb")
+            else MAX_UPLOAD_BYTES
+        )
+        if file.size is not None and file.size > max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Uploaded Jupyter Notebooks must be 25 MB or smaller."
+                    if filename.lower().endswith(".ipynb")
+                    else "Uploaded files must be 5 MB or smaller."
+                ),
+            )
+        
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        if len(file_bytes) > max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Uploaded Jupyter Notebooks must be 25 MB or smaller."
+                    if filename.lower().endswith(".ipynb")
+                    else "Uploaded files must be 5 MB or smaller."
+                ),
+            )
+
+        try:
+            new_code = prepare_audit_content(filename, file_bytes)
+        except ValueError as content_error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to parse uploaded file {filename}: {content_error}",
+            ) from content_error
+
+        if not new_code.strip():
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
         supabase = get_request_supabase_client(request)
         project_response = await asyncio.to_thread(
             lambda: supabase.table("projects")
@@ -5300,51 +5342,68 @@ async def re_audit_project(
                 detail="The project's previous audit score is invalid.",
             ) from score_error
 
-        filename = secure_filename(file.filename)
-        max_upload_bytes = (
-            MAX_NOTEBOOK_UPLOAD_BYTES
-            if filename.lower().endswith(".ipynb")
-            else MAX_UPLOAD_BYTES
-        )
-        if file.size is not None and file.size > max_upload_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    "Uploaded Jupyter Notebooks must be 25 MB or smaller."
-                    if filename.lower().endswith(".ipynb")
-                    else "Uploaded files must be 5 MB or smaller."
-                ),
-            )
-
-        file_bytes = await file.read()
-        if len(file_bytes) > max_upload_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    "Uploaded Jupyter Notebooks must be 25 MB or smaller."
-                    if filename.lower().endswith(".ipynb")
-                    else "Uploaded files must be 5 MB or smaller."
-                ),
-            )
-
-        try:
-            new_code = prepare_audit_content(filename, file_bytes)
-        except ValueError as content_error:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unable to parse uploaded file {filename}: {content_error}",
-            ) from content_error
-
-        if not new_code.strip():
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-
-        previous_weaknesses = normalize_audit_list(
+        old_weaknesses = normalize_audit_list(
             project.get("cons") or project.get("weaknesses") or []
         )
+
+        safe_project_id = secure_filename(project_id) or uuid.uuid4().hex
+        storage_path = (
+            f"{current_user_id}/re-audits/{safe_project_id}/"
+            f"{uuid.uuid4().hex}-{filename}"
+        )
+        content_type = file.content_type or "application/octet-stream"
+
+        try:
+            vault_bucket = supabase.storage.from_("vault")
+            await asyncio.to_thread(
+                lambda: vault_bucket.upload(
+                    storage_path,
+                    file_bytes,
+                    file_options={
+                        "cache-control": "0",
+                        "content-type": content_type,
+                        "upsert": "true",
+                    },
+                )
+            )
+            replacement_file_url = vault_bucket.get_public_url(storage_path)
+        except Exception as storage_error:
+            logger.exception(
+                "project_re_audit.asset_upload_failed project_id=%s",
+                project_id,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="The replacement asset could not be stored.",
+            ) from storage_error
+
+        if not replacement_file_url:
+            raise HTTPException(
+                status_code=502,
+                detail="The replacement asset URL could not be created.",
+            )
+
+        replacement_payload = {
+            "name": filename,
+            "file_name": filename,
+            "file_url": replacement_file_url,
+            "file_type": Path(filename).suffix.lstrip(".").lower() or "file",
+            "file_size": len(file_bytes),
+        }
+        replacement_response = await asyncio.to_thread(
+            lambda: supabase.table("projects")
+            .update(replacement_payload)
+            .eq("id", project_id)
+            .execute()
+        )
+        replacement_rows = replacement_response.data
+        if not isinstance(replacement_rows, list) or not replacement_rows:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
         re_audit_prompt = generate_re_audit_prompt(
             new_code=new_code,
             previous_score=old_score,
-            previous_weaknesses=previous_weaknesses,
+            previous_weaknesses=old_weaknesses,
         )
 
         try:
@@ -5406,12 +5465,16 @@ async def re_audit_project(
         if not isinstance(updated_rows, list) or not updated_rows:
             raise HTTPException(status_code=404, detail="Project not found.")
 
+        updated_project = dict(updated_rows[0])
+        updated_project["score_delta"] = score_delta
+
         return ReAuditEndpointResponse(
             new_score=new_score,
             score_delta=score_delta,
             improvement_summary=improvement_summary,
             strengths=strengths,
             weaknesses=weaknesses,
+            project=updated_project,
         )
     except HTTPException:
         raise
