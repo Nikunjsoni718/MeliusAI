@@ -2068,6 +2068,7 @@ function ProjectCard({
   deletingProjectId,
   verifiedAssetId,
   onVerify,
+  onReupload,
   onOpen,
   onDelete,
 }: {
@@ -2077,9 +2078,11 @@ function ProjectCard({
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
   onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
+  onReupload: (project: ProjectItem, file: File) => void;
   onOpen: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
+  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
   const isProjectVerifying = verifyingAssetId === project.id;
   const isProjectDeleting = deletingProjectId === project.id;
   const isProjectVerified = verifiedAssetId === project.id;
@@ -2176,6 +2179,40 @@ function ProjectCard({
                     : 'Verify with MeliusAI'}
               </button>
             )}
+
+            {!isSpectator && hasCompletedAudit ? (
+              <>
+                <input
+                  ref={reuploadInputRef}
+                  type="file"
+                  accept="*/*"
+                  className="sr-only"
+                  aria-label={`Choose a replacement file for ${project.title}`}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = '';
+                    if (file) {
+                      onReupload(project, file);
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    reuploadInputRef.current?.click();
+                  }}
+                  disabled={verifyingAssetId !== null || isProjectDeleting}
+                  className="h-auto w-full rounded-full border-slate-800/80 bg-slate-950/50 px-4 py-2 text-[11px] tracking-wide text-slate-400 shadow-none hover:border-cyan-500/40 hover:bg-cyan-950/20 hover:text-cyan-200 hover:shadow-[0_0_16px_rgba(34,211,238,0.08)]"
+                >
+                  <UploadIcon className="h-3.5 w-3.5" />
+                  Re-upload Asset
+                </Button>
+              </>
+            ) : null}
           </div>
 
           {!isSpectator && (
@@ -3875,6 +3912,132 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  async function handleProjectReupload(project: ProjectItem, file: File) {
+    if (!isOwner) {
+      return;
+    }
+
+    if (!supabase) {
+      showProjectVerifyError('Asset re-upload is not ready right now.');
+      return;
+    }
+
+    if (uploadClearRef.current) {
+      window.clearTimeout(uploadClearRef.current);
+    }
+
+    setUploadState({
+      fileName: file.name,
+      progress: 5,
+      status: 'uploading',
+    });
+    setProjectVerifyError(null);
+
+    try {
+      const userId = await getConfirmedUserId();
+      if (!userId) {
+        throw new Error('Vault sync is not ready.');
+      }
+
+      const storagePath = `${userId}/project-${project.id}-${Date.now()}-${getStorageFileName(file.name)}`;
+      const { error: uploadError } = await supabase.storage.from('vault').upload(storagePath, file, {
+        upsert: true,
+        cacheControl: '0',
+        contentType: getUploadContentType(file),
+      });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      setUploadState({
+        fileName: file.name,
+        progress: 70,
+        status: 'uploading',
+      });
+
+      const fileUrl = supabase.storage.from('vault').getPublicUrl(storagePath).data.publicUrl;
+      if (!fileUrl) {
+        throw new Error('Could not create a public file URL for the replacement asset.');
+      }
+
+      const [assetDataUrl, extractedCodeContent] = await Promise.all([
+        readAssetAsDataURL(file),
+        shouldForceUtf8CodeRead(file.name)
+          ? extractCodeAsText(file).then((text) => text.trim())
+          : Promise.resolve(''),
+      ]);
+      const preservedDescription = projectDescriptions[project.id]?.trim() || null;
+      const { data, error } = await supabase
+        .from('projects')
+        .update({
+          name: file.name,
+          file_name: file.name,
+          file_url: fileUrl,
+          file_type: getFileExtension(file.name) || 'file',
+          file_size: file.size,
+          description: preservedDescription,
+          user_description: preservedDescription,
+          score: null,
+          evaluation_score: null,
+          logic_score: null,
+          audit_summary: null,
+          ai_summary: null,
+          pros: null,
+          cons: null,
+          recommendations: null,
+          has_been_audited: false,
+          status: 'draft',
+        })
+        .eq('id', project.id)
+        .select('*')
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      const replacementProject: ProjectItem = {
+        ...mapProjectRowToProjectItem(data),
+        asset_data_url: assetDataUrl,
+        ...(extractedCodeContent ? { text_preview: extractedCodeContent } : {}),
+      };
+
+      setProjects((currentProjects) =>
+        currentProjects.map((currentProject) =>
+          currentProject.id === project.id ? replacementProject : currentProject
+        )
+      );
+      setActivePreviewProjectOverride((currentProject) =>
+        currentProject?.id === project.id ? replacementProject : currentProject
+      );
+      if (activePreviewProjectId === project.id) {
+        setActivePreviewName(file.name);
+        setActivePreviewUrl(fileUrl);
+      }
+      setVerifiedAssetId(null);
+      setUploadState({
+        fileName: file.name,
+        progress: 100,
+        status: 'done',
+      });
+
+      if (spectatorProfileKey) {
+        await mutate(spectatorProfileKey);
+      }
+      router.refresh();
+
+      uploadClearRef.current = window.setTimeout(() => {
+        setUploadState(null);
+        uploadClearRef.current = null;
+      }, 450);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'We could not re-upload this asset.';
+      setUploadState(null);
+      showProjectVerifyError(message);
+    }
+  }
+
   function showProjectVerifyError(message: string) {
     setProjectVerifyError(message);
 
@@ -5001,6 +5164,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
                           onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                          onReupload={(selectedProject, file) => void handleProjectReupload(selectedProject, file)}
                           onOpen={handleOpenProjectPreview}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
@@ -5233,6 +5397,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
                             onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                            onReupload={(selectedProject, file) => void handleProjectReupload(selectedProject, file)}
                             onOpen={handleOpenProjectPreview}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
