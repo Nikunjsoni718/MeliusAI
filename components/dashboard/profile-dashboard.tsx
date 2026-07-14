@@ -3912,15 +3912,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     event: ChangeEvent<HTMLInputElement>,
     project: ProjectItem
   ) {
+    const BUCKET_NAME = 'projects';
     const input = event.currentTarget;
     const file = input.files?.[0];
 
-    if (!file || !supabase) return;
+    if (!file) {
+      console.warn("[Re-upload] No file was selected.", { projectId: project.id });
+      return;
+    }
+    if (!supabase) {
+      console.error("[Re-upload] Supabase client is unavailable.", { projectId: project.id });
+      showProjectVerifyError("Project storage is not available right now.");
+      input.value = "";
+      return;
+    }
 
-    const bucketName = "projects";
-    const projectBucket = supabase.storage.from(bucketName);
+    const projectBucket = supabase.storage.from(BUCKET_NAME);
     let uploadedPath: string | null = null;
     let projectRowUpdated = false;
+    let currentStep = "initialize";
 
     try {
       const userId = project.user_id ?? (await getConfirmedUserId());
@@ -3935,15 +3945,40 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
 
       const safeFileName = getStorageFileName(file.name);
-      uploadedPath = `${userId}/${project.id}/${Date.now()}-${safeFileName}`;
+      const uniqueId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2);
+      uploadedPath = `${userId}/${project.id}/${Date.now()}-${uniqueId}-${safeFileName}`;
 
+      currentStep = "upload replacement file";
+      console.log("[Re-upload] Upload starting.", {
+        bucket: BUCKET_NAME,
+        path: uploadedPath,
+        projectId: project.id,
+        fileName: file.name,
+        fileSize: file.size,
+      });
       const { error: uploadError } = await projectBucket.upload(uploadedPath, file, {
         cacheControl: "0",
         contentType: getUploadContentType(file),
         upsert: false,
       });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error("[Re-upload] Upload failed.", {
+          bucket: BUCKET_NAME,
+          path: uploadedPath,
+          projectId: project.id,
+          error: uploadError,
+        });
+        throw uploadError;
+      }
+      console.log("[Re-upload] Upload completed.", {
+        bucket: BUCKET_NAME,
+        path: uploadedPath,
+        projectId: project.id,
+      });
 
       setUploadState({
         fileName: file.name,
@@ -3951,12 +3986,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: "uploading",
       });
 
+      currentStep = "resolve public URL";
+      console.log("[Re-upload] Resolving public URL.", {
+        bucket: BUCKET_NAME,
+        path: uploadedPath,
+      });
       const { data: publicUrlData } = projectBucket.getPublicUrl(uploadedPath);
       const newFileUrl = publicUrlData.publicUrl;
       if (!newFileUrl) {
         throw new Error("Unable to create a public URL for the replacement asset.");
       }
 
+      currentStep = "update project row";
+      console.log("[Re-upload] Database update starting.", {
+        projectId: project.id,
+        fileName: file.name,
+        fileUrl: newFileUrl,
+      });
       const { error: updateError } = await supabase
         .from("projects")
         .update({
@@ -3966,8 +4012,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         })
         .eq("id", project.id);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error("[Re-upload] Database update failed.", {
+          projectId: project.id,
+          fileName: file.name,
+          fileUrl: newFileUrl,
+          error: updateError,
+        });
+        throw updateError;
+      }
       projectRowUpdated = true;
+      console.log("[Re-upload] Database update completed.", {
+        projectId: project.id,
+        fileName: file.name,
+      });
 
       const oldFileUrl = project.file_url ?? project.preview_url;
       if (oldFileUrl) {
@@ -3975,26 +4033,62 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         try {
           const parsedUrl = new URL(oldFileUrl);
-          const publicPathMarker = `/storage/v1/object/public/${bucketName}/`;
+          const publicPathMarker = `/storage/v1/object/public/${BUCKET_NAME}/`;
           const markerIndex = parsedUrl.pathname.indexOf(publicPathMarker);
 
           if (markerIndex >= 0) {
             oldStoragePath = decodeURIComponent(
               parsedUrl.pathname.slice(markerIndex + publicPathMarker.length)
             );
+          } else {
+            console.warn("[Re-upload] Old URL does not belong to the expected bucket.", {
+              bucket: BUCKET_NAME,
+              oldFileUrl,
+              projectId: project.id,
+            });
           }
-        } catch {
+        } catch (pathError) {
+          console.error("[Re-upload] Failed to parse the old storage path.", {
+            bucket: BUCKET_NAME,
+            oldFileUrl,
+            projectId: project.id,
+            error: pathError,
+          });
           oldStoragePath = null;
         }
 
         if (oldStoragePath && oldStoragePath !== uploadedPath) {
-          const { error: removeError } = await projectBucket.remove([oldStoragePath]);
+          currentStep = "delete previous file";
+          console.log("[Re-upload] Old-file deletion starting.", {
+            bucket: BUCKET_NAME,
+            path: oldStoragePath,
+            projectId: project.id,
+          });
 
-          if (removeError) {
-            console.warn("Replacement saved, but the previous storage object could not be removed.", removeError);
-            showProjectVerifyError(
-              "Asset replaced successfully, but the previous file could not be cleaned up."
-            );
+          try {
+            const { error: removeError } = await projectBucket.remove([oldStoragePath]);
+
+            if (removeError) {
+              console.warn("[Re-upload] Old-file deletion was skipped or rejected; replacement remains saved.", {
+                bucket: BUCKET_NAME,
+                path: oldStoragePath,
+                projectId: project.id,
+                error: removeError,
+              });
+            } else {
+              console.log("[Re-upload] Old-file deletion completed.", {
+                bucket: BUCKET_NAME,
+                path: oldStoragePath,
+                projectId: project.id,
+              });
+            }
+          } catch (removeException) {
+            console.error("[Re-upload] Old-file deletion threw an exception; replacement remains saved.", {
+              bucket: BUCKET_NAME,
+              path: oldStoragePath,
+              projectId: project.id,
+              error: removeException,
+            });
           }
         }
       }
@@ -4022,13 +4116,48 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         progress: 100,
         status: "done",
       });
+      console.log("[Re-upload] Replacement flow completed successfully.", {
+        bucket: BUCKET_NAME,
+        path: uploadedPath,
+        projectId: project.id,
+        fileName: file.name,
+      });
     } catch (error) {
       if (uploadedPath && !projectRowUpdated) {
-        const { error: rollbackError } = await projectBucket.remove([uploadedPath]);
-        if (rollbackError) {
-          console.warn("Unable to clean up failed replacement upload.", rollbackError);
+        console.log("[Re-upload] Rollback cleanup starting.", {
+          bucket: BUCKET_NAME,
+          path: uploadedPath,
+          projectId: project.id,
+        });
+
+        try {
+          const { error: rollbackError } = await projectBucket.remove([uploadedPath]);
+          if (rollbackError) {
+            console.warn("[Re-upload] Rollback cleanup was rejected.", {
+              bucket: BUCKET_NAME,
+              path: uploadedPath,
+              projectId: project.id,
+              error: rollbackError,
+            });
+          }
+        } catch (rollbackException) {
+          console.error("[Re-upload] Rollback cleanup threw an exception.", {
+            bucket: BUCKET_NAME,
+            path: uploadedPath,
+            projectId: project.id,
+            error: rollbackException,
+          });
         }
       }
+
+      console.error("[Re-upload] Replacement flow failed.", {
+        step: currentStep,
+        bucket: BUCKET_NAME,
+        path: uploadedPath,
+        projectId: project.id,
+        fileName: file.name,
+        error,
+      });
 
       setUploadState({
         fileName: file.name,
