@@ -4008,7 +4008,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .update({
           file_url: newFileUrl,
           name: file.name,
-          file_name: file.name,
         })
         .eq("id", project.id);
 
