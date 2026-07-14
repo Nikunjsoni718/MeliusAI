@@ -57,6 +57,7 @@ export type ProjectRow = {
   file_type?: string | null;
   file_url?: string | null;
   file_size?: number | null;
+  asset_content?: string | null;
   description?: string | null;
   user_description?: string | null;
   score?: number | null;

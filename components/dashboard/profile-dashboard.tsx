@@ -2070,7 +2070,7 @@ function ProjectCard({
   deletingProjectId,
   verifiedAssetId,
   onVerify,
-  onReupload,
+  handleReUpload,
   onOpen,
   onDelete,
 }: {
@@ -2080,7 +2080,7 @@ function ProjectCard({
   deletingProjectId: string | null;
   verifiedAssetId: string | null;
   onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
-  onReupload: (project: ProjectItem, file: File) => void;
+  handleReUpload: (event: ChangeEvent<HTMLInputElement>, projectId: string) => Promise<void>;
   onOpen: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
@@ -2190,13 +2190,7 @@ function ProjectCard({
                   accept="*/*"
                   className="sr-only"
                   aria-label={`Choose a replacement file for ${project.title}`}
-                  onChange={(event) => {
-                    const file = event.currentTarget.files?.[0];
-                    event.currentTarget.value = '';
-                    if (file) {
-                      onReupload(project, file);
-                    }
-                  }}
+                  onChange={(event) => void handleReUpload(event, project.id)}
                 />
                 <Button
                   type="button"
@@ -3914,151 +3908,50 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function handleProjectReupload(project: ProjectItem, file: File) {
-    if (!isOwner) {
-      return;
-    }
+  async function handleReUpload(
+    event: ChangeEvent<HTMLInputElement>,
+    projectId: string
+  ) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
 
-    if (!supabase) {
-      showProjectVerifyError('Asset re-upload is not ready right now.');
-      return;
-    }
-
-    if (uploadClearRef.current) {
-      window.clearTimeout(uploadClearRef.current);
-    }
-
-    setUploadState({
-      fileName: file.name,
-      progress: 5,
-      status: 'uploading',
-    });
-    setProjectVerifyError(null);
+    if (!file || !supabase) return;
 
     try {
-      const userId = await getConfirmedUserId();
-      const accessToken = session?.access_token ?? (await getCurrentAccessToken());
-      if (!userId) {
-        throw new Error('Vault sync is not ready.');
-      }
-      if (!accessToken) {
-        throw new Error('Your session expired. Please sign in again.');
+      const assetContent = await file.text();
+
+      if (!assetContent.trim()) {
+        throw new Error("The selected file is empty.");
       }
 
-      const storagePath = `${userId}/project-${project.id}-${Date.now()}-${getStorageFileName(file.name)}`;
-      const { error: uploadError } = await supabase.storage.from('vault').upload(storagePath, file, {
-        upsert: true,
-        cacheControl: '0',
-        contentType: getUploadContentType(file),
-      });
-
-      if (uploadError) {
-        throw uploadError;
-      }
-
-      setUploadState({
-        fileName: file.name,
-        progress: 70,
-        status: 'uploading',
-      });
-
-      const fileUrl = supabase.storage.from('vault').getPublicUrl(storagePath).data.publicUrl;
-      if (!fileUrl) {
-        throw new Error('Could not create a public file URL for the replacement asset.');
-      }
-
-      const { error: replacementError } = await supabase
-        .from('projects')
+      const { error } = await supabase
+        .from("projects")
         .update({
-          name: file.name,
-          file_name: file.name,
-          file_url: fileUrl,
-          file_type: getFileExtension(file.name) || 'file',
-          file_size: file.size,
+          asset_content: assetContent,
         })
-        .eq('id', project.id);
+        .eq("id", projectId);
 
-      if (replacementError) {
-        throw replacementError;
-      }
+      if (error) throw error;
 
-      const [newContent, assetDataUrl] = await Promise.all([
-        extractCodeAsText(file).then((text) => text.trim()),
-        readAssetAsDataURL(file),
-      ]);
-      if (!newContent) {
-        throw new Error('The replacement asset does not contain readable text to audit.');
-      }
-
-      const response = await fetch(
-        `${PROFILE_SPECTATOR_BASE_URL}/api/projects/${encodeURIComponent(project.id)}/re-audit`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ new_content: newContent }),
-        }
-      );
-      const reAuditPayload = (await response.json().catch(() => null)) as {
-        detail?: string;
-        new_score?: number;
-        score_delta?: number;
-        improvement_summary?: string;
-        strengths?: string[];
-        weaknesses?: string[];
-        project?: ProjectRow & { score_delta?: number };
-      } | null;
-
-      if (!response.ok) {
-        throw new Error(reAuditPayload?.detail || 'The replacement asset could not be re-audited.');
-      }
-      if (!reAuditPayload?.project) {
-        throw new Error('The re-audit completed without an updated project record.');
-      }
-
-      const reAuditedProject: ProjectItem = {
-        ...mapProjectRowToProjectItem(reAuditPayload.project),
-        asset_data_url: assetDataUrl,
-        text_preview: newContent,
-        last_improvement_summary:
-          reAuditPayload.improvement_summary ?? reAuditPayload.project.last_improvement_summary ?? null,
-      };
-
-      setProjects((currentProjects) =>
-        currentProjects.map((currentProject) =>
-          currentProject.id === project.id ? reAuditedProject : currentProject
+      setProjects((projects) =>
+        projects.map((project) =>
+          project.id === projectId
+            ? { ...project, text_preview: assetContent }
+            : project
         )
       );
-      setActivePreviewProjectOverride((currentProject) =>
-        currentProject?.id === project.id ? reAuditedProject : currentProject
-      );
-      if (activePreviewProjectId === project.id) {
-        setActivePreviewName(file.name);
-        setActivePreviewUrl(fileUrl);
-      }
-      setVerifiedAssetId(project.id);
+
       setUploadState({
         fileName: file.name,
         progress: 100,
-        status: 'done',
+        status: "done",
       });
-
-      if (spectatorProfileKey) {
-        await mutate(spectatorProfileKey);
-      }
-      router.refresh();
-
-      uploadClearRef.current = window.setTimeout(() => {
-        setUploadState(null);
-        uploadClearRef.current = null;
-      }, 450);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'We could not re-upload this asset.';
-      setUploadState(null);
-      showProjectVerifyError(message);
+      showProjectVerifyError(
+        error instanceof Error ? error.message : "Unable to replace the asset."
+      );
+    } finally {
+      input.value = "";
     }
   }
 
@@ -5188,7 +5081,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
                           onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                          onReupload={(selectedProject, file) => void handleProjectReupload(selectedProject, file)}
+                          handleReUpload={handleReUpload}
                           onOpen={handleOpenProjectPreview}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
@@ -5421,7 +5314,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
                             onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                            onReupload={(selectedProject, file) => void handleProjectReupload(selectedProject, file)}
+                            handleReUpload={handleReUpload}
                             onOpen={handleOpenProjectPreview}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
