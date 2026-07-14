@@ -3474,7 +3474,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     });
 
     const path = `${userId}/${getStorageFileName(file.name)}`;
-    const { error: uploadError } = await supabase.storage.from('vault').upload(path, file, {
+    const { error: uploadError } = await supabase.storage.from('projects').upload(path, file, {
       upsert: true,
       contentType: getUploadContentType(file),
     });
@@ -3490,7 +3490,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       status: 'uploading',
     });
 
-    const fileUrl = supabase.storage.from('vault').getPublicUrl(path).data.publicUrl;
+    const fileUrl = supabase.storage.from('projects').getPublicUrl(path).data.publicUrl;
     if (!fileUrl) {
       throw new Error('Could not create a public file URL.');
     }
@@ -4357,7 +4357,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
       const path = `${confirmedUser.id}/avatar-${Date.now()}.${ext}`;
 
-      const { error: uploadError } = await supabase.storage.from('vault').upload(path, file, {
+      const { error: uploadError } = await supabase.storage.from('projects').upload(path, file, {
         upsert: true,
         cacheControl: '0',
         contentType: file.type,
@@ -4368,7 +4368,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw uploadError;
       }
 
-      const publicUrl = supabase.storage.from('vault').getPublicUrl(path).data.publicUrl;
+      const publicUrl = supabase.storage.from('projects').getPublicUrl(path).data.publicUrl;
 
       const { error: profilePhotoError } = await supabase
         .from('profiles')
