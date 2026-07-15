@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
+import { useSWRConfig } from 'swr';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Input } from '@/components/ui/input';
@@ -387,6 +388,7 @@ function DashboardResumePageContent() {
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
   const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
   const { authEnabled, loading, supabase, user } = useViewerProfile();
+  const { mutate } = useSWRConfig();
   const [spectatedOwnership, setSpectatedOwnership] = useState<{
     isOwner: boolean;
     username: string;
@@ -637,16 +639,57 @@ function DashboardResumePageContent() {
         skills: nextFormData.skills,
       };
 
-      const { error } = await supabase
+      const { data: updatedProfileData, error } = await supabase
         .from('profiles')
         .update(updatePayload)
-        .eq('id', user.id);
+        .eq('id', user.id)
+        .select(BASE_RESUME_SELECT)
+        .single();
 
       if (error) {
         throw error;
       }
 
-      setFormData(nextFormData);
+      const updatedProfile = updatedProfileData as ResumeFields;
+      const updatedProfileHandle = (
+        updatedProfile.username ??
+        normalizedTargetUsername ??
+        user.id
+      ).toLowerCase();
+
+      await mutate(
+        (cacheKey) =>
+          Array.isArray(cacheKey) &&
+          cacheKey[0] === 'spectate-profile' &&
+          typeof cacheKey[1] === 'string' &&
+          cacheKey[1].toLowerCase() === updatedProfileHandle &&
+          cacheKey[2] === user.id,
+        (cachedPayload: unknown) => {
+          if (!cachedPayload || typeof cachedPayload !== 'object') {
+            return cachedPayload;
+          }
+
+          const dashboardPayload = cachedPayload as {
+            profile?: ResumeFields | null;
+            [key: string]: unknown;
+          };
+
+          return {
+            ...dashboardPayload,
+            profile: {
+              ...(dashboardPayload.profile ?? {}),
+              ...updatedProfile,
+            },
+          };
+        },
+        { revalidate: false }
+      );
+
+      setFormData({
+        ...nextFormData,
+        age: normalizeAge(updatedProfile.age),
+        status: updatedProfile.current_status ?? '',
+      });
       setSaveState('saved');
       setIsEditing(false);
       setSuccessMessage('Resume changes saved.');

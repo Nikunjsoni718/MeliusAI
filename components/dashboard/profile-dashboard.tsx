@@ -330,10 +330,11 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
-  'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
+  'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
   'id, user_id, folder_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, previous_score, audit_summary, pros, cons, recommendations, last_improved_summary, status, user_description, title, file_size';
 const DASHBOARD_PROJECT_LIMIT = 80;
@@ -2341,6 +2342,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioSaveSequenceRef = useRef(0);
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
+  const bioDraftRef = useRef<string | null>(null);
   const lastSavedBioRef = useRef('');
   const lastSavedSkillsInputRef = useRef('');
   const dashboardPrefetchKeysRef = useRef<Set<string>>(new Set());
@@ -2711,6 +2713,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
+    try {
+      const storedBioDraft = window.localStorage.getItem(BIO_DRAFT_STORAGE_KEY);
+      bioDraftRef.current = storedBioDraft;
+
+      if (storedBioDraft !== null) {
+        setBioText(storedBioDraft);
+      }
+    } catch (error) {
+      console.warn('Unable to restore the local Bio draft:', error);
+    }
+  }, []);
+
+  useEffect(() => {
     const profileKey = targetUsername ?? null;
     const hasHydratedCurrentProfile = Boolean(profileKey) && hydratedProfileKeyRef.current === profileKey;
     const shouldBlockForInitialProfileLoad = profileKey
@@ -2890,7 +2905,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       lastSavedSkillsInputRef.current = skillsInputValue;
       setResolvedProfileId(resolvedProfileIdValue);
       setProfileDraft(hydratedDraft);
-      setBioText(bioValue);
+      setBioText(
+        isOwnProfile && bioDraftRef.current !== null
+          ? bioDraftRef.current
+          : bioValue
+      );
       setRawSkillsInput(skillsInputValue);
       setProfileHydrated(true);
       hydratedProfileKeyRef.current = targetUsername;
@@ -3302,6 +3321,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     const formattedSkillsInput = formattedSkills.join(', ');
 
     if (lastSavedBioRef.current === nextBioText && lastSavedSkillsInputRef.current === formattedSkillsInput) {
+      try {
+        window.localStorage.removeItem(BIO_DRAFT_STORAGE_KEY);
+        bioDraftRef.current = null;
+      } catch (error) {
+        console.warn('Unable to clear the saved Bio draft:', error);
+      }
       showBioSavedState();
       return;
     }
@@ -3358,6 +3383,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }, await getCurrentAccessToken());
 
       if (bioSaveSequenceRef.current === sequence) {
+        try {
+          if (window.localStorage.getItem(BIO_DRAFT_STORAGE_KEY) === nextBio) {
+            window.localStorage.removeItem(BIO_DRAFT_STORAGE_KEY);
+            bioDraftRef.current = null;
+          }
+        } catch (error) {
+          console.warn('Unable to clear the saved Bio draft:', error);
+        }
         lastSavedBioRef.current = nextBioText;
         lastSavedSkillsInputRef.current = formattedSkillsInput;
         setRawSkillsInput(formattedSkillsInput);
@@ -3400,6 +3433,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     setBioText(value);
+    bioDraftRef.current = value;
+    try {
+      window.localStorage.setItem(BIO_DRAFT_STORAGE_KEY, value);
+    } catch (error) {
+      console.warn('Unable to cache the Bio draft locally:', error);
+    }
 
     if (bioSaveState === 'saved') {
       setBioSaveState('idle');
