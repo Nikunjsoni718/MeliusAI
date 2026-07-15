@@ -4008,12 +4008,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         fileName: file.name,
         fileUrl: newFileUrl,
       });
+      // Keep historical audit metrics in Supabase for the context-aware re-audit.
+      // The cleared audit state below belongs only to the local pendingProject.
+      const replacementFileUpdate = {
+        name: file.name,
+        file_url: newFileUrl,
+      };
       const { error: updateError } = await supabase
         .from("projects")
-        .update({
-          file_url: newFileUrl,
-          name: file.name,
-        })
+        .update(replacementFileUpdate)
         .eq("id", project.id);
 
       if (updateError) {
