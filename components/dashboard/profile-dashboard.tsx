@@ -328,6 +328,7 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const STORAGE_BUCKET_NAME = 'vault';
 const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
@@ -3474,7 +3475,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     });
 
     const path = `${userId}/${getStorageFileName(file.name)}`;
-    const { error: uploadError } = await supabase.storage.from('projects').upload(path, file, {
+    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET_NAME).upload(path, file, {
       upsert: true,
       contentType: getUploadContentType(file),
     });
@@ -3490,7 +3491,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       status: 'uploading',
     });
 
-    const fileUrl = supabase.storage.from('projects').getPublicUrl(path).data.publicUrl;
+    const fileUrl = supabase.storage.from(STORAGE_BUCKET_NAME).getPublicUrl(path).data.publicUrl;
     if (!fileUrl) {
       throw new Error('Could not create a public file URL.');
     }
@@ -3771,7 +3772,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             file.contentType || (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') || 'application/octet-stream';
 
           const { error: storageError } = await supabase.storage
-            .from('vault')
+            .from(STORAGE_BUCKET_NAME)
             .upload(filePath, uploadBody, {
               upsert: true,
               contentType,
@@ -3782,7 +3783,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           }
 
           const { data: publicUrlData } = supabase.storage
-            .from('vault')
+            .from(STORAGE_BUCKET_NAME)
             .getPublicUrl(filePath);
 
           if (!publicUrlData.publicUrl) {
@@ -3912,7 +3913,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     event: ChangeEvent<HTMLInputElement>,
     project: ProjectItem
   ) {
-    const BUCKET_NAME = 'vault';
+    const BUCKET_NAME = STORAGE_BUCKET_NAME;
     const input = event.currentTarget;
     const file = input.files?.[0];
 
@@ -4515,7 +4516,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
       const path = `${confirmedUser.id}/avatar-${Date.now()}.${ext}`;
 
-      const { error: uploadError } = await supabase.storage.from('projects').upload(path, file, {
+      const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET_NAME).upload(path, file, {
         upsert: true,
         cacheControl: '0',
         contentType: file.type,
@@ -4526,7 +4527,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw uploadError;
       }
 
-      const publicUrl = supabase.storage.from('projects').getPublicUrl(path).data.publicUrl;
+      const publicUrl = supabase.storage.from(STORAGE_BUCKET_NAME).getPublicUrl(path).data.publicUrl;
 
       const { error: profilePhotoError } = await supabase
         .from('profiles')
