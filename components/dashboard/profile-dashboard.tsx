@@ -4008,6 +4008,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .update({
           file_url: newFileUrl,
           name: file.name,
+          score: null,
+          evaluation_score: null,
+          logic_score: null,
+          audit_summary: null,
+          ai_summary: null,
+          pros: null,
+          cons: null,
+          recommendations: null,
+          last_improvement_summary: null,
+          has_been_audited: false,
+          status: "pending",
         })
         .eq("id", project.id);
 
@@ -4092,22 +4103,38 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         }
       }
 
+      const pendingProject: ProjectItem = {
+        ...project,
+        title: file.name,
+        file_name: file.name,
+        file_url: newFileUrl,
+        preview_url: newFileUrl,
+        file_extension: getFileExtension(file.name) || null,
+        file_type: getFileExtension(file.name) || "file",
+        text_preview: null,
+        asset_data_url: null,
+        score: null,
+        evaluation_score: null,
+        logic_score: null,
+        audit_summary: null,
+        ai_summary: null,
+        executive_summary: null,
+        summary: null,
+        pros: null,
+        cons: null,
+        recommendations: null,
+        last_improvement_summary: null,
+        has_been_audited: false,
+        status: "pending",
+      };
+
       setProjects((projects) =>
         projects.map((currentProject) =>
-          currentProject.id === project.id
-            ? {
-                ...currentProject,
-                title: file.name,
-                file_name: file.name,
-                file_url: newFileUrl,
-                preview_url: newFileUrl,
-                file_extension: getFileExtension(file.name) || null,
-                file_type: getFileExtension(file.name) || "file",
-                text_preview: null,
-                asset_data_url: null,
-              }
-            : currentProject
+          currentProject.id === project.id ? pendingProject : currentProject
         )
+      );
+      setActivePreviewProjectOverride((currentProject) =>
+        currentProject?.id === project.id ? pendingProject : currentProject
       );
 
       setUploadState({
@@ -4121,6 +4148,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         projectId: project.id,
         fileName: file.name,
       });
+
+      currentStep = "audit replacement file";
+      await handleVerifyWithMeliusAI(pendingProject);
     } catch (error) {
       if (uploadedPath && !projectRowUpdated) {
         console.log("[Re-upload] Rollback cleanup starting.", {
