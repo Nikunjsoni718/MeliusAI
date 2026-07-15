@@ -2996,6 +2996,7 @@ def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[st
     if include_improvement_summary:
         properties["last_improved_summary"] = {
             "type": "string",
+            "minLength": 1,
             "description": (
                 "A 2-3 sentence comparison describing fixes, unresolved issues, "
                 "and regressions since the previous audit."
@@ -3086,7 +3087,10 @@ introduced new bugs or regressions? Generate a completely new score, new strengt
 new weaknesses (`cons`), and new recommendations based on this comparison. Do not force
 the score to improve and do not copy the old metrics blindly. Also generate a short
 `last_improved_summary`: a user-facing 2-3 sentence explanation of what improved, what
-remains, and what regressed."""
+remains, and what regressed.
+
+Your JSON response MUST include the exact key `"last_improved_summary"`. This key is
+mandatory in re-audit mode and its value must be a non-empty string."""
 
 
 def generate_single_file_audit_prompt(
@@ -3098,9 +3102,14 @@ def generate_single_file_audit_prompt(
     is_re_audit: bool = False,
 ) -> str:
     output_fields = "ai_summary, score, pros, cons, and recommendations"
+    re_audit_output_rule = ""
 
     if is_re_audit:
         output_fields += ", and last_improved_summary"
+        re_audit_output_rule = (
+            '\nThe JSON response MUST contain the exact key "last_improved_summary" '
+            "with a non-empty comparison summary."
+        )
 
     return f"""Uploaded Artifact Metadata:
 - Asset name: {asset_name}
@@ -3118,6 +3127,7 @@ file size or line count.
 Score rubric:
 {AUDIT_SCORE_FIELD_DESCRIPTION}
 Return only a raw JSON object with {output_fields}.
+{re_audit_output_rule}
 FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and
 `recommendations` arrays, you MUST use the exact format:
 'Catchy Hook: Short explanation'.
@@ -5359,10 +5369,13 @@ async def verify_asset(
                 .maybe_single()
                 .execute()
             )
-            project = project_response.data
+            existing_project_data = project_response.data
 
-            if not isinstance(project, dict):
+            if not isinstance(existing_project_data, dict):
                 raise HTTPException(status_code=404, detail="Project not found.")
+
+            project = existing_project_data
+            old_score = existing_project_data.get("score")
 
             project_owner_ids = {
                 str(owner_id).strip()
@@ -5375,7 +5388,6 @@ async def verify_asset(
                     detail="You can only audit your own projects.",
                 )
 
-            raw_old_score = project.get("score")
             raw_old_strengths = next(
                 (
                     project.get(field_name)
@@ -5409,15 +5421,18 @@ async def verify_asset(
                 raw_old_recommendations
             )
             has_historical_audit = (
-                raw_old_score is not None
-                and bool(normalized_old_strengths)
-                and bool(normalized_old_weaknesses)
-                and bool(normalized_old_recommendations)
+                old_score is not None
+                and (
+                    bool(existing_project_data.get("has_been_audited"))
+                    or bool(normalized_old_strengths)
+                    or bool(normalized_old_weaknesses)
+                    or bool(normalized_old_recommendations)
+                )
             )
 
             if has_historical_audit:
                 try:
-                    old_score = max(0, min(100, int(round(float(raw_old_score)))))
+                    old_score = max(0, min(100, int(round(float(old_score)))))
                 except (TypeError, ValueError) as score_error:
                     raise HTTPException(
                         status_code=409,
@@ -5630,8 +5645,8 @@ async def verify_asset(
 
         audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         calculated_score = audit_response.score
-        last_improved_summary = audit_response.last_improved_summary
-        if has_historical_audit and not last_improved_summary:
+        generated_summary_from_llm = audit_response.last_improved_summary
+        if has_historical_audit and not generated_summary_from_llm:
             raise HTTPException(
                 status_code=502,
                 detail="The AI re-audit response was missing last_improved_summary.",
@@ -5668,11 +5683,16 @@ async def verify_asset(
             "status": "Verified",
         }
         if has_historical_audit:
-            update_payload.update(
-                {
-                    "last_improved_summary": last_improved_summary,
-                    "previous_score": old_score,
-                }
+            comparison_update_payload = {
+                "previous_score": old_score,
+                "last_improved_summary": generated_summary_from_llm,
+            }
+            update_payload.update(comparison_update_payload)
+            logger.info(
+                "verify_asset.re_audit_persist project_id=%s previous_score=%s summary_present=%s",
+                project_id,
+                old_score,
+                bool(generated_summary_from_llm),
             )
 
         project_payload = None
@@ -5724,9 +5744,9 @@ async def verify_asset(
             "recommendations": recommendations,
         }
 
-        if last_improved_summary is not None:
-            response_payload["last_improved_summary"] = last_improved_summary
-            response_payload["improvement_summary"] = last_improved_summary
+        if generated_summary_from_llm is not None:
+            response_payload["last_improved_summary"] = generated_summary_from_llm
+            response_payload["improvement_summary"] = generated_summary_from_llm
         if score_delta is not None:
             response_payload["score_delta"] = score_delta
 
