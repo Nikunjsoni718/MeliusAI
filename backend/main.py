@@ -2455,7 +2455,7 @@ class AuditResponse(BaseModel):
     strengths: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
     weaknesses: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
     recommendations: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
-    improvement_summary: str | None = Field(
+    last_improved_summary: str | None = Field(
         default=None,
         description=(
             "A short, user-facing comparison with the previous audit. "
@@ -2483,6 +2483,12 @@ class AuditResponse(BaseModel):
             normalized_data["strengths"] = normalized_data.get("pros")
         if "weaknesses" not in normalized_data and "cons" in normalized_data:
             normalized_data["weaknesses"] = normalized_data.get("cons")
+        if "last_improved_summary" not in normalized_data:
+            for legacy_key in ("improvement_summary", "last_improvement_summary"):
+                legacy_summary = normalized_data.get(legacy_key)
+                if legacy_summary is not None:
+                    normalized_data["last_improved_summary"] = legacy_summary
+                    break
 
         return normalized_data
 
@@ -2988,14 +2994,14 @@ def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[st
     required = ["ai_summary", "score", "pros", "cons", "recommendations"]
 
     if include_improvement_summary:
-        properties["improvement_summary"] = {
+        properties["last_improved_summary"] = {
             "type": "string",
             "description": (
                 "A 2-3 sentence comparison describing fixes, unresolved issues, "
                 "and regressions since the previous audit."
             ),
         }
-        required.append("improvement_summary")
+        required.append("last_improved_summary")
 
     return {
         "type": "json_schema",
@@ -3079,7 +3085,7 @@ Review the new code provided. Did the developer fix these specific issues? Have 
 introduced new bugs or regressions? Generate a completely new score, new strengths (`pros`),
 new weaknesses (`cons`), and new recommendations based on this comparison. Do not force
 the score to improve and do not copy the old metrics blindly. Also generate a short
-`improvement_summary`: a user-facing 2-3 sentence explanation of what improved, what
+`last_improved_summary`: a user-facing 2-3 sentence explanation of what improved, what
 remains, and what regressed."""
 
 
@@ -3094,7 +3100,7 @@ def generate_single_file_audit_prompt(
     output_fields = "ai_summary, score, pros, cons, and recommendations"
 
     if is_re_audit:
-        output_fields += ", and improvement_summary"
+        output_fields += ", and last_improved_summary"
 
     return f"""Uploaded Artifact Metadata:
 - Asset name: {asset_name}
@@ -3238,9 +3244,9 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
     audit_response.strengths = normalize_audit_list(audit_response.strengths)
     audit_response.weaknesses = normalize_audit_list(audit_response.weaknesses)
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
-    if audit_response.improvement_summary is not None:
-        audit_response.improvement_summary = sanitize_audit_summary(
-            audit_response.improvement_summary
+    if audit_response.last_improved_summary is not None:
+        audit_response.last_improved_summary = sanitize_audit_summary(
+            audit_response.last_improved_summary
         )
 
     return audit_response
@@ -5624,11 +5630,11 @@ async def verify_asset(
 
         audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         calculated_score = audit_response.score
-        improvement_summary = audit_response.improvement_summary
-        if has_historical_audit and not improvement_summary:
+        last_improved_summary = audit_response.last_improved_summary
+        if has_historical_audit and not last_improved_summary:
             raise HTTPException(
                 status_code=502,
-                detail="The AI re-audit response was missing an improvement summary.",
+                detail="The AI re-audit response was missing last_improved_summary.",
             )
 
         score_delta = (
@@ -5662,7 +5668,12 @@ async def verify_asset(
             "status": "Verified",
         }
         if has_historical_audit:
-            update_payload["last_improvement_summary"] = improvement_summary
+            update_payload.update(
+                {
+                    "last_improved_summary": last_improved_summary,
+                    "previous_score": old_score,
+                }
+            )
 
         project_payload = None
 
@@ -5713,8 +5724,9 @@ async def verify_asset(
             "recommendations": recommendations,
         }
 
-        if improvement_summary is not None:
-            response_payload["improvement_summary"] = improvement_summary
+        if last_improved_summary is not None:
+            response_payload["last_improved_summary"] = last_improved_summary
+            response_payload["improvement_summary"] = last_improved_summary
         if score_delta is not None:
             response_payload["score_delta"] = score_delta
 

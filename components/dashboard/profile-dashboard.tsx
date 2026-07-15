@@ -67,6 +67,8 @@ type ProjectItem = {
   has_been_audited?: boolean | null;
   logic_score?: number | null;
   ai_summary?: string | null;
+  last_improved_summary?: string | null;
+  previous_score?: number | null;
   last_improvement_summary?: string | null;
   created_at?: string | null;
   asset_data_url?: string | null;
@@ -333,7 +335,7 @@ const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, folder_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, user_description, title, file_size';
+  'id, user_id, folder_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, previous_score, audit_summary, pros, cons, recommendations, last_improved_summary, status, user_description, title, file_size';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -966,6 +968,8 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
       row.has_been_audited ?? Boolean(hydratedScore !== null || hydratedAuditSummary || hydratedAiSummary),
     logic_score: typeof row.logic_score === 'number' ? row.logic_score : hydratedScore,
     ai_summary: hydratedAiSummary,
+    last_improved_summary: row.last_improved_summary ?? null,
+    previous_score: typeof row.previous_score === 'number' ? row.previous_score : null,
     last_improvement_summary: row.last_improvement_summary ?? null,
     created_at: row.created_at ?? null,
     is_local: false,
@@ -4113,6 +4117,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         pros: null,
         cons: null,
         recommendations: null,
+        last_improved_summary: null,
+        previous_score: null,
         last_improvement_summary: null,
         has_been_audited: false,
         status: "pending",
@@ -4331,6 +4337,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         pros?: string[];
         cons?: string[];
         recommendations?: string[];
+        last_improved_summary?: string;
+        improvement_summary?: string;
+        previous_score?: number;
         project?: ProjectItem;
         report?: {
           calculatedScore?: number;
@@ -4344,6 +4353,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           cons?: string[];
           recommendations?: string[];
           strategicRecommendations?: string[];
+          last_improved_summary?: string;
         };
         reportText?: string;
         description?: string;
@@ -4403,6 +4413,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         pros: prosList.length > 0 ? prosList : updatedProject?.pros,
         cons: consList.length > 0 ? consList : updatedProject?.cons,
         recommendations: recommendationList.length > 0 ? recommendationList : updatedProject?.recommendations,
+        last_improved_summary:
+          payload.last_improved_summary ??
+          payload.improvement_summary ??
+          payload.report?.last_improved_summary ??
+          updatedProject?.last_improved_summary,
+        previous_score:
+          payload.previous_score ?? updatedProject?.previous_score ?? project.previous_score,
       };
 
       setProjects((currentProjects) => {

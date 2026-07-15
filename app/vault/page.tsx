@@ -1837,6 +1837,7 @@ Return Markdown sections for goods, bads, project description, and a final score
       {viewingAuditAsset ? (
         <AuditReviewModal
           assetTitle={getVaultAssetName(viewingAuditAsset)}
+          projectId={viewingAuditAsset.id}
           onClose={() => setViewingAuditAsset(null)}
           onOpenFullFocus={() => {
             const auditAsset = viewingAuditAsset;
@@ -1855,6 +1856,8 @@ Return Markdown sections for goods, bads, project description, and a final score
             description: viewingAuditAsset.description,
             executive_summary: viewingAuditAsset.audit_summary,
             summary: viewingAuditAsset.ai_summary,
+            previous_score: viewingAuditAsset.previous_score,
+            last_improved_summary: viewingAuditAsset.last_improved_summary,
             pros: viewingAuditAsset.pros,
             cons: viewingAuditAsset.cons,
             recommendations: viewingAuditAsset.recommendations,

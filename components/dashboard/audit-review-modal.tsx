@@ -192,6 +192,8 @@ type StructuredAuditData = {
   score?: number | null;
   evaluation_score?: number | null;
   logic_score?: number | null;
+  previous_score?: number | null;
+  last_improved_summary?: string | null;
   ai_summary?: string | null;
   user_description?: string | null;
   audit_summary?: string | null;
@@ -246,6 +248,8 @@ export function AuditReviewModal({
   const resolvedProjectId = projectId ?? id ?? auditData?.id ?? null;
   const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null);
   const [score, setScore] = useState<number | null>(null);
+  const [previousScore, setPreviousScore] = useState<number | null>(null);
+  const [lastImprovedSummary, setLastImprovedSummary] = useState<string | null>(null);
   const [auditSummary, setAuditSummary] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [pros, setPros] = useState<string[] | null>(null);
@@ -265,7 +269,7 @@ export function AuditReviewModal({
         const supabase = createSupabaseBrowserClient();
         const { data, error } = await supabase
           .from('projects')
-          .select('score, evaluation_score, logic_score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
+          .select('score, evaluation_score, logic_score, previous_score, last_improved_summary, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
           .eq('id', resolvedProjectId)
           .maybeSingle();
 
@@ -284,6 +288,8 @@ export function AuditReviewModal({
 
         setHydratedProjectId(resolvedProjectId);
         setScore(data.score ?? data.evaluation_score ?? data.logic_score ?? null);
+        setPreviousScore(data.previous_score ?? null);
+        setLastImprovedSummary(data.last_improved_summary ?? null);
         setAuditSummary(data.audit_summary ?? null);
         setAiSummary(data.ai_summary ?? null);
         setPros(Array.isArray(data.pros) ? data.pros : []);
@@ -310,6 +316,12 @@ export function AuditReviewModal({
     score: hasHydratedProject
       ? score ?? auditData?.score ?? auditData?.evaluation_score ?? auditData?.logic_score ?? null
       : auditData?.score ?? auditData?.evaluation_score ?? auditData?.logic_score ?? null,
+    previous_score: hasHydratedProject
+      ? previousScore ?? auditData?.previous_score ?? null
+      : auditData?.previous_score ?? null,
+    last_improved_summary: hasHydratedProject
+      ? lastImprovedSummary ?? auditData?.last_improved_summary ?? null
+      : auditData?.last_improved_summary ?? null,
     audit_summary: hasHydratedProject ? auditSummary ?? auditData?.audit_summary ?? null : auditData?.audit_summary ?? null,
     ai_summary: hasHydratedProject ? aiSummary ?? auditData?.ai_summary ?? null : auditData?.ai_summary ?? null,
     pros: hasHydratedProject ? pros ?? auditData?.pros ?? null : auditData?.pros ?? null,
@@ -337,6 +349,15 @@ export function AuditReviewModal({
   };
   const isFile = activeFile?.name?.includes('.');
   const badgeText = isFile ? `${activeFile.name.split('.').pop()} FILE`.toUpperCase() : 'PROJECT FOLDER';
+  const comparisonSummary = hydratedAuditData.last_improved_summary?.trim() || '';
+  const normalizedPreviousScore =
+    typeof hydratedAuditData.previous_score === 'number' && Number.isFinite(hydratedAuditData.previous_score)
+      ? Math.round(hydratedAuditData.previous_score)
+      : null;
+  const scoreDelta =
+    normalizedPreviousScore === null
+      ? null
+      : Math.round(activeFile.evaluated_score) - normalizedPreviousScore;
 
   return (
     <div style={{
@@ -374,6 +395,20 @@ export function AuditReviewModal({
           </div>
         </div>
 
+        {comparisonSummary ? (
+          <section className="mb-5 rounded-xl border border-emerald-400/25 bg-gradient-to-r from-emerald-500/10 via-cyan-500/[0.07] to-transparent p-5 shadow-[0_0_28px_rgba(16,185,129,0.08)]">
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-xs text-emerald-300">
+                ↗
+              </span>
+              <h3 className="m-0 text-xs font-bold uppercase tracking-[0.2em] text-emerald-300">
+                Version Improvement
+              </h3>
+            </div>
+            <p className="mb-0 mt-3 text-sm leading-relaxed text-slate-200">{comparisonSummary}</p>
+          </section>
+        ) : null}
+
         {/* AI Executive Summary Box */}
         <div style={{ border: '1px solid #1a2332', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
           <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>AI Executive Summary</h3>
@@ -392,13 +427,28 @@ export function AuditReviewModal({
         {/* 4-Column Bottom Grid */}
         <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
           
-          <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '30px' }}>
+          <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '12px', padding: '30px' }}>
             <svg viewBox="0 0 36 36" style={{ width: '100%', maxWidth: '120px', height: 'auto' }}>
               <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#1a2332" strokeWidth="4" />
               <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#00d2ff" strokeWidth="4" strokeDasharray={`${activeFile.evaluated_score || 0}, 100`} />
               <text x="18" y="20.5" style={{ fill: '#fff', fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' }}>{activeFile.evaluated_score || 0}</text>
               <text x="18" y="26" style={{ fill: '#666', fontSize: '4px', textAnchor: 'middle' }}>/ 100</text>
             </svg>
+            {scoreDelta !== null ? (
+              <span
+                className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
+                  scoreDelta > 0
+                    ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                    : scoreDelta < 0
+                      ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                      : 'border-slate-700 bg-slate-800/70 text-slate-300'
+                }`}
+                title={`Previous score: ${normalizedPreviousScore}/100`}
+              >
+                {scoreDelta > 0 ? '▲ +' : scoreDelta < 0 ? '▼ ' : '• '}
+                {scoreDelta} Points
+              </span>
+            ) : null}
           </div>
 
           <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>

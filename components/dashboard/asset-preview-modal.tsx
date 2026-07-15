@@ -83,6 +83,8 @@ type PreviewProject = {
   score?: number | null;
   evaluation_score?: number | null;
   logic_score?: number | null;
+  previous_score?: number | null;
+  last_improved_summary?: string | null;
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
@@ -112,6 +114,7 @@ type VerifyAssetResponse = {
     weaknesses?: string[];
     recommendations?: string[];
     strategicRecommendations?: string[];
+    last_improved_summary?: string;
   };
   project?: PreviewProject;
   reportText?: string;
@@ -121,6 +124,9 @@ type VerifyAssetResponse = {
   executive_summary?: string;
   summary?: string;
   score?: number;
+  previous_score?: number;
+  last_improved_summary?: string;
+  improvement_summary?: string;
   grade?: string;
   strengths?: string[];
   weaknesses?: string[];
@@ -336,6 +342,12 @@ export function AssetPreviewModal({
   const renderedTextPreview =
     projectTextPreview || (textPreview.url === activePreviewUrl ? textPreview.text : null);
   const score = getScore(liveProject);
+  const lastImprovedSummary = liveProject?.last_improved_summary?.trim() || '';
+  const previousScore =
+    typeof liveProject?.previous_score === 'number' && Number.isFinite(liveProject.previous_score)
+      ? Math.round(liveProject.previous_score)
+      : null;
+  const scoreDelta = previousScore === null ? null : score - previousScore;
   const pros = getMetricItems(liveProject, 'pros');
   const cons = getMetricItems(liveProject, 'cons');
   const recommendations = getMetricItems(liveProject, 'recommendations');
@@ -481,6 +493,14 @@ export function AssetPreviewModal({
         cons: weaknessesList.length > 0 ? weaknessesList : data.project?.cons ?? liveProject.cons,
         recommendations:
           recommendationList.length > 0 ? recommendationList : data.project?.recommendations ?? liveProject.recommendations,
+        last_improved_summary:
+          data.last_improved_summary ??
+          data.improvement_summary ??
+          report?.last_improved_summary ??
+          data.project?.last_improved_summary ??
+          liveProject.last_improved_summary,
+        previous_score:
+          data.previous_score ?? data.project?.previous_score ?? liveProject.previous_score,
         description: data.project?.description ?? (summaryOnlyText || liveProject.description),
       };
 
@@ -585,6 +605,20 @@ export function AssetPreviewModal({
             </span>
           </div>
 
+          {lastImprovedSummary ? (
+            <section className="rounded-xl border border-emerald-400/25 bg-gradient-to-r from-emerald-500/10 via-cyan-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(16,185,129,0.08)]">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-xs text-emerald-300">
+                  ↗
+                </span>
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300">
+                  Version Improvement
+                </h3>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-slate-200">{lastImprovedSummary}</p>
+            </section>
+          ) : null}
+
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
             <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
@@ -612,7 +646,7 @@ export function AssetPreviewModal({
           ) : null}
 
           <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
-            <div className="flex items-center justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
               <div className="relative flex h-32 w-32 items-center justify-center">
                 <div
                   className="absolute inset-0 rounded-full border border-slate-800"
@@ -625,6 +659,21 @@ export function AssetPreviewModal({
                   <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
                 </div>
               </div>
+              {scoreDelta !== null ? (
+                <div
+                  className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
+                    scoreDelta > 0
+                      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                      : scoreDelta < 0
+                        ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                        : 'border-slate-700 bg-slate-800/70 text-slate-300'
+                  }`}
+                  title={`Previous score: ${previousScore}/100`}
+                >
+                  {scoreDelta > 0 ? '▲ +' : scoreDelta < 0 ? '▼ ' : '• '}
+                  {scoreDelta} Points
+                </div>
+              ) : null}
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
