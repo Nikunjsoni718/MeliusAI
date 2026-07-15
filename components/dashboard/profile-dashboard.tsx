@@ -4009,17 +4009,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .update({
           file_url: newFileUrl,
           name: file.name,
-          score: null,
-          evaluation_score: null,
-          logic_score: null,
-          audit_summary: null,
-          ai_summary: null,
-          pros: null,
-          cons: null,
-          recommendations: null,
-          last_improvement_summary: null,
-          has_been_audited: false,
-          status: "pending",
         })
         .eq("id", project.id);
 
@@ -4151,7 +4140,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
 
       currentStep = "audit replacement file";
-      await handleVerifyWithMeliusAI(pendingProject);
+      await handleVerifyWithMeliusAI(pendingProject, true);
     } catch (error) {
       if (uploadedPath && !projectRowUpdated) {
         console.log("[Re-upload] Rollback cleanup starting.", {
@@ -4232,7 +4221,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
   }
 
-  async function handleVerifyWithMeliusAI(project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) {
+  async function handleVerifyWithMeliusAI(
+    project: ProjectItem,
+    force = false,
+    event?: MouseEvent<HTMLButtonElement>
+  ) {
     event?.preventDefault();
     event?.stopPropagation();
 
@@ -4241,6 +4234,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     if (!supabase || verifyingAssetId || deletingProjectId) {
+      return;
+    }
+
+    const hasCachedAudit = Boolean(project.has_been_audited) || [
+      project.score,
+      project.evaluation_score,
+      project.logic_score,
+    ].some(
+      (score) => score !== null && score !== undefined
+    );
+    if (!force && hasCachedAudit) {
       return;
     }
 
@@ -5328,7 +5332,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           verifyingAssetId={verifyingAssetId}
                           deletingProjectId={deletingProjectId}
                           verifiedAssetId={verifiedAssetId}
-                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, false, event)}
                           handleReUpload={handleReUpload}
                           onOpen={handleOpenProjectPreview}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
@@ -5561,7 +5565,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             verifyingAssetId={verifyingAssetId}
                             deletingProjectId={deletingProjectId}
                             verifiedAssetId={verifiedAssetId}
-                            onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
+                            onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, false, event)}
                             handleReUpload={handleReUpload}
                             onOpen={handleOpenProjectPreview}
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
