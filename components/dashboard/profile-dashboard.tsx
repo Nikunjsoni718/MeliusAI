@@ -1486,27 +1486,6 @@ function ProfileIdentitySkeleton() {
   );
 }
 
-function BioSectionSkeleton() {
-  return (
-    <section className="space-y-4">
-      <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-        <CardContent className="p-4 sm:p-6">
-          <div>
-            <SkeletonBlock className="h-4 w-12 rounded-lg" />
-            <SkeletonBlock className="mt-3 h-7 w-36 rounded-lg" />
-          </div>
-          <div className="mt-5 space-y-3 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-5">
-            <SkeletonBlock className="h-4 w-full rounded-lg" />
-            <SkeletonBlock className="h-4 w-11/12 rounded-lg" />
-            <SkeletonBlock className="h-4 w-4/5 rounded-lg" />
-            <SkeletonBlock className="h-4 w-2/3 rounded-lg" />
-          </div>
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
 function WorkAssetsSkeleton() {
   return (
     <section id="my-work-assets" className="space-y-4">
@@ -2527,7 +2506,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     [isOwner, isSpectator, profileHref, targetUsername]
   );
 
-  const firstName = useMemo(() => displayName.trim().split(/\s+/)[0] ?? 'there', [displayName]);
   const isProjectUploading = uploadState?.status === 'uploading';
   const isSyncing =
     profileSyncState === 'syncing' ||
@@ -4986,9 +4964,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             ) : (
             <Suspense fallback={<DashboardSkeleton />}>
             <div className="flex w-full min-w-0 flex-col gap-6 opacity-100 transition-opacity duration-500">
-            <div className="w-full min-w-0 rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-4 backdrop-blur-md sm:p-6 lg:p-7">
+            <div className="relative w-full min-w-0 rounded-[2rem] border border-blue-950/50 bg-[linear-gradient(135deg,rgba(9,13,31,0.88),rgba(5,11,27,0.58))] p-4 shadow-[0_28px_80px_rgba(2,6,23,0.32)] backdrop-blur-xl sm:p-6 lg:p-7">
                 <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="flex min-w-0 flex-col items-start gap-5 sm:flex-row sm:items-center">
+                  <div className="flex min-w-0 flex-1 flex-col items-start gap-5 sm:flex-row sm:items-start">
                     <ProfilePhoto
                       fallbackLabel={displayName}
                       sizeClass="h-16 w-16"
@@ -5001,33 +4979,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         <ProfileIdentitySkeleton />
                       ) : (
                         <>
-                      <p className="text-sm text-slate-400">
-                        {isOwner ? `Hey ${firstName}, welcome back.` : 'Talent profile preview.'}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Individual</span>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          Age: {profileAge ?? 'Not set'}
-                        </span>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          Status: {profileCurrentStatus || 'Not set'}
-                        </span>
-                        {isSyncing ? (
-                          <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-3 py-1 text-sky-100">
-                            Syncing...
-                          </span>
-                        ) : null}
-                        {isOwner && profileSyncState === 'error' ? (
-                          <button
-                            type="button"
-                            onClick={() => void saveProfileDraft()}
-                            className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1 text-rose-100 transition hover:border-rose-300/50"
-                          >
-                            Retry
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3 lg:pr-4">
                         {isEditing ? (
                           <Input
                             aria-label="Full name"
@@ -5057,9 +5009,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           </Link>
                         )}
                       </div>
+
                       {isEditing ? (
                         <>
-                          <label className="mt-2 flex w-full max-w-sm items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
+                          <label className="mt-3 flex w-full max-w-sm items-center rounded-lg border border-blue-950/50 bg-[#050b1b]/60 text-sm text-slate-300 transition focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20">
                             <span className="flex h-10 items-center border-r border-blue-950/50 px-3 text-slate-500">
                               @
                             </span>
@@ -5079,22 +5032,76 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           ) : null}
                         </>
                       ) : (
-                        <p className="mt-2 text-sm text-slate-400">@{displayUsername}</p>
+                        <p className="mt-2 text-sm text-slate-500">@{displayUsername}</p>
                       )}
-                      {email ? (
-                        <a
-                          href={`mailto:${email}`}
-                          className="mt-3 inline-flex w-full max-w-full items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-2 text-xs font-medium text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.1)] transition-all hover:border-cyan-300/60 hover:bg-cyan-500/15 hover:text-white hover:shadow-[0_0_28px_rgba(34,211,238,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 sm:w-auto"
-                        >
-                          <Mail className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
-                          <span className="truncate sm:whitespace-normal sm:break-all">{email}</span>
-                        </a>
+
+                      {isOwner && isEditing ? (
+                        <div className="mt-5 max-w-3xl">
+                          <Textarea
+                            value={bioText}
+                            onChange={(event) => updateBio(event.target.value)}
+                            placeholder="Tell the creative community or hiring organizations about your design methodology or building focus..."
+                            className="min-h-32 resize-none border-white/10 bg-[#050b1b]/45 text-sm leading-relaxed text-slate-200 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/65 sm:text-base"
+                          />
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => void saveCompleteProfile()}
+                              disabled={bioSaveState === 'saving'}
+                              className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-2 text-xs font-medium text-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.14)] transition hover:border-emerald-300/60 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {bioSaveState === 'saved' ? <CheckIcon className="h-4 w-4" /> : null}
+                              {bioSaveState === 'saving'
+                                ? 'Saving Profile...'
+                                : bioSaveState === 'saved'
+                                  ? 'Profile Saved'
+                                  : 'Save Profile'}
+                            </button>
+                          </div>
+                        </div>
                       ) : (
-                        <span className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/30 px-3.5 py-2 text-xs text-slate-500">
-                          <Mail className="h-4 w-4" aria-hidden="true" />
-                          Email unavailable
-                        </span>
+                        <p className="mt-5 max-w-3xl text-sm leading-relaxed text-slate-300 sm:text-base">
+                          {displayBio || 'No bio provided yet.'}
+                        </p>
                       )}
+
+                      <div className="mt-5 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                        {email ? (
+                          <a
+                            href={`mailto:${email}`}
+                            className="inline-flex max-w-full items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-2 font-medium text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,0.1)] transition-all hover:border-cyan-300/60 hover:bg-cyan-500/15 hover:text-white hover:shadow-[0_0_28px_rgba(34,211,238,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
+                          >
+                            <Mail className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
+                            <span className="truncate sm:whitespace-normal sm:break-all">{email}</span>
+                          </a>
+                        ) : (
+                          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/30 px-3.5 py-2 text-slate-500">
+                            <Mail className="h-4 w-4" aria-hidden="true" />
+                            Email unavailable
+                          </span>
+                        )}
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-2">Individual</span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-2">
+                          Age: {profileAge ?? 'Not set'}
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-2">
+                          Status: {profileCurrentStatus || 'Not set'}
+                        </span>
+                        {isSyncing ? (
+                          <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-3 py-2 text-sky-100">
+                            Syncing...
+                          </span>
+                        ) : null}
+                        {isOwner && profileSyncState === 'error' ? (
+                          <button
+                            type="button"
+                            onClick={() => void saveProfileDraft()}
+                            className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-rose-100 transition hover:border-rose-300/50"
+                          >
+                            Retry
+                          </button>
+                        ) : null}
+                      </div>
                       {profileSaveError ? <p className="mt-2 text-sm text-rose-200">{profileSaveError}</p> : null}
                       {avatarError ? <p className="mt-2 text-sm text-slate-400">Photo update did not finish. Try again.</p> : null}
                         </>
@@ -5277,57 +5284,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
 
             <div className="space-y-10">
-              <Suspense fallback={<BioSectionSkeleton />}>
-                {isProfilePayloadPending ? (
-                  <BioSectionSkeleton />
-                ) : (
-              <section className="space-y-4">
-              <Card className="relative overflow-hidden border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                {bioSaveState === 'saving' ? (
-                  <div className="absolute right-6 top-6 h-2 w-2 rounded-full bg-sky-300 shadow-[0_0_20px_rgba(56,189,248,0.9)]" />
-                ) : null}
-                <CardContent className="p-4 sm:p-6">
-                  <div>
-                    <div>
-                      <p className="text-sm text-slate-400">Bio</p>
-                      <h2 className="mt-1 text-2xl font-semibold text-white">About Me</h2>
-                    </div>
-                  </div>
-
-                  {isOwner && isEditing ? (
-                    <>
-                      <Textarea
-                        value={bioText}
-                        onChange={(event) => updateBio(event.target.value)}
-                        placeholder="Tell the creative community or hiring organizations about your design methodology or building focus..."
-                        className="mt-5 min-h-40 resize-none border-transparent bg-[#050b1b]/35 text-base leading-7 shadow-none focus:border-sky-500/60 focus:bg-[#050b1b]/55"
-                      />
-                      <div className="mt-5 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => void saveCompleteProfile()}
-                          disabled={bioSaveState === 'saving'}
-                          className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-5 py-2.5 text-sm font-medium text-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/60 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          {bioSaveState === 'saved' ? <CheckIcon className="h-4 w-4" /> : null}
-                          {bioSaveState === 'saving'
-                            ? 'Syncing Platform Data...'
-                            : bioSaveState === 'saved'
-                              ? 'Profile Dynamic Live ✅'
-                              : 'Save Profile'}
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="mt-5 rounded-2xl border border-blue-950/40 bg-[#050b1b]/35 p-4 text-base leading-7 text-slate-300 sm:p-5">
-                      {displayBio || 'No bio provided yet.'}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </section>
-                )}
-              </Suspense>
 
               <Suspense fallback={<WorkAssetsSkeleton />}>
                 {isProfilePayloadPending ? (
