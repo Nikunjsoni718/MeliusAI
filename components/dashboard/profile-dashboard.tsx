@@ -4226,36 +4226,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     force = false,
     event?: MouseEvent<HTMLButtonElement>
   ) {
+    console.log("Audit button clicked for project:", project.id);
     event?.preventDefault();
     event?.stopPropagation();
 
     if (!isOwner) {
+      console.warn('[Audit] Request blocked because the current viewer is not the project owner.', {
+        projectId: project.id,
+      });
       return;
     }
 
     if (!supabase || verifyingAssetId || deletingProjectId) {
+      console.warn('[Audit] Request blocked because the dashboard is busy or unavailable.', {
+        projectId: project.id,
+        hasSupabaseClient: Boolean(supabase),
+        verifyingAssetId,
+        deletingProjectId,
+      });
       return;
     }
 
-    const hasCachedAudit = Boolean(project.has_been_audited) || [
+    const hasPositiveCachedScore = [
       project.score,
       project.evaluation_score,
       project.logic_score,
-    ].some(
-      (score) => score !== null && score !== undefined
+    ].some((score) => typeof score === 'number' && score > 0);
+    const hasCompletedCachedAudit = Boolean(
+      project.has_been_audited && hasPositiveCachedScore
     );
-    if (!force && hasCachedAudit) {
+
+    if (!force && hasCompletedCachedAudit) {
+      console.log('[Audit] Existing completed audit found; skipping duplicate verification.', {
+        projectId: project.id,
+      });
       return;
     }
-
-    const userContextDescription = projectDescriptions[project.id] ?? '';
-    const projectSourceHref = getProjectDownloadHref(project);
-    const filename = project.file_name || project.title;
 
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
     setProjectVerifyError(null);
     setVerifiedAssetId(null);
+
+    const userContextDescription = projectDescriptions[project.id] ?? '';
+    const projectSourceHref = getProjectDownloadHref(project);
+    const filename = project.file_name || project.title;
 
     if (verifiedAssetTimerRef.current) {
       window.clearTimeout(verifiedAssetTimerRef.current);
