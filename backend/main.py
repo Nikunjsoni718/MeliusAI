@@ -2405,6 +2405,11 @@ AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 0 to 100 based on code qualit
 
 AUDIT_LIST_FIELD_DESCRIPTION = "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
 
+AUDIT_SCORE_REASONING_FIELD_DESCRIPTION = (
+    "A clear 2-3 sentence justification explaining exactly why the file received "
+    "its specific score, highlighting the main deciding factors."
+)
+
 
 class UniversalAuditReport(BaseModel):
     calculatedScore: int = Field(..., ge=0, le=100, description=AUDIT_SCORE_FIELD_DESCRIPTION)
@@ -2452,6 +2457,11 @@ class AuditRequest(BaseModel):
 class AuditResponse(BaseModel):
     ai_summary: str
     score: int = Field(..., ge=0, le=100, description=AUDIT_SCORE_FIELD_DESCRIPTION)
+    score_reasoning: str = Field(
+        ...,
+        min_length=1,
+        description=AUDIT_SCORE_REASONING_FIELD_DESCRIPTION,
+    )
     strengths: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
     weaknesses: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
     recommendations: List[str] = Field(..., description=AUDIT_LIST_FIELD_DESCRIPTION)
@@ -2966,6 +2976,9 @@ def classify_uploaded_asset(asset_name: str, asset_text_content: str) -> Dict[st
 ENHANCED_AUDIT_SYSTEM_PROMPT = """You are a meticulous Tech Lead reviewing a developer's project.
 RULE 1 (TONE): Be professional, punchy, and engaging.
 RULE 4 (LIMITS): Maximum 4 items per array.
+GRANULAR SCORING (ABSOLUTE REQUIREMENT): Calculate a highly precise integer score between 0 and 100 based strictly on the code quality. You MUST NOT round the score to the nearest 5 or 10. Avoid default scores like 75, 80, 85, or 90 unless they perfectly reflect the rubric. Be exact (e.g., 78, 82, 91).
+SCORE REASONING (REQUIRED): In the 'score_reasoning' field, provide a clear 2-3 sentence justification explaining exactly why the file received its specific score, highlighting the main deciding factors.
+EXECUTIVE SUMMARY (REQUIRED): Apply this rule to the `ai_summary` field, which is returned to clients as the executive summary. Your summary must act as a concise description of the file's overall quality. At the very end of the summary, you MUST include a concluding sentence that explicitly ties your analysis to the final score you are assigning (e.g., 'Because of this critical security flaw, the score is limited to 64.' or 'These robust backend practices result in a strong score of 92.').
 FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
 Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
 MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."""
@@ -2975,6 +2988,11 @@ def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[st
     properties: Dict[str, Any] = {
         "ai_summary": {"type": "string"},
         "score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "score_reasoning": {
+            "type": "string",
+            "minLength": 1,
+            "description": AUDIT_SCORE_REASONING_FIELD_DESCRIPTION,
+        },
         "pros": {
             "type": "array",
             "maxItems": 4,
@@ -2991,7 +3009,14 @@ def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[st
             "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
         },
     }
-    required = ["ai_summary", "score", "pros", "cons", "recommendations"]
+    required = [
+        "ai_summary",
+        "score",
+        "score_reasoning",
+        "pros",
+        "cons",
+        "recommendations",
+    ]
 
     if include_improvement_summary:
         properties["last_improved_summary"] = {
@@ -3101,7 +3126,9 @@ def generate_single_file_audit_prompt(
     user_context_description: str,
     is_re_audit: bool = False,
 ) -> str:
-    output_fields = "ai_summary, score, pros, cons, and recommendations"
+    output_fields = (
+        "ai_summary, score, score_reasoning, pros, cons, and recommendations"
+    )
     re_audit_output_rule = ""
 
     if is_re_audit:
@@ -3126,6 +3153,8 @@ file size or line count.
 
 Score rubric:
 {AUDIT_SCORE_FIELD_DESCRIPTION}
+In the 'score_reasoning' field, provide a clear 2-3 sentence justification explaining
+exactly why the file received its specific score, highlighting the main deciding factors.
 Return only a raw JSON object with {output_fields}.
 {re_audit_output_rule}
 FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and
@@ -3228,15 +3257,29 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
         )
 
     try:
-        parsed_content = json.loads(raw_content)
+        parsed_json = json.loads(raw_content)
     except json.JSONDecodeError as parse_error:
         raise HTTPException(
             status_code=502,
             detail="AI audit response was not valid JSON.",
         ) from parse_error
 
+    if not isinstance(parsed_json, dict):
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response was not a JSON object.",
+        )
+
+    score_reasoning = sanitize_audit_summary(parsed_json.get("score_reasoning"))
+    if not score_reasoning:
+        raise HTTPException(
+            status_code=502,
+            detail="AI audit response was missing the required score_reasoning.",
+        )
+    parsed_json["score_reasoning"] = score_reasoning
+
     try:
-        audit_response = AuditResponse.model_validate(parsed_content)
+        audit_response = AuditResponse.model_validate(parsed_json)
     except ValidationError as validation_error:
         raise HTTPException(
             status_code=502,
@@ -3250,6 +3293,7 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
             detail="AI audit response was missing the required ai_summary.",
         )
 
+    audit_response.score_reasoning = score_reasoning
     audit_response.score = max(0, min(100, int(round(float(audit_response.score)))))
     audit_response.strengths = normalize_audit_list(audit_response.strengths)
     audit_response.weaknesses = normalize_audit_list(audit_response.weaknesses)
@@ -5645,6 +5689,7 @@ async def verify_asset(
 
         audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
         calculated_score = audit_response.score
+        score_reasoning = audit_response.score_reasoning
         generated_summary_from_llm = audit_response.last_improved_summary
         if has_historical_audit and not generated_summary_from_llm:
             raise HTTPException(
@@ -5682,6 +5727,8 @@ async def verify_asset(
             "has_been_audited": True,
             "status": "Verified",
         }
+        if project is not None and "score_reasoning" in project:
+            update_payload["score_reasoning"] = score_reasoning
         if has_historical_audit:
             comparison_update_payload = {
                 "previous_score": old_score,
@@ -5733,6 +5780,7 @@ async def verify_asset(
                 "strategicRecommendations": recommendations,
             },
             "score": calculated_score,
+            "score_reasoning": score_reasoning,
             "description": ai_summary,
             "executive_summary": ai_summary,
             "summary": ai_summary,
