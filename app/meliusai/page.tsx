@@ -926,7 +926,7 @@ ${getProjectDescription(linkedProject)}
   }
 
   return (
-    <main className="flex-1 h-screen flex bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] overflow-hidden text-slate-100">
+    <main className="flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-100">
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent pointer-events-none" />
 
       <aside className="w-60 min-w-[15rem] h-full bg-[#060b1e]/40 border-r border-blue-950/30 flex flex-col p-4 z-20">
@@ -1011,7 +1011,7 @@ ${getProjectDescription(linkedProject)}
               </h1>
             </div>
           ) : (
-            <div className="relative z-10 w-full flex-1 overflow-y-auto px-6 pb-44 scroll-smooth">
+            <div className="scrollbar-hide relative z-10 min-w-0 w-full flex-1 overflow-x-hidden overflow-y-auto px-6 pb-44 scroll-smooth">
               <div className="mx-auto w-full max-w-2xl space-y-4 pt-4">
                 {messages.map((message, index) => {
                   const messageText = getMessageText(message);

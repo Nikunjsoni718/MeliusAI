@@ -4789,7 +4789,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   };
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
+    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
           {isSidebarOpen ? (
             <button
               type="button"
@@ -4800,7 +4800,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ) : null}
           <aside
             className={cn(
-              'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-y-auto border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0 md:overflow-visible md:bg-slate-900',
+              'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-hidden border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0 md:bg-slate-900',
               isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
             )}
           >
@@ -4877,7 +4877,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
           </aside>
 
-          <main className="relative h-full min-w-0 flex-1 overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
+          <main className="scrollbar-hide relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
             <button
               type="button"
               aria-label="Toggle sidebar"

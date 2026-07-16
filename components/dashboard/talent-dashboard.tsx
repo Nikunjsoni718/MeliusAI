@@ -396,7 +396,7 @@ function renderDashboard(input: {
       : 'Ready for Review';
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <main className="mx-auto min-h-full w-full max-w-7xl overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8">
       <div className="rounded-[2rem] border border-slate-800/80 bg-slate-950/70 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.6)] backdrop-blur-xl sm:p-6">
         <div className="flex flex-col gap-6 border-b border-slate-800/70 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>

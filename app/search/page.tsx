@@ -165,7 +165,7 @@ export default function GlobalDirectorySearchPage() {
   const activeResults = activeTab === 'people' ? peopleResults : companyResults;
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-[#020617] via-[#050819] to-[#010b24] px-5 py-10 text-white sm:px-8 lg:py-16">
+    <main className="min-h-full w-full overflow-x-hidden bg-gradient-to-br from-[#020617] via-[#050819] to-[#010b24] px-5 py-10 text-white sm:px-8 lg:py-16">
       <section className="mx-auto max-w-6xl">
         <header className="text-center">
           <p className="text-xs font-bold uppercase tracking-[0.28em] text-cyan-300">Global Directory</p>

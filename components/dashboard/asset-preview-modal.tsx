@@ -517,7 +517,7 @@ export function AssetPreviewModal({
   }
 
   const modal = (
-    <div className="fixed inset-0 z-[9999] w-screen h-screen bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+    <div className="fixed inset-0 z-[9999] h-full w-full bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
       <div
         className={`relative w-full max-w-5xl bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col transition-all duration-300 ${
           isExpandedViewer ? 'max-h-[85vh]' : 'max-h-[90vh] overflow-y-auto'

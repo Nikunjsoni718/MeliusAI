@@ -763,7 +763,7 @@ function DashboardResumePageContent() {
   }
 
   return (
-    <main className="relative flex h-screen w-screen overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
+    <main className="relative flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
       <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(0,112,243,0.16),transparent_55%)]" />
 
@@ -832,7 +832,7 @@ function DashboardResumePageContent() {
           </div>
         </aside>
 
-        <section className="relative flex h-full w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto">
+        <section className="scrollbar-hide relative flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-x-hidden overflow-y-auto">
           <button
             type="button"
             aria-label="Toggle sidebar"

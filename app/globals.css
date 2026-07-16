@@ -61,17 +61,17 @@ a {
   text-decoration: none;
 }
 
-.scrollbar-none {
+.scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
 
-.scrollbar-none::-webkit-scrollbar {
+.scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
 
 .page-transition {
-  animation: page-enter 320ms ease both;
+  animation: page-fade-enter 320ms ease both;
 }
 
 .animate-fade-in {
@@ -87,6 +87,16 @@ a {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes page-fade-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
