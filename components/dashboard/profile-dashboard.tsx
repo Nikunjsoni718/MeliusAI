@@ -3047,6 +3047,36 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     };
   }, [currentUser?.id, isSpectator, profileHydrated, supabase]);
 
+  useEffect(() => {
+    if (!isOwner || profileLoading) {
+      return;
+    }
+
+    let animationFrameId: number | null = null;
+    const scrollToOpportunities = () => {
+      if (window.location.hash !== '#opportunities') {
+        return;
+      }
+
+      animationFrameId = window.requestAnimationFrame(() => {
+        document.getElementById('opportunities')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      });
+    };
+
+    scrollToOpportunities();
+    window.addEventListener('hashchange', scrollToOpportunities);
+
+    return () => {
+      window.removeEventListener('hashchange', scrollToOpportunities);
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [isOwner, loadingState, pathname, profileLoading]);
+
   async function handleDismiss(opportunityId: string) {
     const previousOpportunities = liveJobs;
     const dismissedOpportunity = previousOpportunities.find((opportunity) => opportunity.id === opportunityId);
@@ -4840,16 +4870,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         }
                         icon={item.icon}
                         onPrefetch={() => prefetchDashboardNavigation(item)}
-                        onClick={
-                          item.label === 'Opportunities'
-                            ? (event) => {
-                                event.preventDefault();
-                                const opportunitiesHref = `${profileHref}#opportunities`;
-                                router.replace(opportunitiesHref);
-                                setIsSidebarOpen(false);
-                              }
-                            : () => setIsSidebarOpen(false)
-                        }
+                        onClick={() => setIsSidebarOpen(false)}
                       />
                     </motion.div>
                   ))}

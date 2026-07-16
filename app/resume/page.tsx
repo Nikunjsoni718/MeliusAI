@@ -12,7 +12,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
+import { BriefcaseBusiness, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
 import { useSWRConfig } from 'swr';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
@@ -91,6 +91,7 @@ const navigationItems = [
   { href: '/search', label: 'Search', icon: Search },
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Resume', icon: FileText },
+  { href: '/profile#opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
 ];
 
 function SidebarLink({
@@ -456,7 +457,7 @@ function DashboardResumePageContent() {
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
   const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
-  const { authEnabled, loading, supabase, user } = useViewerProfile();
+  const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
   const { mutate } = useSWRConfig();
   const [spectatedOwnership, setSpectatedOwnership] = useState<{
     isOwner: boolean;
@@ -469,6 +470,19 @@ function DashboardResumePageContent() {
     ? Boolean(!loading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
     : Boolean(user?.id);
   const isSpectator = Boolean(targetUsername && !loading && !isOwner);
+  const viewerProfileHandle =
+    profile?.username?.trim() ||
+    (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '') ||
+    user?.id ||
+    '';
+  const displayedProfileHref = targetUsername
+    ? `/profile/${encodeURIComponent(targetUsername)}`
+    : viewerProfileHandle
+      ? `/profile/${encodeURIComponent(viewerProfileHandle)}`
+      : '/profile';
+  const opportunitiesProfileHref = viewerProfileHandle
+    ? `/profile/${encodeURIComponent(viewerProfileHandle)}#opportunities`
+    : `${displayedProfileHref}#opportunities`;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const visibleNavigationItems = useMemo(
     () => (isOwner ? navigationItems : navigationItems.filter((item) => item.label !== 'Search')),
@@ -903,13 +917,13 @@ function DashboardResumePageContent() {
                 {visibleNavigationItems.map((item) => {
                   const Icon = item.icon;
                   const href =
-                    targetUsername
-                      ? item.label === 'Home'
-                        ? `/profile/${encodeURIComponent(targetUsername)}`
-                        : item.label === 'Vault' || item.label === 'Resume'
+                    item.label === 'Home'
+                      ? displayedProfileHref
+                      : item.label === 'Opportunities'
+                        ? opportunitiesProfileHref
+                        : targetUsername && (item.label === 'Vault' || item.label === 'Resume')
                           ? `${item.href}?profile=${encodeURIComponent(targetUsername)}`
-                          : item.href
-                      : item.href;
+                          : item.href;
                   return (
                     <motion.div
                       key={item.href}
