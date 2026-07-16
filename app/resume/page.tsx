@@ -12,7 +12,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderLock, House, Search, UserRound } from 'lucide-react';
+import { FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
 import { useSWRConfig } from 'swr';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils';
 import type { ProjectRow } from '@/types/supabase';
 
 type ResumeStatus = string;
-type SaveState = 'idle' | 'saving' | 'saved';
+type EditableResumeSection = 'coreMetrics' | 'qualifications' | 'skills' | 'experience' | 'hobbies';
+type EditableListField = 'qualifications' | 'experience' | 'hobbies' | 'skills';
 type ResumeFormData = {
   name: string;
   age: string;
@@ -294,27 +295,87 @@ function getTopScoringAssets(assets: ProjectRow[]) {
     .slice(0, 4);
 }
 
+function SectionHeader({
+  editDisabled,
+  isEditing,
+  isOwner,
+  isSaving,
+  label,
+  onEdit,
+  onSave,
+}: {
+  editDisabled: boolean;
+  isEditing: boolean;
+  isOwner: boolean;
+  isSaving: boolean;
+  label: string;
+  onEdit: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="mb-5 flex items-center justify-between gap-3">
+      <h2 className="text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</h2>
+      {isOwner ? (
+        isEditing ? (
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/45 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSaving ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {isSaving ? 'Saving...' : 'Save'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={editDisabled}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-blue-950/60 bg-[#050b1b]/60 text-slate-500 transition hover:border-cyan-500/35 hover:bg-cyan-500/10 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-35"
+            aria-label={`Edit ${label}`}
+            title={`Edit ${label}`}
+          >
+            <Pencil className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        )
+      ) : null}
+    </div>
+  );
+}
+
 function EditableStringListSection({
   addLabel,
+  editDisabled,
   emptyLabel,
   isOwner,
   isEditing,
+  isSaving,
   items,
   label,
   onAdd,
   onDelete,
+  onEdit,
+  onSave,
   onUpdate,
   placeholder,
   variant = 'bullet',
 }: {
   addLabel: string;
+  editDisabled: boolean;
   emptyLabel: string;
   isOwner: boolean;
   isEditing: boolean;
+  isSaving: boolean;
   items: string[];
   label: string;
   onAdd: () => void;
   onDelete: (index: number) => void;
+  onEdit: () => void;
+  onSave: () => void;
   onUpdate: (index: number, value: string) => void;
   placeholder: string;
   variant?: 'bullet' | 'pill';
@@ -323,7 +384,15 @@ function EditableStringListSection({
 
   return (
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
-      <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</p>
+      <SectionHeader
+        editDisabled={editDisabled}
+        isEditing={isEditing}
+        isOwner={isOwner}
+        isSaving={isSaving}
+        label={label}
+        onEdit={onEdit}
+        onSave={onSave}
+      />
       {isOwner && isEditing ? (
         <div className="space-y-3">
           {items.map((item, index) => (
@@ -411,12 +480,21 @@ function DashboardResumePageContent() {
   const [topProjects, setTopProjects] = useState<ProjectRow[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(true);
-  const [isEditing, setIsEditing] = useState(false);
-  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [isEditingCoreMetrics, setIsEditingCoreMetrics] = useState(false);
+  const [isEditingQualifications, setIsEditingQualifications] = useState(false);
+  const [isEditingSkills, setIsEditingSkills] = useState(false);
+  const [isEditingExperience, setIsEditingExperience] = useState(false);
+  const [isEditingHobbies, setIsEditingHobbies] = useState(false);
+  const [savingSection, setSavingSection] = useState<EditableResumeSection | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const canEdit = isOwner && isEditing;
+  const isEditingAnySection =
+    isEditingCoreMetrics ||
+    isEditingQualifications ||
+    isEditingSkills ||
+    isEditingExperience ||
+    isEditingHobbies;
 
   useEffect(() => {
     setSpectatedOwnership(null);
@@ -575,7 +653,12 @@ function DashboardResumePageContent() {
 
   useEffect(() => {
     if (isSpectator) {
-      setIsEditing(false);
+      setIsEditingCoreMetrics(false);
+      setIsEditingQualifications(false);
+      setIsEditingSkills(false);
+      setIsEditingExperience(false);
+      setIsEditingHobbies(false);
+      setSavingSection(null);
     }
   }, [isSpectator]);
 
@@ -591,53 +674,64 @@ function DashboardResumePageContent() {
     setFormData((current) => ({ ...current, [field]: value }));
   }
 
-  function updateStringList(field: 'qualifications' | 'experience' | 'hobbies' | 'skills', index: number, value: string) {
+  function updateStringList(field: EditableListField, index: number, value: string) {
     setFormData((current) => ({
       ...current,
       [field]: current[field].map((item, itemIndex) => (itemIndex === index ? value : item)),
     }));
   }
 
-  function addStringItem(field: 'qualifications' | 'experience' | 'hobbies' | 'skills') {
+  function addStringItem(field: EditableListField) {
     setFormData((current) => ({ ...current, [field]: [...current[field], ''] }));
   }
 
-  function deleteStringItem(field: 'qualifications' | 'experience' | 'hobbies' | 'skills', index: number) {
+  function deleteStringItem(field: EditableListField, index: number) {
     setFormData((current) => ({
       ...current,
       [field]: current[field].filter((_, itemIndex) => itemIndex !== index),
     }));
   }
 
-  async function handleSave() {
-    if (!isOwner || !supabase || !user || saveState === 'saving') {
+  function setSectionEditing(section: EditableResumeSection, isEditing: boolean) {
+    if (section === 'coreMetrics') setIsEditingCoreMetrics(isEditing);
+    if (section === 'qualifications') setIsEditingQualifications(isEditing);
+    if (section === 'skills') setIsEditingSkills(isEditing);
+    if (section === 'experience') setIsEditingExperience(isEditing);
+    if (section === 'hobbies') setIsEditingHobbies(isEditing);
+  }
+
+  function beginEditingSection(section: EditableResumeSection) {
+    if (!isOwner || isEditingAnySection || savingSection) {
       return;
     }
 
-    setSaveState('saving');
+    setFormError(null);
+    setSuccessMessage(null);
+    setSectionEditing(section, true);
+  }
+
+  async function handleSectionSave(section: EditableResumeSection) {
+    if (!isOwner || !supabase || !user || savingSection) {
+      return;
+    }
+
+    setSavingSection(section);
     setFormError(null);
 
     try {
-      const parsedAge = formData.age.trim() ? Number.parseInt(formData.age, 10) : null;
-      const nextFormData: ResumeFormData = {
-        ...formData,
-        name: formData.name.trim(),
-        age: formData.age.trim(),
-        qualifications: formData.qualifications.map((item) => item.trim()).filter(Boolean),
-        experience: formData.experience.map((item) => item.trim()).filter(Boolean),
-        hobbies: formData.hobbies.map((item) => item.trim()).filter(Boolean),
-        skills: formData.skills.map((item) => item.trim()).filter(Boolean),
-        featuredProjectIds: topProjects.map((asset) => asset.id),
-      };
-      const updatePayload: Record<string, unknown> = {
-        full_name: nextFormData.name || null,
-        age: Number.isFinite(parsedAge) ? parsedAge : null,
-        current_status: nextFormData.status || null,
-        qualifications: nextFormData.qualifications,
-        experience: nextFormData.experience,
-        hobbies: nextFormData.hobbies,
-        skills: nextFormData.skills,
-      };
+      let updatePayload: Record<string, unknown>;
+
+      if (section === 'coreMetrics') {
+        const parsedAge = formData.age.trim() ? Number.parseInt(formData.age, 10) : null;
+        updatePayload = {
+          full_name: formData.name.trim() || null,
+          age: Number.isFinite(parsedAge) ? parsedAge : null,
+          current_status: formData.status || null,
+        };
+      } else {
+        const normalizedItems = formData[section].map((item) => item.trim()).filter(Boolean);
+        updatePayload = { [section]: normalizedItems };
+      }
 
       const { data: updatedProfileData, error } = await supabase
         .from('profiles')
@@ -685,25 +779,37 @@ function DashboardResumePageContent() {
         { revalidate: false }
       );
 
-      setFormData({
-        ...nextFormData,
-        age: normalizeAge(updatedProfile.age),
-        status: updatedProfile.current_status ?? '',
+      setFormData((current) => {
+        if (section === 'coreMetrics') {
+          return {
+            ...current,
+            name: updatedProfile.full_name ?? '',
+            age: normalizeAge(updatedProfile.age),
+            status: updatedProfile.current_status ?? '',
+          };
+        }
+
+        return {
+          ...current,
+          [section]: normalizeList(updatedProfile[section]),
+        };
       });
-      setSaveState('saved');
-      setIsEditing(false);
-      setSuccessMessage('Resume changes saved.');
+      setSectionEditing(section, false);
+      const sectionLabel = section === 'coreMetrics'
+        ? 'Core metrics'
+        : section.charAt(0).toUpperCase() + section.slice(1);
+      setSuccessMessage(`${sectionLabel} saved.`);
       if (successTimerRef.current) {
         window.clearTimeout(successTimerRef.current);
       }
       successTimerRef.current = window.setTimeout(() => {
         setSuccessMessage(null);
-        setSaveState('idle');
       }, 2600);
     } catch (error) {
       console.error('Failed to save resume profile', error);
-      setSaveState('idle');
-      setFormError('Profile sync failed. Please try again.');
+      setFormError('This resume section could not be saved. Please try again.');
+    } finally {
+      setSavingSection(null);
     }
   }
 
@@ -863,30 +969,6 @@ function DashboardResumePageContent() {
                   Build a focused technical profile for career matching and MeliusAI context.
                 </p>
               </div>
-              {isOwner ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormError(null);
-                    setSuccessMessage(null);
-                    setSaveState('idle');
-                    if (isEditing) {
-                      void handleSave();
-                    } else {
-                      setIsEditing(true);
-                    }
-                  }}
-                  disabled={saveState === 'saving'}
-                  className={cn(
-                    'inline-flex min-h-11 items-center justify-center rounded-xl border px-5 py-2 text-xs font-bold uppercase tracking-[0.14em] transition disabled:cursor-not-allowed disabled:opacity-60',
-                    isEditing
-                      ? 'border-emerald-400/35 bg-emerald-500/15 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/20'
-                      : 'border-cyan-400/35 bg-cyan-500/10 text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-500/15'
-                  )}
-                >
-                  {saveState === 'saving' ? 'Saving...' : isEditing ? 'Save Changes' : 'Edit Profile'}
-                </button>
-              ) : null}
             </div>
 
             <div className="space-y-5">
@@ -897,7 +979,15 @@ function DashboardResumePageContent() {
               ) : null}
 
               <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
-                <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Core Metrics</p>
+                <SectionHeader
+                  editDisabled={isEditingAnySection}
+                  isEditing={isEditingCoreMetrics}
+                  isOwner={isOwner}
+                  isSaving={savingSection === 'coreMetrics'}
+                  label="Core Metrics"
+                  onEdit={() => beginEditingSection('coreMetrics')}
+                  onSave={() => void handleSectionSave('coreMetrics')}
+                />
                 <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
                   <div className="shrink-0">
                     <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-cyan-500/30 bg-[#050b1b]/70 text-slate-400 shadow-[0_0_26px_rgba(6,182,212,0.12)]">
@@ -930,8 +1020,8 @@ function DashboardResumePageContent() {
                   </div>
                   <div className="grid w-full gap-5 sm:grid-cols-2">
                     <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor={canEdit ? 'resume-name' : undefined}>Name</Label>
-                      {canEdit ? (
+                      <Label htmlFor={isEditingCoreMetrics ? 'resume-name' : undefined}>Name</Label>
+                      {isEditingCoreMetrics ? (
                         <Input
                           id="resume-name"
                           name="full_name"
@@ -948,8 +1038,8 @@ function DashboardResumePageContent() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={canEdit ? 'resume-age' : undefined}>Age</Label>
-                      {canEdit ? (
+                      <Label htmlFor={isEditingCoreMetrics ? 'resume-age' : undefined}>Age</Label>
+                      {isEditingCoreMetrics ? (
                         <Input
                           id="resume-age"
                           name="age"
@@ -967,8 +1057,8 @@ function DashboardResumePageContent() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={canEdit ? 'resume-current-status' : undefined}>Current Status</Label>
-                      {canEdit ? (
+                      <Label htmlFor={isEditingCoreMetrics ? 'resume-current-status' : undefined}>Current Status</Label>
+                      {isEditingCoreMetrics ? (
                         <Select
                           id="resume-current-status"
                           name="current_status"
@@ -994,26 +1084,34 @@ function DashboardResumePageContent() {
 
               <EditableStringListSection
                 addLabel="Qualification"
+                editDisabled={isEditingAnySection}
                 emptyLabel="No qualifications added yet."
                 isOwner={isOwner}
-                isEditing={canEdit}
+                isEditing={isEditingQualifications}
+                isSaving={savingSection === 'qualifications'}
                 items={formData.qualifications}
                 label="Qualifications"
                 onAdd={() => addStringItem('qualifications')}
                 onDelete={(index) => deleteStringItem('qualifications', index)}
+                onEdit={() => beginEditingSection('qualifications')}
+                onSave={() => void handleSectionSave('qualifications')}
                 onUpdate={(index, value) => updateStringList('qualifications', index, value)}
                 placeholder="Passed 10th from..."
               />
 
               <EditableStringListSection
                 addLabel="Skill"
+                editDisabled={isEditingAnySection}
                 emptyLabel="No skills added yet."
                 isOwner={isOwner}
-                isEditing={canEdit}
+                isEditing={isEditingSkills}
+                isSaving={savingSection === 'skills'}
                 items={formData.skills}
                 label="Skills"
                 onAdd={() => addStringItem('skills')}
                 onDelete={(index) => deleteStringItem('skills', index)}
+                onEdit={() => beginEditingSection('skills')}
+                onSave={() => void handleSectionSave('skills')}
                 onUpdate={(index, value) => updateStringList('skills', index, value)}
                 placeholder="React"
                 variant="pill"
@@ -1021,20 +1119,24 @@ function DashboardResumePageContent() {
 
               <EditableStringListSection
                 addLabel="Experience"
+                editDisabled={isEditingAnySection}
                 emptyLabel="No professional experience added yet."
                 isOwner={isOwner}
-                isEditing={canEdit}
+                isEditing={isEditingExperience}
+                isSaving={savingSection === 'experience'}
                 items={formData.experience}
                 label="Professional Experience"
                 onAdd={() => addStringItem('experience')}
                 onDelete={(index) => deleteStringItem('experience', index)}
+                onEdit={() => beginEditingSection('experience')}
+                onSave={() => void handleSectionSave('experience')}
                 onUpdate={(index, value) => updateStringList('experience', index, value)}
                 placeholder="Software Engineer at..."
               />
 
               <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
                 <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
-                {isOwner && isEditing ? (
+                {isOwner ? (
                   <p className="mb-4 text-sm leading-6 text-slate-400">
                     Your top 4 highest-scoring projects are automatically featured on your public profile.
                   </p>
@@ -1049,13 +1151,17 @@ function DashboardResumePageContent() {
 
               <EditableStringListSection
                 addLabel="Hobby"
+                editDisabled={isEditingAnySection}
                 emptyLabel="No hobbies added yet."
                 isOwner={isOwner}
-                isEditing={canEdit}
+                isEditing={isEditingHobbies}
+                isSaving={savingSection === 'hobbies'}
                 items={formData.hobbies}
                 label="Hobbies"
                 onAdd={() => addStringItem('hobbies')}
                 onDelete={(index) => deleteStringItem('hobbies', index)}
+                onEdit={() => beginEditingSection('hobbies')}
+                onSave={() => void handleSectionSave('hobbies')}
                 onUpdate={(index, value) => updateStringList('hobbies', index, value)}
                 placeholder="Photography"
               />
