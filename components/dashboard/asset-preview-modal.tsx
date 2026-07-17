@@ -6,10 +6,10 @@ import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
-  getShareIntentUrl,
 } from '@/lib/audit-motivation';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
@@ -326,6 +326,7 @@ export function AssetPreviewModal({
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [textPreview, setTextPreview] = useState<{
     url: string | null;
     text: string | null;
@@ -361,7 +362,6 @@ export function AssetPreviewModal({
   const executiveSummaryMarkdown =
     getExecutiveSummaryText(liveProject) ||
     "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
-  const shareIntentUrl = getShareIntentUrl(score);
 
   useEffect(() => {
     setIsPortalMounted(true);
@@ -370,6 +370,7 @@ export function AssetPreviewModal({
   useEffect(() => {
     setLiveProject(previewProject ?? null);
     setIsExpandedViewer(false);
+    setIsShareModalOpen(false);
   }, [previewProject]);
 
   useEffect(() => {
@@ -415,6 +416,11 @@ export function AssetPreviewModal({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (isShareModalOpen) {
+          setIsShareModalOpen(false);
+          return;
+        }
+
         setIsExpandedViewer(false);
         onClose();
       }
@@ -424,7 +430,7 @@ export function AssetPreviewModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activePreviewUrl, onClose]);
+  }, [activePreviewUrl, isShareModalOpen, onClose]);
 
   if (!isPortalMounted || !activePreviewUrl || !viewerSrc) {
     return null;
@@ -542,6 +548,7 @@ export function AssetPreviewModal({
           <button
             type="button"
             onClick={() => {
+              setIsShareModalOpen(false);
               setIsExpandedViewer(false);
               onClose();
             }}
@@ -643,15 +650,15 @@ export function AssetPreviewModal({
           </div>
 
           <div className="flex flex-wrap justify-end gap-2">
-            <a
-              href={shareIntentUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100"
+            <button
+              type="button"
+              onClick={() => setIsShareModalOpen(true)}
+              disabled={!liveProject?.id}
+              className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={`Share your ${score} out of 100 MeliusAI audit score`}
             >
               Share Score
-            </a>
+            </button>
 
             {canVerify ? (
               <button
@@ -711,6 +718,14 @@ export function AssetPreviewModal({
         </div>
         )}
       </div>
+
+      {isShareModalOpen && liveProject?.id ? (
+        <ShareScoreModal
+          assetId={liveProject.id}
+          score={score}
+          onClose={() => setIsShareModalOpen(false)}
+        />
+      ) : null}
     </div>
   );
 

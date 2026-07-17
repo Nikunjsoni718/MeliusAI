@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 
+import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
-  getShareIntentUrl,
 } from '@/lib/audit-motivation';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
@@ -265,6 +265,7 @@ export function AuditReviewModal({
   const [cons, setCons] = useState<string[] | null>(null);
   const [recommendations, setRecommendations] = useState<string[] | null>(null);
   const [hasBeenAudited, setHasBeenAudited] = useState<boolean | null>(null);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   useEffect(() => {
     if (!resolvedProjectId || !hasSupabaseBrowserEnv()) {
@@ -368,7 +369,6 @@ export function AuditReviewModal({
       ? null
       : Math.round(activeFile.evaluated_score) - normalizedPreviousScore;
   const currentScore = Math.max(0, Math.min(100, Math.round(activeFile.evaluated_score)));
-  const shareIntentUrl = getShareIntentUrl(currentScore);
 
   return (
     <div style={{
@@ -439,15 +439,15 @@ export function AuditReviewModal({
 
         {/* Share and Re-Audit Button Row */}
         <div className="mb-5 flex flex-wrap justify-end gap-2">
-          <a
-            href={shareIntentUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100"
+          <button
+            type="button"
+            onClick={() => setIsShareModalOpen(true)}
+            disabled={!resolvedProjectId}
+            className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label={`Share your ${currentScore} out of 100 MeliusAI audit score`}
           >
             Share Score
-          </a>
+          </button>
 
           {onReAudit ? (
             <button
@@ -510,6 +510,14 @@ export function AuditReviewModal({
           </div>
 
         </div>
+
+        {isShareModalOpen && resolvedProjectId ? (
+          <ShareScoreModal
+            assetId={resolvedProjectId}
+            score={currentScore}
+            onClose={() => setIsShareModalOpen(false)}
+          />
+        ) : null}
       </div>
     </div>
   );

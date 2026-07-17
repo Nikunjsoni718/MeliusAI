@@ -3,9 +3,6 @@ function normalizeAuditScore(score: number) {
   return Math.max(0, Math.min(100, score));
 }
 
-const defaultShareTargetUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.trim() || 'https://meliusai.com';
-
 export function getMotivationalMessage(score: number) {
   const normalizedScore = normalizeAuditScore(score);
 
@@ -41,16 +38,6 @@ export function getShareText(score: number) {
   }
 
   return `MeliusAI just humbled my codebase with a ${displayedScore}/100... 😅 Back to the drawing board! See if it roasts your code too:`;
-}
-
-export function getShareIntentUrl(score: number, targetUrl = defaultShareTargetUrl) {
-  const parameters = new URLSearchParams({ text: getShareText(score) });
-
-  if (targetUrl?.trim()) {
-    parameters.set('url', targetUrl.trim());
-  }
-
-  return `https://twitter.com/intent/tweet?${parameters.toString()}`;
 }
 
 export function getMotivationalBannerClassName(score: number) {
