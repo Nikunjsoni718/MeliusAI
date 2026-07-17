@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { after, NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
+import { appendUsernameSuffix, generateUsername, normalizeUsername } from '@/lib/username';
 
 export const runtime = 'nodejs';
 
@@ -57,18 +58,6 @@ function getFullName(user: User) {
 
 function getAvatarUrl(user: User) {
   return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
-}
-
-function toUsername(value: string) {
-  const username = value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-  return username || 'member';
 }
 
 async function triggerProfileEmbeddingSync({
@@ -155,8 +144,7 @@ export async function GET(request: NextRequest) {
 
     const fullName = getFullName(user);
     const avatarUrl = getAvatarUrl(user);
-    const emailPrefix = user.email?.split('@')[0] ?? 'member';
-    const generatedUsername = toUsername(fullName || emailPrefix);
+    const generatedUsername = generateUsername(user);
 
     const { data: existingProfile, error: existingProfileError } = await supabaseAdmin
       .from('profiles')
@@ -169,25 +157,61 @@ export async function GET(request: NextRequest) {
       throw existingProfileError;
     }
 
-    const finalUsername =
+    let finalUsername =
       typeof existingProfile?.username === 'string' && existingProfile.username.trim()
-        ? existingProfile.username.trim()
+        ? normalizeUsername(existingProfile.username)
         : generatedUsername;
 
-    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
-      {
-        id: user.id,
-        email: user.email ?? null,
-        full_name: fullName,
-        avatar_url: avatarUrl,
-        username: finalUsername,
-      },
-      { onConflict: 'id' }
-    );
+    if (!existingProfile?.username) {
+      const { data: conflictingProfile, error: usernameLookupError } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('username', finalUsername)
+        .neq('id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (usernameLookupError) {
+        throw usernameLookupError;
+      }
+
+      if (conflictingProfile) {
+        finalUsername = appendUsernameSuffix(finalUsername, user.id);
+      }
+    }
+
+    const saveOAuthProfile = () =>
+      supabaseAdmin.from('profiles').upsert(
+        {
+          id: user.id,
+          email: user.email ?? null,
+          full_name: fullName,
+          avatar_url: avatarUrl,
+          username: finalUsername,
+        },
+        { onConflict: 'id' }
+      );
+    let { error: profileUpsertError } = await saveOAuthProfile();
+
+    if (profileUpsertError?.code === '23505' && !existingProfile?.username) {
+      finalUsername = appendUsernameSuffix(generatedUsername, user.id);
+      ({ error: profileUpsertError } = await saveOAuthProfile());
+    }
 
     if (profileUpsertError) {
       console.error('OAuth callback profile upsert failed:', profileUpsertError);
       throw profileUpsertError;
+    }
+
+    const { error: metadataUpdateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+      user_metadata: {
+        ...user.user_metadata,
+        username: finalUsername,
+      },
+    });
+
+    if (metadataUpdateError) {
+      console.warn('OAuth profile saved, but username metadata could not be synchronized:', metadataUpdateError);
     }
 
     after(() =>

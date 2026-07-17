@@ -2,6 +2,7 @@
 
 import type { Session, User } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 
 import {
   clearPersistedAuthState,
@@ -10,6 +11,7 @@ import {
   type PersistedUserRole,
 } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+import { appendUsernameSuffix, generateUsername } from '@/lib/username';
 import type { UserRow } from '@/types/supabase';
 
 export type ViewerProfile = Pick<
@@ -63,6 +65,8 @@ export function getDashboardHref(role: UserRow['role']) {
 }
 
 export function useViewerProfile() {
+  const pathname = usePathname();
+  const router = useRouter();
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState<ReturnType<typeof createSupabaseBrowserClient> | null>(() => {
     return authEnabled ? createSupabaseBrowserClient() : null;
@@ -202,7 +206,92 @@ export function useViewerProfile() {
         return;
       }
 
-      setProfile(normalizeViewerProfileResponse(body));
+      let nextProfile = normalizeViewerProfileResponse(body);
+
+      if (nextProfile) {
+        const { data: storedProfile, error: profileLookupError } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+
+        if (profileLookupError) {
+          setError(`Unable to check your profile username: ${profileLookupError.message}`);
+          return;
+        }
+
+        let resolvedUsername = storedProfile?.username?.trim() || nextProfile.username?.trim() || null;
+
+        if (!resolvedUsername) {
+          const generatedUsername = generateUsername(currentUser);
+          const { data: conflictingProfile, error: usernameLookupError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('username', generatedUsername)
+            .neq('id', currentUser.id)
+            .limit(1)
+            .maybeSingle();
+
+          if (usernameLookupError) {
+            setError(`Unable to reserve your profile username: ${usernameLookupError.message}`);
+            return;
+          }
+
+          resolvedUsername = conflictingProfile
+            ? appendUsernameSuffix(generatedUsername, currentUser.id)
+            : generatedUsername;
+
+          let { error: usernameUpdateError } = await supabase
+            .from('profiles')
+            .update({ username: resolvedUsername })
+            .eq('id', currentUser.id);
+
+          if (usernameUpdateError?.code === '23505') {
+            resolvedUsername = appendUsernameSuffix(generatedUsername, currentUser.id);
+            ({ error: usernameUpdateError } = await supabase
+              .from('profiles')
+              .update({ username: resolvedUsername })
+              .eq('id', currentUser.id));
+          }
+
+          if (usernameUpdateError) {
+            setError(`Unable to save your profile username: ${usernameUpdateError.message}`);
+            return;
+          }
+
+          nextProfile = { ...nextProfile, username: resolvedUsername };
+        }
+
+        if (resolvedUsername && nextProfile.username !== resolvedUsername) {
+          nextProfile = { ...nextProfile, username: resolvedUsername };
+        }
+
+        if (resolvedUsername && currentUser.user_metadata?.username !== resolvedUsername) {
+          const { data: metadataData, error: metadataError } = await supabase.auth.updateUser({
+            data: {
+              ...currentUser.user_metadata,
+              username: resolvedUsername,
+            },
+          });
+
+          if (metadataError) {
+            console.warn('Profile username saved, but auth metadata sync failed:', metadataError.message);
+          } else if (metadataData.user) {
+            setUser(metadataData.user);
+            persistAuthenticatedUser(metadataData.user);
+          }
+        }
+
+        if (resolvedUsername) {
+          const legacyProfilePrefix = `/profile/${encodeURIComponent(currentUser.id)}`;
+          if (pathname === legacyProfilePrefix || pathname.startsWith(`${legacyProfilePrefix}/`)) {
+            const remainingPath = pathname.slice(legacyProfilePrefix.length);
+            router.replace(`/profile/${encodeURIComponent(resolvedUsername)}${remainingPath}`);
+          }
+        }
+      }
+
+      setProfile(nextProfile);
       setError(null);
     };
 
@@ -231,7 +320,7 @@ export function useViewerProfile() {
       }
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [pathname, router, supabase]);
 
   return {
     authEnabled,

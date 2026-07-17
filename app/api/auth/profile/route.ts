@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { appendUsernameSuffix, generateUsername, normalizeUsername as normalizeGeneratedUsername } from '@/lib/username';
 import type { UserRole } from '@/types/supabase';
 
 export const runtime = 'nodejs';
@@ -53,22 +54,10 @@ function normalizeRole(value: unknown): UserRole {
 }
 
 function normalizeUsername(value: unknown) {
-  const normalized = normalizeText(value)
-    ?.replace(/^@+/, '')
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  const rawValue = normalizeText(value);
+  const normalized = rawValue ? normalizeGeneratedUsername(rawValue) : null;
 
   return normalized && normalized.length >= 3 ? normalized.slice(0, 24) : null;
-}
-
-function appendUserSuffix(baseUsername: string, userId: string) {
-  const suffix = userId.replace(/-/g, '').slice(0, 8);
-  const base = baseUsername.replace(new RegExp(`_${suffix}$`), '');
-
-  return `${base}_${suffix}`;
 }
 
 function getDisplayName(user: User, payload: ProfileBootstrapPayload) {
@@ -87,7 +76,7 @@ function getAvatarUrl(user: User) {
   return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
 }
 
-function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existingUsername?: string | null) {
+async function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existingUsername?: string | null) {
   const savedUsername = normalizeUsername(existingUsername);
 
   if (savedUsername) {
@@ -98,11 +87,27 @@ function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existi
     normalizeUsername(payload.username) ??
     normalizeUsername(getMetadataText(user, 'username')) ??
     normalizeUsername(getMetadataText(user, 'preferred_username')) ??
-    normalizeUsername(getDisplayName(user, payload)) ??
-    normalizeUsername(user.email?.split('@')[0]) ??
-    'member';
+    generateUsername({
+      ...user,
+      user_metadata: {
+        ...user.user_metadata,
+        display_name: getDisplayName(user, payload),
+      },
+    });
+  const admin = createSupabaseAdminClient();
+  const { data: matchingProfile, error } = await admin
+    .from('profiles')
+    .select('id')
+    .eq('username', baseUsername)
+    .neq('id', user.id)
+    .limit(1)
+    .maybeSingle();
 
-  return appendUserSuffix(baseUsername, user.id);
+  if (error) {
+    throw new Error(`Username availability check failed: ${error.message}`);
+  }
+
+  return matchingProfile ? appendUsernameSuffix(baseUsername, user.id) : baseUsername;
 }
 
 async function readAuthenticatedUser(request: NextRequest) {
@@ -174,27 +179,47 @@ async function upsertProfile(user: User, payload: ProfileBootstrapPayload) {
   const admin = createSupabaseAdminClient();
   const existingProfile = await readProfile(user.id);
   const fullName = getDisplayName(user, payload);
-  const username = getProfileUsername(user, payload, existingProfile?.username);
+  let username = await getProfileUsername(user, payload, existingProfile?.username);
   const avatarUrl = getAvatarUrl(user);
 
-  const { data: profile, error } = await admin
-    .from('profiles')
-    .upsert(
-      {
-        id: user.id,
-        email: user.email ?? null,
-        full_name: fullName,
-        avatar_url: avatarUrl,
-        username,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'id' }
-    )
-    .select(PROFILE_SELECT)
-    .single();
+  const saveProfile = () =>
+    admin
+      .from('profiles')
+      .upsert(
+        {
+          id: user.id,
+          email: user.email ?? null,
+          full_name: fullName,
+          avatar_url: avatarUrl,
+          username,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      )
+      .select(PROFILE_SELECT)
+      .single();
+  let { data: profile, error } = await saveProfile();
+
+  if (error?.code === '23505' && !existingProfile?.username) {
+    username = appendUsernameSuffix(username, user.id);
+    ({ data: profile, error } = await saveProfile());
+  }
 
   if (error) {
     throw new Error(`App profile upsert failed: ${error.message}`);
+  }
+
+  if (getMetadataText(user, 'username') !== username) {
+    const { error: metadataError } = await admin.auth.admin.updateUserById(user.id, {
+      user_metadata: {
+        ...user.user_metadata,
+        username,
+      },
+    });
+
+    if (metadataError) {
+      console.warn('Profile saved, but auth username metadata could not be synchronized:', metadataError);
+    }
   }
 
   return profile as ProfileRecord;
