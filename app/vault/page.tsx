@@ -1852,6 +1852,8 @@ Return Markdown sections for goods, bads, project description, and a final score
           assetTitle={getVaultAssetName(viewingAuditAsset)}
           projectId={viewingAuditAsset.id}
           onClose={() => setViewingAuditAsset(null)}
+          onReAudit={isOwner ? () => void handleVerifyWithMeliusAI(viewingAuditAsset) : undefined}
+          isReAuditing={verifyingAssetId === viewingAuditAsset.id}
           onOpenFullFocus={() => {
             const auditAsset = viewingAuditAsset;
             setViewingAuditAsset(null);
@@ -1863,6 +1865,9 @@ Return Markdown sections for goods, bads, project description, and a final score
               : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
           }
           auditData={{
+            score: viewingAuditAsset.score,
+            evaluation_score: viewingAuditAsset.evaluation_score,
+            logic_score: viewingAuditAsset.logic_score,
             ai_summary: viewingAuditAsset.ai_summary,
             user_description: viewingAuditAsset.user_description,
             audit_summary: viewingAuditAsset.audit_summary,

@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from 'react';
 
+import {
+  getMotivationalBannerClassName,
+  getMotivationalMessage,
+  getShareIntentUrl,
+} from '@/lib/audit-motivation';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
 function cleanAuditLine(value: string) {
@@ -212,6 +217,8 @@ interface AuditReviewModalProps {
   id?: string | null;
   onClose: () => void;
   onOpenFullFocus: () => void;
+  onReAudit?: () => void;
+  isReAuditing?: boolean;
   reportText: string;
   auditData?: StructuredAuditData | null;
 }
@@ -242,6 +249,8 @@ export function AuditReviewModal({
   id,
   onClose,
   onOpenFullFocus,
+  onReAudit,
+  isReAuditing = false,
   reportText,
   auditData,
 }: AuditReviewModalProps) {
@@ -358,6 +367,8 @@ export function AuditReviewModal({
     normalizedPreviousScore === null
       ? null
       : Math.round(activeFile.evaluated_score) - normalizedPreviousScore;
+  const currentScore = Math.max(0, Math.min(100, Math.round(activeFile.evaluated_score)));
+  const shareIntentUrl = getShareIntentUrl(currentScore);
 
   return (
     <div style={{
@@ -395,6 +406,15 @@ export function AuditReviewModal({
           </div>
         </div>
 
+        <div
+          role="status"
+          className={`mb-5 rounded-xl border px-5 py-4 ${getMotivationalBannerClassName(currentScore)}`}
+        >
+          <p className="m-0 text-sm font-medium leading-6">
+            {getMotivationalMessage(currentScore)}
+          </p>
+        </div>
+
         {comparisonSummary ? (
           <section className="mb-5 rounded-xl border border-emerald-400/25 bg-gradient-to-r from-emerald-500/10 via-cyan-500/[0.07] to-transparent p-5 shadow-[0_0_28px_rgba(16,185,129,0.08)]">
             <div className="flex items-center gap-2">
@@ -417,11 +437,28 @@ export function AuditReviewModal({
           </p>
         </div>
 
-        {/* Verify Button Row */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
-          <button style={{ background: 'transparent', border: '1px solid #00d2ff', color: '#00d2ff', padding: '8px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
-            Verify with MeliusAI
-          </button>
+        {/* Share and Re-Audit Button Row */}
+        <div className="mb-5 flex flex-wrap justify-end gap-2">
+          <a
+            href={shareIntentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100"
+            aria-label={`Share your ${currentScore} out of 100 MeliusAI audit score`}
+          >
+            Share Score
+          </a>
+
+          {onReAudit ? (
+            <button
+              type="button"
+              onClick={onReAudit}
+              disabled={isReAuditing}
+              className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
+            >
+              {isReAuditing ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
+            </button>
+          ) : null}
         </div>
 
         {/* 4-Column Bottom Grid */}

@@ -3,15 +3,18 @@ function normalizeAuditScore(score: number) {
   return Math.max(0, Math.min(100, score));
 }
 
+const defaultShareTargetUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() || 'https://meliusai.com';
+
 export function getMotivationalMessage(score: number) {
   const normalizedScore = normalizeAuditScore(score);
 
   if (normalizedScore >= 90) {
-    return 'Outstanding work! 🌟 Your architecture is exceptionally clean and production-ready. You should definitely share this score. 🚀';
+    return 'Outstanding work! 🌟 Your architecture is exceptionally clean and production-ready. You earned these bragging rights—hit share! 🚀';
   }
 
   if (normalizedScore >= 80) {
-    return "Great code! 👏 You are just a few minor tweaks away from that 90+ bracket. Check the insights below and let's run it again. 🔄";
+    return 'Great code! 👏 You are just a few minor tweaks away from that 90+ bracket. Fix the bugs, re-audit, and claim your bragging rights! 🔄';
   }
 
   if (normalizedScore >= 70) {
@@ -22,7 +25,32 @@ export function getMotivationalMessage(score: number) {
     return 'Good start, but there is room to grow. 🌱 Focus on the core logic and security fixes highlighted below to drastically improve your next audit. 🛠️';
   }
 
-  return "Every great project starts with a rough draft! 📝 Don't let the score discourage you. Tackle the critical fixes first, and let's see how much you improve on the next run. 💪";
+  return "Every great project starts with a rough draft! 📝 Read the roast, tackle the critical fixes first, and let's see how much you improve on the next run. 💪";
+}
+
+export function getShareText(score: number) {
+  const normalizedScore = normalizeAuditScore(score);
+  const displayedScore = Math.round(normalizedScore);
+
+  if (normalizedScore >= 90) {
+    return `I just scored a top-tier ${displayedScore}/100 on my code architecture using MeliusAI! 🏆 Think your code can beat mine? Check it out:`;
+  }
+
+  if (normalizedScore >= 70) {
+    return `Just audited my code with MeliusAI and scored a solid ${displayedScore}/100. 🛠️ Time to refactor and hit that 90+ club. Audit yours here:`;
+  }
+
+  return `MeliusAI just humbled my codebase with a ${displayedScore}/100... 😅 Back to the drawing board! See if it roasts your code too:`;
+}
+
+export function getShareIntentUrl(score: number, targetUrl = defaultShareTargetUrl) {
+  const parameters = new URLSearchParams({ text: getShareText(score) });
+
+  if (targetUrl?.trim()) {
+    parameters.set('url', targetUrl.trim());
+  }
+
+  return `https://twitter.com/intent/tweet?${parameters.toString()}`;
 }
 
 export function getMotivationalBannerClassName(score: number) {

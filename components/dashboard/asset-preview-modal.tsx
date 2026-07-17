@@ -9,6 +9,7 @@ import remarkGfm from 'remark-gfm';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
+  getShareIntentUrl,
 } from '@/lib/audit-motivation';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
@@ -360,6 +361,7 @@ export function AssetPreviewModal({
   const executiveSummaryMarkdown =
     getExecutiveSummaryText(liveProject) ||
     "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
+  const shareIntentUrl = getShareIntentUrl(score);
 
   useEffect(() => {
     setIsPortalMounted(true);
@@ -640,24 +642,34 @@ export function AssetPreviewModal({
             </div>
           </div>
 
-          {canVerify ? (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (liveProject?.id) {
-                  void handleRunAIVerification(liveProject.id, event);
-                }
-              }}
-              disabled={!liveProject?.id || isVerifying}
-              className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/50 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
+          <div className="flex flex-wrap justify-end gap-2">
+            <a
+              href={shareIntentUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100"
+              aria-label={`Share your ${score} out of 100 MeliusAI audit score`}
             >
-              {isVerifying ? 'Auditing via GPT Engine...' : 'Verify with MeliusAI'}
-            </button>
+              Share Score
+            </a>
+
+            {canVerify ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (liveProject?.id) {
+                    void handleRunAIVerification(liveProject.id, event);
+                  }
+                }}
+                disabled={!liveProject?.id || isVerifying}
+                className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/50 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
+              >
+                {isVerifying ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
+              </button>
+            ) : null}
           </div>
-          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
             <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
