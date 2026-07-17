@@ -4,14 +4,14 @@ import { useEffect, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 import { getShareText } from '@/lib/audit-motivation';
+import { useViewerProfile } from '@/lib/viewer-client';
 
 type ShareScoreModalProps = {
-  assetId: string;
   score: number;
   onClose: () => void;
 };
 
-const PREVIEW_BASE_URL = 'https://meliusai.in/preview';
+const PUBLIC_PROFILE_BASE_URL = 'https://meliusai.in/profile';
 
 function copyTextWithFallback(value: string) {
   const temporaryTextArea = document.createElement('textarea');
@@ -29,7 +29,8 @@ function copyTextWithFallback(value: string) {
   }
 }
 
-export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProps) {
+export function ShareScoreModal({ score, onClose }: ShareScoreModalProps) {
+  const { loading: isProfileLoading, profile, user } = useViewerProfile();
   const normalizedScore = Number.isFinite(score)
     ? Math.max(0, Math.min(100, Math.round(score)))
     : 0;
@@ -37,11 +38,18 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
   const [isSharing, setIsSharing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const previewLink = `${PREVIEW_BASE_URL}/${encodeURIComponent(assetId)}`;
-  const linkedInShareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(previewLink)}`;
+  const currentUsername =
+    profile?.username?.trim() ||
+    (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '');
+  const profileLink = currentUsername
+    ? `${PUBLIC_PROFILE_BASE_URL}/${encodeURIComponent(currentUsername)}`
+    : '';
+  const linkedInShareUrl = profileLink
+    ? `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(profileLink)}`
+    : '#';
   const xShareParameters = new URLSearchParams({
     text: message,
-    url: previewLink,
+    url: profileLink,
   });
   const xShareUrl = `https://twitter.com/intent/tweet?${xShareParameters.toString()}`;
 
@@ -60,6 +68,11 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
   async function handleNativeShare() {
     setFeedback(null);
 
+    if (!profileLink) {
+      setFeedback('Your public profile link is still loading. Please try again in a moment.');
+      return;
+    }
+
     if (typeof navigator.share !== 'function') {
       setFeedback('Native sharing is not supported in this browser. Choose an option below.');
       return;
@@ -71,7 +84,7 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
       await navigator.share({
         title: 'MeliusAI Audit',
         text: message,
-        url: previewLink,
+        url: profileLink,
       });
       setFeedback('Shared successfully.');
     } catch (error) {
@@ -86,11 +99,16 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
   async function handleCopyLink() {
     setFeedback(null);
 
+    if (!profileLink) {
+      setFeedback('Your public profile link is still loading. Please try again in a moment.');
+      return;
+    }
+
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(previewLink);
+        await navigator.clipboard.writeText(profileLink);
       } else {
-        copyTextWithFallback(previewLink);
+        copyTextWithFallback(profileLink);
       }
 
       setIsCopied(true);
@@ -151,14 +169,15 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
           </div>
 
           <div>
-            <label htmlFor="share-preview-link" className="text-xs font-semibold text-slate-300">
-              Asset preview link
+            <label htmlFor="share-profile-link" className="text-xs font-semibold text-slate-300">
+              Public profile link
             </label>
             <input
-              id="share-preview-link"
+              id="share-profile-link"
               type="text"
-              value={previewLink}
+              value={profileLink}
               readOnly
+              placeholder={isProfileLoading ? 'Loading your public profile…' : 'Public profile username unavailable'}
               onFocus={(event) => event.currentTarget.select()}
               className="mt-2 w-full rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 font-mono text-xs text-slate-400 outline-none focus:border-cyan-400/50"
             />
@@ -167,7 +186,7 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
           <button
             type="button"
             onClick={() => void handleNativeShare()}
-            disabled={isSharing}
+            disabled={isSharing || !profileLink}
             className="w-full rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-4 py-3 text-sm font-bold text-cyan-100 transition hover:border-cyan-300/60 hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
           >
             {isSharing ? 'Opening Share Sheet...' : 'Share'}
@@ -181,6 +200,7 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
               <button
                 type="button"
                 onClick={() => void handleCopyLink()}
+                disabled={!profileLink}
                 className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2.5 text-xs font-semibold text-slate-200 transition hover:border-emerald-400/50 hover:text-emerald-200"
               >
                 {isCopied ? 'Copied!' : 'Copy Link'}
@@ -189,6 +209,10 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
                 href={linkedInShareUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-disabled={!profileLink}
+                onClick={(event) => {
+                  if (!profileLink) event.preventDefault();
+                }}
                 className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2.5 text-center text-xs font-semibold text-slate-200 transition hover:border-blue-400/50 hover:text-blue-200"
               >
                 Share to LinkedIn
@@ -197,6 +221,10 @@ export function ShareScoreModal({ assetId, score, onClose }: ShareScoreModalProp
                 href={xShareUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-disabled={!profileLink}
+                onClick={(event) => {
+                  if (!profileLink) event.preventDefault();
+                }}
                 className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2.5 text-center text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-white"
               >
                 Share to X

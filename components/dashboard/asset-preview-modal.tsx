@@ -721,7 +721,6 @@ export function AssetPreviewModal({
 
       {isShareModalOpen && liveProject?.id ? (
         <ShareScoreModal
-          assetId={liveProject.id}
           score={score}
           onClose={() => setIsShareModalOpen(false)}
         />

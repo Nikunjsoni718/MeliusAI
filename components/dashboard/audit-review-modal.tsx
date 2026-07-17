@@ -513,7 +513,6 @@ export function AuditReviewModal({
 
         {isShareModalOpen && resolvedProjectId ? (
           <ShareScoreModal
-            assetId={resolvedProjectId}
             score={currentScore}
             onClose={() => setIsShareModalOpen(false)}
           />
