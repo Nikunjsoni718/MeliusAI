@@ -6,6 +6,11 @@ import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import {
+  getMotivationalBannerClassName,
+  getMotivationalMessage,
+} from '@/lib/audit-motivation';
+
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
 const videoExtensions = new Set(['mp4', 'mov', 'webm', 'ogg', 'mkv']);
@@ -603,6 +608,15 @@ export function AssetPreviewModal({
             <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
               {fileTypeBadge}
             </span>
+          </div>
+
+          <div
+            role="status"
+            className={`rounded-xl border px-4 py-3.5 ${getMotivationalBannerClassName(score)}`}
+          >
+            <p className="text-sm font-medium leading-6">
+              {getMotivationalMessage(score)}
+            </p>
           </div>
 
           {lastImprovedSummary ? (

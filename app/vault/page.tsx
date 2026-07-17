@@ -9,6 +9,10 @@ import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  getMotivationalBannerClassName,
+  getMotivationalMessage,
+} from '@/lib/audit-motivation';
 import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
@@ -745,6 +749,15 @@ function AuditReportModal({
                   <p className="text-[10px] uppercase tracking-[0.2em] text-cyan-300">Score</p>
                   <p className="mt-1 text-2xl font-semibold text-white">{report.score ?? '--'}</p>
                 </div>
+              </div>
+
+              <div
+                role="status"
+                className={`rounded-xl border px-4 py-3.5 ${getMotivationalBannerClassName(report.score ?? 0)}`}
+              >
+                <p className="text-sm font-medium leading-6">
+                  {getMotivationalMessage(report.score ?? 0)}
+                </p>
               </div>
 
               <div className="rounded-xl border border-blue-950/50 bg-[#050b1b]/70 p-4 backdrop-blur-md">
