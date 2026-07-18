@@ -681,7 +681,7 @@ export function AssetPreviewModal({
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-end gap-2" data-html2canvas-ignore="true">
+          <div className="flex flex-wrap justify-end gap-2" data-image-export-ignore="true">
             <button
               type="button"
               onClick={() => void handleDownloadFullReport()}
@@ -724,7 +724,7 @@ export function AssetPreviewModal({
               className="m-0 text-right text-xs text-slate-400"
               role="status"
               aria-live="polite"
-              data-html2canvas-ignore="true"
+              data-image-export-ignore="true"
             >
               {downloadFeedback}
             </p>
@@ -734,9 +734,15 @@ export function AssetPreviewModal({
             <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
               <div className="relative flex h-32 w-32 items-center justify-center">
                 <div
+                  data-audit-score-arc="css"
+                  data-score={score}
                   className="absolute inset-0 rounded-full border border-slate-800"
                   style={{
+                    animation: 'none',
                     background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
+                    opacity: 1,
+                    transition: 'none',
+                    visibility: 'visible',
                   }}
                 />
                 <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">

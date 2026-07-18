@@ -425,7 +425,7 @@ export function AuditReviewModal({
             
             {isFile && (
               <button
-                data-html2canvas-ignore="true"
+                data-image-export-ignore="true"
                 onClick={onOpenFullFocus} 
                 style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
               >
@@ -433,7 +433,7 @@ export function AuditReviewModal({
               </button>
             )}
             
-            <button data-html2canvas-ignore="true" onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            <button data-image-export-ignore="true" onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         </div>
 
@@ -469,7 +469,7 @@ export function AuditReviewModal({
         </div>
 
         {/* Share and Re-Audit Button Row */}
-        <div className="mb-5 flex flex-wrap justify-end gap-2" data-html2canvas-ignore="true">
+        <div className="mb-5 flex flex-wrap justify-end gap-2" data-image-export-ignore="true">
           <button
             type="button"
             onClick={() => void handleDownloadFullReport()}
@@ -506,7 +506,7 @@ export function AuditReviewModal({
             className="mb-5 mt-0 text-right text-xs text-slate-400"
             role="status"
             aria-live="polite"
-            data-html2canvas-ignore="true"
+            data-image-export-ignore="true"
           >
             {downloadFeedback}
           </p>
@@ -517,8 +517,21 @@ export function AuditReviewModal({
           
           <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '12px', padding: '30px' }}>
             <svg viewBox="0 0 36 36" style={{ width: '100%', maxWidth: '120px', height: 'auto' }}>
-              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#1a2332" strokeWidth="4" />
-              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#00d2ff" strokeWidth="4" strokeDasharray={`${activeFile.evaluated_score || 0}, 100`} />
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" pathLength="100" stroke="#1a2332" strokeWidth="4" />
+              <path
+                data-audit-score-arc="svg"
+                data-score={currentScore}
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                fill="none"
+                pathLength="100"
+                shapeRendering="geometricPrecision"
+                stroke="#00d2ff"
+                strokeDasharray={`${currentScore} ${100 - currentScore}`}
+                strokeDashoffset="0"
+                strokeLinecap="round"
+                strokeWidth="4"
+                style={{ animation: 'none', opacity: 1, transition: 'none', visibility: 'visible' }}
+              />
               <text x="18" y="20.5" style={{ fill: '#fff', fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' }}>{activeFile.evaluated_score || 0}</text>
               <text x="18" y="26" style={{ fill: '#666', fontSize: '4px', textAnchor: 'middle' }}>/ 100</text>
             </svg>
