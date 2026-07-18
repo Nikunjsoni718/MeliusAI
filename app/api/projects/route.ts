@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: sessionData.user.id,
         owner_id: sessionData.user.id,
-        ...(typeof body.is_public === 'boolean' ? { is_public: body.is_public } : {}),
+        is_public: body.is_public ?? true,
         title: body.title,
         name: body.title,
         description: body.description?.trim() || null,

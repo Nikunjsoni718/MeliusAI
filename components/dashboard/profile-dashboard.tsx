@@ -7,7 +7,6 @@ import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import useSWR, { useSWRConfig } from 'swr';
 
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -19,6 +18,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
@@ -333,7 +333,6 @@ const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
-const DASHBOARD_PROFILE_CACHE_MS = 30 * 60 * 1000;
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
@@ -495,15 +494,8 @@ async function fetchSpectatorProfile([
     throw new Error('Unable to load candidate profile without a username.');
   }
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
-  }
-
+  // Resolve the route username to its profile UUID before querying projects.
+  // Project ownership is keyed by UUID, never by the public username.
   const { data: profileData, error: profileError } = await supabase
     .from('profiles')
     .select(PROFILE_DASHBOARD_COLUMNS)
@@ -515,6 +507,15 @@ async function fetchSpectatorProfile([
   }
 
   let savedProfile = profileData as SavedProfileItem | null;
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
+  }
 
   if (!savedProfile && user?.id === username) {
     const { data: profileById, error: profileByIdError } = await supabase
@@ -558,12 +559,13 @@ async function fetchSpectatorProfile([
   }
 
   const isOwner = user?.id === savedProfile.id;
+  const targetUserId = savedProfile.id;
   let projectsQuery = supabase
     .from('projects')
     // Keep the public profile on the same row contract as Vault. A hand-maintained
     // projection can silently drift from the asset card's required fields.
     .select('*')
-    .eq('user_id', savedProfile.id)
+    .eq('user_id', targetUserId)
     .order('created_at', { ascending: false })
     .limit(DASHBOARD_PROJECT_LIMIT);
 
@@ -575,19 +577,28 @@ async function fetchSpectatorProfile([
   const { data: projectFoldersData, error: projectFoldersError } = await supabase
     .from('project_folders')
     .select('*')
-    .eq('user_id', savedProfile.id)
+    .eq('user_id', targetUserId)
     .order('created_at', { ascending: false });
 
   if (projectsError) {
     throw new Error(projectsError.message || `Unable to load projects for "${username}".`);
   }
 
-  if (projectFoldersError) {
+  if (projectFoldersError && isOwner) {
     throw new Error(projectFoldersError.message || `Unable to load project folders for "${username}".`);
   }
 
+  if (projectFoldersError) {
+    console.warn(
+      'Public profile folders could not be loaded; rendering public assets as a flat grid:',
+      projectFoldersError.message
+    );
+  }
+
   const projects = Array.isArray(projectsData) ? (projectsData as ProjectRow[]) : [];
-  const projectFolders = Array.isArray(projectFoldersData) ? (projectFoldersData as ProjectFolderRow[]) : [];
+  const projectFolders = !projectFoldersError && Array.isArray(projectFoldersData)
+    ? (projectFoldersData as ProjectFolderRow[])
+    : [];
 
   return {
     detail: null,
@@ -978,32 +989,6 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     created_at: row.created_at ?? null,
     is_local: false,
   };
-}
-
-function mergeProjectLists(currentProjects: ProjectItem[], incomingProjects: ProjectItem[]) {
-  const incomingById = new Map(incomingProjects.map((project) => [project.id, project]));
-  const currentById = new Map(currentProjects.map((project) => [project.id, project]));
-  const mergedProjects = incomingProjects.map((incomingProject) => {
-    const currentProject = currentById.get(incomingProject.id);
-
-    if (!currentProject) {
-      return incomingProject;
-    }
-
-    if (currentProject.has_been_audited && !incomingProject.has_been_audited) {
-      return { ...incomingProject, ...currentProject };
-    }
-
-    return { ...currentProject, ...incomingProject };
-  });
-
-  currentProjects.forEach((currentProject) => {
-    if (!incomingById.has(currentProject.id)) {
-      mergedProjects.push(currentProject);
-    }
-  });
-
-  return mergedProjects;
 }
 
 function mergeVerifiedProject(
@@ -2242,7 +2227,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     supabase,
     user,
   } = useViewerProfile();
-  const { mutate } = useSWRConfig();
   const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
@@ -2261,6 +2245,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isScorecardPublic, setIsScorecardPublic] = useState(true);
   const [, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
@@ -2328,7 +2313,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioDraftRef = useRef<string | null>(null);
   const lastSavedBioRef = useRef('');
   const lastSavedSkillsInputRef = useRef('');
-  const dashboardPrefetchKeysRef = useRef<Set<string>>(new Set());
   const [profileFallback, setProfileFallback] = useState<{
     displayName: string;
     username: string;
@@ -2351,73 +2335,66 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       normalizeProfileUsername(profileId)
     );
   }, [pathname, profileId, profileUsername, routeParams]);
-  const spectatorProfileKey = useMemo(
-    () => {
-      if (!targetUsername) {
-        return null;
-      }
+  const [spectatorProfilePayload, setSpectatorProfilePayload] = useState<NormalizedSpectateProfileResponse | null>(null);
+  const [spectatorProfileError, setSpectatorProfileError] = useState<Error | null>(null);
+  const [spectatorProfileLoading, setSpectatorProfileLoading] = useState(Boolean(targetUsername));
+  const [spectatorRefreshToken, setSpectatorRefreshToken] = useState(0);
 
-      if (authEnabled && loading) {
-        return null;
-      }
-
-      return ['spectate-profile', targetUsername, user?.id ?? 'anonymous'] as const;
-    },
-    [authEnabled, loading, targetUsername, user?.id]
-  );
-  const dashboardProfileFetcher = useCallback(
-    (cacheKey: SpectatorProfileCacheKey) => fetchSpectatorProfile(cacheKey, supabase ?? undefined),
-    [supabase]
-  );
-  const {
-    data: spectatorProfilePayload,
-    error: spectatorProfileError,
-    isLoading: spectatorProfileLoading,
-  } = useSWR(spectatorProfileKey, dashboardProfileFetcher, {
-    dedupingInterval: DASHBOARD_PROFILE_CACHE_MS,
-    errorRetryInterval: 15_000,
-    errorRetryCount: 2,
-    focusThrottleInterval: DASHBOARD_PROFILE_CACHE_MS,
-    keepPreviousData: true,
-    revalidateIfStale: false,
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-  });
-  const prefetchDashboardProfilePayload = useCallback(() => {
-    if (!spectatorProfileKey || spectatorProfileLoading || spectatorProfilePayload) {
+  useEffect(() => {
+    if (!targetUsername) {
+      setSpectatorProfilePayload(null);
+      setSpectatorProfileError(null);
+      setSpectatorProfileLoading(false);
       return;
     }
 
-    const prefetchKey = spectatorProfileKey.join(':');
-    if (dashboardPrefetchKeysRef.current.has(prefetchKey)) {
+    if (authEnabled && loading) {
+      setSpectatorProfileLoading(true);
       return;
     }
 
-    dashboardPrefetchKeysRef.current.add(prefetchKey);
-    void mutate<NormalizedSpectateProfileResponse>(
-      spectatorProfileKey,
-      dashboardProfileFetcher(spectatorProfileKey),
-      {
-        populateCache: true,
-        revalidate: false,
-        rollbackOnError: false,
+    let isActive = true;
+    setSpectatorProfilePayload(null);
+    setSpectatorProfileError(null);
+    setSpectatorProfileLoading(true);
+
+    const loadPublicProfile = async () => {
+      try {
+        const payload = await fetchSpectatorProfile(
+          ['spectate-profile', targetUsername, user?.id ?? 'anonymous'],
+          supabase ?? undefined
+        );
+
+        if (isActive) {
+          setSpectatorProfilePayload(payload);
+        }
+      } catch (error) {
+        if (isActive) {
+          setSpectatorProfileError(
+            error instanceof Error ? error : new Error('Unable to load this public profile.')
+          );
+        }
+      } finally {
+        if (isActive) {
+          setSpectatorProfileLoading(false);
+        }
       }
-    ).catch((error) => {
-      dashboardPrefetchKeysRef.current.delete(prefetchKey);
-      console.warn('Dashboard profile prefetch skipped:', error);
-    });
-  }, [dashboardProfileFetcher, mutate, spectatorProfileKey, spectatorProfileLoading, spectatorProfilePayload]);
+    };
+
+    void loadPublicProfile();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authEnabled, loading, spectatorRefreshToken, supabase, targetUsername, user?.id]);
+
   const prefetchDashboardNavigation = useCallback(
     (item: DashboardNavigationItem) => {
       const routeHref = item.href.split('#')[0] || item.href;
 
       router.prefetch(routeHref);
-
-      if (item.label === 'Vault' || item.label === 'Home' || item.label === 'Resume') {
-        prefetchDashboardProfilePayload();
-      }
     },
-    [prefetchDashboardProfilePayload, router]
+    [router]
   );
   const viewerMetadataUsername =
     typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : undefined;
@@ -2558,10 +2535,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     () => (activeFolderId ? allProjects.filter((project) => project.folder_id === activeFolderId) : []),
     [activeFolderId, allProjects]
   );
-  const rootProfileAssets = useMemo(
-    () => sortedProfileAssets.filter((project) => !project.folder_id),
-    [sortedProfileAssets]
-  );
   const activeFolderProfileAssets = useMemo(
     () =>
       activeFolderId
@@ -2595,6 +2568,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }),
     [sortedProjectFolders, standaloneProjects]
   );
+  const displayedRootItemCount = isSpectating
+    ? sortedProfileAssets.length + sortedProjectFolders.length
+    : rootWorkItems.length;
   const needsReviewCount = useMemo(() => {
     return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
   }, [allProjects]);
@@ -2826,7 +2802,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ? spectatorProfilePayload.projects
         : [];
       const loadedAssets = payloadProjects.filter(
-        (project) => isOwnProfile || project.is_public !== false
+        (project) => isOwnProfile || project.is_public === true
       );
       const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
       const payloadProjectFolders = spectatorProfilePayload.projectFolders;
@@ -2841,11 +2817,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       setProfileData(savedProfile);
       setProfileAssets(loadedAssets);
-      setProjects((currentProjects) =>
-        hydratedProfileKeyRef.current === targetUsername
-          ? mergeProjectLists(currentProjects, loadedProjects)
-          : loadedProjects
-      );
+      setProjects(loadedProjects);
       setProjectFolders(loadedProjectFolders);
       setScans(hydratedScans);
       if (!isOwnProfile || hydratedOpportunities.length > 0) {
@@ -3534,7 +3506,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   async function uploadProjectFile(
     file: File,
     description: string,
-    options: { folderId?: string | null; userId?: string } = {}
+    options: { folderId?: string | null; userId?: string; isPublic?: boolean } = {}
   ) {
     if (!isOwner) {
       throw new Error('Only the profile owner can add work assets.');
@@ -3589,7 +3561,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         file_type: fileExtension,
         description: uploadDescription,
         user_description: uploadDescription,
-        is_public: false,
+        is_public: options.isPublic ?? isScorecardPublic,
         has_been_audited: false,
         status: 'draft',
       })
@@ -3879,6 +3851,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               user_id: user.id,
               file_type: file.name.split('.').pop(),
               file_url: publicUrlData.publicUrl,
+              is_public: isScorecardPublic,
               status: 'pending',
             })
             .select(PROJECT_DASHBOARD_COLUMNS)
@@ -3915,8 +3888,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setStagingFolderName('');
       setProjectDescription('');
 
-      if (spectatorProfileKey) {
-        await mutate(spectatorProfileKey);
+      if (targetUsername) {
+        setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
       router.refresh();
     } catch (error: any) {
@@ -3930,7 +3903,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   async function handleProjectFile(
     file: File,
     description = projectDescription,
-    options: { folderId?: string | null; userId?: string } = {}
+    options: { folderId?: string | null; userId?: string; isPublic?: boolean } = {}
   ) {
     if (!isOwner) {
       return;
@@ -4722,8 +4695,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setEditingFolderId(null);
       setEditFolderName("");
 
-      if (spectatorProfileKey) {
-        await mutate(spectatorProfileKey);
+      if (targetUsername) {
+        setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
       router.refresh();
     } catch (error: any) {
@@ -4769,8 +4742,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       console.log("Audit complete:", data);
       alert("Folder audit completed successfully!");
 
-      if (spectatorProfileKey) {
-        await mutate(spectatorProfileKey);
+      if (targetUsername) {
+        setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
       router.refresh();
     } catch (error) {
@@ -4819,8 +4792,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       if (activeFolderId === folderId) {
         setActiveFolderId(null);
       }
-      if (spectatorProfileKey) {
-        await mutate(spectatorProfileKey);
+      if (targetUsername) {
+        setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
     } catch (error: any) {
       console.error("Delete Error:", error);
@@ -5349,6 +5322,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <div className="flex flex-wrap items-center gap-4">
                   {isOwner ? (
                     <>
+                      <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/70 px-3 py-1.5">
+                        <Switch
+                          id="scorecard-public-toggle"
+                          checked={isScorecardPublic}
+                          onCheckedChange={setIsScorecardPublic}
+                          aria-label="Make scorecard public"
+                        />
+                        <span className="text-[11px] font-medium text-slate-300">
+                          Make scorecard public
+                        </span>
+                      </div>
                       <button
                         id="create-project-btn"
                         className="btn primary"
@@ -5381,9 +5365,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       </button>
                     </>
                   ) : null}
-                  {rootWorkItems.length > 0 ? (
+                  {displayedRootItemCount > 0 ? (
                     <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                      {rootWorkItems.length} items
+                      {displayedRootItemCount} items
                     </Badge>
                   ) : null}
                 </div>
@@ -5445,7 +5429,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     )}
                   </div>
                 </div>
-              ) : rootWorkItems.length === 0 ? (
+              ) : displayedRootItemCount === 0 ? (
                 isOwner ? null : (
                   <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                     <CardContent className="p-4 sm:p-8">
@@ -5469,7 +5453,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   >
                     {isSpectating ? (
                       <UniversalAssetGrid
-                        assets={rootProfileAssets}
+                        assets={sortedProfileAssets}
                         folders={projectFolders}
                         isSpectator
                         deletingAssetId={deletingProjectId}
@@ -5997,6 +5981,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               <div style={{ background: '#0b1120', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', border: '1px solid #00d2ff' }}>
                 <h2 style={{ color: '#fff', marginTop: 0 }}>Review Files ({stagedFiles.filter((file) => file.selected).length} selected)</h2>
                 <p style={{ color: '#8892b0' }}>Uncheck files you don&apos;t want to audit.</p>
+
+                <div className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-slate-700/80 bg-slate-950/70 px-4 py-3">
+                  <div>
+                    <p className="m-0 text-sm font-semibold text-slate-100">Make scorecard public</p>
+                    <p className="mb-0 mt-1 text-xs text-slate-500">Show these uploaded assets on your public profile.</p>
+                  </div>
+                  <Switch
+                    id="staging-scorecard-public-toggle"
+                    checked={isScorecardPublic}
+                    onCheckedChange={setIsScorecardPublic}
+                    aria-label="Make uploaded scorecards public"
+                  />
+                </div>
 
                 <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '15px 0' }}>
                   {Object.entries(groupedFiles).map(([dirPath, filesInDir]) => {
