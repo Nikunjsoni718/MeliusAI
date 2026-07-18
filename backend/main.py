@@ -4629,7 +4629,7 @@ async def spectate_profile(
     target_username = username.strip().lower()
     if not target_username:
         print("--- SPECTATE PROFILE FAILED: empty username parameter ---")
-        raise HTTPException(status_code=404, detail="Profile not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     supabase = get_supabase_service_client()
     if supabase is None:
@@ -4646,6 +4646,7 @@ async def spectate_profile(
         lambda: supabase.table("profiles")
         .select(SPECTATE_PROFILE_PUBLIC_SELECT)
         .eq("username", target_username)
+        .limit(1)
         .execute()
     )
     profile_rows = profile_response.data or []
@@ -4655,23 +4656,60 @@ async def spectate_profile(
             "--- SPECTATE PROFILE FAILED: Supabase profiles query returned an unexpected "
             f"data shape for username '{target_username}': {type(profile_rows).__name__} ---"
         )
-        raise HTTPException(status_code=404, detail="Profile not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     if len(profile_rows) == 0:
         print(
             "--- SPECTATE PROFILE FAILED: no profile row found for username "
             f"'{target_username}' using service-role client ---"
         )
-        raise HTTPException(status_code=404, detail="Profile not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     profile = dict(profile_rows[0])
     profile_uuid = profile.get("id") or profile.get("user_id")
+    profile_uuid_text = str(profile_uuid or "").strip()
+    if not profile_uuid_text:
+        print(
+            "--- SPECTATE PROFILE FAILED: profile row for username "
+            f"'{target_username}' has no id/user_id UUID ---"
+        )
+        raise HTTPException(status_code=404, detail="User not found")
+
+    print(f"--- SPECTATE PROFILE UUID: username='{target_username}' uuid='{profile_uuid_text}' ---")
+
+    projects_response = await asyncio.to_thread(
+        lambda: supabase.table("projects")
+        .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+        .eq("user_id", profile_uuid_text)
+        .eq("is_public", True)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    project_rows = projects_response.data if isinstance(projects_response.data, list) else []
+    public_projects = [
+        dict(project)
+        for project in dedupe_rows_by_id(project_rows)
+        if isinstance(project, dict)
+    ]
+    public_projects = sorted(
+        public_projects,
+        key=lambda row: str(row.get("created_at") or ""),
+        reverse=True,
+    )
+    print(
+        "--- SPECTATE PROFILE ASSETS: username='{}' uuid='{}' public_assets={} ---".format(
+            target_username,
+            profile_uuid_text,
+            len(public_projects),
+        )
+    )
+
     current_user_id, authentication_status = await resolve_request_user(
         request,
         token,
         required=False,
     )
-    profile_owner_id = str(profile_uuid or "").strip() or None
+    profile_owner_id = profile_uuid_text
     is_owner = bool(
         current_user_id
         and profile_owner_id
@@ -4679,40 +4717,10 @@ async def spectate_profile(
     )
     viewer_type = "owner" if is_owner else "visitor"
     profile["email"] = None
+    profile["projects"] = public_projects
 
-    if profile_uuid:
-        profile_uuid_text = str(profile_uuid)
-        email_result, projects_result = await asyncio.gather(
-            fetch_auth_email_for_profile(supabase, profile_uuid_text),
-            fetch_project_rows_for_profile(supabase, profile_uuid_text),
-            return_exceptions=True,
-        )
-
-        if isinstance(email_result, Exception):
-            logger.warning("Unable to hydrate spectator profile email: %s", email_result)
-            profile["email"] = None
-        else:
-            profile["email"] = email_result
-
-        if isinstance(projects_result, Exception):
-            logger.warning("Unable to hydrate spectator profile projects: %s", projects_result)
-            profile["projects"] = []
-        else:
-            profile["projects"] = (
-                projects_result
-                if is_owner
-                else [
-                    project
-                    for project in projects_result
-                    if project.get("is_public") is not False
-                ]
-            )
-    else:
-        print(
-            "--- SPECTATE PROFILE EMAIL SKIPPED: profile row for username "
-            f"'{target_username}' has no id or user_id value ---"
-        )
-        profile["projects"] = []
+    email_result = await fetch_auth_email_for_profile(supabase, profile_uuid_text)
+    profile["email"] = email_result
 
     scan_rows = build_project_scan_rows(profile["projects"])
     profile["ratings"] = scan_rows
