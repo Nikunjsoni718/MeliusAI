@@ -4681,28 +4681,21 @@ async def spectate_profile(
         lambda: supabase.table("projects")
         .select(SPECTATE_PROJECT_PUBLIC_SELECT)
         .eq("user_id", profile_uuid_text)
-        .eq("is_public", True)
         .order("created_at", desc=True)
         .execute()
     )
     project_rows = projects_response.data if isinstance(projects_response.data, list) else []
-    public_projects = [
+    assets = [
         dict(project)
         for project in dedupe_rows_by_id(project_rows)
         if isinstance(project, dict)
     ]
-    public_projects = sorted(
-        public_projects,
+    assets = sorted(
+        assets,
         key=lambda row: str(row.get("created_at") or ""),
         reverse=True,
     )
-    print(
-        "--- SPECTATE PROFILE ASSETS: username='{}' uuid='{}' public_assets={} ---".format(
-            target_username,
-            profile_uuid_text,
-            len(public_projects),
-        )
-    )
+    print(f"Spectator fetch for {target_username} returned {len(assets)} assets")
 
     current_user_id, authentication_status = await resolve_request_user(
         request,
@@ -4717,7 +4710,7 @@ async def spectate_profile(
     )
     viewer_type = "owner" if is_owner else "visitor"
     profile["email"] = None
-    profile["projects"] = public_projects
+    profile["projects"] = assets
 
     email_result = await fetch_auth_email_for_profile(supabase, profile_uuid_text)
     profile["email"] = email_result
@@ -4751,6 +4744,8 @@ async def spectate_profile(
     return {
         **profile,
         "success": True,
+        "data": profile["projects"],
+        "assets": profile["projects"],
         "profile": profile,
         "resume": profile,
         "projects": profile["projects"],

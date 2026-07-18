@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -21,7 +20,7 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
-import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
+import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow, UserRow } from '@/types/supabase';
@@ -272,7 +271,11 @@ type SpectatorProfilePayload = {
   experience?: string[] | string | null;
   hobbies?: string[] | null;
   skills?: string[] | null;
+  data?: ProjectRow[] | null;
+  assets?: ProjectRow[] | null;
   projects?: ProjectRow[] | null;
+  vault_assets?: ProjectRow[] | null;
+  vaultAssets?: ProjectRow[] | null;
   projectFolders?: ProjectFolderRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
@@ -299,6 +302,10 @@ type SpectatorScanItem = {
   created_at?: string | null;
 };
 type NormalizedSpectateProfileResponse = {
+  data?: ProjectRow[] | null;
+  assets?: ProjectRow[] | null;
+  vault_assets?: ProjectRow[] | null;
+  vaultAssets?: ProjectRow[] | null;
   detail: string | null;
   isOwner: boolean;
   message: string | null;
@@ -477,141 +484,6 @@ function normalizeProfileList(value: unknown) {
   }
 
   return [];
-}
-
-type SpectatorProfileCacheKey = readonly ['spectate-profile', string, string];
-
-async function fetchSpectatorProfile([
-  ,
-  targetUsername,
-]: SpectatorProfileCacheKey, supabase?: SupabaseClient): Promise<NormalizedSpectateProfileResponse> {
-  if (!supabase) {
-    throw new Error('Supabase is not configured for dashboard profile loading.');
-  }
-
-  const username = normalizeProfileUsername(targetUsername);
-  if (!username) {
-    throw new Error('Unable to load candidate profile without a username.');
-  }
-
-  // Resolve the route username to its profile UUID before querying projects.
-  // Project ownership is keyed by UUID, never by the public username.
-  const { data: profileData, error: profileError } = await supabase
-    .from('profiles')
-    .select(PROFILE_DASHBOARD_COLUMNS)
-    .eq('username', username)
-    .maybeSingle();
-
-  if (profileError) {
-    throw new Error(profileError.message || `Unable to load candidate profile "${username}".`);
-  }
-
-  let savedProfile = profileData as SavedProfileItem | null;
-
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    console.warn('Dashboard ownership check could not read the Supabase user:', userError.message);
-  }
-
-  if (!savedProfile && user?.id === username) {
-    const { data: profileById, error: profileByIdError } = await supabase
-      .from('profiles')
-      .select(PROFILE_DASHBOARD_COLUMNS)
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (profileByIdError) {
-      console.warn('Dashboard UUID fallback could not load profile by id:', profileByIdError.message);
-    }
-
-    savedProfile = profileById as SavedProfileItem | null;
-  }
-
-  if (!savedProfile?.id) {
-    const fallbackProfile = {
-      id: user?.id ?? username,
-      username,
-      full_name: null,
-      bio: null,
-      current_status: null,
-      avg_project_score: null,
-      avatar_url: null,
-      email: user?.email ?? null,
-    } satisfies SavedProfileItem;
-    const fallbackIsOwner = Boolean(user?.id && user.id === fallbackProfile.id);
-
-    return {
-      detail: `Profile "${username}" was not found.`,
-      isOwner: fallbackIsOwner,
-      message: 'Profile not found.',
-      profile: fallbackProfile,
-      projects: [],
-      projectFolders: [],
-      ratings: [],
-      opportunities: [],
-      authenticationStatus: user ? 'authenticated' : 'anonymous',
-      viewerType: fallbackIsOwner ? 'owner' : user ? 'authenticated' : 'public',
-    };
-  }
-
-  const isOwner = user?.id === savedProfile.id;
-  const targetUserId = savedProfile.id;
-  let projectsQuery = supabase
-    .from('projects')
-    // Keep the public profile on the same row contract as Vault. A hand-maintained
-    // projection can silently drift from the asset card's required fields.
-    .select('*')
-    .eq('user_id', targetUserId)
-    .order('created_at', { ascending: false })
-    .limit(DASHBOARD_PROJECT_LIMIT);
-
-  if (!isOwner) {
-    projectsQuery = projectsQuery.eq('is_public', true);
-  }
-
-  const { data: projectsData, error: projectsError } = await projectsQuery;
-  const { data: projectFoldersData, error: projectFoldersError } = await supabase
-    .from('project_folders')
-    .select('*')
-    .eq('user_id', targetUserId)
-    .order('created_at', { ascending: false });
-
-  if (projectsError) {
-    throw new Error(projectsError.message || `Unable to load projects for "${username}".`);
-  }
-
-  if (projectFoldersError && isOwner) {
-    throw new Error(projectFoldersError.message || `Unable to load project folders for "${username}".`);
-  }
-
-  if (projectFoldersError) {
-    console.warn(
-      'Public profile folders could not be loaded; rendering public assets as a flat grid:',
-      projectFoldersError.message
-    );
-  }
-
-  const projects = Array.isArray(projectsData) ? (projectsData as ProjectRow[]) : [];
-  const projectFolders = !projectFoldersError && Array.isArray(projectFoldersData)
-    ? (projectFoldersData as ProjectFolderRow[])
-    : [];
-
-  return {
-    detail: null,
-    isOwner,
-    message: null,
-    profile: savedProfile,
-    projects,
-    projectFolders,
-    ratings: [],
-    opportunities: [],
-    authenticationStatus: user ? 'authenticated' : 'anonymous',
-    viewerType: isOwner ? 'owner' : user ? 'authenticated' : 'public',
-  };
 }
 
 function formatScanDate(value: string) {
@@ -2360,10 +2232,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     const loadPublicProfile = async () => {
       try {
-        const payload = await fetchSpectatorProfile(
-          ['spectate-profile', targetUsername, user?.id ?? 'anonymous'],
-          supabase ?? undefined
-        );
+        const response = await fetchSpectateProfileResponse(targetUsername, { supabase });
+        const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
+        console.log("Spectator API Response:", payload);
+
+        if (!response.ok || !payload) {
+          throw new Error(payload?.detail || payload?.message || 'Unable to load this public profile.');
+        }
 
         if (isActive) {
           setSpectatorProfilePayload(payload);
@@ -2798,12 +2673,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       // Mirror Vault's successful state flow: unwrap Supabase `data` into an
       // array first, preserve the ProjectRow shape, then derive any legacy view
       // model needed by the rest of this dashboard.
-      const payloadProjects = Array.isArray(spectatorProfilePayload.projects)
-        ? spectatorProfilePayload.projects
-        : [];
-      const loadedAssets = payloadProjects.filter(
-        (project) => isOwnProfile || project.is_public === true
-      );
+      const payloadProjects =
+        spectatorProfilePayload.data ??
+        spectatorProfilePayload.projects ??
+        spectatorProfilePayload.assets ??
+        spectatorProfilePayload.vault_assets ??
+        spectatorProfilePayload.vaultAssets ??
+        [];
+      const loadedAssets = Array.isArray(payloadProjects) ? payloadProjects : [];
       const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
       const payloadProjectFolders = spectatorProfilePayload.projectFolders;
       const loadedProjectFolders = Array.isArray(payloadProjectFolders) ? payloadProjectFolders : [];
