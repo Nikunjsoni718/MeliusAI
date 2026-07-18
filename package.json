@@ -19,6 +19,7 @@
     "@vercel/functions": "^3.7.4",
     "ai": "^6.0.205",
     "framer-motion": "^12.38.0",
+    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^1.16.0",
     "next": "^16.2.3",

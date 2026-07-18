@@ -1,12 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
 } from '@/lib/audit-motivation';
+import {
+  AUDIT_CAPTURE_TARGET_ID,
+  downloadFullAuditReport,
+} from '@/lib/download-audit-report';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
 function cleanAuditLine(value: string) {
@@ -266,6 +270,9 @@ export function AuditReviewModal({
   const [recommendations, setRecommendations] = useState<string[] | null>(null);
   const [hasBeenAudited, setHasBeenAudited] = useState<boolean | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
+  const auditCaptureRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!resolvedProjectId || !hasSupabaseBrowserEnv()) {
@@ -370,13 +377,36 @@ export function AuditReviewModal({
       : Math.round(activeFile.evaluated_score) - normalizedPreviousScore;
   const currentScore = Math.max(0, Math.min(100, Math.round(activeFile.evaluated_score)));
 
+  async function handleDownloadFullReport() {
+    if (!auditCaptureRef.current || isDownloadingReport) {
+      return;
+    }
+
+    setIsDownloadingReport(true);
+    setDownloadFeedback(null);
+
+    try {
+      await downloadFullAuditReport(auditCaptureRef.current, assetTitle);
+      setDownloadFeedback('Full audit report downloaded.');
+    } catch (error) {
+      console.error('Full audit report download failed:', error);
+      setDownloadFeedback('The full report could not be downloaded. Please try again.');
+    } finally {
+      setIsDownloadingReport(false);
+    }
+  }
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
       backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
     }}>
       {/* Unified Main Container - Polished Wide Version */}
-      <div style={{ background: '#0a0f1c', border: '1px solid #1a2332', borderRadius: '12px', padding: '30px', color: '#fff', width: '90%', maxWidth: '1100px', maxHeight: '90vh', overflowY: 'auto' }}>
+      <div
+        id={AUDIT_CAPTURE_TARGET_ID}
+        ref={auditCaptureRef}
+        style={{ background: '#000000', border: '1px solid #1a2332', borderRadius: '12px', padding: '30px', color: '#fff', width: '90%', maxWidth: '1100px', maxHeight: '90vh', overflowY: 'auto' }}
+      >
         
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
@@ -394,7 +424,8 @@ export function AuditReviewModal({
             </span>
             
             {isFile && (
-              <button 
+              <button
+                data-html2canvas-ignore="true"
                 onClick={onOpenFullFocus} 
                 style={{ background: 'transparent', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s' }}
               >
@@ -402,7 +433,7 @@ export function AuditReviewModal({
               </button>
             )}
             
-            <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            <button data-html2canvas-ignore="true" onClick={onClose} style={{ background: 'transparent', border: '1px solid #333', color: '#fff', width: '30px', height: '30px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         </div>
 
@@ -438,7 +469,16 @@ export function AuditReviewModal({
         </div>
 
         {/* Share and Re-Audit Button Row */}
-        <div className="mb-5 flex flex-wrap justify-end gap-2">
+        <div className="mb-5 flex flex-wrap justify-end gap-2" data-html2canvas-ignore="true">
+          <button
+            type="button"
+            onClick={() => void handleDownloadFullReport()}
+            disabled={isDownloadingReport}
+            className="inline-flex items-center rounded-full border border-cyan-400/50 bg-cyan-500/20 px-4 py-2 text-xs font-bold text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)] transition hover:border-cyan-300 hover:bg-cyan-500/30 disabled:cursor-wait disabled:opacity-60"
+          >
+            {isDownloadingReport ? 'Preparing Full Report...' : 'Download Full Report'}
+          </button>
+
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
@@ -460,6 +500,17 @@ export function AuditReviewModal({
             </button>
           ) : null}
         </div>
+
+        {downloadFeedback ? (
+          <p
+            className="mb-5 mt-0 text-right text-xs text-slate-400"
+            role="status"
+            aria-live="polite"
+            data-html2canvas-ignore="true"
+          >
+            {downloadFeedback}
+          </p>
+        ) : null}
 
         {/* 4-Column Bottom Grid */}
         <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>

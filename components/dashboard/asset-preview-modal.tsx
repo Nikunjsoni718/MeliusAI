@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,10 @@ import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
 } from '@/lib/audit-motivation';
+import {
+  AUDIT_CAPTURE_TARGET_ID,
+  downloadFullAuditReport,
+} from '@/lib/download-audit-report';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -327,6 +331,9 @@ export function AssetPreviewModal({
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
+  const auditCaptureRef = useRef<HTMLDivElement | null>(null);
   const [textPreview, setTextPreview] = useState<{
     url: string | null;
     text: string | null;
@@ -371,6 +378,8 @@ export function AssetPreviewModal({
     setLiveProject(previewProject ?? null);
     setIsExpandedViewer(false);
     setIsShareModalOpen(false);
+    setIsDownloadingReport(false);
+    setDownloadFeedback(null);
   }, [previewProject]);
 
   useEffect(() => {
@@ -434,6 +443,25 @@ export function AssetPreviewModal({
 
   if (!isPortalMounted || !activePreviewUrl || !viewerSrc) {
     return null;
+  }
+
+  async function handleDownloadFullReport() {
+    if (!auditCaptureRef.current || isDownloadingReport) {
+      return;
+    }
+
+    setIsDownloadingReport(true);
+    setDownloadFeedback(null);
+
+    try {
+      await downloadFullAuditReport(auditCaptureRef.current, liveProject?.title ?? previewName);
+      setDownloadFeedback('Full audit report downloaded.');
+    } catch (error) {
+      console.error('Full audit report download failed:', error);
+      setDownloadFeedback('The full report could not be downloaded. Please try again.');
+    } finally {
+      setIsDownloadingReport(false);
+    }
   }
 
   async function handleRunAIVerification(projectId: string, event?: MouseEvent<HTMLButtonElement>) {
@@ -608,7 +636,11 @@ export function AssetPreviewModal({
         </div>
 
         {!isExpandedViewer && (
-        <div className="p-6 flex flex-col gap-4 border-t border-slate-800 animate-fadeIn">
+        <div
+          id={AUDIT_CAPTURE_TARGET_ID}
+          ref={auditCaptureRef}
+          className="flex h-auto max-h-none flex-col gap-4 overflow-visible border-t border-slate-800 bg-black p-6 animate-fadeIn"
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{liveProject?.title ?? previewName}</h2>
@@ -649,7 +681,16 @@ export function AssetPreviewModal({
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2" data-html2canvas-ignore="true">
+            <button
+              type="button"
+              onClick={() => void handleDownloadFullReport()}
+              disabled={isDownloadingReport}
+              className="inline-flex items-center rounded-full border border-cyan-400/50 bg-cyan-500/20 px-4 py-2 text-xs font-bold text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)] transition hover:border-cyan-300 hover:bg-cyan-500/30 disabled:cursor-wait disabled:opacity-60"
+            >
+              {isDownloadingReport ? 'Preparing Full Report...' : 'Download Full Report'}
+            </button>
+
             <button
               type="button"
               onClick={() => setIsShareModalOpen(true)}
@@ -677,6 +718,17 @@ export function AssetPreviewModal({
               </button>
             ) : null}
           </div>
+
+          {downloadFeedback ? (
+            <p
+              className="m-0 text-right text-xs text-slate-400"
+              role="status"
+              aria-live="polite"
+              data-html2canvas-ignore="true"
+            >
+              {downloadFeedback}
+            </p>
+          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
             <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
