@@ -784,6 +784,7 @@ export function UniversalAssetGrid({
               key={`folder-${item.folder.id}`}
               name={item.folder.name || 'Untitled Folder'}
               fileCount={item.assets.length}
+              files={item.assets}
               averageScore={getAverageScore(item.assets)}
               onClick={() => {
                 setActiveFolderId(item.folder.id);
