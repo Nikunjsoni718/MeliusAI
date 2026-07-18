@@ -271,7 +271,7 @@ type SpectatorProfilePayload = {
   experience?: string[] | string | null;
   hobbies?: string[] | null;
   skills?: string[] | null;
-  data?: ProjectRow[] | null;
+  data?: unknown;
   assets?: ProjectRow[] | null;
   projects?: ProjectRow[] | null;
   vault_assets?: ProjectRow[] | null;
@@ -302,7 +302,7 @@ type SpectatorScanItem = {
   created_at?: string | null;
 };
 type NormalizedSpectateProfileResponse = {
-  data?: ProjectRow[] | null;
+  data?: unknown;
   assets?: ProjectRow[] | null;
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
@@ -484,6 +484,49 @@ function normalizeProfileList(value: unknown) {
   }
 
   return [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function firstArray<T>(values: unknown[]): T[] {
+  const arrayValue = values.find(Array.isArray);
+
+  return Array.isArray(arrayValue) ? (arrayValue as T[]) : [];
+}
+
+function extractSpectatorProjects(payload: NormalizedSpectateProfileResponse | null): ProjectRow[] {
+  const payloadRecord = asRecord(payload);
+  const dataRecord = asRecord(payloadRecord?.data);
+
+  return firstArray<ProjectRow>([
+    payloadRecord?.projects,
+    payloadRecord?.assets,
+    payloadRecord?.vault_assets,
+    payloadRecord?.vaultAssets,
+    payloadRecord?.files,
+    payloadRecord?.data,
+    dataRecord?.projects,
+    dataRecord?.assets,
+    dataRecord?.vault_assets,
+    dataRecord?.vaultAssets,
+    dataRecord?.files,
+  ]);
+}
+
+function extractSpectatorProjectFolders(payload: NormalizedSpectateProfileResponse | null): ProjectFolderRow[] {
+  const payloadRecord = asRecord(payload);
+  const dataRecord = asRecord(payloadRecord?.data);
+
+  return firstArray<ProjectFolderRow>([
+    payloadRecord?.projectFolders,
+    payloadRecord?.folders,
+    dataRecord?.projectFolders,
+    dataRecord?.folders,
+  ]);
 }
 
 function formatScanDate(value: string) {
@@ -2241,6 +2284,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         }
 
         if (isActive) {
+          const loadedAssets = extractSpectatorProjects(payload);
+          const loadedProjectFolders = extractSpectatorProjectFolders(payload);
+
+          setProfileAssets(loadedAssets);
+          setProjects(loadedAssets.map(mapProjectRowToProjectItem));
+          setProjectFolders(loadedProjectFolders);
           setSpectatorProfilePayload(payload);
         }
       } catch (error) {
@@ -2674,21 +2723,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       // array first, preserve the ProjectRow shape, then derive any legacy view
       // model needed by the rest of this dashboard.
       const payloadProjects =
-        spectatorProfilePayload.data ??
-        spectatorProfilePayload.projects ??
-        spectatorProfilePayload.assets ??
-        spectatorProfilePayload.vault_assets ??
-        spectatorProfilePayload.vaultAssets ??
-        [];
+        extractSpectatorProjects(spectatorProfilePayload);
       const loadedAssets = Array.isArray(payloadProjects) ? payloadProjects : [];
       const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
-      const payloadProjectFolders = spectatorProfilePayload.projectFolders;
-      const loadedProjectFolders = Array.isArray(payloadProjectFolders) ? payloadProjectFolders : [];
-      const payloadRatings = spectatorProfilePayload.ratings;
+      const loadedProjectFolders = extractSpectatorProjectFolders(spectatorProfilePayload);
+      const payloadRatings = Array.isArray(spectatorProfilePayload.ratings)
+        ? spectatorProfilePayload.ratings
+        : [];
       const hydratedScans = payloadRatings
         .map(normalizeSpectatorRating)
         .filter((scan): scan is SpectatorScanItem => scan !== null);
-      const hydratedOpportunities = spectatorProfilePayload.opportunities
+      const payloadOpportunities = Array.isArray(spectatorProfilePayload.opportunities)
+        ? spectatorProfilePayload.opportunities
+        : [];
+      const hydratedOpportunities = payloadOpportunities
         .map(normalizeLiveOpportunity)
         .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
@@ -5282,8 +5330,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }
                       />
-                    ) : activeFolderProjects.length > 0 ? (
-                      activeFolderProjects.map((project) => (
+                    ) : Array.isArray(activeFolderProjects) && activeFolderProjects.length > 0 ? (
+                      activeFolderProjects?.map((project) => (
                         <ProjectCard
                           key={project.id}
                           project={project}
@@ -5340,8 +5388,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }
                       />
-                    ) : visibleWorkItems.length > 0 ? (
-                      visibleWorkItems.map((item) => {
+                    ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
+                      visibleWorkItems?.map((item) => {
                         if (item.type === 'folder') {
                           const folder = item.folder;
                           const folderAudit = folder as FolderAuditItem;
