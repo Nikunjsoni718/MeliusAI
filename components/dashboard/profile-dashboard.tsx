@@ -277,6 +277,7 @@ type SpectatorProfilePayload = {
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
   projectFolders?: ProjectFolderRow[] | null;
+  project_folders?: ProjectFolderRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
   birth_date?: string | null;
@@ -312,6 +313,7 @@ type NormalizedSpectateProfileResponse = {
   profile: SavedProfileItem | null;
   projects: ProjectRow[];
   projectFolders: ProjectFolderRow[];
+  project_folders?: ProjectFolderRow[] | null;
   ratings: unknown[];
   opportunities: unknown[];
   authenticationStatus: string | null;
@@ -523,8 +525,10 @@ function extractSpectatorProjectFolders(payload: NormalizedSpectateProfileRespon
 
   return firstArray<ProjectFolderRow>([
     payloadRecord?.projectFolders,
+    payloadRecord?.project_folders,
     payloadRecord?.folders,
     dataRecord?.projectFolders,
+    dataRecord?.project_folders,
     dataRecord?.folders,
   ]);
 }
@@ -5383,7 +5387,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         isSpectator
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
-                        onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                         onReadProtocol={(project) =>
                           handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }

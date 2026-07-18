@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
+import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -38,7 +39,7 @@ type UniversalAssetGridProps = {
 };
 
 type UniversalGridItem =
-  | { type: 'folder'; folder: ProjectFolderRow }
+  | { type: 'folder'; assets: ProjectRow[]; folder: ProjectFolderRow }
   | { type: 'asset'; asset: ProjectRow };
 
 const codeLanguageMap: Record<string, string> = {
@@ -219,6 +220,18 @@ function getAssetScore(project: ProjectRow) {
   return typeof score === 'number' && Number.isFinite(score)
     ? Math.max(0, Math.min(100, Math.round(score)))
     : null;
+}
+
+function getAverageScore(projects: ProjectRow[]) {
+  const scores = projects
+    .map(getAssetScore)
+    .filter((score): score is number => typeof score === 'number');
+
+  if (scores.length === 0) {
+    return null;
+  }
+
+  return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
 }
 
 function resolvePreviewKind(project: ProjectRow): AssetPreviewKind {
@@ -634,55 +647,6 @@ function UniversalAssetCard({
   );
 }
 
-function UniversalFolderCard({
-  folder,
-  onOpen,
-}: {
-  folder: ProjectFolderRow;
-  onOpen?: (folder: ProjectFolderRow) => void;
-}) {
-  const folderName = folder.name || 'Untitled Folder';
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!onOpen) {
-      return;
-    }
-
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onOpen(folder);
-    }
-  }
-
-  return (
-    <div
-      className="project-folder-card card"
-      data-folder-id={folder.id}
-      data-folder-name={folderName}
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen?.(folder)}
-      onKeyDown={handleKeyDown}
-      aria-label={`Open ${folderName}`}
-    >
-      <div className="folder-card-body">
-        <div className="folder-icon-glow">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48" aria-hidden="true">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-          </svg>
-        </div>
-        <h3 className="folder-name">{folderName}</h3>
-        <span className="folder-badge">Project Workspace</span>
-      </div>
-      <div className="folder-card-footer">
-        <button className="open-folder-btn" type="button">
-          Open Workspace &rarr;
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function UniversalAssetGrid({
   assets,
   className,
@@ -701,6 +665,7 @@ export function UniversalAssetGrid({
   onVerify,
 }: UniversalAssetGridProps) {
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [localProjectPatches, setLocalProjectPatches] = useState<Record<string, Partial<ProjectRow>>>({});
   const patchedAssets = useMemo(
     () =>
@@ -722,14 +687,54 @@ export function UniversalAssetGrid({
       }),
     [folders]
   );
+  const folderAssetsById = useMemo(() => {
+    const groupedAssets: Record<string, ProjectRow[]> = {};
+
+    patchedAssets.forEach((asset) => {
+      if (!asset.folder_id) {
+        return;
+      }
+
+      groupedAssets[asset.folder_id] = [...(groupedAssets[asset.folder_id] ?? []), asset];
+    });
+
+    return groupedAssets;
+  }, [patchedAssets]);
+  const foldersWithAssets = useMemo(() => {
+    const explicitFolders = sortedFolders.map((folder) => ({
+      folder,
+      assets: folderAssetsById[folder.id] ?? [],
+    }));
+    const explicitFolderIds = new Set(explicitFolders.map((item) => item.folder.id));
+    const syntheticFolders = Object.entries(folderAssetsById)
+      .filter(([folderId]) => !explicitFolderIds.has(folderId))
+      .map(([folderId, folderAssets]) => ({
+        folder: {
+          id: folderId,
+          name: folderAssets[0]?.title?.trim() || folderAssets[0]?.name?.split('/')[0]?.trim() || 'Folder Project',
+          user_id: folderAssets[0]?.user_id ?? null,
+          owner_id: folderAssets[0]?.owner_id ?? null,
+          created_at: folderAssets[0]?.created_at ?? null,
+          updated_at: folderAssets[0]?.updated_at ?? null,
+        } satisfies ProjectFolderRow,
+        assets: folderAssets,
+      }));
+
+    return [...explicitFolders, ...syntheticFolders];
+  }, [folderAssetsById, sortedFolders]);
+  const rootAssets = useMemo(
+    () => patchedAssets.filter((asset) => !asset.folder_id),
+    [patchedAssets]
+  );
   const gridItems = useMemo<UniversalGridItem[]>(
     () =>
       [
-        ...sortedFolders.map((folder) => ({
+        ...foldersWithAssets.map(({ folder, assets: folderAssets }) => ({
           type: 'folder' as const,
           folder,
+          assets: folderAssets,
         })),
-        ...patchedAssets.map((asset) => ({
+        ...rootAssets.map((asset) => ({
           type: 'asset' as const,
           asset,
         })),
@@ -740,8 +745,11 @@ export function UniversalAssetGrid({
         const rightTime = rightDate ? new Date(rightDate).getTime() : 0;
         return rightTime - leftTime;
       }),
-    [patchedAssets, sortedFolders]
+    [foldersWithAssets, rootAssets]
   );
+  const activeFolderItem = activeFolderId
+    ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
+    : null;
   const activePreviewProject = activePreviewProjectId
     ? patchedAssets.find((project) => project.id === activePreviewProjectId) ?? null
     : null;
@@ -772,10 +780,15 @@ export function UniversalAssetGrid({
       <div className={cn('grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full', gridClassName, className)}>
         {gridItems.map((item) =>
           item.type === 'folder' ? (
-            <UniversalFolderCard
+            <ProjectFolderCard
               key={`folder-${item.folder.id}`}
-              folder={item.folder}
-              onOpen={onFolderOpen}
+              name={item.folder.name || 'Untitled Folder'}
+              fileCount={item.assets.length}
+              averageScore={getAverageScore(item.assets)}
+              onClick={() => {
+                setActiveFolderId(item.folder.id);
+                onFolderOpen?.(item.folder);
+              }}
             />
           ) : (
             <UniversalAssetCard
@@ -794,6 +807,73 @@ export function UniversalAssetGrid({
           )
         )}
       </div>
+
+      {activeFolderItem ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="folder-project-modal-title"
+          onClick={() => setActiveFolderId(null)}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-800 bg-[#050a18] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
+                  Folder Project
+                </p>
+                <h2 id="folder-project-modal-title" className="mt-1 text-xl font-semibold text-white">
+                  {activeFolderItem.folder.name || 'Untitled Folder'}
+                </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  {activeFolderItem.assets.length} {activeFolderItem.assets.length === 1 ? 'file' : 'files'}
+                  {getAverageScore(activeFolderItem.assets) !== null
+                    ? ` · Average Score ${getAverageScore(activeFolderItem.assets)}/100`
+                    : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveFolderId(null)}
+                className="self-start rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:text-white sm:self-auto"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5">
+              {activeFolderItem.assets.length > 0 ? (
+                <div className="grid w-full grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {activeFolderItem.assets.map((asset) => (
+                    <UniversalAssetCard
+                      key={asset.id}
+                      project={asset}
+                      isSpectator={isSpectator}
+                      deletingAssetId={deletingAssetId}
+                      isVisibilityUpdating={visibilityUpdatingIds.includes(asset.id)}
+                      verifyingAssetId={verifyingAssetId}
+                      onDelete={onDelete}
+                      onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
+                      onReadProtocol={onReadProtocol}
+                      onToggleVisibility={onToggleVisibility}
+                      onVerify={onVerify}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Card className="border-blue-950/50 bg-[#090d1f]/40">
+                  <CardContent className="p-8 text-center text-sm text-slate-400">
+                    This folder project does not have files yet.
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <AssetPreviewModal
         activePreviewName={activePreviewProject ? getUniversalAssetName(activePreviewProject) : null}

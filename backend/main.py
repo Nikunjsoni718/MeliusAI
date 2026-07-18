@@ -4684,14 +4684,32 @@ async def spectate_profile(
         .order("created_at", desc=True)
         .execute()
     )
+    folders_response = await asyncio.to_thread(
+        lambda: supabase.table("project_folders")
+        .select("*")
+        .eq("user_id", profile_uuid_text)
+        .order("created_at", desc=True)
+        .execute()
+    )
     project_rows = projects_response.data if isinstance(projects_response.data, list) else []
+    folder_rows = folders_response.data if isinstance(folders_response.data, list) else []
     assets = [
         dict(project)
         for project in dedupe_rows_by_id(project_rows)
         if isinstance(project, dict)
     ]
+    project_folders = [
+        dict(folder)
+        for folder in dedupe_rows_by_id(folder_rows)
+        if isinstance(folder, dict)
+    ]
     assets = sorted(
         assets,
+        key=lambda row: str(row.get("created_at") or ""),
+        reverse=True,
+    )
+    project_folders = sorted(
+        project_folders,
         key=lambda row: str(row.get("created_at") or ""),
         reverse=True,
     )
@@ -4749,6 +4767,8 @@ async def spectate_profile(
         "profile": profile,
         "resume": profile,
         "projects": profile["projects"],
+        "project_folders": project_folders,
+        "projectFolders": project_folders,
         "vault_assets": profile["projects"],
         "vaultAssets": profile["projects"],
         "ratings": scan_rows,

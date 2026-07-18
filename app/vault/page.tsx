@@ -35,6 +35,8 @@ type VaultToastState = {
 };
 
 type SpectatorVaultResponse = {
+  data?: unknown;
+  assets?: ProjectRow[] | null;
   id?: string | null;
   username?: string | null;
   profile?: {
@@ -63,17 +65,25 @@ const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
 });
 
 function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
+  const dataRecord =
+    payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : null;
   const projects =
+    payload?.assets ??
     payload?.projects ??
     payload?.vault_assets ??
     payload?.vaultAssets ??
     payload?.files ??
+    dataRecord?.assets ??
+    dataRecord?.projects ??
+    dataRecord?.vault_assets ??
+    dataRecord?.vaultAssets ??
+    dataRecord?.files ??
     [];
 
   return Array.isArray(projects)
     ? projects
-        .filter((project) => project.is_public !== false)
-        .filter((project) => !project.folder_id)
         .sort((a, b) => {
           const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
           const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -83,7 +93,16 @@ function getSpectatorVaultProjects(payload: SpectatorVaultResponse | null) {
 }
 
 function getSpectatorVaultFolders(payload: SpectatorVaultResponse | null) {
-  const folders = payload?.projectFolders ?? payload?.project_folders ?? [];
+  const dataRecord =
+    payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : null;
+  const folders =
+    payload?.projectFolders ??
+    payload?.project_folders ??
+    dataRecord?.projectFolders ??
+    dataRecord?.project_folders ??
+    [];
 
   return Array.isArray(folders)
     ? folders.sort((a, b) => {
@@ -1215,7 +1234,6 @@ function VaultPageContent() {
           .from('projects')
           .select('*')
           .eq('user_id', user.id)
-          .is('folder_id', null)
           .order('created_at', { ascending: false });
         const { data: foldersData, error: foldersError } = await supabase
           .from('project_folders')
@@ -1334,10 +1352,6 @@ function VaultPageContent() {
 
       if (ownerId) {
         folderAssetsQuery = folderAssetsQuery.eq('user_id', ownerId);
-      }
-
-      if (!isOwner) {
-        folderAssetsQuery = folderAssetsQuery.eq('is_public', true);
       }
 
       const { data, error } = await folderAssetsQuery;
@@ -1798,7 +1812,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}
-                onFolderOpen={(folder) => void handleOpenVaultFolder(folder)}
                 onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                 onReadProtocol={handleReadFullAuditProtocol}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
