@@ -12,6 +12,7 @@ import useSWR, { useSWRConfig } from 'swr';
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
+import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -559,7 +560,9 @@ async function fetchSpectatorProfile([
   const isOwner = user?.id === savedProfile.id;
   let projectsQuery = supabase
     .from('projects')
-    .select(PROJECT_DASHBOARD_COLUMNS)
+    // Keep the public profile on the same row contract as Vault. A hand-maintained
+    // projection can silently drift from the asset card's required fields.
+    .select('*')
     .eq('user_id', savedProfile.id)
     .order('created_at', { ascending: false })
     .limit(DASHBOARD_PROJECT_LIMIT);
@@ -2242,6 +2245,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const { mutate } = useSWRConfig();
   const currentUser = user;
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
+  const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -2523,6 +2527,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }),
     [projects]
   );
+  const sortedProfileAssets = useMemo(
+    () =>
+      [...profileAssets].sort((a, b) => {
+        const rightDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const leftDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      }),
+    [profileAssets]
+  );
   const sortedProjectFolders = useMemo(
     () =>
       [...projectFolders].sort((a, b) => {
@@ -2544,6 +2557,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const activeFolderProjects = useMemo(
     () => (activeFolderId ? allProjects.filter((project) => project.folder_id === activeFolderId) : []),
     [activeFolderId, allProjects]
+  );
+  const rootProfileAssets = useMemo(
+    () => sortedProfileAssets.filter((project) => !project.folder_id),
+    [sortedProfileAssets]
+  );
+  const activeFolderProfileAssets = useMemo(
+    () =>
+      activeFolderId
+        ? sortedProfileAssets.filter((project) => project.folder_id === activeFolderId)
+        : [],
+    [activeFolderId, sortedProfileAssets]
   );
   const rootWorkItems = useMemo<WorkAssetGridItem[]>(
     () =>
@@ -2722,6 +2746,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setSettingsOpen(false);
       setResolvedProfileId(null);
       setProfileData(null);
+      setProfileAssets([]);
       setProjects([]);
       setProjectFolders([]);
       setActiveFolderId(null);
@@ -2794,12 +2819,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ? user.user_metadata.preferred_username.trim()
           : null);
       const isOwnProfile = spectatorProfilePayload.isOwner;
-      const payloadProjects = spectatorProfilePayload.projects;
-      const loadedProjects = payloadProjects.length > 0
-        ? payloadProjects
-            .map(mapProjectRowToProjectItem)
-            .filter((project) => isOwnProfile || project.is_public !== false)
+      // Mirror Vault's successful state flow: unwrap Supabase `data` into an
+      // array first, preserve the ProjectRow shape, then derive any legacy view
+      // model needed by the rest of this dashboard.
+      const payloadProjects = Array.isArray(spectatorProfilePayload.projects)
+        ? spectatorProfilePayload.projects
         : [];
+      const loadedAssets = payloadProjects.filter(
+        (project) => isOwnProfile || project.is_public !== false
+      );
+      const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
       const payloadProjectFolders = spectatorProfilePayload.projectFolders;
       const loadedProjectFolders = Array.isArray(payloadProjectFolders) ? payloadProjectFolders : [];
       const payloadRatings = spectatorProfilePayload.ratings;
@@ -2811,6 +2840,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .filter((opportunity): opportunity is LiveOpportunityItem => opportunity !== null);
 
       setProfileData(savedProfile);
+      setProfileAssets(loadedAssets);
       setProjects((currentProjects) =>
         hydratedProfileKeyRef.current === targetUsername
           ? mergeProjectLists(currentProjects, loadedProjects)
@@ -5373,8 +5403,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <h2 id="current-folder-title">{activeFolder?.name ?? 'Project Folder'}</h2>
                   </div>
 
-                  <div id="folder-contents-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {activeFolderProjects.length > 0 ? (
+                  <div
+                    id="folder-contents-grid"
+                    className={cn(
+                      !isSpectating &&
+                        'projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                    )}
+                  >
+                    {isSpectating ? (
+                      <UniversalAssetGrid
+                        assets={activeFolderProfileAssets}
+                        emptyMessage="This project folder is empty."
+                        isSpectator
+                        deletingAssetId={deletingProjectId}
+                        verifyingAssetId={verifyingAssetId}
+                        onReadProtocol={(project) =>
+                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
+                        }
+                      />
+                    ) : activeFolderProjects.length > 0 ? (
                       activeFolderProjects.map((project) => (
                         <ProjectCard
                           key={project.id}
@@ -5413,8 +5460,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 )
               ) : (
                 <>
-                  <div id="main-assets-grid" className="projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {visibleWorkItems.length > 0 &&
+                  <div
+                    id="main-assets-grid"
+                    className={cn(
+                      !isSpectating &&
+                        'projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                    )}
+                  >
+                    {isSpectating ? (
+                      <UniversalAssetGrid
+                        assets={rootProfileAssets}
+                        folders={projectFolders}
+                        isSpectator
+                        deletingAssetId={deletingProjectId}
+                        verifyingAssetId={verifyingAssetId}
+                        onFolderOpen={(folder) => setActiveFolderId(folder.id)}
+                        onReadProtocol={(project) =>
+                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
+                        }
+                      />
+                    ) : visibleWorkItems.length > 0 ? (
                       visibleWorkItems.map((item) => {
                         if (item.type === 'folder') {
                           const folder = item.folder;
@@ -5622,11 +5687,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             onDelete={(projectId) => void handleDeleteProject(projectId)}
                           />
                         );
-                      })}
+                      })
+                    ) : null}
 
                   </div>
 
-                  {rootWorkItems.length > 0 ? (
+                  {!isSpectating && rootWorkItems.length > 0 ? (
                     <button
                       type="button"
                       onClick={() => setShowAllWork((value) => !value)}
