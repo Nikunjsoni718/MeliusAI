@@ -168,13 +168,18 @@ function getCodeLanguage(extension: string) {
 }
 
 async function readRemoteTextAsUtf8(src: string) {
-  const response = await fetch(src);
+  const response = await fetch(src, {
+    headers: {
+      Range: 'bytes=0-199',
+    },
+  });
 
   if (!response.ok) {
     throw new Error('Unable to read code preview.');
   }
 
-  return response.text();
+  const text = await response.text();
+  return text.slice(0, 200);
 }
 
 function formatFileSize(bytes?: number | null) {
@@ -384,7 +389,7 @@ function UniversalPreviewSurface({ project }: { project: ProjectRow }) {
   if (previewKind === 'image') {
     return assetUrl ? (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={assetUrl} alt={assetName} className="h-full w-full bg-[#050b1b]/80 object-cover" />
+      <img src={assetUrl} alt={assetName} loading="lazy" className="h-full w-full bg-[#050b1b]/80 object-cover" />
     ) : (
       <GenericFilePreview title={assetName} subtitle="Image stored in your vault." tag="Image" icon={<FileIcon className="h-7 w-7" />} />
     );

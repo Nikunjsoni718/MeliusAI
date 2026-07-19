@@ -56,6 +56,10 @@ type SpectatorVaultResponse = {
   message?: string;
 };
 
+const VAULT_PROJECT_CARD_SELECT =
+  'id, user_id, owner_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
+const VAULT_FOLDER_SELECT = 'id, user_id, owner_id, name, created_at, updated_at';
+
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -243,13 +247,18 @@ function getCodeLanguage(extension: string) {
 }
 
 async function readRemoteTextAsUtf8(src: string) {
-  const response = await fetch(src);
+  const response = await fetch(src, {
+    headers: {
+      Range: 'bytes=0-199',
+    },
+  });
 
   if (!response.ok) {
     throw new Error('Unable to read code preview.');
   }
 
-  return response.text();
+  const text = await response.text();
+  return text.slice(0, 200);
 }
 
 function formatFileSize(bytes?: number | null) {
@@ -601,7 +610,7 @@ function VaultPreviewSurface({ project }: { project: ProjectRow }) {
   if (previewKind === 'image') {
     return assetUrl ? (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={assetUrl} alt={assetName} className="h-full w-full bg-[#050b1b]/80 object-cover" />
+      <img src={assetUrl} alt={assetName} loading="lazy" className="h-full w-full bg-[#050b1b]/80 object-cover" />
     ) : (
       <GenericFilePreview title={assetName} subtitle="Image stored in your vault." tag="Image" icon={<FileIcon className="h-7 w-7" />} />
     );
@@ -1232,12 +1241,12 @@ function VaultPageContent() {
 
         const { data, error } = await supabase
           .from('projects')
-          .select('*')
+          .select(VAULT_PROJECT_CARD_SELECT)
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
         const { data: foldersData, error: foldersError } = await supabase
           .from('project_folders')
-          .select('*')
+          .select(VAULT_FOLDER_SELECT)
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
@@ -1250,8 +1259,8 @@ function VaultPageContent() {
         }
 
         if (active) {
-          const loadedAssets = Array.isArray(data) ? data : [];
-          const loadedFolders = Array.isArray(foldersData) ? foldersData : [];
+          const loadedAssets = Array.isArray(data) ? (data as ProjectRow[]) : [];
+          const loadedFolders = Array.isArray(foldersData) ? (foldersData as ProjectFolderRow[]) : [];
           setViewerId(user.id);
           setVaultError(null);
           setVaultAssets(loadedAssets);
@@ -1346,7 +1355,7 @@ function VaultPageContent() {
       const ownerId = folder.user_id ?? folder.owner_id ?? viewerId;
       let folderAssetsQuery = supabase
         .from('projects')
-        .select('*')
+        .select(VAULT_PROJECT_CARD_SELECT)
         .eq('folder_id', folder.id)
         .order('created_at', { ascending: false });
 
@@ -1360,7 +1369,7 @@ function VaultPageContent() {
         throw error;
       }
 
-      const loadedFolderAssets = Array.isArray(data) ? data : [];
+      const loadedFolderAssets = Array.isArray(data) ? (data as ProjectRow[]) : [];
       setFolderAssets(loadedFolderAssets);
       setDescriptionDrafts((currentDrafts) => ({
         ...currentDrafts,

@@ -483,7 +483,12 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, bio, avatar_url, age, current_status, "
     "qualifications, experience, hobbies, skills"
 )
-SPECTATE_PROJECT_PUBLIC_SELECT = "*"
+SPECTATE_PROJECT_PUBLIC_SELECT = (
+    "id, user_id, owner_id, is_public, folder_id, name, title, file_name, "
+    "file_url, file_type, file_size, score, evaluation_score, logic_score, "
+    "has_been_audited, previous_score, status, created_at, updated_at"
+)
+SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, owner_id, name, created_at, updated_at"
 
 
 def normalize_email(value: Any) -> str | None:
@@ -4686,7 +4691,7 @@ async def spectate_profile(
     )
     folders_response = await asyncio.to_thread(
         lambda: supabase.table("project_folders")
-        .select("*")
+        .select(SPECTATE_PROJECT_FOLDER_SELECT)
         .eq("user_id", profile_uuid_text)
         .order("created_at", desc=True)
         .execute()

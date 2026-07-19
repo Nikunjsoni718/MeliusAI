@@ -345,7 +345,7 @@ const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, folder_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, previous_score, audit_summary, pros, cons, recommendations, last_improved_summary, status, user_description, title, file_size';
+  'id, user_id, owner_id, folder_id, name, title, file_name, file_url, file_type, file_size, created_at, updated_at, logic_score, is_public, evaluation_score, has_been_audited, score, previous_score, status';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -764,13 +764,18 @@ const readAssetAsDataURL = (asset: Blob) =>
   });
 
 async function readRemoteTextAsUtf8(src: string) {
-  const response = await fetch(src);
+  const response = await fetch(src, {
+    headers: {
+      Range: 'bytes=0-199',
+    },
+  });
 
   if (!response.ok) {
     throw new Error('Unable to read code preview.');
   }
 
-  return response.text();
+  const text = await response.text();
+  return text.slice(0, 200);
 }
 
 function getUploadContentType(file: File) {
@@ -1177,7 +1182,7 @@ function SidebarProfileLink({
       <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-blue-950/60 bg-[#09152b]/70">
         {avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+          <img src={avatarUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <SilhouetteIcon className="h-6 w-6" />
         )}
@@ -1497,7 +1502,7 @@ function ProfilePhoto({
       <div className="relative h-full w-full overflow-hidden rounded-full border border-sky-400/35 bg-[#050b1b]/70 shadow-[0_0_35px_rgba(56,189,248,0.35)]">
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt="" className="h-full w-full object-cover" />
+          <img src={src} alt="" loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-lg font-semibold uppercase tracking-wide text-slate-300">
             {fallbackLabel?.trim()?.charAt(0) || <SilhouetteIcon className="h-[62%] w-[62%]" />}
@@ -1836,6 +1841,7 @@ function ProjectPreviewSurface({
           <img
             src={previewUrl}
             alt={project.title}
+            loading="lazy"
             className={cn('h-full w-full bg-[#050b1b]/80', expanded ? 'object-contain' : 'object-cover')}
           />
         </>
@@ -3494,7 +3500,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         has_been_audited: false,
         status: 'draft',
       })
-      .select('*')
+      .select(PROJECT_DASHBOARD_COLUMNS)
       .single();
 
     if (error) {

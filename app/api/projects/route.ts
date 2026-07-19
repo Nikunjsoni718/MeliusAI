@@ -6,6 +6,8 @@ import type { PortfolioSourceKind, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
   'id, owner_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+const projectCardSelect =
+  'id, user_id, owner_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
 
 function isProjectStatus(value: unknown): value is ProjectStatus {
   return value === 'draft' || value === 'submitted' || value === 'reviewed' || value === 'archived';
@@ -26,7 +28,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('projects')
-      .select(projectSelect)
+      .select(projectCardSelect)
       .is('folder_id', null)
       .order('created_at', { ascending: false });
 
