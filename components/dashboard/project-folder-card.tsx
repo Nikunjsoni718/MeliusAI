@@ -15,7 +15,7 @@ type ProjectFolderCardProps = {
 };
 
 function getFileName(file: ProjectRow) {
-  return file.file_name?.trim() || file.name?.split('/').pop()?.trim() || file.title?.trim() || 'Untitled file';
+  return file.name?.split('/').pop()?.trim() || file.title?.trim() || 'Untitled file';
 }
 
 function getFileExtension(fileName: string) {

@@ -10,6 +10,7 @@ import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lu
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
+import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -5401,193 +5402,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       visibleWorkItems?.map((item) => {
                         if (item.type === 'folder') {
                           const folder = item.folder;
-                          const folderAudit = folder as FolderAuditItem;
-                          const folderAuditScore = getFolderAuditScore(folderAudit);
-                          const openFolderAuditProtocol = () => {
-                            handleOpenProjectPreview(folderAudit);
-                          };
-                          const handleOpenFolderAuditProtocol = (event: MouseEvent<HTMLElement>) => {
-                            event.stopPropagation();
-                            openFolderAuditProtocol();
-                          };
+                          const folderProjects = allProjects.filter((project) => project.folder_id === folder.id);
+                          const folderProjectRows = folderProjects.map((project) => ({
+                            ...project,
+                            name: project.title,
+                            created_at: project.created_at ?? '',
+                          })) as ProjectRow[];
+                          const folderAuditScore = getFolderAuditScore(folder as FolderAuditItem);
 
                           return (
-                            <div
+                            <ProjectFolderCard
                               key={folder.id}
-                              className="project-folder-card card"
+                              name={folder.name || 'Untitled Folder'}
+                              fileCount={folderProjectRows.length}
+                              files={folderProjectRows}
+                              averageScore={folderAuditScore}
                               onClick={() => setActiveFolderId(folder.id)}
-                              style={{ position: 'relative' }}
-                            >
-                              {isOwner ? (
-                                <div style={{ position: 'absolute', top: '15px', right: '15px', display: 'flex', gap: '8px', zIndex: 10 }}>
-                                  <button
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setEditingFolderId(folder.id);
-                                      setEditFolderName(folder.name);
-                                    }}
-                                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#8892b0', cursor: 'pointer', padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                    title="Rename Folder"
-                                    type="button"
-                                    aria-label={`Rename ${folder.name || 'workspace'}`}
-                                  >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                                    </svg>
-                                  </button>
-
-                                  <button
-                                    className="folder-delete-btn"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void handleDeleteFolder(folder.id);
-                                    }}
-                                    style={{ position: 'static', top: 'auto', right: 'auto', padding: '6px', borderRadius: '6px' }}
-                                    title="Delete Workspace"
-                                    type="button"
-                                    aria-label={`Delete ${folder.name || 'workspace'}`}
-                                  >
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                                      <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
-                                    </svg>
-                                  </button>
-                                </div>
-                              ) : null}
-
-                              <div className="folder-card-body">
-                                <div
-                                  className="folder-icon-glow"
-                                  onClick={folderAuditScore ? handleOpenFolderAuditProtocol : undefined}
-                                  onKeyDown={(event) => {
-                                    if (!folderAuditScore) {
-                                      return;
-                                    }
-
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      openFolderAuditProtocol();
-                                    }
-                                  }}
-                                  role={folderAuditScore ? 'button' : undefined}
-                                  tabIndex={folderAuditScore ? 0 : undefined}
-                                  aria-label={folderAuditScore ? `Read full audit protocol for ${folder.name}` : undefined}
-                                >
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48">
-                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                                  </svg>
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '10px', width: '100%', textAlign: 'center' }}>
-                                  {editingFolderId === folder.id ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }} onClick={(event) => event.stopPropagation()}>
-                                      <input
-                                        type="text"
-                                        value={editFolderName}
-                                        onChange={(event) => setEditFolderName(event.target.value)}
-                                        style={{
-                                          width: '80%',
-                                          padding: '6px 10px',
-                                          borderRadius: '4px',
-                                          background: 'rgba(255,255,255,0.1)',
-                                          border: '1px solid #00d2ff',
-                                          color: '#fff',
-                                          outline: 'none',
-                                          fontSize: '16px',
-                                          textAlign: 'center',
-                                        }}
-                                        autoFocus
-                                        onKeyDown={(event) => {
-                                          if (event.key === 'Enter') void handleRenameFolder(folder.id);
-                                          if (event.key === 'Escape') {
-                                            setEditingFolderId(null);
-                                            setEditFolderName("");
-                                          }
-                                        }}
-                                      />
-                                      <button
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          void handleRenameFolder(folder.id);
-                                        }}
-                                        style={{ background: '#00d2ff', color: '#000', border: 'none', padding: '4px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-                                        type="button"
-                                      >
-                                        Save
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <h3 style={{ color: '#fff', margin: 0, fontSize: '18px', textAlign: 'center', fontWeight: 'bold' }}>
-                                      {folder.name}
-                                    </h3>
-                                  )}
-                                </div>
-                                <span className="folder-badge">Project Workspace</span>
-                              </div>
-                              <div className="folder-card-footer">
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '15px' }}>
-                                  <button
-                                    className="open-folder-btn"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setActiveFolderId(folder.id);
-                                    }}
-                                    type="button"
-                                  >
-                                    Open Workspace &rarr;
-                                  </button>
-
-                                  {isOwner ? (
-                                    <button
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        void handleVerifyFolder(folder.id);
-                                      }}
-                                      disabled={auditingFolders[folder.id]}
-                                      style={{
-                                        background: auditingFolders[folder.id] ? 'rgba(255,255,255,0.05)' : 'transparent',
-                                        border: '1px solid #00d2ff',
-                                        color: '#00d2ff',
-                                        padding: '10px',
-                                        borderRadius: '6px',
-                                        cursor: auditingFolders[folder.id] ? 'not-allowed' : 'pointer',
-                                        width: '100%',
-                                        fontWeight: 'bold',
-                                        fontSize: '14px',
-                                        transition: 'all 0.2s',
-                                      }}
-                                      type="button"
-                                    >
-                                      {auditingFolders[folder.id] ? 'Auditing via GPT Engine...' : (folderAuditScore ? 'Re-Verify with MeliusAI' : 'Verify with MeliusAI')}
-                                    </button>
-                                  ) : null}
-
-                                  {folderAuditScore ? (
-                                    <button
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleOpenProjectPreview(folderAudit);
-                                      }}
-                                      style={{
-                                        background: 'rgba(255,255,255,0.05)',
-                                        border: '1px solid #444',
-                                        color: '#fff',
-                                        padding: '10px',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        width: '100%',
-                                        fontWeight: 'bold',
-                                        fontSize: '14px',
-                                        transition: 'all 0.2s',
-                                        marginTop: '2px',
-                                      }}
-                                      type="button"
-                                    >
-                                      Read Full Audit Protocol
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
+                            />
                           );
                         }
 
