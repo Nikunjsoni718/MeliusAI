@@ -491,6 +491,8 @@ SPECTATE_PROJECT_PUBLIC_SELECT = (
     "has_been_audited, previous_score, status, created_at, updated_at"
 )
 SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, owner_id, name, created_at, updated_at"
+VAULT_PROJECT_CARD_SELECT = "id, user_id, name, file_type, created_at, score, has_been_audited, file_url"
+VAULT_FOLDER_CARD_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
 
 
 def normalize_email(value: Any) -> str | None:
@@ -4625,6 +4627,72 @@ async def verify_member(
         return {"success": False, "message": f"No user found with username '{target_username}'"}
 
     return {"success": True, "user": result.data[0]}
+
+
+@app.get("/api/vault")
+@app.get("/api/projects")
+async def get_authenticated_vault(
+    request: Request,
+    current_user_id: str = Depends(verify_user),
+):
+    try:
+        supabase = get_request_supabase_client(request)
+
+        projects_response, folders_response = await asyncio.gather(
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(VAULT_PROJECT_CARD_SELECT)
+                .eq("user_id", current_user_id)
+                .order("created_at", desc=True)
+                .execute()
+            ),
+            asyncio.to_thread(
+                lambda: supabase.table("project_folders")
+                .select(VAULT_FOLDER_CARD_SELECT)
+                .eq("user_id", current_user_id)
+                .order("created_at", desc=True)
+                .execute()
+            ),
+        )
+
+        projects = projects_response.data if isinstance(projects_response.data, list) else []
+        folders = folders_response.data if isinstance(folders_response.data, list) else []
+        clean_projects = [
+            dict(project)
+            for project in projects
+            if isinstance(project, dict)
+        ]
+        clean_folders = [
+            dict(folder)
+            for folder in folders
+            if isinstance(folder, dict)
+        ]
+
+        print(
+            f"Authenticated vault fetch for {current_user_id} returned "
+            f"{len(clean_projects)} projects and {len(clean_folders)} folders"
+        )
+
+        return {
+            "success": True,
+            "data": clean_projects,
+            "projects": clean_projects,
+            "assets": clean_projects,
+            "vault_assets": clean_projects,
+            "vaultAssets": clean_projects,
+            "folders": clean_folders,
+            "project_folders": clean_folders,
+            "projectFolders": clean_folders,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Authenticated vault fetch failed for {current_user_id}: {e}")
+        logger.exception("authenticated_vault.failed user_id=%s", current_user_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load authenticated vault data.",
+        ) from e
 
 
 @app.get("/api/spectate-profile/{username}")
