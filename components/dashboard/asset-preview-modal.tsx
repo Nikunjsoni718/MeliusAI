@@ -226,14 +226,14 @@ function getStringArray(value: unknown) {
 }
 
 function getProjectBio(project?: PreviewProject | null) {
-  return project?.user_description?.trim() || project?.bio?.trim() || '';
+  return project?.ai_summary?.trim() || project?.audit_summary?.trim() || project?.user_description?.trim() || project?.bio?.trim() || '';
 }
 
 function getExecutiveSummaryText(project?: PreviewProject | null) {
   const storedSummary =
-    project?.user_description?.trim() ||
     project?.ai_summary?.trim() ||
     project?.audit_summary?.trim() ||
+    project?.user_description?.trim() ||
     project?.executive_summary?.trim() ||
     project?.summary?.trim() ||
     '';
@@ -267,8 +267,8 @@ function getProjectAssetText(project: PreviewProject | null | undefined, preview
     project?.raw_text?.trim() ||
     project?.text_preview?.trim() ||
     project?.ai_summary?.trim() ||
-    project?.description?.trim() ||
     project?.audit_summary?.trim() ||
+    project?.description?.trim() ||
     project?.file_name?.trim() ||
     previewName
   );

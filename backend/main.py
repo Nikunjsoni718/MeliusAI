@@ -487,15 +487,21 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
 SPECTATE_PROJECT_PUBLIC_SELECT = (
     "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
     "logic_score, folder_id, status, title, file_size, description, user_description, "
-    "audit_summary, pros, cons, recommendations"
+    "ai_summary, audit_summary, pros, cons, recommendations"
 )
-SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
+SPECTATE_PROJECT_FOLDER_SELECT = (
+    "id, user_id, name, status, created_at, macro_score, macro_summary, "
+    "executive_summary, pros, cons, recommendations, evaluation_score"
+)
 VAULT_PROJECT_CARD_SELECT = (
     "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
     "logic_score, folder_id, status, title, file_size, description, user_description, "
-    "audit_summary, pros, cons, recommendations"
+    "ai_summary, audit_summary, pros, cons, recommendations"
 )
-VAULT_FOLDER_CARD_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
+VAULT_FOLDER_CARD_SELECT = (
+    "id, user_id, name, status, created_at, macro_score, macro_summary, "
+    "executive_summary, pros, cons, recommendations, evaluation_score"
+)
 
 
 def normalize_email(value: Any) -> str | None:
@@ -582,6 +588,7 @@ def attach_folder_files(
         nested_folders.append(
             {
                 **folder,
+                "nested_projects": nested_files,
                 "assets": nested_files,
                 "files": nested_files,
                 "file_count": len(nested_files),

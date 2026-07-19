@@ -234,8 +234,8 @@ function getStructuredItems(value?: string[] | null) {
 function getStructuredSummary(auditData?: StructuredAuditData | null) {
   const storedSummary =
     auditData?.ai_summary?.trim() ||
-    auditData?.user_description?.trim() ||
     auditData?.audit_summary?.trim() ||
+    auditData?.user_description?.trim() ||
     auditData?.executive_summary?.trim() ||
     auditData?.summary?.trim() ||
     auditData?.description?.trim() ||
@@ -359,10 +359,15 @@ export function AuditReviewModal({
   const activeFile = {
     name: assetTitle,
     evaluated_score: hydratedAuditData.score ?? 0,
-    executive_summary: structuredSummary || cleanDescriptionText || 'Audit complete. Review the insights below.',
-    pros: structuredPros.length > 0 ? structuredPros : leftSideGoods,
-    cons: structuredCons.length > 0 ? structuredCons : rightSideBads,
-    recommendations: structuredRecommendations,
+    executive_summary:
+      hydratedAuditData.ai_summary?.trim() ||
+      hydratedAuditData.audit_summary?.trim() ||
+      structuredSummary ||
+      cleanDescriptionText ||
+      'Audit complete. Review the insights below.',
+    pros: hydratedAuditData.pros?.length ? hydratedAuditData.pros : structuredPros.length > 0 ? structuredPros : leftSideGoods,
+    cons: hydratedAuditData.cons?.length ? hydratedAuditData.cons : structuredCons.length > 0 ? structuredCons : rightSideBads,
+    recommendations: hydratedAuditData.recommendations?.length ? hydratedAuditData.recommendations : structuredRecommendations,
   };
   const isFile = activeFile?.name?.includes('.');
   const badgeText = isFile ? `${activeFile.name.split('.').pop()} FILE`.toUpperCase() : 'PROJECT FOLDER';

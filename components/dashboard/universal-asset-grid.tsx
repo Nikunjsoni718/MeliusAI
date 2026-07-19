@@ -38,8 +38,23 @@ type UniversalAssetGridProps = {
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 };
 
+type ProjectFolderWithFiles = ProjectFolderRow & {
+  assets?: ProjectRow[] | null;
+  files?: ProjectRow[] | null;
+  file_count?: number | null;
+  nested_projects?: ProjectRow[] | null;
+  macro_score?: number | null;
+  macro_summary?: string | null;
+  executive_summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
+  evaluation_score?: number | null;
+  status?: string | null;
+};
+
 type UniversalGridItem =
-  | { type: 'folder'; assets: ProjectRow[]; folder: ProjectFolderRow }
+  | { type: 'folder'; assets: ProjectRow[]; folder: ProjectFolderWithFiles }
   | { type: 'asset'; asset: ProjectRow };
 
 const codeLanguageMap: Record<string, string> = {
@@ -237,6 +252,32 @@ function getAverageScore(projects: ProjectRow[]) {
   }
 
   return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function getNestedFolderAssets(folder: ProjectFolderWithFiles) {
+  if (Array.isArray(folder.nested_projects)) {
+    return folder.nested_projects;
+  }
+
+  if (Array.isArray(folder.assets)) {
+    return folder.assets;
+  }
+
+  if (Array.isArray(folder.files)) {
+    return folder.files;
+  }
+
+  return [];
+}
+
+function getStringList(value?: string[] | null) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function getFolderSummary(folder: ProjectFolderWithFiles) {
+  return folder.executive_summary?.trim() || folder.macro_summary?.trim() || '';
 }
 
 function resolvePreviewKind(project: ProjectRow): AssetPreviewKind {
@@ -705,11 +746,19 @@ export function UniversalAssetGrid({
 
     return groupedAssets;
   }, [patchedAssets]);
-  const foldersWithAssets = useMemo(() => {
-    const explicitFolders = sortedFolders.map((folder) => ({
-      folder,
-      assets: folderAssetsById[folder.id] ?? [],
-    }));
+  const foldersWithAssets = useMemo<{ folder: ProjectFolderWithFiles; assets: ProjectRow[] }[]>(() => {
+    const explicitFolders = sortedFolders.map((folder) => {
+      const folderWithFiles = folder as ProjectFolderWithFiles;
+      const nestedAssets = getNestedFolderAssets(folderWithFiles).map((asset) => ({
+        ...asset,
+        ...(localProjectPatches[asset.id] ?? {}),
+      }));
+
+      return {
+        folder: folderWithFiles,
+        assets: nestedAssets.length > 0 ? nestedAssets : folderAssetsById[folder.id] ?? [],
+      };
+    });
     const explicitFolderIds = new Set(explicitFolders.map((item) => item.folder.id));
     const syntheticFolders = Object.entries(folderAssetsById)
       .filter(([folderId]) => !explicitFolderIds.has(folderId))
@@ -721,12 +770,12 @@ export function UniversalAssetGrid({
           owner_id: folderAssets[0]?.owner_id ?? null,
           created_at: folderAssets[0]?.created_at ?? null,
           updated_at: folderAssets[0]?.updated_at ?? null,
-        } satisfies ProjectFolderRow,
+        } satisfies ProjectFolderWithFiles,
         assets: folderAssets,
       }));
 
     return [...explicitFolders, ...syntheticFolders];
-  }, [folderAssetsById, sortedFolders]);
+  }, [folderAssetsById, localProjectPatches, sortedFolders]);
   const rootAssets = useMemo(
     () => patchedAssets.filter((asset) => !asset.folder_id),
     [patchedAssets]
@@ -755,8 +804,21 @@ export function UniversalAssetGrid({
   const activeFolderItem = activeFolderId
     ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
     : null;
+  const activeFolderSummary = activeFolderItem ? getFolderSummary(activeFolderItem.folder) : '';
+  const activeFolderPros = activeFolderItem ? getStringList(activeFolderItem.folder.pros) : [];
+  const activeFolderCons = activeFolderItem ? getStringList(activeFolderItem.folder.cons) : [];
+  const activeFolderRecommendations = activeFolderItem
+    ? getStringList(activeFolderItem.folder.recommendations)
+    : [];
+  const allRenderableAssets = useMemo(
+    () => [
+      ...patchedAssets,
+      ...foldersWithAssets.flatMap(({ assets: folderAssets }) => folderAssets),
+    ],
+    [foldersWithAssets, patchedAssets]
+  );
   const activePreviewProject = activePreviewProjectId
-    ? patchedAssets.find((project) => project.id === activePreviewProjectId) ?? null
+    ? allRenderableAssets.find((project) => project.id === activePreviewProjectId) ?? null
     : null;
   const activePreviewModalProject = activePreviewProject
     ? {
@@ -851,6 +913,69 @@ export function UniversalAssetGrid({
             </div>
 
             <div className="overflow-y-auto p-5">
+              {activeFolderSummary ||
+              activeFolderPros.length > 0 ||
+              activeFolderCons.length > 0 ||
+              activeFolderRecommendations.length > 0 ? (
+                <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)]">
+                  <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
+                      AI Executive Summary
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-slate-300">
+                      {activeFolderSummary || 'Folder audit summary has not been generated yet.'}
+                    </p>
+                  </section>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <section className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4 text-emerald-300">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Strengths</p>
+                      <ul className="mt-3 space-y-2">
+                        {activeFolderPros.length > 0 ? (
+                          activeFolderPros.map((item, index) => (
+                            <li key={`folder-pro-${index}`} className="text-xs leading-relaxed text-slate-300">
+                              {item}
+                            </li>
+                          ))
+                        ) : (
+                          <li className="text-xs italic text-slate-500">No strengths generated yet.</li>
+                        )}
+                      </ul>
+                    </section>
+
+                    <section className="rounded-2xl border border-rose-500/15 bg-rose-500/[0.04] p-4 text-rose-300">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Weaknesses</p>
+                      <ul className="mt-3 space-y-2">
+                        {activeFolderCons.length > 0 ? (
+                          activeFolderCons.map((item, index) => (
+                            <li key={`folder-con-${index}`} className="text-xs leading-relaxed text-slate-300">
+                              {item}
+                            </li>
+                          ))
+                        ) : (
+                          <li className="text-xs italic text-slate-500">No weaknesses generated yet.</li>
+                        )}
+                      </ul>
+                    </section>
+
+                    <section className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4 text-cyan-300">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Recommendations</p>
+                      <ul className="mt-3 space-y-2">
+                        {activeFolderRecommendations.length > 0 ? (
+                          activeFolderRecommendations.map((item, index) => (
+                            <li key={`folder-rec-${index}`} className="text-xs leading-relaxed text-slate-300">
+                              {item}
+                            </li>
+                          ))
+                        ) : (
+                          <li className="text-xs italic text-slate-500">No recommendations generated yet.</li>
+                        )}
+                      </ul>
+                    </section>
+                  </div>
+                </div>
+              ) : null}
+
               {activeFolderItem.assets.length > 0 ? (
                 <div className="grid w-full grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {activeFolderItem.assets.map((asset) => (

@@ -57,8 +57,8 @@ type SpectatorVaultResponse = {
 };
 
 const VAULT_PROJECT_CARD_SELECT =
-  'id, user_id, owner_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
-const VAULT_FOLDER_SELECT = 'id, user_id, owner_id, name, created_at, updated_at';
+  'id, user_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
+const VAULT_FOLDER_SELECT = 'id, user_id, name, created_at, updated_at';
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -1352,7 +1352,7 @@ function VaultPageContent() {
     }
 
     try {
-      const ownerId = folder.user_id ?? folder.owner_id ?? viewerId;
+      const ownerId = folder.user_id ?? viewerId;
       let folderAssetsQuery = supabase
         .from('projects')
         .select(VAULT_PROJECT_CARD_SELECT)
