@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
@@ -34,6 +34,7 @@ type UniversalAssetGridProps = {
   onFolderOpen?: (folder: ProjectFolderRow) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReadProtocol?: (project: ProjectRow) => void;
+  onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 };
@@ -527,6 +528,7 @@ function UniversalAssetCard({
   onDelete,
   onPreview,
   onReadProtocol,
+  onReupload,
   onToggleVisibility,
   onVerify,
 }: {
@@ -538,9 +540,11 @@ function UniversalAssetCard({
   onDelete?: (projectId: string) => void;
   onPreview: (project: ProjectRow) => void;
   onReadProtocol?: (project: ProjectRow) => void;
+  onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 }) {
+  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
   const assetName = getUniversalAssetName(project);
   const isDeleting = deletingAssetId === project.id;
   const isPublic = project.is_public ?? true;
@@ -631,7 +635,7 @@ function UniversalAssetCard({
             </div>
           </div>
 
-          {onReadProtocol || (!isSpectator && onVerify) ? (
+          {onReadProtocol || (!isSpectator && (onVerify || onReupload)) ? (
             <div className="mt-auto flex w-full flex-col gap-2 pt-2">
               {onReadProtocol ? (
                 <button
@@ -667,6 +671,31 @@ function UniversalAssetCard({
                 >
                   {isVerifying ? 'Auditing Asset...' : hasCompletedAudit ? 'AI Audit Completed' : 'Verify with MeliusAI'}
                 </button>
+              ) : null}
+
+              {!isSpectator && onReupload ? (
+                <>
+                  <input
+                    ref={reuploadInputRef}
+                    type="file"
+                    accept="*/*"
+                    className="sr-only"
+                    aria-label={`Choose a replacement file for ${assetName}`}
+                    onChange={(event) => void onReupload(event, project)}
+                  />
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      reuploadInputRef.current?.click();
+                    }}
+                    disabled={verifyingAssetId !== null || arePrimaryActionsDisabled}
+                    className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Re-upload Asset
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -707,6 +736,7 @@ export function UniversalAssetGrid({
   onFolderOpen,
   onProjectUpdated,
   onReadProtocol,
+  onReupload,
   onToggleVisibility,
   onVerify,
 }: UniversalAssetGridProps) {
@@ -869,6 +899,7 @@ export function UniversalAssetGrid({
               onDelete={onDelete}
               onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
               onReadProtocol={onReadProtocol}
+              onReupload={onReupload}
               onToggleVisibility={onToggleVisibility}
               onVerify={onVerify}
             />

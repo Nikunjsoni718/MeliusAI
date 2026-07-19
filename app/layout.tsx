@@ -58,6 +58,13 @@ export default function RootLayout({
   return (
     <html lang="en-IN">
       <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* eslint-disable-next-line @next/next/no-page-custom-font -- App Router root layout is the document shell. */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+        />
         {/* Injecting the structured metadata schema right into the HTML head container */}
         <script
           type="application/ld+json"

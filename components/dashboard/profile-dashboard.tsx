@@ -5551,6 +5551,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         onReadProtocol={(project) =>
                           handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }
+                        onReupload={(event, project) =>
+                          handleReUpload(event, mapProjectRowToProjectItem(project))
+                        }
                         onDelete={(projectId) => void handleDeleteProject(projectId)}
                         onProjectUpdated={(projectId, projectPatch) => {
                           setProfileAssets((currentAssets) =>
