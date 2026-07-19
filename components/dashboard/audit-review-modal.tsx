@@ -286,7 +286,7 @@ export function AuditReviewModal({
         const supabase = createSupabaseBrowserClient();
         const { data, error } = await supabase
           .from('projects')
-          .select('score, evaluation_score, logic_score, previous_score, last_improved_summary, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
+          .select('score, evaluation_score, logic_score, audit_summary, ai_summary, pros, cons, recommendations, has_been_audited')
           .eq('id', resolvedProjectId)
           .maybeSingle();
 
@@ -305,8 +305,8 @@ export function AuditReviewModal({
 
         setHydratedProjectId(resolvedProjectId);
         setScore(data.score ?? data.evaluation_score ?? data.logic_score ?? null);
-        setPreviousScore(data.previous_score ?? null);
-        setLastImprovedSummary(data.last_improved_summary ?? null);
+        setPreviousScore(null);
+        setLastImprovedSummary(null);
         setAuditSummary(data.audit_summary ?? null);
         setAiSummary(data.ai_summary ?? null);
         setPros(Array.isArray(data.pros) ? data.pros : []);

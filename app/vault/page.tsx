@@ -57,7 +57,7 @@ type SpectatorVaultResponse = {
 };
 
 const VAULT_PROJECT_CARD_SELECT =
-  'id, user_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
+  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, title, file_size, folder_id';
 const VAULT_FOLDER_SELECT = 'id, user_id, name, created_at, updated_at';
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
@@ -273,7 +273,7 @@ function formatFileSize(bytes?: number | null) {
 }
 
 function getVaultAssetName(project: ProjectRow) {
-  return project.name?.trim() || project.file_name?.trim() || project.title?.trim() || 'Untitled Asset';
+  return project.name?.trim() || project.title?.trim() || 'Untitled Asset';
 }
 
 function getVaultAssetUrl(project: ProjectRow) {
@@ -872,7 +872,7 @@ function VaultProjectCard({
   const assetUrl = getVaultAssetUrl(project);
   const arePrimaryActionsDisabled = isDeleting;
   const fileTypeLabel = `${getVaultAssetFileType(project)} File`;
-  const fileName = project.file_name || project.name || assetName;
+  const fileName = project.name || project.title || assetName;
 
   return (
     <Card className="relative overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
@@ -1556,7 +1556,7 @@ function VaultPageContent() {
     try {
       const accumulatedReportText = await streamAssetAudit({
         fileUrl,
-        filename: project.file_name || `asset_${project.id.slice(0, 5)}.pptx`,
+        filename: project.name || project.title || `asset_${project.id.slice(0, 5)}.pptx`,
         instruction: `Run a full MeliusAI asset audit for this vault file.
 Project Title: ${getVaultAssetName(project)}
 Current Notes: ${project.description || 'No existing project notes.'}
@@ -1915,7 +1915,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                 id: activePreviewAsset.id,
                 name: activePreviewAsset.name,
                 title: getVaultAssetName(activePreviewAsset),
-                file_name: activePreviewAsset.file_name ?? activePreviewAsset.name ?? activePreviewAsset.title ?? null,
                 file_url: activePreviewAsset.file_url,
                 file_type: activePreviewAsset.file_type,
                 user_description: activePreviewAsset.user_description,
