@@ -485,10 +485,16 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, bio, avatar_url, current_status, age, avg_project_score, skills"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
-    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, logic_score"
+    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
+    "logic_score, folder_id, status, title, file_size, description, user_description, "
+    "audit_summary, pros, cons, recommendations"
 )
 SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
-VAULT_PROJECT_CARD_SELECT = "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, logic_score"
+VAULT_PROJECT_CARD_SELECT = (
+    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
+    "logic_score, folder_id, status, title, file_size, description, user_description, "
+    "audit_summary, pros, cons, recommendations"
+)
 VAULT_FOLDER_CARD_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
 
 
@@ -536,6 +542,53 @@ def dedupe_rows_by_id(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             fallback_rows.append(row)
 
     return list(deduped_rows.values()) + fallback_rows
+
+
+def clean_supabase_rows(rows: Any) -> List[Dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+
+    return [
+        dict(row)
+        for row in dedupe_rows_by_id(rows)
+        if isinstance(row, dict)
+    ]
+
+
+def sort_rows_newest_first(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: str(row.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+def attach_folder_files(
+    folders: List[Dict[str, Any]],
+    folder_files: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    files_by_folder_id: Dict[str, List[Dict[str, Any]]] = {}
+
+    for file_row in folder_files:
+        folder_id = str(file_row.get("folder_id") or "").strip()
+        if not folder_id:
+            continue
+        files_by_folder_id.setdefault(folder_id, []).append(file_row)
+
+    nested_folders: List[Dict[str, Any]] = []
+    for folder in folders:
+        folder_id = str(folder.get("id") or "").strip()
+        nested_files = sort_rows_newest_first(files_by_folder_id.get(folder_id, []))
+        nested_folders.append(
+            {
+                **folder,
+                "assets": nested_files,
+                "files": nested_files,
+                "file_count": len(nested_files),
+            }
+        )
+
+    return nested_folders
 
 
 async def fetch_project_rows_for_profile(supabase: Any, profile_id: str) -> List[Dict[str, Any]]:
@@ -4635,14 +4688,7 @@ async def get_authenticated_vault(
     try:
         supabase = get_request_supabase_client(request)
 
-        projects_response, folders_response = await asyncio.gather(
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(VAULT_PROJECT_CARD_SELECT)
-                .eq("user_id", current_user_id)
-                .order("created_at", desc=True)
-                .execute()
-            ),
+        folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
             asyncio.to_thread(
                 lambda: supabase.table("project_folders")
                 .select(VAULT_FOLDER_CARD_SELECT)
@@ -4650,24 +4696,39 @@ async def get_authenticated_vault(
                 .order("created_at", desc=True)
                 .execute()
             ),
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(VAULT_PROJECT_CARD_SELECT)
+                .eq("user_id", current_user_id)
+                .is_("folder_id", "null")
+                .order("created_at", desc=True)
+                .execute()
+            ),
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(VAULT_PROJECT_CARD_SELECT)
+                .eq("user_id", current_user_id)
+                .not_.is_("folder_id", "null")
+                .order("created_at", desc=True)
+                .execute()
+            ),
         )
 
-        projects = projects_response.data if isinstance(projects_response.data, list) else []
-        folders = folders_response.data if isinstance(folders_response.data, list) else []
-        clean_projects = [
-            dict(project)
-            for project in projects
-            if isinstance(project, dict)
-        ]
-        clean_folders = [
-            dict(folder)
-            for folder in folders
-            if isinstance(folder, dict)
-        ]
+        clean_projects = sort_rows_newest_first(
+            clean_supabase_rows(standalone_projects_response.data)
+        )
+        clean_folder_files = sort_rows_newest_first(
+            clean_supabase_rows(folder_files_response.data)
+        )
+        clean_folders = attach_folder_files(
+            sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
+            clean_folder_files,
+        )
 
         print(
             f"Authenticated vault fetch for {current_user_id} returned "
-            f"{len(clean_projects)} projects and {len(clean_folders)} folders"
+            f"{len(clean_projects)} standalone projects, {len(clean_folders)} folders, "
+            f"and {len(clean_folder_files)} folder files"
         )
 
         return {
@@ -4680,6 +4741,8 @@ async def get_authenticated_vault(
             "folders": clean_folders,
             "project_folders": clean_folders,
             "projectFolders": clean_folders,
+            "folder_files": clean_folder_files,
+            "folderFiles": clean_folder_files,
         }
     except Exception as e:
         print(str(e))
@@ -4722,14 +4785,7 @@ async def spectate_profile(
         if not profile_uuid_text:
             raise HTTPException(status_code=404, detail="User not found")
 
-        projects_response, folders_response = await asyncio.gather(
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                .eq("user_id", profile_uuid_text)
-                .order("created_at", desc=True)
-                .execute()
-            ),
+        folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
             asyncio.to_thread(
                 lambda: supabase.table("project_folders")
                 .select(SPECTATE_PROJECT_FOLDER_SELECT)
@@ -4737,31 +4793,38 @@ async def spectate_profile(
                 .order("created_at", desc=True)
                 .execute()
             ),
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                .eq("user_id", profile_uuid_text)
+                .is_("folder_id", "null")
+                .order("created_at", desc=True)
+                .execute()
+            ),
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                .eq("user_id", profile_uuid_text)
+                .not_.is_("folder_id", "null")
+                .order("created_at", desc=True)
+                .execute()
+            ),
         )
 
-        project_rows = projects_response.data if isinstance(projects_response.data, list) else []
-        folder_rows = folders_response.data if isinstance(folders_response.data, list) else []
-        assets = [
-            dict(project)
-            for project in dedupe_rows_by_id(project_rows)
-            if isinstance(project, dict)
-        ]
-        project_folders = [
-            dict(folder)
-            for folder in dedupe_rows_by_id(folder_rows)
-            if isinstance(folder, dict)
-        ]
-        assets = sorted(
-            assets,
-            key=lambda row: str(row.get("created_at") or ""),
-            reverse=True,
+        assets = sort_rows_newest_first(
+            clean_supabase_rows(standalone_projects_response.data)
         )
-        project_folders = sorted(
-            project_folders,
-            key=lambda row: str(row.get("created_at") or ""),
-            reverse=True,
+        folder_files = sort_rows_newest_first(
+            clean_supabase_rows(folder_files_response.data)
         )
-        print(f"Spectator fetch for {target_username} returned {len(assets)} assets")
+        project_folders = attach_folder_files(
+            sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
+            folder_files,
+        )
+        print(
+            f"Spectator fetch for {target_username} returned {len(assets)} standalone assets, "
+            f"{len(project_folders)} folders, and {len(folder_files)} folder files"
+        )
 
         current_user_id, authentication_status = await resolve_request_user(
             request,
@@ -4793,6 +4856,8 @@ async def spectate_profile(
             "projectFolders": project_folders,
             "vault_assets": profile["projects"],
             "vaultAssets": profile["projects"],
+            "folder_files": folder_files,
+            "folderFiles": folder_files,
             "ratings": scan_rows,
             "scores": scan_rows,
             "scans": scan_rows,
