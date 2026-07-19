@@ -53,6 +53,7 @@ type ProjectItem = {
   file_extension?: string | null;
   file_name?: string | null;
   file_url?: string | null;
+  storage_path?: string | null;
   code_language?: string | null;
   description?: string | null;
   executive_summary?: string | null;
@@ -924,6 +925,60 @@ function getProjectFileType(project: ProjectItem) {
 
 function getProjectDownloadHref(project: ProjectItem) {
   return project.preview_url ?? project.file_url ?? null;
+}
+
+function normalizeVaultStoragePath(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedPath = value
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join('/');
+
+  return normalizedPath || null;
+}
+
+function extractVaultStoragePath(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue || /^(blob:|data:|meliusai:)/i.test(trimmedValue)) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+    const bucketPathMarkers = [
+      `/storage/v1/object/public/${STORAGE_BUCKET_NAME}/`,
+      `/storage/v1/object/sign/${STORAGE_BUCKET_NAME}/`,
+      `/storage/v1/object/authenticated/${STORAGE_BUCKET_NAME}/`,
+      `/storage/v1/object/${STORAGE_BUCKET_NAME}/`,
+    ];
+    const marker = bucketPathMarkers.find((candidate) => url.pathname.includes(candidate));
+
+    if (!marker) {
+      return null;
+    }
+
+    const markerIndex = url.pathname.indexOf(marker);
+    return normalizeVaultStoragePath(
+      decodeURIComponent(url.pathname.slice(markerIndex + marker.length))
+    );
+  } catch {
+    if (trimmedValue.includes('://')) {
+      return null;
+    }
+
+    const pathWithoutBucket = trimmedValue.startsWith(`${STORAGE_BUCKET_NAME}/`)
+      ? trimmedValue.slice(STORAGE_BUCKET_NAME.length + 1)
+      : trimmedValue;
+    return normalizeVaultStoragePath(pathWithoutBucket);
+  }
 }
 
 function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
@@ -2715,6 +2770,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return activeSession?.access_token ?? null;
   }, [supabase]);
 
+  const getProjectAuditHref = useCallback(
+    async (project: ProjectItem) => {
+      const currentHref = getProjectDownloadHref(project);
+      const storagePath =
+        normalizeVaultStoragePath(project.storage_path) ??
+        extractVaultStoragePath(currentHref);
+
+      if (!storagePath) {
+        return currentHref;
+      }
+
+      if (!supabase) {
+        throw new Error('Verification Failed: Project storage is unavailable.');
+      }
+
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET_NAME)
+        .createSignedUrl(storagePath, 3600);
+
+      if (error || !data?.signedUrl) {
+        throw new Error(error?.message || 'Verification Failed: Unable to authorize the project file.');
+      }
+
+      return data.signedUrl;
+    },
+    [supabase]
+  );
+
   useEffect(() => {
     if (loading) {
       return;
@@ -4084,7 +4167,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
           : Math.random().toString(36).slice(2);
-      uploadedPath = `${userId}/${project.id}/${Date.now()}-${uniqueId}-${safeFileName}`;
+      uploadedPath = normalizeVaultStoragePath(
+        `${userId}/${project.id}/${Date.now()}-${uniqueId}-${safeFileName}`
+      );
+
+      if (!uploadedPath) {
+        throw new Error("Unable to create a valid replacement storage path.");
+      }
 
       currentStep = "upload replacement file";
       console.log("[Re-upload] Upload starting.", {
@@ -4121,15 +4210,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: "uploading",
       });
 
-      currentStep = "resolve public URL";
-      console.log("[Re-upload] Resolving public URL.", {
+      currentStep = "create signed URL";
+      console.log("[Re-upload] Creating signed URL.", {
         bucket: BUCKET_NAME,
         path: uploadedPath,
       });
-      const { data: publicUrlData } = projectBucket.getPublicUrl(uploadedPath);
-      const newFileUrl = publicUrlData.publicUrl;
-      if (!newFileUrl) {
-        throw new Error("Unable to create a public URL for the replacement asset.");
+      const { data: signedUrlData, error: signedUrlError } = await projectBucket.createSignedUrl(
+        uploadedPath,
+        3600
+      );
+      const newFileUrl = signedUrlData?.signedUrl;
+      if (signedUrlError || !newFileUrl) {
+        throw new Error(
+          signedUrlError?.message || "Unable to authorize the replacement asset."
+        );
       }
 
       currentStep = "update project row";
@@ -4165,34 +4259,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
 
       const oldFileUrl = project.file_url ?? project.preview_url;
-      if (oldFileUrl) {
-        let oldStoragePath: string | null = null;
-
-        try {
-          const parsedUrl = new URL(oldFileUrl);
-          const publicPathMarker = `/storage/v1/object/public/${BUCKET_NAME}/`;
-          const markerIndex = parsedUrl.pathname.indexOf(publicPathMarker);
-
-          if (markerIndex >= 0) {
-            oldStoragePath = decodeURIComponent(
-              parsedUrl.pathname.slice(markerIndex + publicPathMarker.length)
-            );
-          } else {
-            console.warn("[Re-upload] Old URL does not belong to the expected bucket.", {
-              bucket: BUCKET_NAME,
-              oldFileUrl,
-              projectId: project.id,
-            });
-          }
-        } catch (pathError) {
-          console.error("[Re-upload] Failed to parse the old storage path.", {
-            bucket: BUCKET_NAME,
-            oldFileUrl,
-            projectId: project.id,
-            error: pathError,
-          });
-          oldStoragePath = null;
-        }
+      if (oldFileUrl || project.storage_path) {
+        const oldStoragePath =
+          normalizeVaultStoragePath(project.storage_path) ??
+          extractVaultStoragePath(oldFileUrl);
 
         if (oldStoragePath && oldStoragePath !== uploadedPath) {
           currentStep = "delete previous file";
@@ -4236,6 +4306,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         file_name: file.name,
         file_url: newFileUrl,
         preview_url: newFileUrl,
+        storage_path: uploadedPath,
         file_extension: getFileExtension(file.name) || null,
         file_type: getFileExtension(file.name) || "file",
         text_preview: null,
@@ -4261,6 +4332,47 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         projects.map((currentProject) =>
           currentProject.id === project.id ? pendingProject : currentProject
         )
+      );
+      const replacementProjectRowPatch: Partial<ProjectRow> = {
+        name: file.name,
+        title: file.name,
+        file_name: file.name,
+        file_url: newFileUrl,
+        file_type: getFileExtension(file.name) || "file",
+        score: null,
+        evaluation_score: null,
+        logic_score: null,
+        audit_summary: null,
+        ai_summary: null,
+        pros: null,
+        cons: null,
+        recommendations: null,
+        has_been_audited: false,
+      };
+      setProfileAssets((currentAssets) =>
+        currentAssets.map((asset) =>
+          asset.id === project.id
+            ? { ...asset, ...replacementProjectRowPatch }
+            : asset
+        )
+      );
+      setProjectFolders((currentFolders) =>
+        currentFolders.map((folder) => {
+          const folderWithProjects = folder as ProjectFolderWithNestedProjects;
+          const updateNestedProjects = (rows: ProjectRow[] | null | undefined) =>
+            rows?.map((row) =>
+              row.id === project.id
+                ? { ...row, ...replacementProjectRowPatch }
+                : row
+            ) ?? rows;
+
+          return {
+            ...folder,
+            nested_projects: updateNestedProjects(folderWithProjects.nested_projects),
+            assets: updateNestedProjects(folderWithProjects.assets),
+            files: updateNestedProjects(folderWithProjects.files),
+          };
+        })
       );
       setActivePreviewProjectOverride((currentProject) =>
         currentProject?.id === project.id ? pendingProject : currentProject
@@ -4408,7 +4520,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setVerifiedAssetId(null);
 
     const userContextDescription = projectDescriptions[project.id] ?? '';
-    const projectSourceHref = getProjectDownloadHref(project);
     const filename = project.file_name || project.title;
 
     if (verifiedAssetTimerRef.current) {
@@ -4422,6 +4533,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     try {
+      const projectSourceHref = await getProjectAuditHref(project);
       if (!projectSourceHref) {
         throw new Error('Verification Failed: This asset does not contain a valid file URL.');
       }
@@ -4610,17 +4722,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setProjectVerifyError(null);
 
     try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!supabase) {
+        throw new Error('Project storage is not available right now.');
+      }
 
-      if (!response.ok) {
-        throw new Error(body?.error ?? 'Unable to delete project.');
+      const userId = await getConfirmedUserId();
+      if (!userId) {
+        throw new Error('Your session has expired. Please sign in again.');
+      }
+
+      const { data: deletedProjects, error: deleteError } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectId)
+        .eq('user_id', userId)
+        .select('id');
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      if (!deletedProjects || deletedProjects.length === 0) {
+        throw new Error('Project not found or unauthorized.');
       }
 
       setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
+      setProfileAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== projectId));
       setProjectDescriptions((currentDescriptions) => {
         const nextDescriptions = { ...currentDescriptions };
         delete nextDescriptions[projectId];

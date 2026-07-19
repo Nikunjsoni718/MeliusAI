@@ -1667,14 +1667,23 @@ Return Markdown sections for goods, bads, project description, and a final score
     setVaultError(null);
 
     try {
-      const response = await fetch(`/api/projects/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!supabase || !viewerId) {
+        throw new Error('Your session has expired. Please sign in again.');
+      }
 
-      if (!response.ok) {
-        throw new Error(body?.error ?? 'Unable to delete project.');
+      const { data: deletedProjects, error: deleteError } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', viewerId)
+        .select('id');
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      if (!deletedProjects || deletedProjects.length === 0) {
+        throw new Error('Project not found or unauthorized.');
       }
 
       setVaultAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== id));
