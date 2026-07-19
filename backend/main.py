@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 import ast
+from collections import defaultdict
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -494,13 +495,12 @@ SPECTATE_PROJECT_FOLDER_SELECT = (
     "executive_summary, pros, cons, recommendations, evaluation_score"
 )
 VAULT_PROJECT_CARD_SELECT = (
-    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
-    "logic_score, folder_id, status, title, file_size, description, user_description, "
-    "ai_summary, audit_summary, pros, cons, recommendations"
+    "id, user_id, folder_id, name, title, file_type, file_url, file_size, "
+    "created_at, score, logic_score, status, has_been_audited"
 )
-VAULT_FOLDER_CARD_SELECT = (
-    "id, user_id, name, status, created_at, macro_score, macro_summary, "
-    "executive_summary, pros, cons, recommendations, evaluation_score"
+VAULT_FOLDER_CARD_SELECT = "id, user_id, name, created_at"
+VAULT_PROFILE_SELECT = (
+    "id, username, full_name, avatar_url, current_status, avg_project_score"
 )
 
 
@@ -596,6 +596,41 @@ def attach_folder_files(
         )
 
     return nested_folders
+
+
+def stitch_dashboard_projects(
+    folders: List[Dict[str, Any]],
+    projects: List[Dict[str, Any]],
+) -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    """Group one bulk project result and attach children without further I/O."""
+    projects_by_folder_id: defaultdict[str | None, List[Dict[str, Any]]] = defaultdict(list)
+    folder_projects: List[Dict[str, Any]] = []
+
+    for project in projects:
+        raw_folder_id = project.get("folder_id")
+        folder_id = str(raw_folder_id).strip() if raw_folder_id is not None else None
+        normalized_folder_id = folder_id or None
+        projects_by_folder_id[normalized_folder_id].append(project)
+
+        if normalized_folder_id is not None:
+            folder_projects.append(project)
+
+    standalone_projects = projects_by_folder_id.pop(None, [])
+
+    # This is the only folders pass; every lookup is against the in-memory map.
+    for folder in folders:
+        folder_id = str(folder.get("id") or "").strip()
+        nested_projects = projects_by_folder_id.get(folder_id, [])
+        folder["nested_projects"] = nested_projects
+        folder["assets"] = nested_projects
+        folder["files"] = nested_projects
+        folder["file_count"] = len(nested_projects)
+
+    return standalone_projects, folders, folder_projects
 
 
 async def fetch_project_rows_for_profile(supabase: Any, profile_id: str) -> List[Dict[str, Any]]:
@@ -4686,6 +4721,7 @@ async def verify_member(
     return {"success": True, "user": result.data[0]}
 
 
+@app.get("/api/dashboard")
 @app.get("/api/vault")
 @app.get("/api/projects")
 async def get_authenticated_vault(
@@ -4695,7 +4731,14 @@ async def get_authenticated_vault(
     try:
         supabase = get_request_supabase_client(request)
 
-        folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
+        profile_response, folders_response, projects_response = await asyncio.gather(
+            asyncio.to_thread(
+                lambda: supabase.table("profiles")
+                .select(VAULT_PROFILE_SELECT)
+                .eq("id", current_user_id)
+                .limit(1)
+                .execute()
+            ),
             asyncio.to_thread(
                 lambda: supabase.table("project_folders")
                 .select(VAULT_FOLDER_CARD_SELECT)
@@ -4707,49 +4750,41 @@ async def get_authenticated_vault(
                 lambda: supabase.table("projects")
                 .select(VAULT_PROJECT_CARD_SELECT)
                 .eq("user_id", current_user_id)
-                .is_("folder_id", "null")
-                .order("created_at", desc=True)
-                .execute()
-            ),
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(VAULT_PROJECT_CARD_SELECT)
-                .eq("user_id", current_user_id)
-                .not_.is_("folder_id", "null")
                 .order("created_at", desc=True)
                 .execute()
             ),
         )
 
-        clean_projects = sort_rows_newest_first(
-            clean_supabase_rows(standalone_projects_response.data)
-        )
-        clean_folder_files = sort_rows_newest_first(
-            clean_supabase_rows(folder_files_response.data)
-        )
-        clean_folders = attach_folder_files(
-            sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
-            clean_folder_files,
+        profile_rows = clean_supabase_rows(profile_response.data)
+        profile = profile_rows[0] if profile_rows else None
+        all_projects = clean_supabase_rows(projects_response.data)
+        standalone_projects, clean_folders, folder_projects = stitch_dashboard_projects(
+            clean_supabase_rows(folders_response.data),
+            all_projects,
         )
 
-        print(
-            f"Authenticated vault fetch for {current_user_id} returned "
-            f"{len(clean_projects)} standalone projects, {len(clean_folders)} folders, "
-            f"and {len(clean_folder_files)} folder files"
+        logger.info(
+            "authenticated_dashboard.loaded user_id=%s standalone=%d folders=%d folder_projects=%d",
+            current_user_id,
+            len(standalone_projects),
+            len(clean_folders),
+            len(folder_projects),
         )
 
         return {
             "success": True,
-            "data": clean_projects,
-            "projects": clean_projects,
-            "assets": clean_projects,
-            "vault_assets": clean_projects,
-            "vaultAssets": clean_projects,
+            "profile": profile,
+            "data": standalone_projects,
+            "projects": standalone_projects,
+            "all_projects": all_projects,
+            "assets": standalone_projects,
+            "vault_assets": standalone_projects,
+            "vaultAssets": standalone_projects,
             "folders": clean_folders,
             "project_folders": clean_folders,
             "projectFolders": clean_folders,
-            "folder_files": clean_folder_files,
-            "folderFiles": clean_folder_files,
+            "folder_files": folder_projects,
+            "folderFiles": folder_projects,
         }
     except Exception as e:
         print(str(e))
