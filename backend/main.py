@@ -4842,6 +4842,11 @@ async def spectate_profile(
         viewer_type = "owner" if is_owner else "visitor"
         profile["email"] = None
         profile["projects"] = assets
+        profile["project_folders"] = project_folders
+        profile["projectFolders"] = project_folders
+        profile["folders"] = project_folders
+        profile["folder_files"] = folder_files
+        profile["folderFiles"] = folder_files
 
         scan_rows = build_project_scan_rows(profile["projects"])
         profile["ratings"] = scan_rows

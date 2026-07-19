@@ -279,6 +279,8 @@ type SpectatorProfilePayload = {
   vaultAssets?: ProjectRow[] | null;
   projectFolders?: ProjectFolderRow[] | null;
   project_folders?: ProjectFolderRow[] | null;
+  folderFiles?: ProjectRow[] | null;
+  folder_files?: ProjectRow[] | null;
 };
 type SavedProfileItem = SpectatorProfilePayload & {
   birth_date?: string | null;
@@ -315,10 +317,20 @@ type NormalizedSpectateProfileResponse = {
   projects: ProjectRow[];
   projectFolders: ProjectFolderRow[];
   project_folders?: ProjectFolderRow[] | null;
+  folderFiles?: ProjectRow[] | null;
+  folder_files?: ProjectRow[] | null;
   ratings: unknown[];
   opportunities: unknown[];
   authenticationStatus: string | null;
   viewerType: string | null;
+};
+type ProjectFolderWithNestedProjects = ProjectFolderRow & {
+  assets?: ProjectRow[] | null;
+  files?: ProjectRow[] | null;
+  file_count?: number | null;
+  folderFiles?: ProjectRow[] | null;
+  folder_files?: ProjectRow[] | null;
+  nested_projects?: ProjectRow[] | null;
 };
 type DashboardNavigationItem = {
   href: string;
@@ -523,15 +535,72 @@ function extractSpectatorProjects(payload: NormalizedSpectateProfileResponse | n
 function extractSpectatorProjectFolders(payload: NormalizedSpectateProfileResponse | null): ProjectFolderRow[] {
   const payloadRecord = asRecord(payload);
   const dataRecord = asRecord(payloadRecord?.data);
+  const profileRecord = asRecord(payloadRecord?.profile);
 
   return firstArray<ProjectFolderRow>([
     payloadRecord?.projectFolders,
     payloadRecord?.project_folders,
     payloadRecord?.folders,
+    profileRecord?.projectFolders,
+    profileRecord?.project_folders,
+    profileRecord?.folders,
     dataRecord?.projectFolders,
     dataRecord?.project_folders,
     dataRecord?.folders,
   ]);
+}
+
+function extractSpectatorFolderFiles(payload: NormalizedSpectateProfileResponse | null): ProjectRow[] {
+  const payloadRecord = asRecord(payload);
+  const dataRecord = asRecord(payloadRecord?.data);
+  const profileRecord = asRecord(payloadRecord?.profile);
+
+  return firstArray<ProjectRow>([
+    payloadRecord?.folderFiles,
+    payloadRecord?.folder_files,
+    profileRecord?.folderFiles,
+    profileRecord?.folder_files,
+    dataRecord?.folderFiles,
+    dataRecord?.folder_files,
+  ]);
+}
+
+function getFolderNestedProjects(folder: ProjectFolderWithNestedProjects): ProjectRow[] {
+  if (Array.isArray(folder.nested_projects)) {
+    return folder.nested_projects;
+  }
+
+  if (Array.isArray(folder.assets)) {
+    return folder.assets;
+  }
+
+  if (Array.isArray(folder.files)) {
+    return folder.files;
+  }
+
+  return [];
+}
+
+function stitchSpectatorProjectFolders(
+  folders: ProjectFolderRow[],
+  folderFiles: ProjectRow[]
+): ProjectFolderWithNestedProjects[] {
+  return folders.map((folder) => {
+    const folderWithNestedProjects = folder as ProjectFolderWithNestedProjects;
+    const existingNestedProjects = getFolderNestedProjects(folderWithNestedProjects);
+    const nestedProjects =
+      existingNestedProjects.length > 0
+        ? existingNestedProjects
+        : folderFiles.filter((file) => file.folder_id === folder.id);
+
+    return {
+      ...folderWithNestedProjects,
+      nested_projects: nestedProjects,
+      assets: nestedProjects,
+      files: nestedProjects,
+      file_count: nestedProjects.length,
+    };
+  });
 }
 
 function formatScanDate(value: string) {
@@ -2296,7 +2365,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         if (isActive) {
           const loadedAssets = extractSpectatorProjects(payload);
-          const loadedProjectFolders = extractSpectatorProjectFolders(payload);
+          const loadedProjectFolders = stitchSpectatorProjectFolders(
+            extractSpectatorProjectFolders(payload),
+            extractSpectatorFolderFiles(payload)
+          );
 
           setProfileAssets(loadedAssets);
           setProjects(loadedAssets.map(mapProjectRowToProjectItem));
@@ -2737,7 +2809,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         extractSpectatorProjects(spectatorProfilePayload);
       const loadedAssets = Array.isArray(payloadProjects) ? payloadProjects : [];
       const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
-      const loadedProjectFolders = extractSpectatorProjectFolders(spectatorProfilePayload);
+      const loadedProjectFolders = stitchSpectatorProjectFolders(
+        extractSpectatorProjectFolders(spectatorProfilePayload),
+        extractSpectatorFolderFiles(spectatorProfilePayload)
+      );
       const payloadRatings = Array.isArray(spectatorProfilePayload.ratings)
         ? spectatorProfilePayload.ratings
         : [];
