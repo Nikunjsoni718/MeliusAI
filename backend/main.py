@@ -482,16 +482,13 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
-    "id, username, full_name, bio, avatar_url, age, current_status, "
-    "qualifications, experience, hobbies, skills"
+    "id, username, full_name, bio, avatar_url, current_status, age, avg_project_score, skills"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
-    "id, user_id, owner_id, is_public, folder_id, name, title, file_name, "
-    "file_url, file_type, file_size, score, evaluation_score, logic_score, "
-    "has_been_audited, previous_score, status, created_at, updated_at"
+    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, logic_score"
 )
-SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, owner_id, name, created_at, updated_at"
-VAULT_PROJECT_CARD_SELECT = "id, user_id, name, file_type, created_at, score, has_been_audited, file_url"
+SPECTATE_PROJECT_FOLDER_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
+VAULT_PROJECT_CARD_SELECT = "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, logic_score"
 VAULT_FOLDER_CARD_SELECT = "id, user_id, name, status, created_at, macro_score, evaluation_score"
 
 
@@ -4684,15 +4681,10 @@ async def get_authenticated_vault(
             "project_folders": clean_folders,
             "projectFolders": clean_folders,
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        print(f"Authenticated vault fetch failed for {current_user_id}: {e}")
+        print(str(e))
         logger.exception("authenticated_vault.failed user_id=%s", current_user_id)
-        raise HTTPException(
-            status_code=500,
-            detail="Unable to load authenticated vault data.",
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/spectate-profile/{username}")
@@ -4701,158 +4693,117 @@ async def spectate_profile(
     request: Request,
     token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
-    target_username = username.strip().lower()
-    if not target_username:
-        print("--- SPECTATE PROFILE FAILED: empty username parameter ---")
-        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        target_username = username.strip().lower()
+        if not target_username:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    supabase = get_supabase_service_client()
-    if supabase is None:
-        print(
-            "--- SPECTATE PROFILE FAILED: SUPABASE_SERVICE_ROLE_KEY is not configured, "
-            "so the service-role client could not be initialized ---"
+        supabase = get_supabase_service_client()
+        if supabase is None:
+            raise HTTPException(
+                status_code=500,
+                detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
+            )
+
+        profile_response = await asyncio.to_thread(
+            lambda: supabase.table("profiles")
+            .select(SPECTATE_PROFILE_PUBLIC_SELECT)
+            .eq("username", target_username)
+            .limit(1)
+            .execute()
         )
-        raise HTTPException(
-            status_code=500,
-            detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
-        )
+        profile_rows = profile_response.data or []
 
-    profile_response = await asyncio.to_thread(
-        lambda: supabase.table("profiles")
-        .select(SPECTATE_PROFILE_PUBLIC_SELECT)
-        .eq("username", target_username)
-        .limit(1)
-        .execute()
-    )
-    profile_rows = profile_response.data or []
+        if not isinstance(profile_rows, list) or len(profile_rows) == 0:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    if not isinstance(profile_rows, list):
-        print(
-            "--- SPECTATE PROFILE FAILED: Supabase profiles query returned an unexpected "
-            f"data shape for username '{target_username}': {type(profile_rows).__name__} ---"
-        )
-        raise HTTPException(status_code=404, detail="User not found")
+        profile = dict(profile_rows[0])
+        profile_uuid_text = str(profile.get("id") or "").strip()
+        if not profile_uuid_text:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    if len(profile_rows) == 0:
-        print(
-            "--- SPECTATE PROFILE FAILED: no profile row found for username "
-            f"'{target_username}' using service-role client ---"
-        )
-        raise HTTPException(status_code=404, detail="User not found")
-
-    profile = dict(profile_rows[0])
-    profile_uuid = profile.get("id") or profile.get("user_id")
-    profile_uuid_text = str(profile_uuid or "").strip()
-    if not profile_uuid_text:
-        print(
-            "--- SPECTATE PROFILE FAILED: profile row for username "
-            f"'{target_username}' has no id/user_id UUID ---"
-        )
-        raise HTTPException(status_code=404, detail="User not found")
-
-    print(f"--- SPECTATE PROFILE UUID: username='{target_username}' uuid='{profile_uuid_text}' ---")
-
-    projects_response = await asyncio.to_thread(
-        lambda: supabase.table("projects")
-        .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-        .eq("user_id", profile_uuid_text)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    folders_response = await asyncio.to_thread(
-        lambda: supabase.table("project_folders")
-        .select(SPECTATE_PROJECT_FOLDER_SELECT)
-        .eq("user_id", profile_uuid_text)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    project_rows = projects_response.data if isinstance(projects_response.data, list) else []
-    folder_rows = folders_response.data if isinstance(folders_response.data, list) else []
-    assets = [
-        dict(project)
-        for project in dedupe_rows_by_id(project_rows)
-        if isinstance(project, dict)
-    ]
-    project_folders = [
-        dict(folder)
-        for folder in dedupe_rows_by_id(folder_rows)
-        if isinstance(folder, dict)
-    ]
-    assets = sorted(
-        assets,
-        key=lambda row: str(row.get("created_at") or ""),
-        reverse=True,
-    )
-    project_folders = sorted(
-        project_folders,
-        key=lambda row: str(row.get("created_at") or ""),
-        reverse=True,
-    )
-    print(f"Spectator fetch for {target_username} returned {len(assets)} assets")
-
-    current_user_id, authentication_status = await resolve_request_user(
-        request,
-        token,
-        required=False,
-    )
-    profile_owner_id = profile_uuid_text
-    is_owner = bool(
-        current_user_id
-        and profile_owner_id
-        and current_user_id == profile_owner_id
-    )
-    viewer_type = "owner" if is_owner else "visitor"
-    profile["email"] = None
-    profile["projects"] = assets
-
-    email_result = await fetch_auth_email_for_profile(supabase, profile_uuid_text)
-    profile["email"] = email_result
-
-    scan_rows = build_project_scan_rows(profile["projects"])
-    profile["ratings"] = scan_rows
-    profile["scores"] = scan_rows
-    profile["scans"] = scan_rows
-
-    profile["isOwner"] = is_owner
-    profile["viewerType"] = viewer_type
-    profile["authenticationStatus"] = authentication_status
-
-    runtime_environment = (
-        os.getenv("ENVIRONMENT")
-        or os.getenv("APP_ENV")
-        or os.getenv("NODE_ENV")
-        or "development"
-    ).strip().lower()
-    if runtime_environment not in {"prod", "production"}:
-        logger.info(
-            "Spectate profile owner detection: username=%s auth_status=%s "
-            "authenticated_user_id=%s profile_owner_id=%s is_owner=%s",
-            target_username,
-            authentication_status,
-            current_user_id,
-            profile_owner_id,
-            is_owner,
+        projects_response, folders_response = await asyncio.gather(
+            asyncio.to_thread(
+                lambda: supabase.table("projects")
+                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                .eq("user_id", profile_uuid_text)
+                .order("created_at", desc=True)
+                .execute()
+            ),
+            asyncio.to_thread(
+                lambda: supabase.table("project_folders")
+                .select(SPECTATE_PROJECT_FOLDER_SELECT)
+                .eq("user_id", profile_uuid_text)
+                .order("created_at", desc=True)
+                .execute()
+            ),
         )
 
-    return {
-        **profile,
-        "success": True,
-        "data": profile["projects"],
-        "assets": profile["projects"],
-        "profile": profile,
-        "resume": profile,
-        "projects": profile["projects"],
-        "project_folders": project_folders,
-        "projectFolders": project_folders,
-        "vault_assets": profile["projects"],
-        "vaultAssets": profile["projects"],
-        "ratings": scan_rows,
-        "scores": scan_rows,
-        "scans": scan_rows,
-        "isOwner": is_owner,
-        "viewerType": viewer_type,
-        "authenticationStatus": authentication_status,
-    }
+        project_rows = projects_response.data if isinstance(projects_response.data, list) else []
+        folder_rows = folders_response.data if isinstance(folders_response.data, list) else []
+        assets = [
+            dict(project)
+            for project in dedupe_rows_by_id(project_rows)
+            if isinstance(project, dict)
+        ]
+        project_folders = [
+            dict(folder)
+            for folder in dedupe_rows_by_id(folder_rows)
+            if isinstance(folder, dict)
+        ]
+        assets = sorted(
+            assets,
+            key=lambda row: str(row.get("created_at") or ""),
+            reverse=True,
+        )
+        project_folders = sorted(
+            project_folders,
+            key=lambda row: str(row.get("created_at") or ""),
+            reverse=True,
+        )
+        print(f"Spectator fetch for {target_username} returned {len(assets)} assets")
+
+        current_user_id, authentication_status = await resolve_request_user(
+            request,
+            token,
+            required=False,
+        )
+        is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
+        viewer_type = "owner" if is_owner else "visitor"
+        profile["email"] = None
+        profile["projects"] = assets
+
+        scan_rows = build_project_scan_rows(profile["projects"])
+        profile["ratings"] = scan_rows
+        profile["scores"] = scan_rows
+        profile["scans"] = scan_rows
+        profile["isOwner"] = is_owner
+        profile["viewerType"] = viewer_type
+        profile["authenticationStatus"] = authentication_status
+
+        return {
+            **profile,
+            "success": True,
+            "data": profile["projects"],
+            "assets": profile["projects"],
+            "profile": profile,
+            "resume": profile,
+            "projects": profile["projects"],
+            "project_folders": project_folders,
+            "projectFolders": project_folders,
+            "vault_assets": profile["projects"],
+            "vaultAssets": profile["projects"],
+            "ratings": scan_rows,
+            "scores": scan_rows,
+            "scans": scan_rows,
+            "isOwner": is_owner,
+            "viewerType": viewer_type,
+            "authenticationStatus": authentication_status,
+        }
+    except Exception as e:
+        print(str(e))
+        logger.exception("spectate_profile.failed username=%s", username)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/talent-discovery")
