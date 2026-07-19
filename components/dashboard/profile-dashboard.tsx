@@ -10,7 +10,6 @@ import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lu
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
-import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -358,7 +357,7 @@ const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, owner_id, folder_id, name, title, file_name, file_url, file_type, file_size, created_at, updated_at, logic_score, is_public, evaluation_score, has_been_audited, score, previous_score, status';
+  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, title, file_size, folder_id';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -2539,8 +2538,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     [activeFolderId, projectFolders]
   );
   const activeFolderProjects = useMemo(
-    () => (activeFolderId ? allProjects.filter((project) => project.folder_id === activeFolderId) : []),
-    [activeFolderId, allProjects]
+    () => {
+      if (!activeFolderId) {
+        return [];
+      }
+
+      const localFolderProjects = allProjects.filter((project) => project.folder_id === activeFolderId);
+      if (localFolderProjects.length > 0) {
+        return localFolderProjects;
+      }
+
+      return activeFolder
+        ? getFolderNestedProjects(activeFolder as ProjectFolderWithNestedProjects).map(mapProjectRowToProjectItem)
+        : [];
+    },
+    [activeFolder, activeFolderId, allProjects]
   );
   const activeFolderProfileAssets = useMemo(
     () =>
@@ -3571,7 +3583,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         file_url: fileUrl,
         file_type: fileExtension,
         description: uploadDescription,
-        user_description: uploadDescription,
         is_public: options.isPublic ?? isScorecardPublic,
         has_been_audited: false,
         status: 'draft',
@@ -3875,11 +3886,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw projectError;
       }
 
-      const savedFolder = folderData as ProjectFolderRow;
-      const savedProjects = uploadResults
-        .map((result) => result.data)
-        .filter(Boolean)
-        .map((row) => mapProjectRowToProjectItem(row as ProjectRow));
+      const savedProjectRows = uploadResults.flatMap((result) =>
+        result.data ? [result.data as ProjectRow] : []
+      );
+      const savedProjects = savedProjectRows.map((row) => mapProjectRowToProjectItem(row));
+      const savedFolder = {
+        ...(folderData as ProjectFolderRow),
+        nested_projects: savedProjectRows,
+        assets: savedProjectRows,
+        files: savedProjectRows,
+        file_count: savedProjectRows.length,
+      } satisfies ProjectFolderWithNestedProjects;
 
       setIsStagingModalOpen(false);
       setStagedFiles([]);
@@ -3888,6 +3905,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProjectFolders((currentFolders) => [
         savedFolder,
         ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
+      ]);
+      setProfileAssets((currentAssets) => [
+        ...savedProjectRows,
+        ...currentAssets.filter(
+          (asset) => !savedProjectRows.some((savedProject) => savedProject.id === asset.id)
+        ),
       ]);
       setProjects((currentProjects) => [
         ...savedProjects,
@@ -3951,6 +3974,34 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProjects((currentProjects) => [
         projectWithExtractedCode,
         ...currentProjects.filter((project) => project.id !== projectWithExtractedCode.id),
+      ]);
+      const projectWithExtractedCodeRow = {
+          id: projectWithExtractedCode.id,
+          user_id: projectWithExtractedCode.user_id ?? undefined,
+          folder_id: projectWithExtractedCode.folder_id ?? null,
+          name: projectWithExtractedCode.title,
+          title: projectWithExtractedCode.title,
+          file_url: projectWithExtractedCode.file_url ?? projectWithExtractedCode.preview_url ?? null,
+          file_type: projectWithExtractedCode.mime_type ?? projectWithExtractedCode.file_type ?? null,
+          file_size: null,
+          created_at: projectWithExtractedCode.created_at ?? '',
+          logic_score: projectWithExtractedCode.logic_score ?? null,
+          ai_summary: projectWithExtractedCode.ai_summary ?? null,
+          is_public: projectWithExtractedCode.is_public ?? null,
+          description: projectWithExtractedCode.description ?? null,
+          evaluation_score: projectWithExtractedCode.evaluation_score ?? null,
+          has_been_audited: projectWithExtractedCode.has_been_audited ?? null,
+          score: projectWithExtractedCode.score ?? null,
+          audit_summary: projectWithExtractedCode.audit_summary ?? null,
+          pros: projectWithExtractedCode.pros ?? null,
+          cons: projectWithExtractedCode.cons ?? null,
+          recommendations: projectWithExtractedCode.recommendations ?? null,
+          status: projectWithExtractedCode.status as ProjectRow['status'],
+        } satisfies ProjectRow;
+
+      setProfileAssets((currentAssets) => [
+        projectWithExtractedCodeRow,
+        ...currentAssets.filter((asset) => asset.id !== projectWithExtractedCode.id),
       ]);
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
@@ -5457,10 +5508,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <>
                   <div
                     id="main-assets-grid"
-                    className={cn(
-                      !isSpectating &&
-                        'projects-grid grid w-full grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-                    )}
+                    className="w-full"
                   >
                     {isSpectating ? (
                       <UniversalAssetGrid
@@ -5474,44 +5522,48 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         }
                       />
                     ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
-                      visibleWorkItems?.map((item) => {
-                        if (item.type === 'folder') {
-                          const folder = item.folder;
-                          const folderProjects = allProjects.filter((project) => project.folder_id === folder.id);
-                          const folderProjectRows = folderProjects.map((project) => ({
-                            ...project,
-                            name: project.title,
-                            created_at: project.created_at ?? '',
-                          })) as ProjectRow[];
-                          const folderAuditScore = getFolderAuditScore(folder as FolderAuditItem);
-
-                          return (
-                            <ProjectFolderCard
-                              key={folder.id}
-                              name={folder.name || 'Untitled Folder'}
-                              fileCount={folderProjectRows.length}
-                              files={folderProjectRows}
-                              averageScore={folderAuditScore}
-                              onClick={() => setActiveFolderId(folder.id)}
-                            />
-                          );
+                      <UniversalAssetGrid
+                        assets={profileAssets}
+                        folders={projectFolders}
+                        deletingAssetId={deletingProjectId}
+                        verifyingAssetId={verifyingAssetId}
+                        onVerify={(selectedProject, event) =>
+                          void handleVerifyWithMeliusAI(mapProjectRowToProjectItem(selectedProject), false, event)
                         }
-
-                        return (
-                          <ProjectCard
-                            key={item.project.id}
-                            project={item.project}
-                            isSpectator={isSpectating}
-                            verifyingAssetId={verifyingAssetId}
-                            deletingProjectId={deletingProjectId}
-                            verifiedAssetId={verifiedAssetId}
-                            onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, false, event)}
-                            handleReUpload={handleReUpload}
-                            onOpen={handleOpenProjectPreview}
-                            onDelete={(projectId) => void handleDeleteProject(projectId)}
-                          />
-                        );
-                      })
+                        onReadProtocol={(project) =>
+                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
+                        }
+                        onDelete={(projectId) => void handleDeleteProject(projectId)}
+                        onProjectUpdated={(projectId, projectPatch) => {
+                          setProfileAssets((currentAssets) =>
+                            currentAssets.map((asset) =>
+                              asset.id === projectId
+                                ? {
+                                    ...asset,
+                                    ...projectPatch,
+                                  }
+                                : asset
+                            )
+                          );
+                          setProjects((currentProjects) =>
+                            currentProjects.map((project) =>
+                              project.id === projectId
+                                ? mergeVerifiedProject(
+                                    project,
+                                    mapProjectRowToProjectItem({
+                                      ...project,
+                                      ...projectPatch,
+                                      id: project.id,
+                                      created_at: project.created_at ?? '',
+                                      name: projectPatch.name ?? project.title,
+                                    } as ProjectRow),
+                                    projectPatch.ai_summary ?? projectPatch.audit_summary ?? project.ai_summary ?? ''
+                                  )
+                                : project
+                            )
+                          );
+                        }}
+                      />
                     ) : null}
 
                   </div>
