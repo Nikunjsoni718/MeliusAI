@@ -58,7 +58,7 @@ type SpectatorVaultResponse = {
 
 const VAULT_PROJECT_CARD_SELECT =
   'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, title, file_size, folder_id';
-const VAULT_FOLDER_SELECT = 'id, user_id, name, created_at, updated_at';
+const VAULT_FOLDER_SELECT = 'id, user_id, name, created_at';
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
