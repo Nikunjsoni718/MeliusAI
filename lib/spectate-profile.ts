@@ -16,6 +16,7 @@ type SupabaseSessionClient = {
 };
 
 type SpectateProfileFetchOptions = {
+  accessToken?: string | null;
   init?: RequestInit;
   signal?: AbortSignal;
   supabase?: SupabaseSessionClient | null;
@@ -74,7 +75,12 @@ export async function fetchSpectateProfileResponse(
   options: SpectateProfileFetchOptions = {}
 ) {
   const headers = new Headers(options.init?.headers);
-  const accessToken = await getSupabaseAccessToken(options.supabase);
+  // Passing null explicitly skips the asynchronous session lookup so public
+  // profile content can start loading on the component's first effect.
+  const accessToken =
+    options.accessToken !== undefined
+      ? options.accessToken
+      : await getSupabaseAccessToken(options.supabase);
 
   if (accessToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${accessToken}`);

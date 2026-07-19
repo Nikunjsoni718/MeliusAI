@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
@@ -1571,7 +1571,16 @@ function ProfilePhoto({
       <div className="relative h-full w-full overflow-hidden rounded-full border border-sky-400/35 bg-[#050b1b]/70 shadow-[0_0_35px_rgba(56,189,248,0.35)]">
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt="" loading="lazy" className="h-full w-full object-cover" />
+          <img
+            src={src}
+            alt=""
+            width={64}
+            height={64}
+            loading="eager"
+            fetchPriority="high"
+            decoding="async"
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-lg font-semibold uppercase tracking-wide text-slate-300">
             {fallbackLabel?.trim()?.charAt(0) || <SilhouetteIcon className="h-[62%] w-[62%]" />}
@@ -2333,49 +2342,57 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [spectatorProfileError, setSpectatorProfileError] = useState<Error | null>(null);
   const [spectatorProfileLoading, setSpectatorProfileLoading] = useState(Boolean(targetUsername));
   const [spectatorRefreshToken, setSpectatorRefreshToken] = useState(0);
+  const requestedSpectatorTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!targetUsername) {
+      requestedSpectatorTargetRef.current = null;
       setSpectatorProfilePayload(null);
       setSpectatorProfileError(null);
       setSpectatorProfileLoading(false);
       return;
     }
 
-    if (authEnabled && loading) {
+    const isNewTarget = requestedSpectatorTargetRef.current !== targetUsername;
+    requestedSpectatorTargetRef.current = targetUsername;
+
+    if (isNewTarget) {
+      setSpectatorProfilePayload(null);
+      setSpectatorProfileError(null);
       setSpectatorProfileLoading(true);
-      return;
     }
 
     let isActive = true;
-    setSpectatorProfilePayload(null);
-    setSpectatorProfileError(null);
-    setSpectatorProfileLoading(true);
+    const controller = new AbortController();
 
     const loadPublicProfile = async () => {
       try {
-        const response = await fetchSpectateProfileResponse(targetUsername, { supabase });
+        const response = await fetchSpectateProfileResponse(targetUsername, {
+          // A null token deliberately starts a public request immediately. If
+          // the session arrives later, this effect revalidates without hiding
+          // the already-painted profile.
+          accessToken: session?.access_token ?? null,
+          signal: controller.signal,
+        });
         const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
-        console.log("Spectator API Response:", payload);
 
         if (!response.ok || !payload) {
           throw new Error(payload?.detail || payload?.message || 'Unable to load this public profile.');
         }
 
         if (isActive) {
-          const loadedAssets = extractSpectatorProjects(payload);
-          const loadedProjectFolders = stitchSpectatorProjectFolders(
-            extractSpectatorProjectFolders(payload),
-            extractSpectatorFolderFiles(payload)
-          );
-
-          setProfileAssets(loadedAssets);
-          setProjects(loadedAssets.map(mapProjectRowToProjectItem));
-          setProjectFolders(loadedProjectFolders);
-          setSpectatorProfilePayload(payload);
+          setSpectatorProfileError(null);
+          // Commit LCP-critical identity and bio state before hydrating project
+          // grids, ratings, and other below-the-fold dashboard state.
+          if (payload.profile?.id) {
+            setProfileData(payload.profile);
+          }
+          startTransition(() => {
+            setSpectatorProfilePayload(payload);
+          });
         }
       } catch (error) {
-        if (isActive) {
+        if (isActive && !(error instanceof DOMException && error.name === 'AbortError')) {
           setSpectatorProfileError(
             error instanceof Error ? error : new Error('Unable to load this public profile.')
           );
@@ -2391,8 +2408,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       isActive = false;
+      controller.abort();
     };
-  }, [authEnabled, loading, spectatorRefreshToken, supabase, targetUsername, user?.id]);
+  }, [session?.access_token, spectatorRefreshToken, targetUsername]);
 
   const prefetchDashboardNavigation = useCallback(
     (item: DashboardNavigationItem) => {
