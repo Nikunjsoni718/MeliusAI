@@ -2726,6 +2726,29 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const visibleWorkItems = useMemo(() => {
     return showAllWork ? initialWorkItems : initialWorkItems.slice(0, 4);
   }, [initialWorkItems, showAllWork]);
+  const { displayedProfileAssets, displayedProjectFolders } = useMemo(() => {
+    const visibleFolderIds = new Set<string>();
+    const visibleStandaloneProjectIds = new Set<string>();
+
+    visibleWorkItems.forEach((item) => {
+      if (item.type === 'folder') {
+        visibleFolderIds.add(item.folder.id);
+      } else {
+        visibleStandaloneProjectIds.add(item.project.id);
+      }
+    });
+
+    return {
+      displayedProjectFolders: sortedProjectFolders.filter((folder) =>
+        visibleFolderIds.has(folder.id)
+      ),
+      displayedProfileAssets: sortedProfileAssets.filter((asset) =>
+        asset.folder_id
+          ? visibleFolderIds.has(asset.folder_id)
+          : visibleStandaloneProjectIds.has(asset.id)
+      ),
+    };
+  }, [sortedProfileAssets, sortedProjectFolders, visibleWorkItems]);
   const activePreviewProject = useMemo(() => {
     if (activePreviewProjectOverride) {
       return activePreviewProjectOverride;
@@ -5668,8 +5691,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       />
                     ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
                       <UniversalAssetGrid
-                        assets={profileAssets}
-                        folders={projectFolders}
+                        assets={displayedProfileAssets}
+                        folders={displayedProjectFolders}
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
                         onVerify={(selectedProject, event) =>
@@ -5716,13 +5739,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                   </div>
 
-                  {!isSpectating && rootWorkItems.length > 0 ? (
+                  {!isSpectating && initialWorkItems.length > 4 ? (
                     <button
                       type="button"
                       onClick={() => setShowAllWork((value) => !value)}
                       className="mt-6 mx-auto block px-5 py-2 bg-blue-950/40 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-900/60 hover:border-blue-500 rounded-lg font-mono text-xs tracking-wider uppercase transition-all duration-200 cursor-pointer"
                     >
-                      {showAllWork ? 'Collapse Assets' : `See All Uploaded Assets (${initialWorkItems.length})`}
+                      {showAllWork ? 'COLLAPSE ASSETS' : 'SEE ALL UPLOADED ASSETS'}
                     </button>
                   ) : null}
                 </>
