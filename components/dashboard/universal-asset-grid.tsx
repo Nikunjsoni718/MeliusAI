@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
-import { AuditReviewModal, type AuditReportSubject } from '@/components/dashboard/audit-review-modal';
+import { AuditReviewModal, type AuditAsset } from '@/components/dashboard/audit-review-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -908,7 +908,7 @@ export function UniversalAssetGrid({
     activeAuditTarget?.kind === 'file'
       ? allRenderableAssets.find((project) => project.id === activeAuditTarget.id) ?? null
       : null;
-  const activeAuditSubject: AuditReportSubject | null = activeAuditFolderItem
+  const activeAuditAsset: AuditAsset | null = activeAuditFolderItem
     ? {
         kind: 'folder',
         id: activeAuditFolderItem.folder.id,
@@ -1052,13 +1052,13 @@ export function UniversalAssetGrid({
         )}
       </div>
 
-      {activeAuditSubject ? (
+      {activeAuditAsset ? (
         <AuditReviewModal
-          subject={activeAuditSubject}
+          asset={activeAuditAsset}
           isReAuditing={
-            activeAuditSubject.kind === 'folder'
-              ? verifyingFolderIds.includes(activeAuditSubject.id ?? '')
-              : verifyingAssetId === activeAuditSubject.id
+            activeAuditAsset.kind === 'folder'
+              ? verifyingFolderIds.includes(activeAuditAsset.id ?? '')
+              : verifyingAssetId === activeAuditAsset.id
           }
           onReAudit={
             isSpectator

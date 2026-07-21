@@ -216,7 +216,7 @@ type StructuredAuditData = {
   has_been_audited?: boolean | null;
 };
 
-export type AuditReportSubject = {
+export type AuditAsset = {
   kind: 'file' | 'folder';
   id: string | null;
   name: string;
@@ -232,7 +232,7 @@ export type AuditReportSubject = {
 };
 
 interface AuditReviewModalProps {
-  subject: AuditReportSubject;
+  asset: AuditAsset;
   onClose: () => void;
   onOpenFullFocus?: () => void;
   onReAudit?: () => void;
@@ -367,34 +367,34 @@ function getStructuredSummary(auditData?: StructuredAuditData | null) {
 }
 
 export function AuditReviewModal({
-  subject,
+  asset,
   onClose,
   onOpenFullFocus,
   onReAudit,
   isReAuditing = false,
 }: AuditReviewModalProps) {
-  const resolvedProjectId = subject.id;
-  const normalizedSubject = normalizeAuditReport({
-    score: subject.score,
-    executiveSummary: subject.executiveSummary,
-    strengths: subject.strengths,
-    weaknesses: subject.weaknesses,
-    recommendations: subject.recommendations,
-    reportText: subject.reportText,
+  const resolvedProjectId = asset.id;
+  const normalizedAsset = normalizeAuditReport({
+    score: asset.score,
+    executiveSummary: asset.executiveSummary,
+    strengths: asset.strengths,
+    weaknesses: asset.weaknesses,
+    recommendations: asset.recommendations,
+    reportText: asset.reportText,
   });
-  const subjectAuditData: StructuredAuditData = {
-    id: subject.id,
-    score: normalizedSubject.score,
-    previous_score: subject.previousScore ?? null,
-    last_improved_summary: subject.lastImprovedSummary ?? null,
-    ai_summary: normalizedSubject.summary || subject.executiveSummary || null,
-    audit_summary: normalizedSubject.summary || subject.executiveSummary || null,
-    pros: normalizedSubject.strengths,
-    cons: normalizedSubject.weaknesses,
-    recommendations: normalizedSubject.recommendations,
-    has_been_audited: subject.hasBeenAudited ?? null,
+  const assetAuditData: StructuredAuditData = {
+    id: asset.id,
+    score: normalizedAsset.score,
+    previous_score: asset.previousScore ?? null,
+    last_improved_summary: asset.lastImprovedSummary ?? null,
+    ai_summary: normalizedAsset.summary || asset.executiveSummary || null,
+    audit_summary: normalizedAsset.summary || asset.executiveSummary || null,
+    pros: normalizedAsset.strengths,
+    cons: normalizedAsset.weaknesses,
+    recommendations: normalizedAsset.recommendations,
+    has_been_audited: asset.hasBeenAudited ?? null,
   };
-  const subjectReportText = subject.reportText?.trim() || subject.executiveSummary?.trim() || '';
+  const assetReportText = asset.reportText?.trim() || asset.executiveSummary?.trim() || '';
   const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null);
   const [score, setScore] = useState<number | null>(null);
   const [previousScore, setPreviousScore] = useState<number | null>(null);
@@ -411,7 +411,7 @@ export function AuditReviewModal({
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (subject.kind === 'folder' || !resolvedProjectId || !hasSupabaseBrowserEnv()) {
+    if (asset.kind === 'folder' || !resolvedProjectId || !hasSupabaseBrowserEnv()) {
       return;
     }
 
@@ -461,51 +461,51 @@ export function AuditReviewModal({
     return () => {
       active = false;
     };
-  }, [resolvedProjectId, subject.kind]);
+  }, [asset.kind, resolvedProjectId]);
 
   const hasHydratedProject = Boolean(
-    subject.kind === 'file' && resolvedProjectId && hydratedProjectId === resolvedProjectId
+    asset.kind === 'file' && resolvedProjectId && hydratedProjectId === resolvedProjectId
   );
   const hydratedAuditData: StructuredAuditData = {
-    ...subjectAuditData,
-    score: subjectAuditData.score ?? (hasHydratedProject ? score : null),
+    ...assetAuditData,
+    score: assetAuditData.score ?? (hasHydratedProject ? score : null),
     previous_score:
-      subjectAuditData.previous_score ?? (hasHydratedProject ? previousScore : null),
+      assetAuditData.previous_score ?? (hasHydratedProject ? previousScore : null),
     last_improved_summary:
-      subjectAuditData.last_improved_summary ?? (hasHydratedProject ? lastImprovedSummary : null),
+      assetAuditData.last_improved_summary ?? (hasHydratedProject ? lastImprovedSummary : null),
     audit_summary:
-      subjectAuditData.audit_summary || (hasHydratedProject ? auditSummary : null),
-    ai_summary: subjectAuditData.ai_summary || (hasHydratedProject ? aiSummary : null),
+      assetAuditData.audit_summary || (hasHydratedProject ? auditSummary : null),
+    ai_summary: assetAuditData.ai_summary || (hasHydratedProject ? aiSummary : null),
     pros:
-      subjectAuditData.pros?.length
-        ? subjectAuditData.pros
+      assetAuditData.pros?.length
+        ? assetAuditData.pros
         : hasHydratedProject
           ? pros
-          : subjectAuditData.pros,
+          : assetAuditData.pros,
     cons:
-      subjectAuditData.cons?.length
-        ? subjectAuditData.cons
+      assetAuditData.cons?.length
+        ? assetAuditData.cons
         : hasHydratedProject
           ? cons
-          : subjectAuditData.cons,
+          : assetAuditData.cons,
     recommendations:
-      subjectAuditData.recommendations?.length
-        ? subjectAuditData.recommendations
+      assetAuditData.recommendations?.length
+        ? assetAuditData.recommendations
         : hasHydratedProject
           ? recommendations
-          : subjectAuditData.recommendations,
+          : assetAuditData.recommendations,
     has_been_audited:
-      subjectAuditData.has_been_audited ?? (hasHydratedProject ? hasBeenAudited : null),
+      assetAuditData.has_been_audited ?? (hasHydratedProject ? hasBeenAudited : null),
   };
   const hydratedReportText =
-    subjectReportText || (hasHydratedProject ? auditSummary ?? aiSummary ?? '' : '');
+    assetReportText || (hasHydratedProject ? auditSummary ?? aiSummary ?? '' : '');
   const { cleanDescriptionText, leftSideGoods, rightSideBads } = parseAuditReport(hydratedReportText);
   const structuredSummary = getStructuredSummary(hydratedAuditData);
   const structuredPros = getStructuredItems(hydratedAuditData.pros);
   const structuredCons = getStructuredItems(hydratedAuditData.cons);
   const structuredRecommendations = getStructuredItems(hydratedAuditData.recommendations);
   const activeFile = {
-    name: subject.name,
+    name: asset.name,
     evaluated_score: hydratedAuditData.score ?? 0,
     executive_summary:
       hydratedAuditData.ai_summary?.trim() ||
@@ -517,7 +517,7 @@ export function AuditReviewModal({
     cons: hydratedAuditData.cons?.length ? hydratedAuditData.cons : structuredCons.length > 0 ? structuredCons : rightSideBads,
     recommendations: hydratedAuditData.recommendations?.length ? hydratedAuditData.recommendations : structuredRecommendations,
   };
-  const isFile = subject.kind === 'file';
+  const isFile = asset.kind === 'file';
   const badgeText = `${activeFile.name.split('.').pop()} FILE`.toUpperCase();
   const comparisonSummary = hydratedAuditData.last_improved_summary?.trim() || '';
   const normalizedPreviousScore =
@@ -535,7 +535,7 @@ export function AuditReviewModal({
     setDownloadFeedback(null);
 
     try {
-      await downloadFullAuditReport(auditCaptureRef.current, subject.name);
+      await downloadFullAuditReport(auditCaptureRef.current, asset.name);
       setDownloadFeedback('Full audit report downloaded.');
     } catch (error) {
       console.error('Full audit report download failed:', error);
