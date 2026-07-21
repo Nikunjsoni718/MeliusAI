@@ -72,7 +72,7 @@ const auditTextFileExtensions = new Set([
   'yml',
 ]);
 
-type PreviewProject = {
+export type PreviewProject = {
   id?: string;
   name?: string | null;
   title?: string;
@@ -105,11 +105,17 @@ type PreviewProject = {
   auditReport?: unknown;
 };
 
+export type AuditPreviewAsset = PreviewProject & {
+  kind: 'file' | 'folder';
+  name: string;
+  previewUrl?: string | null;
+};
+
 type AssetPreviewModalProps = {
-  activePreviewName: string | null;
-  activePreviewUrl: string | null;
+  asset: AuditPreviewAsset | null;
   canVerify?: boolean;
-  previewProject?: PreviewProject | null;
+  isReAuditing?: boolean;
+  onReAudit?: () => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onClose: () => void;
 };
@@ -270,15 +276,15 @@ function MetricList({
 }
 
 export function AssetPreviewModal({
-  activePreviewName,
-  activePreviewUrl,
+  asset,
   canVerify = true,
-  previewProject,
+  isReAuditing = false,
+  onReAudit,
   onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
   const [isPortalMounted, setIsPortalMounted] = useState(false);
-  const [liveProject, setLiveProject] = useState<PreviewProject | null>(previewProject ?? null);
+  const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -296,7 +302,9 @@ export function AssetPreviewModal({
     isLoading: false,
     error: null,
   });
-  const previewName = activePreviewName ?? previewProject?.title ?? getFallbackFileName(activePreviewUrl);
+  const isFolder = asset?.kind === 'folder';
+  const activePreviewUrl = asset?.previewUrl ?? asset?.file_url ?? asset?.preview_url ?? null;
+  const previewName = asset?.name ?? asset?.title ?? getFallbackFileName(activePreviewUrl);
   const viewerSrc = useMemo(
     () => getViewerSrc(activePreviewUrl, previewName),
     [activePreviewUrl, previewName]
@@ -318,21 +326,24 @@ export function AssetPreviewModal({
   const cons = normalizedAudit.weaknesses;
   const recommendations = normalizedAudit.recommendations;
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
+  const verificationInProgress = isVerifying || isReAuditing;
   const executiveSummaryMarkdown =
     normalizedAudit.summary ||
-    "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
+    (isFolder
+      ? "This workspace is awaiting verification. Click 'Verify with MeliusAI' to generate an aggregate executive summary."
+      : "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.");
 
   useEffect(() => {
     setIsPortalMounted(true);
   }, []);
 
   useEffect(() => {
-    setLiveProject(previewProject ?? null);
+    setLiveProject(asset ?? null);
     setIsExpandedViewer(false);
     setIsShareModalOpen(false);
     setIsDownloadingReport(false);
     setDownloadFeedback(null);
-  }, [previewProject]);
+  }, [asset]);
 
   useEffect(() => {
     if (!activePreviewUrl || !shouldRenderTextPreview) {
@@ -371,7 +382,7 @@ export function AssetPreviewModal({
   }, [activePreviewUrl, projectTextPreview, shouldRenderTextPreview]);
 
   useEffect(() => {
-    if (!activePreviewUrl) {
+    if (!asset) {
       return;
     }
 
@@ -391,9 +402,9 @@ export function AssetPreviewModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activePreviewUrl, isShareModalOpen, onClose]);
+  }, [asset, isShareModalOpen, onClose]);
 
-  if (!isPortalMounted || !activePreviewUrl || !viewerSrc) {
+  if (!isPortalMounted || !asset || (!isFolder && (!activePreviewUrl || !viewerSrc))) {
     return null;
   }
 
@@ -511,14 +522,16 @@ export function AssetPreviewModal({
         }`}
       >
         <div className="sticky top-0 z-30 flex justify-end gap-2 border-b border-slate-900/70 bg-slate-950/90 p-3 backdrop-blur">
-          <button
-            type="button"
-            onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
-            className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-cyan-400 bg-slate-900 border border-slate-800 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
-            aria-pressed={isExpandedViewer}
-          >
-            {isExpandedViewer ? 'Exit Focus Mode' : 'Full Focus Mode'}
-          </button>
+          {!isFolder ? (
+            <button
+              type="button"
+              onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
+              className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-cyan-400 bg-slate-900 border border-slate-800 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
+              aria-pressed={isExpandedViewer}
+            >
+              {isExpandedViewer ? 'Exit Focus Mode' : 'Full Focus Mode'}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -533,6 +546,7 @@ export function AssetPreviewModal({
           </button>
         </div>
 
+        {!isFolder && viewerSrc && activePreviewUrl ? (
         <div
           className={`w-full ${
             isExpandedViewer
@@ -580,6 +594,7 @@ export function AssetPreviewModal({
             />
           )}
         </div>
+        ) : null}
 
         {!isExpandedViewer && (
         <div
@@ -589,12 +604,18 @@ export function AssetPreviewModal({
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">{liveProject?.title ?? previewName}</h2>
-              <p className="mt-1 truncate text-xs text-slate-500">{liveProject?.file_name ?? previewName}</p>
+              <h2 className="truncate text-xl font-bold tracking-tight text-slate-50">
+                {liveProject?.name ?? liveProject?.title ?? previewName}
+              </h2>
+              <p className="mt-1 truncate text-xs text-slate-500">
+                {isFolder ? 'Workspace Audit' : liveProject?.file_name ?? previewName}
+              </p>
             </div>
-            <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
-              {fileTypeBadge}
-            </span>
+            {!isFolder ? (
+              <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                {fileTypeBadge}
+              </span>
+            ) : null}
           </div>
 
           <div
@@ -647,20 +668,24 @@ export function AssetPreviewModal({
               Share Score
             </button>
 
-            {canVerify ? (
+            {canVerify && (!isFolder || onReAudit) ? (
               <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  if (isFolder) {
+                    onReAudit?.();
+                    return;
+                  }
                   if (liveProject?.id) {
                     void handleRunAIVerification(liveProject.id, event);
                   }
                 }}
-                disabled={!liveProject?.id || isVerifying}
+                disabled={!liveProject?.id || verificationInProgress}
                 className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/50 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
               >
-                {isVerifying ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
+                {verificationInProgress ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
               </button>
             ) : null}
           </div>

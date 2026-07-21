@@ -6046,9 +6046,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             ) : null}
 
             <AssetPreviewModal
-              activePreviewName={activePreviewName}
-              activePreviewUrl={activePreviewUrl}
-              previewProject={activePreviewProject}
+              asset={
+                activePreviewProject
+                  ? {
+                      ...activePreviewProject,
+                      kind: 'file',
+                      name: activePreviewName ?? activePreviewProject.title,
+                      previewUrl: activePreviewUrl,
+                    }
+                  : null
+              }
               onProjectUpdated={handlePreviewProjectUpdated}
               onClose={() => {
                 setActivePreviewProjectId(null);
