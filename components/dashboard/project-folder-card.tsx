@@ -10,8 +10,10 @@ type ProjectFolderCardProps = {
   className?: string;
   fileCount: number;
   files?: ProjectRow[];
+  isVerifying?: boolean;
   name: string;
   onClick: () => void;
+  onVerify?: () => void;
 };
 
 function getFileName(file: ProjectRow) {
@@ -29,8 +31,10 @@ export function ProjectFolderCard({
   className,
   fileCount,
   files = [],
+  isVerifying = false,
   name,
   onClick,
+  onVerify,
 }: ProjectFolderCardProps) {
   const fileLabel = `${fileCount} ${fileCount === 1 ? 'File' : 'Files'}`;
   const topFiles = files.slice(0, 4);
@@ -126,6 +130,21 @@ export function ProjectFolderCard({
             >
               Open Workspace
             </button>
+            {onVerify ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onVerify();
+                }}
+                disabled={isVerifying}
+                aria-busy={isVerifying}
+                className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:cursor-not-allowed disabled:bg-slate-950/20 disabled:text-slate-700"
+              >
+                {isVerifying ? 'Verifying...' : 'Verify with MeliusAI'}
+              </button>
+            ) : null}
           </div>
         </div>
       </CardContent>

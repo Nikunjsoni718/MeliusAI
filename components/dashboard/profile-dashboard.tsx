@@ -326,11 +326,16 @@ type NormalizedSpectateProfileResponse = {
 };
 type ProjectFolderWithNestedProjects = ProjectFolderRow & {
   assets?: ProjectRow[] | null;
+  cons?: string[] | null;
+  evaluation_score?: number | null;
+  executive_summary?: string | null;
   files?: ProjectRow[] | null;
   file_count?: number | null;
   folderFiles?: ProjectRow[] | null;
   folder_files?: ProjectRow[] | null;
   nested_projects?: ProjectRow[] | null;
+  pros?: string[] | null;
+  recommendations?: string[] | null;
 };
 type DashboardNavigationItem = {
   href: string;
@@ -4968,9 +4973,42 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error(errorPayload?.detail || 'Failed to audit folder');
       }
 
-      const data = await response.json();
-      console.log("Audit complete:", data);
-      alert("Folder audit completed successfully!");
+      const data = (await response.json()) as {
+        folder_audit?: {
+          cons?: string[] | null;
+          evaluated_score?: number | string | null;
+          executive_summary?: string | null;
+          description?: string | null;
+          pros?: string[] | null;
+          recommendations?: string[] | null;
+        };
+        folder_score?: number | string | null;
+      };
+      const folderScore = normalizeAuditScore(
+        data.folder_score ?? data.folder_audit?.evaluated_score
+      );
+      const folderSummary =
+        data.folder_audit?.executive_summary ?? data.folder_audit?.description ?? null;
+
+      setProjectFolders((currentFolders) =>
+        currentFolders.map((folder) =>
+          folder.id === folderId
+            ? {
+                ...folder,
+                evaluation_score: folderScore,
+                executive_summary: folderSummary,
+                pros: data.folder_audit?.pros ?? null,
+                cons: data.folder_audit?.cons ?? null,
+                recommendations: data.folder_audit?.recommendations ?? null,
+              }
+            : folder
+        )
+      );
+      alert(
+        folderScore !== null
+          ? `Folder audit completed successfully with a score of ${folderScore}/100.`
+          : 'Folder audit completed successfully!'
+      );
 
       if (targetUsername) {
         setSpectatorRefreshToken((currentToken) => currentToken + 1);
@@ -4978,7 +5016,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       router.refresh();
     } catch (error) {
       console.error("Error verifying folder:", error);
-      alert("An error occurred during the AI audit.");
+      alert(error instanceof Error ? error.message : 'An error occurred during the AI audit.');
     } finally {
       setAuditingFolders((prev) => ({ ...prev, [folderId]: false }));
     }
@@ -5694,7 +5732,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         assets={displayedProfileAssets}
                         folders={displayedProjectFolders}
                         deletingAssetId={deletingProjectId}
+                        verifyingFolderIds={Object.keys(auditingFolders).filter(
+                          (folderId) => auditingFolders[folderId]
+                        )}
                         verifyingAssetId={verifyingAssetId}
+                        onVerifyFolder={(folderId) => void handleVerifyFolder(folderId)}
                         onVerify={(selectedProject, event) =>
                           void handleVerifyWithMeliusAI(mapProjectRowToProjectItem(selectedProject), false, event)
                         }

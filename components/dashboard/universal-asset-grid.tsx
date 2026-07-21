@@ -28,10 +28,12 @@ type UniversalAssetGridProps = {
   folders?: ProjectFolderRow[];
   gridClassName?: string;
   isSpectator?: boolean;
+  verifyingFolderIds?: string[];
   verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
   onDelete?: (projectId: string) => void;
   onFolderOpen?: (folder: ProjectFolderRow) => void;
+  onVerifyFolder?: (folderId: string) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReadProtocol?: (project: ProjectRow) => void;
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
@@ -253,6 +255,16 @@ function getAverageScore(projects: ProjectRow[]) {
   }
 
   return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function getFolderScore(folder: ProjectFolderWithFiles, projects: ProjectRow[]) {
+  const folderScore = folder.evaluation_score ?? folder.macro_score ?? null;
+
+  if (typeof folderScore === 'number' && Number.isFinite(folderScore)) {
+    return Math.max(0, Math.min(100, Math.round(folderScore)));
+  }
+
+  return getAverageScore(projects);
 }
 
 function getNestedFolderAssets(folder: ProjectFolderWithFiles) {
@@ -730,10 +742,12 @@ export function UniversalAssetGrid({
   folders = [],
   gridClassName,
   isSpectator = false,
+  verifyingFolderIds = [],
   verifyingAssetId = null,
   visibilityUpdatingIds = [],
   onDelete,
   onFolderOpen,
+  onVerifyFolder,
   onProjectUpdated,
   onReadProtocol,
   onReupload,
@@ -882,11 +896,17 @@ export function UniversalAssetGrid({
               name={item.folder.name || 'Untitled Folder'}
               fileCount={item.assets.length}
               files={item.assets}
-              averageScore={getAverageScore(item.assets)}
+              averageScore={getFolderScore(item.folder, item.assets)}
+              isVerifying={verifyingFolderIds.includes(item.folder.id)}
               onClick={() => {
                 setActiveFolderId(item.folder.id);
                 onFolderOpen?.(item.folder);
               }}
+              onVerify={
+                !isSpectator && onVerifyFolder
+                  ? () => onVerifyFolder(item.folder.id)
+                  : undefined
+              }
             />
           ) : (
             <UniversalAssetCard
