@@ -66,6 +66,8 @@ type UniversalGridItem =
   | { type: 'folder'; assets: ProjectRow[]; folder: ProjectFolderWithFiles }
   | { type: 'asset'; asset: ProjectRow };
 
+type FolderView = 'audit' | 'workspace';
+
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
   cc: 'cpp',
@@ -768,6 +770,7 @@ export function UniversalAssetGrid({
 }: UniversalAssetGridProps) {
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [activeFolderView, setActiveFolderView] = useState<FolderView | null>(null);
   const [localProjectPatches, setLocalProjectPatches] = useState<Record<string, Partial<ProjectRow>>>({});
   const patchedAssets = useMemo(
     () =>
@@ -857,7 +860,7 @@ export function UniversalAssetGrid({
       }),
     [foldersWithAssets, rootAssets]
   );
-  const activeFolderItem = activeFolderId
+  const activeFolderItem = activeFolderId && activeFolderView
     ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
     : null;
   const activeFolderSummary = activeFolderItem ? getFolderSummary(activeFolderItem.folder) : '';
@@ -912,9 +915,9 @@ export function UniversalAssetGrid({
               editName={editingFolderId === item.folder.id ? editFolderName : item.folder.name}
               isEditing={editingFolderId === item.folder.id}
               isVerifying={verifyingFolderIds.includes(item.folder.id)}
-              onClick={() => {
+              onAuditClick={() => {
                 setActiveFolderId(item.folder.id);
-                onFolderOpen?.(item.folder);
+                setActiveFolderView('audit');
               }}
               onDelete={
                 !isSpectator && onFolderDelete
@@ -937,6 +940,18 @@ export function UniversalAssetGrid({
                   ? () => onVerifyFolder(item.folder.id)
                   : undefined
               }
+              onWorkspaceClick={() => {
+                setActiveFolderId(null);
+                setActiveFolderView(null);
+
+                if (onFolderOpen) {
+                  onFolderOpen(item.folder);
+                  return;
+                }
+
+                setActiveFolderId(item.folder.id);
+                setActiveFolderView('workspace');
+              }}
             />
           ) : (
             <UniversalAssetCard
@@ -957,13 +972,16 @@ export function UniversalAssetGrid({
         )}
       </div>
 
-      {activeFolderItem ? (
+      {activeFolderItem && activeFolderView ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-labelledby="folder-project-modal-title"
-          onClick={() => setActiveFolderId(null)}
+          onClick={() => {
+            setActiveFolderId(null);
+            setActiveFolderView(null);
+          }}
         >
           <div
             className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-800 bg-[#050a18] shadow-2xl"
@@ -972,21 +990,24 @@ export function UniversalAssetGrid({
             <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
-                  Folder Project
+                  {activeFolderView === 'audit' ? 'Aggregate Folder Audit' : 'Folder Workspace'}
                 </p>
                 <h2 id="folder-project-modal-title" className="mt-1 text-xl font-semibold text-white">
                   {activeFolderItem.folder.name || 'Untitled Folder'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-400">
                   {activeFolderItem.assets.length} {activeFolderItem.assets.length === 1 ? 'file' : 'files'}
-                  {getAverageScore(activeFolderItem.assets) !== null
-                    ? ` · Average Score ${getAverageScore(activeFolderItem.assets)}/100`
+                  {getFolderScore(activeFolderItem.folder, activeFolderItem.assets) !== null
+                    ? ` · Overall Score ${getFolderScore(activeFolderItem.folder, activeFolderItem.assets)}/100`
                     : ''}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setActiveFolderId(null)}
+                onClick={() => {
+                  setActiveFolderId(null);
+                  setActiveFolderView(null);
+                }}
                 className="self-start rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:text-white sm:self-auto"
               >
                 Close
@@ -994,70 +1015,76 @@ export function UniversalAssetGrid({
             </div>
 
             <div className="overflow-y-auto p-5">
-              {activeFolderSummary ||
-              activeFolderPros.length > 0 ||
-              activeFolderCons.length > 0 ||
-              activeFolderRecommendations.length > 0 ? (
-                <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)]">
-                  <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
-                      AI Executive Summary
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-slate-300">
-                      {activeFolderSummary || 'Folder audit summary has not been generated yet.'}
-                    </p>
-                  </section>
-
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <section className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4 text-emerald-300">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Strengths</p>
-                      <ul className="mt-3 space-y-2">
-                        {activeFolderPros.length > 0 ? (
-                          activeFolderPros.map((item, index) => (
-                            <li key={`folder-pro-${index}`} className="text-xs leading-relaxed text-slate-300">
-                              {item}
-                            </li>
-                          ))
-                        ) : (
-                          <li className="text-xs italic text-slate-500">No strengths generated yet.</li>
-                        )}
-                      </ul>
+              {activeFolderView === 'audit' ? (
+                activeFolderSummary ||
+                activeFolderPros.length > 0 ||
+                activeFolderCons.length > 0 ||
+                activeFolderRecommendations.length > 0 ? (
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)]">
+                    <section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
+                        AI Executive Summary
+                      </p>
+                      <p className="mt-3 text-sm leading-6 text-slate-300">
+                        {activeFolderSummary || 'Folder audit summary has not been generated yet.'}
+                      </p>
                     </section>
 
-                    <section className="rounded-2xl border border-rose-500/15 bg-rose-500/[0.04] p-4 text-rose-300">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Weaknesses</p>
-                      <ul className="mt-3 space-y-2">
-                        {activeFolderCons.length > 0 ? (
-                          activeFolderCons.map((item, index) => (
-                            <li key={`folder-con-${index}`} className="text-xs leading-relaxed text-slate-300">
-                              {item}
-                            </li>
-                          ))
-                        ) : (
-                          <li className="text-xs italic text-slate-500">No weaknesses generated yet.</li>
-                        )}
-                      </ul>
-                    </section>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <section className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4 text-emerald-300">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Strengths</p>
+                        <ul className="mt-3 space-y-2">
+                          {activeFolderPros.length > 0 ? (
+                            activeFolderPros.map((item, index) => (
+                              <li key={`folder-pro-${index}`} className="text-xs leading-relaxed text-slate-300">
+                                {item}
+                              </li>
+                            ))
+                          ) : (
+                            <li className="text-xs italic text-slate-500">No strengths generated yet.</li>
+                          )}
+                        </ul>
+                      </section>
 
-                    <section className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4 text-cyan-300">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Recommendations</p>
-                      <ul className="mt-3 space-y-2">
-                        {activeFolderRecommendations.length > 0 ? (
-                          activeFolderRecommendations.map((item, index) => (
-                            <li key={`folder-rec-${index}`} className="text-xs leading-relaxed text-slate-300">
-                              {item}
-                            </li>
-                          ))
-                        ) : (
-                          <li className="text-xs italic text-slate-500">No recommendations generated yet.</li>
-                        )}
-                      </ul>
-                    </section>
+                      <section className="rounded-2xl border border-rose-500/15 bg-rose-500/[0.04] p-4 text-rose-300">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Weaknesses</p>
+                        <ul className="mt-3 space-y-2">
+                          {activeFolderCons.length > 0 ? (
+                            activeFolderCons.map((item, index) => (
+                              <li key={`folder-con-${index}`} className="text-xs leading-relaxed text-slate-300">
+                                {item}
+                              </li>
+                            ))
+                          ) : (
+                            <li className="text-xs italic text-slate-500">No weaknesses generated yet.</li>
+                          )}
+                        </ul>
+                      </section>
+
+                      <section className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4 text-cyan-300">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Recommendations</p>
+                        <ul className="mt-3 space-y-2">
+                          {activeFolderRecommendations.length > 0 ? (
+                            activeFolderRecommendations.map((item, index) => (
+                              <li key={`folder-rec-${index}`} className="text-xs leading-relaxed text-slate-300">
+                                {item}
+                              </li>
+                            ))
+                          ) : (
+                            <li className="text-xs italic text-slate-500">No recommendations generated yet.</li>
+                          )}
+                        </ul>
+                      </section>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-
-              {activeFolderItem.assets.length > 0 ? (
+                ) : (
+                  <Card className="border-blue-950/50 bg-[#090d1f]/40">
+                    <CardContent className="p-8 text-center text-sm text-slate-400">
+                      This workspace does not have an aggregate folder audit yet.
+                    </CardContent>
+                  </Card>
+                )
+              ) : activeFolderItem.assets.length > 0 ? (
                 <div className="grid w-full grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {activeFolderItem.assets.map((asset) => (
                     <UniversalAssetCard
@@ -1070,6 +1097,7 @@ export function UniversalAssetGrid({
                       onDelete={onDelete}
                       onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
                       onReadProtocol={onReadProtocol}
+                      onReupload={onReupload}
                       onToggleVisibility={onToggleVisibility}
                       onVerify={onVerify}
                     />
@@ -1078,7 +1106,7 @@ export function UniversalAssetGrid({
               ) : (
                 <Card className="border-blue-950/50 bg-[#090d1f]/40">
                   <CardContent className="p-8 text-center text-sm text-slate-400">
-                    This folder project does not have files yet.
+                    This folder workspace does not have files yet.
                   </CardContent>
                 </Card>
               )}

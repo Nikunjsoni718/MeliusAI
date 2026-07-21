@@ -5674,6 +5674,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         isSpectator
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
+                        onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                         onReadProtocol={(project) =>
                           handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }
@@ -5749,6 +5750,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           setEditingFolderId(folder.id);
                           setEditFolderName(folder.name);
                         }}
+                        onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                         onFolderRename={(folderId) => handleRenameFolder(folderId)}
                         onVerifyFolder={(folderId) => void handleVerifyFolder(folderId)}
                         onVerify={(selectedProject, event) =>

@@ -1830,6 +1830,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}
+                onFolderOpen={(folder) => void handleOpenVaultFolder(folder)}
                 onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                 onReadProtocol={handleReadFullAuditProtocol}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
