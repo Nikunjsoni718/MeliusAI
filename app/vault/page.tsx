@@ -4,8 +4,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Suspense, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
-import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -1008,11 +1006,6 @@ function VaultPageContent() {
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [syncToken, setSyncToken] = useState(0);
   const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
-  const [viewingAuditAsset, setViewingAuditAsset] = useState<ProjectRow | null>(null);
-  const [activePreviewAsset, setActivePreviewAsset] = useState<ProjectRow | null>(null);
-  const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
-  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
-  const [liveStreamText, setLiveStreamText] = useState('');
   const [visibilityUpdatingIds, setVisibilityUpdatingIds] = useState<string[]>([]);
   const [visibilityToast, setVisibilityToast] = useState<VaultToastState | null>(null);
   const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
@@ -1547,7 +1540,6 @@ function VaultPageContent() {
     }
 
     setVerifyingAssetId(project.id);
-    setLiveStreamText('');
     setVaultError(null);
     if (descriptionSaveTimersRef.current[project.id]) {
       window.clearTimeout(descriptionSaveTimersRef.current[project.id]);
@@ -1562,9 +1554,7 @@ function VaultPageContent() {
 Project Title: ${getVaultAssetName(project)}
 Current Notes: ${project.description || 'No existing project notes.'}
 Return Markdown sections for goods, bads, project description, and a final score out of 100.`,
-        onChunk: (incomingTokens) => {
-          setLiveStreamText((previousText) => previousText + incomingTokens);
-        },
+        onChunk: () => undefined,
       });
       const extractedScore = extractEvaluationScore(accumulatedReportText);
       const normalizedAudit = normalizeAuditReport({
@@ -1614,22 +1604,6 @@ Return Markdown sections for goods, bads, project description, and a final score
         ...currentDrafts,
         [project.id]: accumulatedReportText,
       }));
-      setViewingAuditAsset((currentAsset) =>
-        currentAsset?.id === project.id
-          ? {
-              ...currentAsset,
-              ...updatePayload,
-            }
-          : currentAsset
-      );
-      setActivePreviewAsset((currentAsset) =>
-        currentAsset?.id === project.id
-          ? {
-              ...currentAsset,
-              ...updatePayload,
-            }
-          : currentAsset
-      );
       window.alert(`Verification Complete! ${getVaultAssetName(project)} has been successfully audited.`);
     } catch (error) {
       console.error('Detailed Verification Diagnostic Log:', error);
@@ -1639,30 +1613,6 @@ Return Markdown sections for goods, bads, project description, and a final score
     } finally {
       setVerifyingAssetId(null);
     }
-  }
-
-  function handleReadFullAuditProtocol(project: ProjectRow) {
-    if (!project.has_been_audited) {
-      window.alert(
-        "This asset file has not been verified yet. Please click 'Verify Asset' to run the scanner first!"
-      );
-      return;
-    }
-
-    setViewingAuditAsset(project);
-  }
-
-  function handleOpenFullFocusPreview(project: ProjectRow) {
-    const previewUrl = getVaultAssetUrl(project);
-
-    if (!previewUrl) {
-      window.alert('Preview unavailable: this asset does not contain a valid file URL.');
-      return;
-    }
-
-    setActivePreviewAsset(project);
-    setActivePreviewName(getVaultAssetName(project));
-    setActivePreviewUrl(previewUrl);
   }
 
   async function handleDeleteVaultAsset(id: string) {
@@ -1716,7 +1666,6 @@ Return Markdown sections for goods, bads, project description, and a final score
         window.clearTimeout(descriptionSaveTimersRef.current[id]);
         delete descriptionSaveTimersRef.current[id];
       }
-      setViewingAuditAsset((currentAsset) => (currentAsset?.id === id ? null : currentAsset));
     } catch (error) {
       console.error('Failed to delete vault asset', error);
       setVaultError(error instanceof Error ? error.message : 'Unable to delete this asset right now.');
@@ -1812,7 +1761,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                       verifyingAssetId={verifyingAssetId}
                       visibilityUpdatingIds={visibilityUpdatingIds}
                       onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                      onReadProtocol={handleReadFullAuditProtocol}
                       onToggleVisibility={(projectId, currentVisibilityStatus) =>
                         void handleToggleVisibility(projectId, currentVisibilityStatus)
                       }
@@ -1851,7 +1799,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                 visibilityUpdatingIds={visibilityUpdatingIds}
                 onFolderOpen={(folder) => void handleOpenVaultFolder(folder)}
                 onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                onReadProtocol={handleReadFullAuditProtocol}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
                   void handleToggleVisibility(projectId, currentVisibilityStatus)
                 }
@@ -1897,97 +1844,6 @@ Return Markdown sections for goods, bads, project description, and a final score
           </motion.div>
         ) : null}
       </AnimatePresence>
-
-      {viewingAuditAsset ? (
-        <AuditReviewModal
-          assetTitle={getVaultAssetName(viewingAuditAsset)}
-          projectId={viewingAuditAsset.id}
-          onClose={() => setViewingAuditAsset(null)}
-          onReAudit={isOwner ? () => void handleVerifyWithMeliusAI(viewingAuditAsset) : undefined}
-          isReAuditing={verifyingAssetId === viewingAuditAsset.id}
-          onOpenFullFocus={() => {
-            const auditAsset = viewingAuditAsset;
-            setViewingAuditAsset(null);
-            handleOpenFullFocusPreview(auditAsset);
-          }}
-          reportText={
-            verifyingAssetId === viewingAuditAsset.id && liveStreamText.trim()
-              ? liveStreamText
-              : viewingAuditAsset.description ?? viewingAuditAsset.ai_summary ?? ''
-          }
-          auditData={{
-            score: viewingAuditAsset.score,
-            evaluation_score: viewingAuditAsset.evaluation_score,
-            logic_score: viewingAuditAsset.logic_score,
-            ai_summary: viewingAuditAsset.ai_summary,
-            user_description: viewingAuditAsset.user_description,
-            audit_summary: viewingAuditAsset.audit_summary,
-            description: viewingAuditAsset.description,
-            executive_summary: viewingAuditAsset.audit_summary,
-            summary: viewingAuditAsset.ai_summary,
-            previous_score: viewingAuditAsset.previous_score,
-            last_improved_summary: viewingAuditAsset.last_improved_summary,
-            pros: viewingAuditAsset.pros,
-            cons: viewingAuditAsset.cons,
-            recommendations: viewingAuditAsset.recommendations,
-          }}
-        />
-      ) : null}
-
-      <AssetPreviewModal
-        activePreviewName={activePreviewName}
-        activePreviewUrl={activePreviewUrl}
-        canVerify={isOwner}
-        previewProject={
-          activePreviewAsset
-            ? {
-                id: activePreviewAsset.id,
-                name: activePreviewAsset.name,
-                title: getVaultAssetName(activePreviewAsset),
-                file_url: activePreviewAsset.file_url,
-                file_type: activePreviewAsset.file_type,
-                user_description: activePreviewAsset.user_description,
-                description: activePreviewAsset.description,
-                executive_summary: activePreviewAsset.audit_summary,
-                summary: activePreviewAsset.summary,
-                ai_summary: activePreviewAsset.ai_summary,
-                audit_summary: activePreviewAsset.audit_summary,
-                score: activePreviewAsset.score,
-                evaluation_score: activePreviewAsset.evaluation_score,
-                logic_score: activePreviewAsset.logic_score,
-                pros: activePreviewAsset.pros,
-                cons: activePreviewAsset.cons,
-                recommendations: activePreviewAsset.recommendations,
-              }
-            : null
-        }
-        onProjectUpdated={(projectId, projectPatch) => {
-          setVaultAssets((currentAssets) =>
-            currentAssets.map((asset) =>
-              asset.id === projectId
-                ? { ...asset, ...projectPatch, id: asset.id, created_at: asset.created_at }
-                : asset
-            )
-          );
-          setFolderAssets((currentAssets) =>
-            currentAssets.map((asset) =>
-              asset.id === projectId
-                ? { ...asset, ...projectPatch, id: asset.id, created_at: asset.created_at }
-                : asset
-            )
-          );
-          setActivePreviewAsset((currentAsset) =>
-            currentAsset?.id === projectId
-              ? { ...currentAsset, ...projectPatch, id: currentAsset.id, created_at: currentAsset.created_at }
-              : currentAsset
-          );
-        }}
-        onClose={() => {
-          setActivePreviewAsset(null);
-          setActivePreviewName(null);
-          setActivePreviewUrl(null);
-        }}
-      />
     </>
   );
 }

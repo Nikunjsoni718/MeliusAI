@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
-import { AuditReviewModal } from '@/components/dashboard/audit-review-modal';
+import { AuditReviewModal, type AuditReportSubject } from '@/components/dashboard/audit-review-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,7 +42,6 @@ type UniversalAssetGridProps = {
   onFolderRename?: (folderId: string) => void | Promise<void>;
   onVerifyFolder?: (folderId: string) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
-  onReadProtocol?: (project: ProjectRow) => void;
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
@@ -75,7 +74,8 @@ type UniversalGridItem =
   | { type: 'folder'; assets: ProjectRow[]; folder: ProjectFolderWithFiles }
   | { type: 'asset'; asset: ProjectRow };
 
-type FolderView = 'audit' | 'workspace';
+type FolderView = 'workspace';
+type AuditTarget = { kind: 'file' | 'folder'; id: string };
 
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
@@ -329,17 +329,6 @@ function getFolderSummary(folder: ProjectFolderWithFiles) {
     folder.description?.trim() ||
     ''
   );
-}
-
-function hasFolderAuditScore(folder: ProjectFolderWithFiles) {
-  return [
-    folder.evaluated_score,
-    folder.melius_score,
-    folder.evaluation_score,
-    folder.logic_score,
-    folder.score,
-    folder.macro_score,
-  ].some((score) => score !== null && score !== undefined && Number.isFinite(Number(score)));
 }
 
 function resolvePreviewKind(project: ProjectRow): AssetPreviewKind {
@@ -804,7 +793,6 @@ export function UniversalAssetGrid({
   onFolderRename,
   onVerifyFolder,
   onProjectUpdated,
-  onReadProtocol,
   onReupload,
   onToggleVisibility,
   onVerify,
@@ -812,6 +800,7 @@ export function UniversalAssetGrid({
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [activeFolderView, setActiveFolderView] = useState<FolderView | null>(null);
+  const [activeAuditTarget, setActiveAuditTarget] = useState<AuditTarget | null>(null);
   const [localProjectPatches, setLocalProjectPatches] = useState<Record<string, Partial<ProjectRow>>>({});
   const patchedAssets = useMemo(
     () =>
@@ -904,23 +893,6 @@ export function UniversalAssetGrid({
   const activeFolderItem = activeFolderId && activeFolderView
     ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
     : null;
-  const activeFolderSummary = activeFolderItem ? getFolderSummary(activeFolderItem.folder) : '';
-  const activeFolderPros = activeFolderItem ? getStringList(activeFolderItem.folder.pros) : [];
-  const activeFolderCons = activeFolderItem ? getStringList(activeFolderItem.folder.cons) : [];
-  const activeFolderRecommendations = activeFolderItem
-    ? getStringList(activeFolderItem.folder.recommendations)
-    : [];
-  const activeFolderScore = activeFolderItem
-    ? getFolderScore(activeFolderItem.folder, activeFolderItem.assets)
-    : null;
-  const hasActiveFolderAudit = Boolean(
-    activeFolderItem &&
-      (activeFolderSummary ||
-        activeFolderPros.length > 0 ||
-        activeFolderCons.length > 0 ||
-        activeFolderRecommendations.length > 0 ||
-        hasFolderAuditScore(activeFolderItem.folder))
-  );
   const allRenderableAssets = useMemo(
     () => [
       ...patchedAssets,
@@ -928,6 +900,59 @@ export function UniversalAssetGrid({
     ],
     [foldersWithAssets, patchedAssets]
   );
+  const activeAuditFolderItem =
+    activeAuditTarget?.kind === 'folder'
+      ? foldersWithAssets.find(({ folder }) => folder.id === activeAuditTarget.id) ?? null
+      : null;
+  const activeAuditFile =
+    activeAuditTarget?.kind === 'file'
+      ? allRenderableAssets.find((project) => project.id === activeAuditTarget.id) ?? null
+      : null;
+  const activeAuditSubject: AuditReportSubject | null = activeAuditFolderItem
+    ? {
+        kind: 'folder',
+        id: activeAuditFolderItem.folder.id,
+        name: activeAuditFolderItem.folder.name || 'Untitled Folder',
+        score: getFolderScore(activeAuditFolderItem.folder, activeAuditFolderItem.assets),
+        executiveSummary:
+          getFolderSummary(activeAuditFolderItem.folder) ||
+          'This workspace does not have an aggregate folder audit yet.',
+        strengths: getStringList(activeAuditFolderItem.folder.pros),
+        weaknesses: getStringList(activeAuditFolderItem.folder.cons),
+        recommendations: getStringList(activeAuditFolderItem.folder.recommendations),
+        reportText: getFolderSummary(activeAuditFolderItem.folder),
+        hasBeenAudited: Boolean(
+          getFolderSummary(activeAuditFolderItem.folder) ||
+            getFolderScore(activeAuditFolderItem.folder, activeAuditFolderItem.assets) !== null
+        ),
+      }
+    : activeAuditFile
+      ? {
+          kind: 'file',
+          id: activeAuditFile.id,
+          name: getUniversalAssetName(activeAuditFile),
+          score:
+            activeAuditFile.score ??
+            activeAuditFile.evaluation_score ??
+            activeAuditFile.logic_score,
+          executiveSummary:
+            activeAuditFile.ai_summary ??
+            activeAuditFile.audit_summary ??
+            activeAuditFile.summary ??
+            activeAuditFile.description,
+          strengths: activeAuditFile.pros,
+          weaknesses: activeAuditFile.cons,
+          recommendations: activeAuditFile.recommendations,
+          reportText:
+            activeAuditFile.description ??
+            activeAuditFile.ai_summary ??
+            activeAuditFile.audit_summary ??
+            '',
+          previousScore: activeAuditFile.previous_score,
+          lastImprovedSummary: activeAuditFile.last_improved_summary,
+          hasBeenAudited: activeAuditFile.has_been_audited,
+        }
+      : null;
   const activePreviewProject = activePreviewProjectId
     ? allRenderableAssets.find((project) => project.id === activePreviewProjectId) ?? null
     : null;
@@ -968,8 +993,9 @@ export function UniversalAssetGrid({
               isEditing={editingFolderId === item.folder.id}
               isVerifying={verifyingFolderIds.includes(item.folder.id)}
               onAuditClick={() => {
-                setActiveFolderId(item.folder.id);
-                setActiveFolderView('audit');
+                setActiveFolderId(null);
+                setActiveFolderView(null);
+                setActiveAuditTarget({ kind: 'folder', id: item.folder.id });
               }}
               onDelete={
                 !isSpectator && onFolderDelete
@@ -1015,7 +1041,9 @@ export function UniversalAssetGrid({
               verifyingAssetId={verifyingAssetId}
               onDelete={onDelete}
               onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
-              onReadProtocol={onReadProtocol}
+              onReadProtocol={(selectedProject) =>
+                setActiveAuditTarget({ kind: 'file', id: selectedProject.id })
+              }
               onReupload={onReupload}
               onToggleVisibility={onToggleVisibility}
               onVerify={onVerify}
@@ -1024,36 +1052,36 @@ export function UniversalAssetGrid({
         )}
       </div>
 
-      {activeFolderItem && activeFolderView === 'audit' && hasActiveFolderAudit ? (
+      {activeAuditSubject ? (
         <AuditReviewModal
-          assetKind="folder"
-          assetTitle={activeFolderItem.folder.name || 'Untitled Folder'}
-          projectId={activeFolderItem.folder.id}
-          reportText={activeFolderSummary}
-          auditData={{
-            id: activeFolderItem.folder.id,
-            score: activeFolderScore,
-            evaluation_score: activeFolderScore,
-            executive_summary: activeFolderSummary,
-            audit_summary: activeFolderSummary,
-            pros: activeFolderPros,
-            cons: activeFolderCons,
-            recommendations: activeFolderRecommendations,
-            has_been_audited: true,
-          }}
-          isReAuditing={verifyingFolderIds.includes(activeFolderItem.folder.id)}
+          subject={activeAuditSubject}
+          isReAuditing={
+            activeAuditSubject.kind === 'folder'
+              ? verifyingFolderIds.includes(activeAuditSubject.id ?? '')
+              : verifyingAssetId === activeAuditSubject.id
+          }
           onReAudit={
-            !isSpectator && onVerifyFolder
-              ? () => onVerifyFolder(activeFolderItem.folder.id)
+            isSpectator
+              ? undefined
+              : activeAuditFolderItem && onVerifyFolder
+                ? () => onVerifyFolder(activeAuditFolderItem.folder.id)
+                : activeAuditFile && onVerify
+                  ? () => onVerify(activeAuditFile)
+                  : undefined
+          }
+          onOpenFullFocus={
+            activeAuditFile
+              ? () => {
+                  setActiveAuditTarget(null);
+                  setActivePreviewProjectId(activeAuditFile.id);
+                }
               : undefined
           }
-          onOpenFullFocus={() => undefined}
-          onClose={() => {
-            setActiveFolderId(null);
-            setActiveFolderView(null);
-          }}
+          onClose={() => setActiveAuditTarget(null)}
         />
-      ) : activeFolderItem && activeFolderView ? (
+      ) : null}
+
+      {activeFolderItem && activeFolderView === 'workspace' ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
           role="dialog"
@@ -1071,7 +1099,7 @@ export function UniversalAssetGrid({
             <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300/80">
-                  {activeFolderView === 'audit' ? 'Aggregate Folder Audit' : 'Folder Workspace'}
+                  Folder Workspace
                 </p>
                 <h2 id="folder-project-modal-title" className="mt-1 text-xl font-semibold text-white">
                   {activeFolderItem.folder.name || 'Untitled Folder'}
@@ -1093,13 +1121,7 @@ export function UniversalAssetGrid({
             </div>
 
             <div className="overflow-y-auto p-5">
-              {activeFolderView === 'audit' ? (
-                <Card className="border-blue-950/50 bg-[#090d1f]/40">
-                  <CardContent className="p-8 text-center text-sm text-slate-400">
-                    This workspace does not have an aggregate folder audit yet.
-                  </CardContent>
-                </Card>
-              ) : activeFolderItem.assets.length > 0 ? (
+              {activeFolderItem.assets.length > 0 ? (
                 <div className="grid w-full grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {activeFolderItem.assets.map((asset) => (
                     <UniversalAssetCard
@@ -1111,7 +1133,9 @@ export function UniversalAssetGrid({
                       verifyingAssetId={verifyingAssetId}
                       onDelete={onDelete}
                       onPreview={(selectedProject) => setActivePreviewProjectId(selectedProject.id)}
-                      onReadProtocol={onReadProtocol}
+                      onReadProtocol={(selectedProject) =>
+                        setActiveAuditTarget({ kind: 'file', id: selectedProject.id })
+                      }
                       onReupload={onReupload}
                       onToggleVisibility={onToggleVisibility}
                       onVerify={onVerify}

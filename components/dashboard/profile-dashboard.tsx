@@ -5675,9 +5675,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
-                        onReadProtocol={(project) =>
-                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
-                        }
                       />
                     ) : Array.isArray(activeFolderProjects) && activeFolderProjects.length > 0 ? (
                       activeFolderProjects?.map((project) => (
@@ -5729,9 +5726,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         isSpectator
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
-                        onReadProtocol={(project) =>
-                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
-                        }
                       />
                     ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
                       <UniversalAssetGrid
@@ -5755,9 +5749,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         onVerifyFolder={(folderId) => void handleVerifyFolder(folderId)}
                         onVerify={(selectedProject, event) =>
                           void handleVerifyWithMeliusAI(mapProjectRowToProjectItem(selectedProject), false, event)
-                        }
-                        onReadProtocol={(project) =>
-                          handleOpenProjectPreview(mapProjectRowToProjectItem(project))
                         }
                         onReupload={(event, project) =>
                           handleReUpload(event, mapProjectRowToProjectItem(project))
