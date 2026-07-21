@@ -1117,6 +1117,20 @@ Output Format Requirements:
 - Provide a high-level Executive Summary (max 3 sentences) focusing purely on the systemic architecture.
 - Group all findings (Strengths and Structural Vulnerabilities) strictly under the 5 systemic pillars listed above."""
 
+EVALUATION_SYSTEM_MESSAGE += """
+
+ADDITIONAL FOLDER AUDIT REQUIREMENTS:
+When evaluating this folder, you must analyze it as a highly interconnected ecosystem, not just isolated files. Specifically look for:
+- Cross-File Styling: Does the CSS architecture properly align with the HTML structure? 
+- DOM & Logic Flow: Does the JavaScript logic seamlessly complement the frontend, or does it cause conflicts (e.g., inefficient DOM manipulation, broken event listeners)?
+- State & Architecture: How does data flow between components? Do the dependencies and scripts work together cleanly?
+
+You must also include the following specific sections in your final output, anchoring your claims with exact file paths (e.g., "The logic in app.js conflicts with index.html"):
+1. AI Executive Summary (3-4 sentences on the overall architectural health and stack integration)
+2. Systemic Strengths 
+3. Systemic Weaknesses
+4. Actionable Recommendations"""
+
 EVALUATION_ITEM_FORMAT_DESCRIPTION = (
     "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` "
     "arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. "
