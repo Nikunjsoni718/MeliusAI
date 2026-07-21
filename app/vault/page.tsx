@@ -13,6 +13,7 @@ import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
 } from '@/lib/audit-motivation';
+import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
 import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
@@ -1566,12 +1567,22 @@ Return Markdown sections for goods, bads, project description, and a final score
         },
       });
       const extractedScore = extractEvaluationScore(accumulatedReportText);
+      const normalizedAudit = normalizeAuditReport({
+        reportText: accumulatedReportText,
+        score: extractedScore,
+      });
+      const verifiedScore = normalizedAudit.score ?? extractedScore;
       const updatePayload = {
         ai_summary: accumulatedReportText,
+        audit_summary: normalizedAudit.summary || accumulatedReportText,
+        cons: normalizedAudit.weaknesses,
         description: accumulatedReportText,
-        evaluation_score: extractedScore,
+        evaluation_score: verifiedScore,
         has_been_audited: true,
-        logic_score: extractedScore,
+        logic_score: verifiedScore,
+        pros: normalizedAudit.strengths,
+        recommendations: normalizedAudit.recommendations,
+        score: verifiedScore,
       };
       const { error } = await supabase.from('projects').update(updatePayload).eq('id', project.id);
 
@@ -1604,6 +1615,14 @@ Return Markdown sections for goods, bads, project description, and a final score
         [project.id]: accumulatedReportText,
       }));
       setViewingAuditAsset((currentAsset) =>
+        currentAsset?.id === project.id
+          ? {
+              ...currentAsset,
+              ...updatePayload,
+            }
+          : currentAsset
+      );
+      setActivePreviewAsset((currentAsset) =>
         currentAsset?.id === project.id
           ? {
               ...currentAsset,

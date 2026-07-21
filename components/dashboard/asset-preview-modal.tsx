@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
+import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -98,6 +99,10 @@ type PreviewProject = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_data?: unknown;
+  auditData?: unknown;
+  audit_report?: unknown;
+  auditReport?: unknown;
 };
 
 type AssetPreviewModalProps = {
@@ -143,6 +148,10 @@ type VerifyAssetResponse = {
   pros?: string[];
   cons?: string[];
   recommendations?: string[];
+  audit_data?: unknown;
+  auditData?: unknown;
+  audit_report?: unknown;
+  auditReport?: unknown;
 };
 
 function getFileExtensionFromUrlOrName(previewUrl: string | null, fileName: string | null) {
@@ -214,54 +223,6 @@ async function readRemoteTextAsUtf8(src: string) {
   return response.text();
 }
 
-function getScore(project?: PreviewProject | null) {
-  const score = project?.evaluation_score ?? project?.logic_score ?? project?.score ?? null;
-  return typeof score === 'number' && Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0;
-}
-
-function getStringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-    : [];
-}
-
-function getProjectBio(project?: PreviewProject | null) {
-  return project?.ai_summary?.trim() || project?.audit_summary?.trim() || project?.user_description?.trim() || project?.bio?.trim() || '';
-}
-
-function getExecutiveSummaryText(project?: PreviewProject | null) {
-  const storedSummary =
-    project?.ai_summary?.trim() ||
-    project?.audit_summary?.trim() ||
-    project?.user_description?.trim() ||
-    project?.executive_summary?.trim() ||
-    project?.summary?.trim() ||
-    '';
-  let rawSummary = storedSummary;
-
-  if (storedSummary.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(storedSummary) as {
-        ai_summary?: unknown;
-        user_description?: unknown;
-        executiveSummary?: unknown;
-        summary?: unknown;
-      };
-      rawSummary =
-        [parsed.ai_summary, parsed.user_description, parsed.executiveSummary, parsed.summary]
-          .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
-          ?.trim() || storedSummary;
-    } catch {
-      rawSummary = storedSummary;
-    }
-  }
-
-  return rawSummary
-    .replace(/^\s*#{1,6}\s*executive summary\s*/i, '')
-    .split(/\n\s*(?:#{1,6}\s*)?(?:pros|strengths|cons|weaknesses|strategic recommendations|recommendations|scorecard)\b/i)[0]
-    .trim();
-}
-
 function getProjectAssetText(project: PreviewProject | null | undefined, previewName: string) {
   return (
     project?.raw_text?.trim() ||
@@ -272,16 +233,6 @@ function getProjectAssetText(project: PreviewProject | null | undefined, preview
     project?.file_name?.trim() ||
     previewName
   );
-}
-
-function getMetricItems(project: PreviewProject | null | undefined, kind: 'pros' | 'cons' | 'recommendations') {
-  const directItems = getStringArray(project?.[kind]);
-
-  if (directItems.length > 0) {
-    return directItems;
-  }
-
-  return [];
 }
 
 function MetricList({
@@ -355,19 +306,20 @@ export function AssetPreviewModal({
   const projectTextPreview = liveProject?.raw_text?.trim() || liveProject?.text_preview?.trim() || null;
   const renderedTextPreview =
     projectTextPreview || (textPreview.url === activePreviewUrl ? textPreview.text : null);
-  const score = getScore(liveProject);
+  const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
+  const score = normalizedAudit.score ?? 0;
   const lastImprovedSummary = liveProject?.last_improved_summary?.trim() || '';
   const previousScore =
     typeof liveProject?.previous_score === 'number' && Number.isFinite(liveProject.previous_score)
       ? Math.round(liveProject.previous_score)
       : null;
   const scoreDelta = previousScore === null ? null : score - previousScore;
-  const pros = getMetricItems(liveProject, 'pros');
-  const cons = getMetricItems(liveProject, 'cons');
-  const recommendations = getMetricItems(liveProject, 'recommendations');
+  const pros = normalizedAudit.strengths;
+  const cons = normalizedAudit.weaknesses;
+  const recommendations = normalizedAudit.recommendations;
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const executiveSummaryMarkdown =
-    getExecutiveSummaryText(liveProject) ||
+    normalizedAudit.summary ||
     "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.";
 
   useEffect(() => {
@@ -497,52 +449,45 @@ export function AssetPreviewModal({
         throw new Error(data.error || 'MeliusAI verification failed.');
       }
 
-      const report = data.report;
-      const pythonScore = typeof data.score === 'number' ? data.score : undefined;
-      const executiveSummary =
-        data.ai_summary?.trim() ||
-        report?.ai_summary?.trim() ||
-        data.user_description?.trim() ||
-        report?.user_description?.trim() ||
-        report?.executiveSummary?.trim() ||
-        data.project?.ai_summary?.trim() ||
-        data.project?.user_description?.trim() ||
-        data.project?.audit_summary?.trim() ||
-        getExecutiveSummaryText(liveProject) ||
-        '';
-      const strengthsList = data.strengths ?? report?.strengths ?? data.pros ?? report?.pros ?? [];
-      const weaknessesList = data.weaknesses ?? report?.weaknesses ?? data.cons ?? report?.cons ?? [];
-      const recommendationList = data.recommendations ?? report?.recommendations ?? report?.strategicRecommendations ?? [];
-      const summaryOnlyText =
-        data.ai_summary?.trim() ||
-        data.user_description?.trim() ||
-        data.project?.ai_summary?.trim() ||
-        data.project?.user_description?.trim() ||
-        executiveSummary;
+      const normalizedResponse = normalizeAuditReport(data);
+      const existingAudit = normalizeAuditReport(liveProject);
+      const normalizedScore = normalizedResponse.score ?? existingAudit.score;
+      const executiveSummary = normalizedResponse.summary || existingAudit.summary;
+      const strengthsList =
+        normalizedResponse.strengths.length > 0
+          ? normalizedResponse.strengths
+          : existingAudit.strengths;
+      const weaknessesList =
+        normalizedResponse.weaknesses.length > 0
+          ? normalizedResponse.weaknesses
+          : existingAudit.weaknesses;
+      const recommendationList =
+        normalizedResponse.recommendations.length > 0
+          ? normalizedResponse.recommendations
+          : existingAudit.recommendations;
       const projectPatch: Partial<PreviewProject> = {
         ...(data.project ?? {}),
-        score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.score ?? liveProject.score,
-        evaluation_score:
-          report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.evaluation_score ?? liveProject.evaluation_score,
-        logic_score: report?.score ?? report?.calculatedScore ?? pythonScore ?? data.project?.logic_score ?? liveProject.logic_score,
-        ai_summary: data.ai_summary ?? data.project?.ai_summary ?? (summaryOnlyText || liveProject.ai_summary),
-        user_description: data.user_description ?? data.project?.user_description ?? (summaryOnlyText || liveProject.user_description),
-        audit_summary: summaryOnlyText || report?.executiveSummary || data.project?.audit_summary || liveProject.audit_summary,
-        executive_summary: data.executive_summary ?? summaryOnlyText ?? data.project?.executive_summary ?? liveProject.executive_summary,
-        summary: data.summary ?? summaryOnlyText ?? data.project?.summary ?? liveProject.summary,
-        pros: strengthsList.length > 0 ? strengthsList : data.project?.pros ?? liveProject.pros,
-        cons: weaknessesList.length > 0 ? weaknessesList : data.project?.cons ?? liveProject.cons,
-        recommendations:
-          recommendationList.length > 0 ? recommendationList : data.project?.recommendations ?? liveProject.recommendations,
+        score: normalizedScore,
+        evaluation_score: normalizedScore,
+        logic_score: normalizedScore,
+        ai_summary: executiveSummary || liveProject.ai_summary,
+        user_description: executiveSummary || liveProject.user_description,
+        audit_summary: executiveSummary || liveProject.audit_summary,
+        executive_summary: executiveSummary || liveProject.executive_summary,
+        summary: executiveSummary || liveProject.summary,
+        pros: strengthsList,
+        cons: weaknessesList,
+        recommendations: recommendationList,
         last_improved_summary:
           data.last_improved_summary ??
           data.improvement_summary ??
-          report?.last_improved_summary ??
+          data.report?.last_improved_summary ??
           data.project?.last_improved_summary ??
           liveProject.last_improved_summary,
         previous_score:
           data.previous_score ?? data.project?.previous_score ?? liveProject.previous_score,
-        description: data.project?.description ?? (summaryOnlyText || liveProject.description),
+        description:
+          (data.description ?? data.project?.description ?? executiveSummary) || liveProject.description,
       };
 
       setLiveProject((currentProject) => ({
@@ -552,6 +497,7 @@ export function AssetPreviewModal({
       onProjectUpdated?.(projectId, projectPatch);
     } catch (error) {
       console.error('Preview modal AI verification failed:', error);
+      window.alert(error instanceof Error ? error.message : 'MeliusAI verification failed.');
     } finally {
       setIsVerifying(false);
     }

@@ -216,6 +216,7 @@ type StructuredAuditData = {
 };
 
 interface AuditReviewModalProps {
+  assetKind?: 'file' | 'folder';
   assetTitle: string;
   projectId?: string | null;
   id?: string | null;
@@ -225,6 +226,113 @@ interface AuditReviewModalProps {
   isReAuditing?: boolean;
   reportText: string;
   auditData?: StructuredAuditData | null;
+}
+
+export function FeedbackBanner({ score }: { score: number }) {
+  return (
+    <div
+      role="status"
+      className={`mb-5 rounded-xl border px-5 py-4 ${getMotivationalBannerClassName(score)}`}
+    >
+      <p className="m-0 text-sm font-medium leading-6">{getMotivationalMessage(score)}</p>
+    </div>
+  );
+}
+
+export function ScoreGauge({ score, previousScore = null }: { score: number; previousScore?: number | null }) {
+  const normalizedScore = Math.max(0, Math.min(100, Math.round(score)));
+  const normalizedPreviousScore =
+    typeof previousScore === 'number' && Number.isFinite(previousScore)
+      ? Math.max(0, Math.min(100, Math.round(previousScore)))
+      : null;
+  const scoreDelta = normalizedPreviousScore === null ? null : normalizedScore - normalizedPreviousScore;
+
+  return (
+    <section className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-lg border border-[#1a2332] p-6">
+      <svg viewBox="0 0 36 36" className="h-auto w-full max-w-[120px]" aria-label={`${normalizedScore} out of 100`}>
+        <path
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          pathLength="100"
+          stroke="#1a2332"
+          strokeWidth="4"
+        />
+        <path
+          data-audit-score-arc="svg"
+          data-score={normalizedScore}
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          fill="none"
+          pathLength="100"
+          shapeRendering="geometricPrecision"
+          stroke="#00d2ff"
+          strokeDasharray={`${normalizedScore} ${100 - normalizedScore}`}
+          strokeDashoffset="0"
+          strokeLinecap="round"
+          strokeWidth="4"
+          style={{ animation: 'none', opacity: 1, transition: 'none', visibility: 'visible' }}
+        />
+        <text x="18" y="20.5" className="fill-white text-[10px] font-bold" textAnchor="middle">
+          {normalizedScore}
+        </text>
+        <text x="18" y="26" className="fill-[#666] text-[4px]" textAnchor="middle">
+          / 100
+        </text>
+      </svg>
+
+      {scoreDelta !== null ? (
+        <span
+          className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
+            scoreDelta > 0
+              ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+              : scoreDelta < 0
+                ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                : 'border-slate-700 bg-slate-800/70 text-slate-300'
+          }`}
+          title={`Previous score: ${normalizedPreviousScore}/100`}
+        >
+          {scoreDelta > 0 ? '▲ +' : scoreDelta < 0 ? '▼ ' : '• '}
+          {scoreDelta} Points
+        </span>
+      ) : null}
+    </section>
+  );
+}
+
+export function AuditMetricCard({
+  emptyText,
+  items,
+  title,
+  tone,
+}: {
+  emptyText: string;
+  items: string[];
+  title: string;
+  tone: 'emerald' | 'rose' | 'cyan';
+}) {
+  const titleClasses = {
+    emerald: 'text-[#00ff88] [text-shadow:0_0_10px_rgba(0,255,136,0.4)]',
+    rose: 'text-[#ff4444] [text-shadow:0_0_10px_rgba(255,68,68,0.4)]',
+    cyan: 'text-[#00d2ff] [text-shadow:0_0_10px_rgba(0,210,255,0.4)]',
+  };
+
+  return (
+    <section className="min-h-56 rounded-lg border border-[#1a2332] p-5">
+      <h3 className={`m-0 mb-[15px] text-xs font-bold uppercase tracking-[1px] ${titleClasses[tone]}`}>
+        {title}
+      </h3>
+      <ul className="m-0 list-disc space-y-2.5 pl-4 text-[13px] leading-relaxed text-[#ccc]">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <li key={`${title}-${index}`} className="break-words pl-1">
+              {item}
+            </li>
+          ))
+        ) : (
+          <li className="list-none italic text-slate-500">{emptyText}</li>
+        )}
+      </ul>
+    </section>
+  );
 }
 
 function getStructuredItems(value?: string[] | null) {
@@ -248,6 +356,7 @@ function getStructuredSummary(auditData?: StructuredAuditData | null) {
 }
 
 export function AuditReviewModal({
+  assetKind,
   assetTitle,
   projectId,
   id,
@@ -275,7 +384,7 @@ export function AuditReviewModal({
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!resolvedProjectId || !hasSupabaseBrowserEnv()) {
+    if (assetKind === 'folder' || !resolvedProjectId || !hasSupabaseBrowserEnv()) {
       return;
     }
 
@@ -325,7 +434,7 @@ export function AuditReviewModal({
     return () => {
       active = false;
     };
-  }, [resolvedProjectId]);
+  }, [assetKind, resolvedProjectId]);
 
   const hasHydratedProject = Boolean(resolvedProjectId && hydratedProjectId === resolvedProjectId);
   const hydratedAuditData: StructuredAuditData = {
@@ -369,17 +478,13 @@ export function AuditReviewModal({
     cons: hydratedAuditData.cons?.length ? hydratedAuditData.cons : structuredCons.length > 0 ? structuredCons : rightSideBads,
     recommendations: hydratedAuditData.recommendations?.length ? hydratedAuditData.recommendations : structuredRecommendations,
   };
-  const isFile = activeFile?.name?.includes('.');
+  const isFile = assetKind ? assetKind === 'file' : activeFile?.name?.includes('.');
   const badgeText = isFile ? `${activeFile.name.split('.').pop()} FILE`.toUpperCase() : 'PROJECT FOLDER';
   const comparisonSummary = hydratedAuditData.last_improved_summary?.trim() || '';
   const normalizedPreviousScore =
     typeof hydratedAuditData.previous_score === 'number' && Number.isFinite(hydratedAuditData.previous_score)
       ? Math.round(hydratedAuditData.previous_score)
       : null;
-  const scoreDelta =
-    normalizedPreviousScore === null
-      ? null
-      : Math.round(activeFile.evaluated_score) - normalizedPreviousScore;
   const currentScore = Math.max(0, Math.min(100, Math.round(activeFile.evaluated_score)));
 
   async function handleDownloadFullReport() {
@@ -442,14 +547,7 @@ export function AuditReviewModal({
           </div>
         </div>
 
-        <div
-          role="status"
-          className={`mb-5 rounded-xl border px-5 py-4 ${getMotivationalBannerClassName(currentScore)}`}
-        >
-          <p className="m-0 text-sm font-medium leading-6">
-            {getMotivationalMessage(currentScore)}
-          </p>
-        </div>
+        <FeedbackBanner score={currentScore} />
 
         {comparisonSummary ? (
           <section className="mb-5 rounded-xl border border-emerald-400/25 bg-gradient-to-r from-emerald-500/10 via-cyan-500/[0.07] to-transparent p-5 shadow-[0_0_28px_rgba(16,185,129,0.08)]">
@@ -471,10 +569,9 @@ export function AuditReviewModal({
           <p style={{ margin: 0, color: '#ccc', fontSize: '14px', lineHeight: '1.6', wordWrap: 'break-word', whiteSpace: 'normal' }}>
             {activeFile.executive_summary || "Audit complete. Review the insights below."}
           </p>
-        </div>
 
-        {/* Share and Re-Audit Button Row */}
-        <div className="mb-5 flex flex-wrap justify-end gap-2" data-image-export-ignore="true">
+          {/* Share and Re-Audit Button Row */}
+          <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-[#1a2332] pt-4" data-image-export-ignore="true">
           <button
             type="button"
             onClick={() => void handleDownloadFullReport()}
@@ -504,80 +601,41 @@ export function AuditReviewModal({
               {isReAuditing ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
             </button>
           ) : null}
+          </div>
+
+          {downloadFeedback ? (
+            <p
+              className="mb-0 mt-3 text-right text-xs text-slate-400"
+              role="status"
+              aria-live="polite"
+              data-image-export-ignore="true"
+            >
+              {downloadFeedback}
+            </p>
+          ) : null}
         </div>
 
-        {downloadFeedback ? (
-          <p
-            className="mb-5 mt-0 text-right text-xs text-slate-400"
-            role="status"
-            aria-live="polite"
-            data-image-export-ignore="true"
-          >
-            {downloadFeedback}
-          </p>
-        ) : null}
-
         {/* 4-Column Bottom Grid */}
-        <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
-          
-          <div style={{ flex: '0 0 200px', border: '1px solid #1a2332', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '12px', padding: '30px' }}>
-            <svg viewBox="0 0 36 36" style={{ width: '100%', maxWidth: '120px', height: 'auto' }}>
-              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" pathLength="100" stroke="#1a2332" strokeWidth="4" />
-              <path
-                data-audit-score-arc="svg"
-                data-score={currentScore}
-                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                fill="none"
-                pathLength="100"
-                shapeRendering="geometricPrecision"
-                stroke="#00d2ff"
-                strokeDasharray={`${currentScore} ${100 - currentScore}`}
-                strokeDashoffset="0"
-                strokeLinecap="round"
-                strokeWidth="4"
-                style={{ animation: 'none', opacity: 1, transition: 'none', visibility: 'visible' }}
-              />
-              <text x="18" y="20.5" style={{ fill: '#fff', fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' }}>{activeFile.evaluated_score || 0}</text>
-              <text x="18" y="26" style={{ fill: '#666', fontSize: '4px', textAnchor: 'middle' }}>/ 100</text>
-            </svg>
-            {scoreDelta !== null ? (
-              <span
-                className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
-                  scoreDelta > 0
-                    ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                    : scoreDelta < 0
-                      ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
-                      : 'border-slate-700 bg-slate-800/70 text-slate-300'
-                }`}
-                title={`Previous score: ${normalizedPreviousScore}/100`}
-              >
-                {scoreDelta > 0 ? '▲ +' : scoreDelta < 0 ? '▼ ' : '• '}
-                {scoreDelta} Points
-              </span>
-            ) : null}
-          </div>
-
-          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#00ff88', textShadow: '0 0 10px rgba(0, 255, 136, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Strengths</h3>
-            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
-              {activeFile.pros?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
-            </ul>
-          </div>
-
-          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#ff4444', textShadow: '0 0 10px rgba(255, 68, 68, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Weaknesses</h3>
-            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
-              {activeFile.cons?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
-            </ul>
-          </div>
-
-          <div style={{ flex: 1, border: '1px solid #1a2332', borderRadius: '8px', padding: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#00d2ff', textShadow: '0 0 10px rgba(0, 210, 255, 0.4)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase' }}>Recommendations</h3>
-            <ul style={{ margin: 0, paddingLeft: '16px', color: '#ccc', fontSize: '13px', lineHeight: '1.6', listStyleType: 'disc' }}>
-              {activeFile.recommendations?.map((item: string, i: number) => <li key={i} style={{ marginBottom: '10px', wordWrap: 'break-word', whiteSpace: 'normal', paddingLeft: '4px' }}>{item}</li>)}
-            </ul>
-          </div>
-
+        <div className="grid items-stretch gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <ScoreGauge score={currentScore} previousScore={normalizedPreviousScore} />
+          <AuditMetricCard
+            title="Strengths"
+            tone="emerald"
+            items={activeFile.pros ?? []}
+            emptyText="No strengths generated yet."
+          />
+          <AuditMetricCard
+            title="Weaknesses"
+            tone="rose"
+            items={activeFile.cons ?? []}
+            emptyText="No weaknesses generated yet."
+          />
+          <AuditMetricCard
+            title="Recommendations"
+            tone="cyan"
+            items={activeFile.recommendations ?? []}
+            emptyText="No recommendations generated yet."
+          />
         </div>
 
         {isShareModalOpen && resolvedProjectId ? (
