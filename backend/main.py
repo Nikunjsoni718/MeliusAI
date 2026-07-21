@@ -1,6 +1,7 @@
 import os
 import asyncio
 import base64
+import gc
 import io
 import json
 import logging
@@ -10,6 +11,7 @@ import time
 import uuid
 import ast
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -109,7 +111,58 @@ MAX_NOTEBOOK_UPLOAD_BYTES = 25 * 1024 * 1024
 AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
 AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT = 90000
 AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
+AUDIT_MAX_CONCURRENCY = 3
+AUDIT_MAX_CONCURRENT_REPOSITORIES = 2
+AUDIT_QUEUE_TIMEOUT_SECONDS = 5.0
+AUDIT_OVERLOAD_MESSAGE = (
+    "Server is currently under heavy load. Please try analyzing this repository again in a few seconds."
+)
+AUDIT_THREAD_POOL = ThreadPoolExecutor(
+    max_workers=AUDIT_MAX_CONCURRENCY,
+    thread_name_prefix="melius-audit",
+)
+PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
+
+
+async def run_in_audit_thread(operation):
+    """Run blocking audit I/O without using asyncio's much larger default executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(AUDIT_THREAD_POOL, operation)
+
+
+async def gather_in_bounded_batches(
+    items,
+    operation,
+    *,
+    limit: int = AUDIT_MAX_CONCURRENCY,
+    return_exceptions: bool = False,
+):
+    """Process only a small batch at a time so large repositories cannot create unbounded tasks."""
+    bounded_limit = max(1, min(int(limit), AUDIT_MAX_CONCURRENCY))
+    semaphore = asyncio.Semaphore(bounded_limit)
+    results = []
+
+    async def run_item(item):
+        async with semaphore:
+            return await operation(item)
+
+    for offset in range(0, len(items), bounded_limit):
+        batch = items[offset : offset + bounded_limit]
+        batch_results = await asyncio.gather(
+            *(run_item(item) for item in batch),
+            return_exceptions=True,
+        )
+        if not return_exceptions:
+            batch_error = next(
+                (result for result in batch_results if isinstance(result, BaseException)),
+                None,
+            )
+            if batch_error is not None:
+                raise batch_error
+        results.extend(batch_results)
+
+    return results
 
 
 def clean_and_parse_json(raw_string: str) -> dict:
@@ -1451,34 +1504,35 @@ async def orchestrate_audit(files_data: list, async_client):
         system_blueprint_resp.choices[0].message.content or "No system blueprint was generated."
     ).strip()
 
-    semaphore = asyncio.Semaphore(5)
     file_audits: Dict[str, Dict[str, Any]] = {}
 
     async def bound_audit(file: Dict[str, Any]):
-        async with semaphore:
-            if file.get("is_binary"):
-                return None
+        if file.get("is_binary"):
+            return None
 
-            if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
-                return file["filename"], {
-                    "evaluated_score": 100,
-                    "description": "System Documentation.",
-                    "pros": ["Documentation Anchor: README defines the system purpose."],
-                    "cons": [],
-                    "recommendations": [],
-                }
+        if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
+            return file["filename"], {
+                "evaluated_score": 100,
+                "description": "System Documentation.",
+                "pros": ["Documentation Anchor: README defines the system purpose."],
+                "cons": [],
+                "recommendations": [],
+            }
 
-            audit_result = await perform_ai_file_audit(
-                filename=file["filename"],
-                content=file["content"],
-                detected_language=file["language"],
-                async_client=async_client,
-                system_blueprint=system_blueprint,
-            )
-            return file["filename"], audit_result
+        audit_result = await perform_ai_file_audit(
+            filename=file["filename"],
+            content=file["content"],
+            detected_language=file["language"],
+            async_client=async_client,
+            system_blueprint=system_blueprint,
+        )
+        return file["filename"], audit_result
 
-    results = await asyncio.gather(
-        *[bound_audit(file) for file in normalized_files if not file.get("is_binary")],
+    auditable_files = [file for file in normalized_files if not file.get("is_binary")]
+    results = await gather_in_bounded_batches(
+        auditable_files,
+        bound_audit,
+        limit=AUDIT_MAX_CONCURRENCY,
         return_exceptions=True,
     )
     phase_two_failures = []
@@ -1571,6 +1625,9 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
 
     downloaded_files = []
     normalized_files = []
+    responses = []
+    audit_results = []
+    database_update_items = []
     for index, file_payload in enumerate(payload_files):
         filename = str(
             get_file_value(file_payload, "filename")
@@ -1595,9 +1652,20 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         if file_url:
             normalized_files.append({"filename": filename, "fileUrl": file_url, "file_id": file_id})
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-        tasks = [client.get(file["fileUrl"]) for file in normalized_files]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        limits=httpx.Limits(
+            max_connections=AUDIT_MAX_CONCURRENCY,
+            max_keepalive_connections=AUDIT_MAX_CONCURRENCY,
+        ),
+    ) as client:
+        responses = await gather_in_bounded_batches(
+            normalized_files,
+            lambda file: client.get(file["fileUrl"]),
+            limit=AUDIT_MAX_CONCURRENCY,
+            return_exceptions=True,
+        )
 
         for file, response in zip(normalized_files, responses):
             if isinstance(response, Exception):
@@ -1607,6 +1675,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                 logger.error(
                     f"Bad status {response.status_code} for {file['filename']}. URL might be expired/protected."
                 )
+                await response.aclose()
                 continue
 
             # Normalize special formats before either the blueprint or file auditor sees them.
@@ -1663,6 +1732,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     "Protected/error HTML detected for %s. Skipping AI audit for this file.",
                     file["filename"],
                 )
+                await response.aclose()
                 continue
 
             downloaded_files.append(
@@ -1674,6 +1744,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     "file_id": file.get("file_id") or "",
                 }
             )
+            await response.aclose()
 
     if not downloaded_files:
         raise HTTPException(status_code=400, detail="Failed to download folder files.")
@@ -1733,33 +1804,34 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     ).strip()
 
     # --- PHASE 2: AUDIT EVERY NON-BINARY FILE IN ISOLATION ---
-    semaphore = asyncio.Semaphore(5)
     file_audits = {}
 
     async def bound_audit(file_record: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-        async with semaphore:
-            filename = file_record["filename"]
-            if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
-                return filename, {
-                    "evaluated_score": 100,
-                    "description": "System Documentation.",
-                    "pros": [],
-                    "cons": [],
-                    "recommendations": [],
-                }
+        filename = file_record["filename"]
+        if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
+            return filename, {
+                "evaluated_score": 100,
+                "description": "System Documentation.",
+                "pros": [],
+                "cons": [],
+                "recommendations": [],
+            }
 
-            # Pass this file's complete raw content to the isolated audit function.
-            audit_result = await perform_ai_file_audit(
-                filename=filename,
-                content=file_record["content"],
-                detected_language=file_record["language"],
-                async_client=async_client,
-                system_blueprint=system_blueprint,
-            )
-            return filename, audit_result
+        # Pass this file's complete raw content to the isolated audit function.
+        audit_result = await perform_ai_file_audit(
+            filename=filename,
+            content=file_record["content"],
+            detected_language=file_record["language"],
+            async_client=async_client,
+            system_blueprint=system_blueprint,
+        )
+        return filename, audit_result
 
-    audit_results = await asyncio.gather(
-        *(bound_audit(file) for file in downloaded_files if not file.get("is_binary")),
+    auditable_downloads = [file for file in downloaded_files if not file.get("is_binary")]
+    audit_results = await gather_in_bounded_batches(
+        auditable_downloads,
+        bound_audit,
+        limit=AUDIT_MAX_CONCURRENCY,
         return_exceptions=True,
     )
     phase_two_failures = []
@@ -1858,7 +1930,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     }
 
     async def update_parent_project():
-        return await asyncio.to_thread(
+        return await run_in_audit_thread(
             lambda: supabase_client.table("projects")
             .update(parent_update_payload)
             .eq("id", project_id)
@@ -1888,18 +1960,82 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             "has_been_audited": True,
         }
 
-        return await asyncio.to_thread(
+        return await run_in_audit_thread(
             lambda: supabase_client.table("projects")
             .update(file_update_payload)
             .eq("id", file_id)
             .execute()
         )
 
-    database_update_tasks = [update_parent_project()]
-    database_update_tasks.extend(update_individual_file(file_record) for file_record in downloaded_files)
-    await asyncio.gather(*database_update_tasks)
+    async def persist_audit_record(file_record):
+        if file_record is None:
+            return await update_parent_project()
+        return await update_individual_file(file_record)
 
-    return {"status": "success", **orchestration_result}
+    database_update_items = [None, *downloaded_files]
+    await gather_in_bounded_batches(
+        database_update_items,
+        persist_audit_record,
+        limit=AUDIT_MAX_CONCURRENCY,
+    )
+
+    response_payload = {"status": "success", **orchestration_result}
+    downloaded_files.clear()
+    normalized_files.clear()
+    responses.clear()
+    audit_results.clear()
+    database_update_items.clear()
+    del auditable_downloads
+    gc.collect()
+    return response_payload
+
+
+async def run_folder_workflow_with_resource_limits(
+    payload,
+    project_id: str,
+    supabase_client,
+    async_client,
+):
+    audit_slot_acquired = False
+
+    try:
+        try:
+            await asyncio.wait_for(
+                PROJECT_AUDIT_SEMAPHORE.acquire(),
+                timeout=AUDIT_QUEUE_TIMEOUT_SECONDS,
+            )
+            audit_slot_acquired = True
+        except asyncio.TimeoutError:
+            logger.warning("folder_workflow.queue_full project_id=%s", project_id)
+            return JSONResponse(
+                status_code=500,
+                content={"error": AUDIT_OVERLOAD_MESSAGE},
+            )
+
+        return await evaluate_folder_workflow(
+            payload,
+            project_id,
+            supabase_client,
+            async_client,
+        )
+    except HTTPException:
+        raise
+    except OSError:
+        logger.exception("folder_workflow.resource_exhausted project_id=%s", project_id)
+        return JSONResponse(
+            status_code=500,
+            content={"error": AUDIT_OVERLOAD_MESSAGE},
+        )
+    except Exception as error:
+        logger.exception("folder_workflow.failed project_id=%s error=%s", project_id, error)
+        return JSONResponse(
+            status_code=500,
+            content={"error": AUDIT_OVERLOAD_MESSAGE},
+        )
+    finally:
+        if audit_slot_acquired:
+            PROJECT_AUDIT_SEMAPHORE.release()
+        gc.collect()
 
 
 @app.post("/api/evaluate_folder_workflow")
@@ -1921,7 +2057,12 @@ async def evaluate_folder_workflow_route(
         project_id,
     )
     supabase_client = get_request_supabase_client(request)
-    return await evaluate_folder_workflow(payload, project_id, supabase_client, async_client)
+    return await run_folder_workflow_with_resource_limits(
+        payload,
+        project_id,
+        supabase_client,
+        async_client,
+    )
 
 
 @app.post("/api/evaluate")
@@ -1944,7 +2085,12 @@ async def evaluate_code(
     if getattr(payload, "is_folder_audit", False) or payload.files or payload.folder_files:
         logger.info("code_evaluation.orchestrator.folder.start project_id=%s", project_id)
         supabase_client = get_request_supabase_client(request)
-        return await evaluate_folder_workflow(payload, project_id, supabase_client, async_client)
+        return await run_folder_workflow_with_resource_limits(
+            payload,
+            project_id,
+            supabase_client,
+            async_client,
+        )
     # -----------------------------------------------------------------
 
     detected_language = detect_audit_language(filename)
@@ -3419,7 +3565,10 @@ def get_audit_file_name(file_record: Dict[str, Any]) -> str:
     return str(file_name).strip() or "Unknown file"
 
 
-async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
+async def load_audit_file_content(
+    file_record: Dict[str, Any],
+    http_client: httpx.AsyncClient | None = None,
+) -> str:
     file_name = get_audit_file_name(file_record)
     raw_content = (
         file_record.get("raw_content")
@@ -3434,14 +3583,23 @@ async def load_audit_file_content(file_record: Dict[str, Any]) -> str:
     file_url = str(file_record.get("file_url") or "").strip()
     if file_url.startswith(("http://", "https://")):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as http_client:
+            if http_client is None:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as owned_http_client:
+                    response = await owned_http_client.get(file_url)
+            else:
                 response = await http_client.get(file_url)
+
+            try:
                 response.raise_for_status()
                 fetched_content = prepare_audit_content(file_name, response.content)
+            finally:
+                await response.aclose()
 
             if fetched_content:
                 return truncate_audit_text(fetched_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)
         except ValueError:
+            raise
+        except OSError:
             raise
         except Exception as fetch_error:
             logger.warning(
@@ -3772,7 +3930,7 @@ async def mark_project_file_audited(
         return query.execute()
 
     try:
-        update_response = await asyncio.to_thread(lambda: update_project_file(update_payload))
+        update_response = await run_in_audit_thread(lambda: update_project_file(update_payload))
     except Exception as status_update_error:
         logger.warning(
             "project_audit.status_update_failed file=%s error=%s",
@@ -3781,7 +3939,7 @@ async def mark_project_file_audited(
         )
         fallback_payload = dict(update_payload)
         fallback_payload.pop("status", None)
-        update_response = await asyncio.to_thread(lambda: update_project_file(fallback_payload))
+        update_response = await run_in_audit_thread(lambda: update_project_file(fallback_payload))
 
     updated_rows = getattr(update_response, "data", None)
     if isinstance(updated_rows, list) and not updated_rows:
@@ -3894,10 +4052,33 @@ async def run_project_audit(
     if requested_user_id != current_user_id:
         raise HTTPException(status_code=403, detail="You can only audit your own project folder.")
 
+    audit_slot_acquired = False
+    db_response = None
+    files = []
+    file_contents = []
+    loaded_files = []
+    files_data = []
+    files_to_update = []
+    file_update_results = []
+    orchestration_result = None
+
     try:
+        try:
+            await asyncio.wait_for(
+                PROJECT_AUDIT_SEMAPHORE.acquire(),
+                timeout=AUDIT_QUEUE_TIMEOUT_SECONDS,
+            )
+            audit_slot_acquired = True
+        except asyncio.TimeoutError:
+            logger.warning("project_audit.queue_full folder_id=%s", folder_id)
+            return JSONResponse(
+                status_code=500,
+                content={"error": AUDIT_OVERLOAD_MESSAGE},
+            )
+
         supabase_client = get_request_supabase_client(request)
 
-        db_response = await asyncio.to_thread(
+        db_response = await run_in_audit_thread(
             lambda: supabase_client.table("projects")
             .select("*")
             .eq("folder_id", folder_id)
@@ -3909,9 +4090,19 @@ async def run_project_audit(
         if not files:
             raise HTTPException(status_code=404, detail="No files found in this folder.")
 
-        file_contents = await asyncio.gather(
-            *(load_audit_file_content(file_record) for file_record in files)
-        )
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(20.0, connect=10.0),
+            limits=httpx.Limits(
+                max_connections=AUDIT_MAX_CONCURRENCY,
+                max_keepalive_connections=AUDIT_MAX_CONCURRENCY,
+            ),
+        ) as audit_http_client:
+            file_contents = await gather_in_bounded_batches(
+                files,
+                lambda file_record: load_audit_file_content(file_record, audit_http_client),
+                limit=AUDIT_MAX_CONCURRENCY,
+            )
         loaded_files = [
             {
                 "record": file_record,
@@ -3945,18 +4136,39 @@ async def run_project_audit(
             )
             file_audits_by_name = {loaded_files[0]["file_name"]: parsed_project_summary}
 
-        file_update_results = await asyncio.gather(
-            *(
-                mark_project_file_audited(
-                    loaded_file["record"],
-                    {**file_audits_by_name[loaded_file["file_name"]], "file_name": loaded_file["file_name"]},
-                    supabase_client,
-                )
-                for loaded_file in loaded_files
-                if loaded_file["file_name"] in file_audits_by_name
-            ),
+        files_to_update = [
+            loaded_file
+            for loaded_file in loaded_files
+            if loaded_file["file_name"] in file_audits_by_name
+        ]
+
+        async def update_loaded_file(loaded_file):
+            return await mark_project_file_audited(
+                loaded_file["record"],
+                {
+                    **file_audits_by_name[loaded_file["file_name"]],
+                    "file_name": loaded_file["file_name"],
+                },
+                supabase_client,
+            )
+
+        file_update_results = await gather_in_bounded_batches(
+            files_to_update,
+            update_loaded_file,
+            limit=AUDIT_MAX_CONCURRENCY,
             return_exceptions=True,
         )
+        resource_error = next(
+            (
+                file_update_result
+                for file_update_result in file_update_results
+                if isinstance(file_update_result, OSError)
+            ),
+            None,
+        )
+        if resource_error is not None:
+            raise resource_error
+
         file_update_failures = [
             str(file_update_result)
             for file_update_result in file_update_results
@@ -3987,7 +4199,7 @@ async def run_project_audit(
             "recommendations": parsed_project_summary.get("recommendations"),
         }
 
-        await asyncio.to_thread(
+        await run_in_audit_thread(
             lambda: supabase_client.table("project_folders")
             .update(folder_audit_payload)
             .eq("id", folder_id)
@@ -3999,9 +4211,31 @@ async def run_project_audit(
 
     except HTTPException:
         raise
+    except OSError:
+        logger.exception("project_audit.resource_exhausted folder_id=%s", folder_id)
+        return JSONResponse(
+            status_code=500,
+            content={"error": AUDIT_OVERLOAD_MESSAGE},
+        )
     except Exception as error:
-        logger.exception("project_audit.failed folder_id=%s", folder_id)
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        logger.exception("project_audit.failed folder_id=%s error=%s", folder_id, error)
+        return JSONResponse(
+            status_code=500,
+            content={"error": AUDIT_OVERLOAD_MESSAGE},
+        )
+    finally:
+        if audit_slot_acquired:
+            PROJECT_AUDIT_SEMAPHORE.release()
+
+        files.clear()
+        file_contents.clear()
+        loaded_files.clear()
+        files_data.clear()
+        files_to_update.clear()
+        file_update_results.clear()
+        del db_response
+        del orchestration_result
+        gc.collect()
 
 
 class MatchTalentRequest(BaseModel):
