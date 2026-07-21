@@ -1101,26 +1101,21 @@ EVALUATION_LANGUAGE_MAP = {
     ".yml": "YAML",
 }
 
-EVALUATION_SYSTEM_MESSAGE = (
-    "You are an elite Senior Staff Software Engineer auditing code for MeliusAI. "
-    "Evaluate the code for architectural design, performance, security, and best practices. "
-    "You MUST generate a detailed, non-empty 'description' for every submitted file, regardless "
-    "of programming language. The description must explain the code's apparent purpose, runtime "
-    "role, architectural structure, major components/functions/classes, data flow, and integration "
-    "points. Modern web files such as .ts and .tsx require the exact same deep architectural "
-    "description as backend languages like Java, Python, or Go; never treat TypeScript, TSX, JSX, "
-    "or frontend component files as lightweight snippets. "
-    "Return ONLY a valid JSON object with this exact schema and no markdown: "
-    "{'description': string, 'score': number, 'grade': 'A'|'B'|'C'|'D'|'F', "
-    "'pros': [string, string, string], 'cons': [string, string, string], "
-    "'recommendations': [string, string, string]}. "
-    "The 'description' key is mandatory, must be a string, and must never be null, empty, "
-    "or a generic placeholder.\n"
-    "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, "
-    "you MUST use the exact format: 'Catchy Hook: Short explanation'.\n"
-    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'\n"
-    "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
-)
+EVALUATION_SYSTEM_MESSAGE = """You are an expert Principal Software Architect evaluating a full-stack codebase. Do not act like a basic linter or syntax checker. Do not focus on micro-level suggestions like adding unit tests, basic async handling, robust initialization, or improving simple error messages.
+
+Instead, analyze the folder structure and files as a massive, unified system. Audit the codebase strictly against the following systemic pillars:
+
+1. Overall Architecture & File Relationships: Evaluate the separation of concerns, component decoupling, and repository layout. How well do the modules interact?
+2. React Patterns & State Flow: Check the global and local state management strategies (e.g., Context, Zustand, Redux). Look for structural issues like severe prop-drilling or unsafe side effects (useEffect lifecycles).
+3. Routing & Navigation: Assess how routing is structured, whether layouts are properly abstracted, and if protected route architectures are solid.
+4. API Structure & Data Handling: Evaluate how API calls are modularized (e.g., services layers). Check how data fetching, caching, and state synchronization flow through the system.
+5. Build Configuration & Dependencies: Review package configurations and dependencies for bloat, security risks, or architectural misalignments.
+
+Output Format Requirements:
+- Anchor your architectural critique by citing specific file paths (e.g., "In /src/components/Dashboard.jsx...").
+- Provide a definitive Overall Score (0-100).
+- Provide a high-level Executive Summary (max 3 sentences) focusing purely on the systemic architecture.
+- Group all findings (Strengths and Structural Vulnerabilities) strictly under the 5 systemic pillars listed above."""
 
 EVALUATION_ITEM_FORMAT_DESCRIPTION = (
     "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` "
