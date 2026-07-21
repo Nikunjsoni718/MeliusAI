@@ -24,6 +24,8 @@ type UniversalAssetGridProps = {
   assets: ProjectRow[];
   className?: string;
   deletingAssetId?: string | null;
+  editFolderName?: string;
+  editingFolderId?: string | null;
   emptyMessage?: string;
   folders?: ProjectFolderRow[];
   gridClassName?: string;
@@ -32,7 +34,11 @@ type UniversalAssetGridProps = {
   verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
   onDelete?: (projectId: string) => void;
+  onFolderDelete?: (folderId: string) => void;
+  onFolderEditNameChange?: (name: string) => void;
+  onFolderEditStart?: (folder: ProjectFolderRow) => void;
   onFolderOpen?: (folder: ProjectFolderRow) => void;
+  onFolderRename?: (folderId: string) => void | Promise<void>;
   onVerifyFolder?: (folderId: string) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReadProtocol?: (project: ProjectRow) => void;
@@ -738,6 +744,8 @@ export function UniversalAssetGrid({
   assets,
   className,
   deletingAssetId = null,
+  editFolderName = '',
+  editingFolderId = null,
   emptyMessage = 'No verified Vault assets found yet.',
   folders = [],
   gridClassName,
@@ -746,7 +754,11 @@ export function UniversalAssetGrid({
   verifyingAssetId = null,
   visibilityUpdatingIds = [],
   onDelete,
+  onFolderDelete,
+  onFolderEditNameChange,
+  onFolderEditStart,
   onFolderOpen,
+  onFolderRename,
   onVerifyFolder,
   onProjectUpdated,
   onReadProtocol,
@@ -897,11 +909,29 @@ export function UniversalAssetGrid({
               fileCount={item.assets.length}
               files={item.assets}
               averageScore={getFolderScore(item.folder, item.assets)}
+              editName={editingFolderId === item.folder.id ? editFolderName : item.folder.name}
+              isEditing={editingFolderId === item.folder.id}
               isVerifying={verifyingFolderIds.includes(item.folder.id)}
               onClick={() => {
                 setActiveFolderId(item.folder.id);
                 onFolderOpen?.(item.folder);
               }}
+              onDelete={
+                !isSpectator && onFolderDelete
+                  ? () => onFolderDelete(item.folder.id)
+                  : undefined
+              }
+              onEdit={
+                !isSpectator && onFolderEditStart
+                  ? () => onFolderEditStart(item.folder)
+                  : undefined
+              }
+              onEditNameChange={onFolderEditNameChange}
+              onRename={
+                !isSpectator && onFolderRename
+                  ? () => onFolderRename(item.folder.id)
+                  : undefined
+              }
               onVerify={
                 !isSpectator && onVerifyFolder
                   ? () => onVerifyFolder(item.folder.id)

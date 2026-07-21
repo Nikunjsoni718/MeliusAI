@@ -5057,6 +5057,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));
       setProjects((prev) => prev.filter((project) => project.folder_id !== folderId));
+      setProfileAssets((prev) => prev.filter((project) => project.folder_id !== folderId));
+      if (editingFolderId === folderId) {
+        setEditingFolderId(null);
+        setEditFolderName('');
+      }
       if (activeFolderId === folderId) {
         setActiveFolderId(null);
       }
@@ -5732,10 +5737,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         assets={displayedProfileAssets}
                         folders={displayedProjectFolders}
                         deletingAssetId={deletingProjectId}
+                        editFolderName={editFolderName}
+                        editingFolderId={editingFolderId}
                         verifyingFolderIds={Object.keys(auditingFolders).filter(
                           (folderId) => auditingFolders[folderId]
                         )}
                         verifyingAssetId={verifyingAssetId}
+                        onFolderDelete={(folderId) => void handleDeleteFolder(folderId)}
+                        onFolderEditNameChange={setEditFolderName}
+                        onFolderEditStart={(folder) => {
+                          setEditingFolderId(folder.id);
+                          setEditFolderName(folder.name);
+                        }}
+                        onFolderRename={(folderId) => handleRenameFolder(folderId)}
                         onVerifyFolder={(folderId) => void handleVerifyFolder(folderId)}
                         onVerify={(selectedProject, event) =>
                           void handleVerifyWithMeliusAI(mapProjectRowToProjectItem(selectedProject), false, event)
