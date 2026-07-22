@@ -623,7 +623,10 @@ function UniversalAssetCard({
   }
 
   return (
-    <Card className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
+    <Card
+      data-tour-project-id={project.id}
+      className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80"
+    >
       <CardContent className="p-0">
         <div className="relative flex h-full flex-col justify-between p-5">
           <div className="flex flex-1 flex-col">
@@ -672,6 +675,7 @@ function UniversalAssetCard({
               aria-disabled={!assetUrl}
               onClick={handlePreviewClick}
               onKeyDown={handlePreviewKeyDown}
+              data-tour="project-thumbnail"
               className="group relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
               aria-label={`Preview ${assetName}`}
             >
@@ -716,6 +720,7 @@ function UniversalAssetCard({
                   }}
                   disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
                   aria-busy={isVerifying}
+                  data-tour="project-verify"
                   className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:bg-slate-950/20 disabled:text-slate-700"
                 >
                   {isVerifying ? 'Auditing Asset...' : hasCompletedAudit ? 'AI Audit Completed' : 'Verify with MeliusAI'}

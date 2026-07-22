@@ -206,6 +206,9 @@ export async function GET(request: NextRequest) {
     const { error: metadataUpdateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
       user_metadata: {
         ...user.user_metadata,
+        is_new_user:
+          user.user_metadata?.is_new_user === true ||
+          Date.now() - new Date(user.created_at).getTime() < 15 * 60 * 1000,
         username: finalUsername,
       },
     });

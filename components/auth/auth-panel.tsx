@@ -99,6 +99,7 @@ export function AuthPanel({
           options: {
             data: {
               role: 'talent',
+              is_new_user: true,
               full_name: fullName.trim() || email.trim().split('@')[0],
               display_name: fullName.trim() || email.trim().split('@')[0],
             },

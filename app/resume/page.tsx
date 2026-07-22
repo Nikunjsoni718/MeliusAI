@@ -16,6 +16,7 @@ import { BriefcaseBusiness, FileText, FolderLock, House, LoaderCircle, Pencil, S
 import { useSWRConfig } from 'swr';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
+import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -110,7 +111,13 @@ function SidebarLink({
   return (
     <Link
       href={href}
-      onClick={onClick}
+      onClick={() => {
+        if (label === 'Developer Profile') {
+          pauseProductTour(1);
+        }
+        onClick?.();
+      }}
+      data-tour={label === 'Developer Profile' ? 'developer-profile-nav' : undefined}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         active ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : null
@@ -813,6 +820,14 @@ function DashboardResumePageContent() {
         ? 'Core metrics'
         : section.charAt(0).toUpperCase() + section.slice(1);
       setSuccessMessage(`${sectionLabel} saved.`);
+      const hasTechnicalProfileDetails = [
+        ...formData.qualifications,
+        ...formData.skills,
+        ...formData.experience,
+      ].some((item) => item.trim().length > 0);
+      if (hasTechnicalProfileDetails && advanceProductTour(1, 2)) {
+        router.push(displayedProfileHref);
+      }
       if (successTimerRef.current) {
         window.clearTimeout(successTimerRef.current);
       }

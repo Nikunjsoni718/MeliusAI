@@ -11,6 +11,13 @@ import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
+import {
+  advanceProductTour,
+  hasCompletedProductTour,
+  pauseProductTour,
+  resumeProductTour,
+  startProductTour,
+} from '@/components/onboarding/product-tour';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -1269,9 +1276,15 @@ function SidebarNavButton({
       prefetch
       aria-label={label}
       title={label}
-      onClick={onClick}
+      onClick={(event) => {
+        if (label === 'Developer Profile') {
+          pauseProductTour(1);
+        }
+        onClick?.(event);
+      }}
       onFocus={onPrefetch}
       onMouseEnter={onPrefetch}
+      data-tour={label === 'Developer Profile' ? 'developer-profile-nav' : undefined}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         label === 'MeliusAI' ? 'text-cyan-400/90 hover:text-cyan-400' : null,
@@ -2143,7 +2156,10 @@ function ProjectCard({
   }
 
   return (
-    <Card className="relative w-full min-w-0 overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80">
+    <Card
+      data-tour-project-id={project.id}
+      className="relative w-full min-w-0 overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80"
+    >
       <CardContent className="p-0">
         <div className="relative flex h-full flex-col justify-between p-5">
           <div className="flex flex-1 flex-col">
@@ -2168,6 +2184,7 @@ function ProjectCard({
               tabIndex={0}
               onClick={handlePreviewClick}
               onKeyDown={handlePreviewKeyDown}
+              data-tour="project-thumbnail"
               className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
               aria-label={`Preview ${project.title}`}
             >
@@ -2204,6 +2221,7 @@ function ProjectCard({
                 }}
                 disabled={verifyingAssetId !== null || isProjectDeleting}
                 aria-busy={isProjectVerifying}
+                data-tour="project-verify"
                 className={cn(
                   'w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer',
                   isProjectVerifying && 'animate-pulse border-cyan-500/40 text-cyan-300',
@@ -2350,6 +2368,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [isNewUser, setIsNewUser] = useState(false);
   const [bioText, setBioText] = useState('');
   const [rawSkillsInput, setRawSkillsInput] = useState('');
   const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
@@ -2837,6 +2856,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       router.replace('/auth');
     }
   }, [authEnabled, loading, router, targetUsername, user]);
+
+  useEffect(() => {
+    if (!isOwner || !user) {
+      setIsNewUser(false);
+      return;
+    }
+
+    const metadataFlag =
+      user.user_metadata?.is_new_user === true || user.user_metadata?.isNewUser === true;
+    setIsNewUser(metadataFlag && !hasCompletedProductTour(user.id));
+  }, [isOwner, user]);
+
+  useEffect(() => {
+    if (isNewUser && isOwner && user && !profileLoading) {
+      startProductTour(user.id);
+    }
+  }, [isNewUser, isOwner, profileLoading, user]);
 
   useEffect(() => {
     try {
@@ -3464,15 +3500,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }, 1600);
   }
 
-  async function saveBio(nextBio = bioText) {
+  async function saveBio(nextBio = bioText): Promise<boolean> {
     if (!isOwner) {
-      return;
+      return false;
     }
 
     if (!supabase) {
       setBioSaveState('idle');
       showBioToast('Sync Error: Please check your connection.');
-      return;
+      return false;
     }
 
     const nextBioText = nextBio.trim();
@@ -3490,7 +3526,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         console.warn('Unable to clear the saved Bio draft:', error);
       }
       showBioSavedState();
-      return;
+      return true;
     }
 
     const sequence = bioSaveSequenceRef.current + 1;
@@ -3567,16 +3603,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         setUsernameSaveError(null);
         showBioSavedState();
       }
+      return true;
     } catch (error) {
       console.error('Profile dynamic platform data sync failed:', error);
       if (bioSaveSequenceRef.current === sequence) {
         setBioSaveState('idle');
         if (isUsernameConflictError(error)) {
           setUsernameSaveError(USERNAME_TAKEN_MESSAGE);
-          return;
+          return false;
         }
         showBioToast('Sync Error: Please check your connection.');
       }
+      return false;
     }
   }
 
@@ -3586,7 +3624,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    await saveBio(bioText);
+    const bioSaved = await saveBio(bioText);
+    if (bioSaved) {
+      advanceProductTour(0, 1);
+    }
   }
 
   function updateBio(value: string) {
@@ -3738,6 +3779,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setActivePreviewProjectId(asset.id);
       setActivePreviewName(previewFileName);
       setActivePreviewUrl(previewUrl);
+      advanceProductTour(4, 5, asset.id);
       return;
     }
 
@@ -3772,8 +3814,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     setActivePreviewProjectOverride(folderPreviewProject);
     setActivePreviewProjectId(folderPreviewProject.id);
-    setActivePreviewName(previewName);
-    setActivePreviewUrl(previewUrl);
+      setActivePreviewName(previewName);
+      setActivePreviewUrl(previewUrl);
   }
 
   function handleDownloadProject(project: ProjectItem) {
@@ -4050,6 +4092,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setActiveFolderId(savedFolder.id);
       setStagingFolderName('');
       setProjectDescription('');
+      if (savedProjects[0]?.id) {
+        advanceProductTour(2, 3, savedProjects[0].id);
+      }
 
       if (targetUsername) {
         setSpectatorRefreshToken((currentToken) => currentToken + 1);
@@ -4058,6 +4103,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);
+      resumeProductTour(2);
     } finally {
       setIsUploading(false);
     }
@@ -4071,6 +4117,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     if (!isOwner) {
       return;
     }
+
+    pauseProductTour(2);
 
     if (uploadClearRef.current) {
       window.clearTimeout(uploadClearRef.current);
@@ -4137,6 +4185,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
       }));
       setProjectDescription('');
+      advanceProductTour(2, 3, projectWithExtractedCode.id);
       router.refresh();
 
       uploadClearRef.current = window.setTimeout(() => {
@@ -4151,6 +4200,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: 'failed',
         error: error instanceof Error ? error.message : 'We could not save this project.',
       });
+      resumeProductTour(2);
     }
   }
 
@@ -4542,6 +4592,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
+    pauseProductTour(3);
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
     setProjectVerifyError(null);
@@ -4716,6 +4767,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           : currentProject
       );
       setVerifiedAssetId(project.id);
+      advanceProductTour(3, 4, project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
         setVerifiedAssetId(null);
         verifiedAssetTimerRef.current = null;
@@ -4724,6 +4776,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       console.error('Detailed Verification Diagnostic Log:', error);
       const message = error instanceof Error ? error.message : 'MeliusAI GPT verification failed.';
       showProjectVerifyError(message);
+      resumeProductTour(3);
     } finally {
       setVerifyingAssetId(null);
     }
@@ -5412,9 +5465,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         <button
                           type="button"
                           onClick={() => {
-                            setIsEditing((value) => !value);
+                            const nextEditingState = !isEditing;
+                            setIsEditing(nextEditingState);
                             setSettingsOpen(false);
+                            if (nextEditingState) {
+                              pauseProductTour(0);
+                            }
                           }}
+                          data-tour="edit-profile"
                           className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
                         >
                           {isEditing ? 'Done Editing' : 'Edit Profile'}
@@ -5606,36 +5664,41 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           Make scorecard public
                         </span>
                       </div>
-                      <button
-                        id="create-project-btn"
-                        className="btn primary"
-                        type="button"
-                        onClick={() => setIsIngestionModalOpen(true)}
-                      >
-                        + Create Project Folder
-                      </button>
-                      <input
-                        ref={projectFileInputRef}
-                        type="file"
-                        accept="*/*"
-                        disabled={isProjectUploading}
-                        className="sr-only"
-                        onChange={(event) => {
-                          const file = event.currentTarget.files?.[0];
-                          event.currentTarget.value = '';
-                          if (file) {
-                            void handleProjectFile(file);
-                          }
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="btn primary"
-                        disabled={isProjectUploading}
-                        onClick={() => projectFileInputRef.current?.click()}
-                      >
-                        + UPLOAD FILE
-                      </button>
+                      <div data-tour="project-upload" className="flex flex-wrap items-center gap-2">
+                        <button
+                          id="create-project-btn"
+                          className="btn primary"
+                          type="button"
+                          onClick={() => {
+                            pauseProductTour(2);
+                            setIsIngestionModalOpen(true);
+                          }}
+                        >
+                          + Create Project Folder
+                        </button>
+                        <input
+                          ref={projectFileInputRef}
+                          type="file"
+                          accept="*/*"
+                          disabled={isProjectUploading}
+                          className="sr-only"
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            event.currentTarget.value = '';
+                            if (file) {
+                              void handleProjectFile(file);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={isProjectUploading}
+                          onClick={() => projectFileInputRef.current?.click()}
+                        >
+                          + UPLOAD FILE
+                        </button>
+                      </div>
                     </>
                   ) : null}
                   {displayedRootItemCount > 0 ? (
@@ -5982,6 +6045,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   onClick={(event) => {
                     if (event.target === event.currentTarget) {
                       setIsIngestionModalOpen(false);
+                      resumeProductTour(2);
                     }
                   }}
                 >
@@ -5993,7 +6057,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         id="close-modal"
                         aria-label="Close"
                         type="button"
-                        onClick={() => setIsIngestionModalOpen(false)}
+                        onClick={() => {
+                          setIsIngestionModalOpen(false);
+                          resumeProductTour(2);
+                        }}
                       >
                         &times;
                       </button>
@@ -6081,7 +6148,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 />
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => setIsGithubModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button onClick={() => { setIsGithubModalOpen(false); resumeProductTour(2); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
                   <button
                     onClick={handleGithubFetch}
                     disabled={isFetchingGithub}
@@ -6184,7 +6251,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => setIsStagingModalOpen(false)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button onClick={() => { setIsStagingModalOpen(false); resumeProductTour(2); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
                   <button
                     onClick={() => void handleConfirmUpload()}
                     disabled={isUploading}

@@ -718,6 +718,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
             emailRedirectTo: `${getBaseUrl()}/auth/confirmed`,
             data: {
               role: 'talent',
+              is_new_user: true,
               display_name: individualFullName.trim(),
               full_name: individualFullName.trim(),
               username: normalizedUsername,

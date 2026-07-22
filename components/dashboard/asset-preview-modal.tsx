@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
+import { finishProductTour } from '@/components/onboarding/product-tour';
 import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
@@ -660,8 +661,12 @@ export function AssetPreviewModal({
 
             <button
               type="button"
-              onClick={() => setIsShareModalOpen(true)}
+              onClick={() => {
+                finishProductTour(5);
+                setIsShareModalOpen(true);
+              }}
               disabled={!liveProject?.id}
+              data-tour="share-score"
               className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={`Share your ${score} out of 100 MeliusAI audit score`}
             >
