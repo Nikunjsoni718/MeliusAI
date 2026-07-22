@@ -5,6 +5,7 @@ import { EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyrid
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 const TOUR_EVENT_NAME = 'meliusai:product-tour:change';
+export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
@@ -146,6 +147,11 @@ export function finishProductTour(expectedStep?: ProductTourStep) {
   window.localStorage.setItem(getTourCompletedKey(currentState.userId), 'true');
   window.localStorage.removeItem(getTourStateKey(currentState.userId));
   window.localStorage.removeItem(ACTIVE_TOUR_USER_KEY);
+  window.dispatchEvent(
+    new CustomEvent(PRODUCT_TOUR_COMPLETE_EVENT_NAME, {
+      detail: { userId: currentState.userId },
+    })
+  );
   emitTourChange();
   return true;
 }

@@ -13,6 +13,8 @@ const PROFILE_SELECT = 'id, username, full_name, birth_date, bio, avatar_url, up
 type ProfileBootstrapPayload = {
   display_name?: unknown;
   full_name?: unknown;
+  is_new_user?: unknown;
+  onboarding_initialized_at?: unknown;
   role?: unknown;
   role_selected_at?: unknown;
   username?: unknown;
@@ -305,12 +307,24 @@ export async function PATCH(request: NextRequest) {
 
     const admin = createSupabaseAdminClient();
     const role = normalizeRole(payload.role ?? user.user_metadata?.role);
-    const roleSelectedAt = normalizeText(payload.role_selected_at) ?? new Date().toISOString();
-    const nextUserMetadata = {
+    const roleSelectedAt =
+      normalizeText(payload.role_selected_at) ??
+      getMetadataText(user, 'role_selected_at') ??
+      new Date().toISOString();
+    const nextUserMetadata: Record<string, unknown> = {
       ...user.user_metadata,
       role,
       role_selected_at: roleSelectedAt,
     };
+
+    if (payload.is_new_user === false) {
+      nextUserMetadata.is_new_user = false;
+    }
+
+    const onboardingInitializedAt = normalizeText(payload.onboarding_initialized_at);
+    if (onboardingInitializedAt) {
+      nextUserMetadata.onboarding_initialized_at = onboardingInitializedAt;
+    }
     const { data: metadataUpdateData, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
       user_metadata: nextUserMetadata,
     });

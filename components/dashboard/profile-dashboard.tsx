@@ -15,6 +15,7 @@ import {
   advanceProductTour,
   hasCompletedProductTour,
   pauseProductTour,
+  PRODUCT_TOUR_COMPLETE_EVENT_NAME,
   resumeProductTour,
   startProductTour,
 } from '@/components/onboarding/product-tour';
@@ -2858,21 +2859,65 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
-    if (!isOwner || !user) {
-      setIsNewUser(false);
+    if (!isOwner || !user || profileLoading || !profileData) {
       return;
     }
 
-    const metadataFlag =
-      user.user_metadata?.is_new_user === true || user.user_metadata?.isNewUser === true;
-    setIsNewUser(metadataFlag && !hasCompletedProductTour(user.id));
-  }, [isOwner, user]);
+    const hasEmptyBio = !profileData.bio?.trim();
+    const hasEmptyUsername = !profileData.username?.trim();
+    const shouldRunTour =
+      (hasEmptyBio || hasEmptyUsername) && !hasCompletedProductTour(user.id);
+
+    setIsNewUser(shouldRunTour);
+  }, [isOwner, profileData, profileLoading, user]);
 
   useEffect(() => {
     if (isNewUser && isOwner && user && !profileLoading) {
       startProductTour(user.id);
     }
   }, [isNewUser, isOwner, profileLoading, user]);
+
+  const handleTourComplete = useCallback(async () => {
+    setIsNewUser(false);
+
+    try {
+      const response = await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          is_new_user: false,
+          onboarding_initialized_at: new Date().toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Unable to mark the product tour as complete.');
+      }
+    } catch (error) {
+      console.warn('Product tour completed locally, but profile initialization did not sync:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const handleCompletionEvent = (event: Event) => {
+      const completionEvent = event as CustomEvent<{ userId?: string }>;
+      if (completionEvent.detail?.userId === user.id) {
+        void handleTourComplete();
+      }
+    };
+
+    window.addEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, handleCompletionEvent);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, handleCompletionEvent);
+    };
+  }, [handleTourComplete, user]);
 
   useEffect(() => {
     try {
