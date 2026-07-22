@@ -90,7 +90,7 @@ const navigationItems = [
   { href: '/profile', label: 'Home', icon: House },
   { href: '/search', label: 'Search', icon: Search },
   { href: '/vault', label: 'Vault', icon: FolderLock },
-  { href: '/resume', label: 'Resume', icon: FileText },
+  { href: '/resume', label: 'Developer Profile', icon: FileText },
   { href: '/profile#opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
 ];
 
@@ -113,7 +113,7 @@ function SidebarLink({
       onClick={onClick}
       className={cn(
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
-        active ? 'bg-blue-950/35 text-white' : null
+        active ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : null
       )}
     >
       <span className="text-slate-400 transition-colors group-hover:text-cyan-400">{icon}</span>
@@ -898,7 +898,7 @@ function DashboardResumePageContent() {
         ) : null}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-blue-950/40 bg-slate-950 p-4 transition-transform duration-300 ease-in-out md:relative md:z-40 md:h-full md:min-w-[16rem] md:translate-x-0 md:bg-[#060b1e]',
+            'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-white/10 bg-[#0A0F1C]/70 p-4 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-40 md:h-full md:min-w-[16rem] md:translate-x-0',
             isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
@@ -921,7 +921,7 @@ function DashboardResumePageContent() {
                       ? displayedProfileHref
                       : item.label === 'Opportunities'
                         ? opportunitiesProfileHref
-                        : targetUsername && (item.label === 'Vault' || item.label === 'Resume')
+                        : targetUsername && (item.label === 'Vault' || item.label === 'Developer Profile')
                           ? `${item.href}?profile=${encodeURIComponent(targetUsername)}`
                           : item.href;
                   return (

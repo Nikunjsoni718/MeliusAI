@@ -1276,7 +1276,7 @@ function SidebarNavButton({
         'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:text-white hover:bg-blue-950/30 transition-all duration-200 group',
         label === 'MeliusAI' ? 'text-cyan-400/90 hover:text-cyan-400' : null,
         active
-          ? 'bg-blue-950/35 text-white'
+          ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]'
           : null
       )}
     >
@@ -2555,7 +2555,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             isSpectator && targetUsername
               ? `/resume?profile=${encodeURIComponent(targetUsername)}`
               : '/resume',
-          label: 'Resume',
+          label: 'Developer Profile',
           icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
         },
         {
@@ -5106,7 +5106,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           ) : null}
           <aside
             className={cn(
-              'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-hidden border-r border-slate-800 bg-slate-950 transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0 md:bg-slate-900',
+              'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-hidden border-r border-white/10 bg-[#0A0F1C]/70 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0',
               isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
             )}
           >
