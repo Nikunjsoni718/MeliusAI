@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
   clearPersistedAuthState,
@@ -18,6 +18,7 @@ const PUBLIC_SESSION_CHECK_TIMEOUT_MS = 3500;
 
 export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
   const router = useRouter();
+  const [isSessionChecking, setIsSessionChecking] = useState(true);
   const supabase = useMemo(() => {
     if (!hasSupabaseBrowserEnv()) {
       return null;
@@ -41,6 +42,9 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
     async function resolveSessionDestination() {
       if (!supabase) {
         clearPersistedAuthState();
+        if (isMounted) {
+          setIsSessionChecking(false);
+        }
         return;
       }
 
@@ -54,6 +58,9 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
 
         if (sessionResult === 'timeout') {
           console.warn('Session check timed out; showing public auth route.');
+          if (isMounted) {
+            setIsSessionChecking(false);
+          }
           return;
         }
 
@@ -64,6 +71,9 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
 
         if (error || !session?.user) {
           clearPersistedAuthState();
+          if (isMounted) {
+            setIsSessionChecking(false);
+          }
           return;
         }
 
@@ -74,6 +84,9 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
       } catch (error) {
         console.error('Unable to resolve persistent workspace session:', error);
         clearPersistedAuthState();
+        if (isMounted) {
+          setIsSessionChecking(false);
+        }
       }
     }
 
@@ -83,6 +96,10 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
       isMounted = false;
     };
   }, [router, supabase]);
+
+  if (isSessionChecking) {
+    return null;
+  }
 
   return <>{children}</>;
 }

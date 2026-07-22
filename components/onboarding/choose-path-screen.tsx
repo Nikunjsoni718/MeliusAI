@@ -93,7 +93,7 @@ export function ChoosePathScreen() {
   }
 
   if (loading) {
-    return <main className="flex min-h-screen items-center justify-center text-slate-300">Loading your path...</main>;
+    return null;
   }
 
   if (!user) {

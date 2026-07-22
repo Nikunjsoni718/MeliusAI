@@ -170,6 +170,7 @@ function toViewerProfile(user: User, profile: ProfileRecord) {
     display_name: displayName,
     username: profile.username ?? getMetadataText(user, 'username'),
     birth_date: profile.birth_date ?? getMetadataText(user, 'birth_date'),
+    bio: profile.bio ?? null,
     headline: null,
     company_name: null,
     github_username: null,

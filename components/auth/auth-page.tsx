@@ -10,12 +10,12 @@ import faviconLogo from '@/app/favicon.png';
 import GoogleSignInButton from '@/components/GoogleSignInButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { clearPersistedAuthState, persistAuthenticatedRouteState, persistAuthenticatedUser } from '@/lib/auth-session-routing';
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
+import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+import { useTalentAuthCompletion } from '@/lib/talent-auth-completion';
 import { cn } from '@/lib/utils';
-import { getDashboardHref, useViewerProfile } from '@/lib/viewer-client';
 import type { UserRole } from '@/types/supabase';
 
 const ROLE_STORAGE_KEY = 'meliusai-auth-role';
@@ -356,26 +356,12 @@ type AuthPageProps = {
   initialMode?: 'signin' | 'signup';
 };
 
-type ProfileBootstrapResponse = {
-  data?: {
-    id?: string;
-    username?: string | null;
-  };
-  error?: string;
-  profile?: {
-    id: string;
-    username?: string | null;
-  };
-  success?: boolean;
-};
-
 export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const router = useRouter();
-  const { authEnabled, error: viewerError, profile, supabase, user } = useViewerProfile();
-  const handledSignedInRef = useRef(false);
-  const roleSyncInFlightRef = useRef(false);
+  const completeTalentAuthentication = useTalentAuthCompletion();
+  const authEnabled = hasSupabaseBrowserEnv();
+  const [supabase] = useState(() => (authEnabled ? createSupabaseBrowserClient() : null));
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
-  const [hasLoadedIntent, setHasLoadedIntent] = useState(false);
   const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>(initialMode);
   const [individualFullName, setIndividualFullName] = useState('');
   const [individualUsername, setIndividualUsername] = useState('');
@@ -389,7 +375,6 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [authMessage, setAuthMessage] = useState({ text: '', isError: false });
 
-  const existingDestination = profile?.role_selected_at ? getDashboardHref(profile.role) : null;
   const activeRole = selectedRole ? roleDescriptors[selectedRole] : null;
   const normalizedVaultUsername = individualUsername.trim().replace(/^@+/, '');
   const isIndividualSignInReady = Boolean(individualEmail.trim() && individualPassword);
@@ -414,160 +399,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     setSelectedRole('talent');
     clearRoleIntent();
     setIndividualMode(initialMode);
-    setHasLoadedIntent(true);
   }, [initialMode]);
-
-  useEffect(() => {
-    if (viewerError) {
-      setError(viewerError);
-    }
-  }, [viewerError]);
-
-  useEffect(() => {
-    if (profile?.role_selected_at) {
-      clearRoleIntent();
-    }
-  }, [profile?.role_selected_at]);
-
-  useEffect(() => {
-    if (!supabase) {
-      return;
-    }
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event !== 'SIGNED_IN' || !session || handledSignedInRef.current) {
-        return;
-      }
-
-      const completeSignIn = async () => {
-        handledSignedInRef.current = true;
-
-        try {
-          const userMetadata = session.user.user_metadata ?? {};
-          const metadataRole = typeof userMetadata.role === 'string' ? userMetadata.role.toLowerCase() : '';
-          const role =
-            metadataRole === 'recruiter' ||
-            metadataRole === 'corporate' ||
-            metadataRole === 'organization' ||
-            metadataRole === 'organisation'
-              ? 'recruiter'
-              : 'talent';
-
-          if (role !== 'talent') {
-            handledSignedInRef.current = false;
-            return;
-          }
-
-          persistAuthenticatedUser(session.user);
-
-          const response = await fetch('/api/auth/profile', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              role: 'talent',
-              full_name:
-                typeof userMetadata.full_name === 'string'
-                  ? userMetadata.full_name
-                  : typeof userMetadata.display_name === 'string'
-                    ? userMetadata.display_name
-                    : null,
-              username: typeof userMetadata.username === 'string' ? userMetadata.username : null,
-              birth_date: typeof userMetadata.birth_date === 'string' ? userMetadata.birth_date : null,
-            }),
-          });
-          const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
-
-          if (!response.ok || !body?.success) {
-            throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
-          }
-
-          const profileHandle =
-            body.profile?.username ??
-            body.data?.username ??
-            (typeof session.user.user_metadata?.username === 'string' ? session.user.user_metadata.username : null) ??
-            session.user.id;
-
-          router.push(`/profile/${encodeURIComponent(profileHandle)}`);
-          router.refresh();
-        } catch (signInError) {
-          handledSignedInRef.current = false;
-          setError(signInError instanceof Error ? signInError.message : 'Unable to finish sign-in.');
-        }
-      };
-
-      void completeSignIn();
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [router, supabase]);
-
-  useEffect(() => {
-    if (
-      !hasLoadedIntent ||
-      !user ||
-      !profile ||
-      !selectedRole ||
-      profile.role_selected_at ||
-      roleSyncInFlightRef.current
-    ) {
-      return;
-    }
-
-    let active = true;
-
-    const syncRole = async () => {
-      roleSyncInFlightRef.current = true;
-      setError(null);
-      setMessage('Getting your account ready...');
-
-      try {
-        const response = await fetch('/api/auth/profile', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            role: selectedRole,
-            role_selected_at: new Date().toISOString(),
-          }),
-        });
-
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        if (!response.ok) {
-          throw new Error(body?.error ?? 'We could not open this page.');
-        }
-
-        clearRoleIntent();
-        router.replace(getDashboardHref(selectedRole));
-        router.refresh();
-      } catch (syncError) {
-        if (!active) {
-          return;
-        }
-
-        clearRoleIntent();
-        setSelectedRole('talent');
-        setMessage(null);
-        setError(syncError instanceof Error ? syncError.message : 'Unable to secure this path.');
-      } finally {
-        roleSyncInFlightRef.current = false;
-      }
-    };
-
-    void syncRole();
-
-    return () => {
-      active = false;
-    };
-  }, [hasLoadedIntent, profile, router, selectedRole, user]);
 
   async function beginOAuth(provider: Provider) {
     if (!selectedRole) {
@@ -673,47 +505,6 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     setMessage(null);
     saveRoleIntent(selectedRole);
 
-    const ensureIndividualProfile = async ({
-      accessToken,
-      birthDate,
-      fullName,
-      username,
-    }: {
-      accessToken?: string | null;
-      birthDate?: string | null;
-      fullName?: string | null;
-      username?: string | null;
-    }) => {
-      setMessage('Creating your MeliusAI profile...');
-
-      const headers = new Headers({
-        'Content-Type': 'application/json',
-      });
-
-      if (accessToken) {
-        headers.set('Authorization', `Bearer ${accessToken}`);
-      }
-
-      const response = await fetch('/api/auth/profile', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({
-          role: 'talent',
-          full_name: fullName,
-          username,
-          birth_date: birthDate,
-        }),
-      });
-      const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
-
-      if (!response.ok || !body?.success || !body.profile?.id) {
-        throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
-      }
-
-      return body.profile.username ?? body.data?.username ?? username ?? body.profile.id;
-    };
-
     try {
       if (individualMode === 'signup') {
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
@@ -748,21 +539,17 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
           return;
         }
 
-        const profileHandle = await ensureIndividualProfile({
-          accessToken: signUpData.session.access_token,
+        setMessage('Creating your MeliusAI profile...');
+        await completeTalentAuthentication({
           birthDate: birthDateValue,
           fullName: individualFullName.trim(),
+          session: signUpData.session,
           username: normalizedUsername,
         });
 
-        if (signUpData.user) {
-          persistAuthenticatedUser(signUpData.user);
-        } else {
-          persistAuthenticatedRouteState('individual');
-        }
         emitSignupDebugEvent('talent_signup_success', { hasSession: true });
+        clearRoleIntent();
         setMessage('Your MeliusAI profile is ready.');
-        router.replace(`/profile/${encodeURIComponent(profileHandle)}`);
         return;
       }
 
@@ -779,21 +566,22 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
         (data.user?.user_metadata?.role as string | undefined) ??
         ((data.user as { raw_user_meta_data?: { role?: string } } | null)?.raw_user_meta_data?.role);
 
-      if (data.user && authRole === 'talent') {
-        const userId = data.user.id;
-        const { data: profileLookup, error: profileLookupError } = await supabase
-          .from('profiles')
-          .select('username')
-          .eq('id', userId)
-          .single();
-
-        if (profileLookupError || !profileLookup?.username) {
-          throw new Error('Sign-in succeeded, but your profile username could not be found.');
-        }
-
-        persistAuthenticatedUser(data.user);
+      if (data.user && data.session && authRole === 'talent') {
+        const userMetadata = data.user.user_metadata ?? {};
+        setMessage('Loading your MeliusAI profile...');
+        await completeTalentAuthentication({
+          birthDate: typeof userMetadata.birth_date === 'string' ? userMetadata.birth_date : null,
+          fullName:
+            typeof userMetadata.full_name === 'string'
+              ? userMetadata.full_name
+              : typeof userMetadata.display_name === 'string'
+                ? userMetadata.display_name
+                : null,
+          session: data.session,
+          username: typeof userMetadata.username === 'string' ? userMetadata.username : null,
+        });
+        clearRoleIntent();
         setMessage('Welcome back.');
-        router.push(`/profile/${encodeURIComponent(profileLookup.username)}`);
         return;
       }
 
@@ -903,27 +691,6 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     setIndividualEmail('');
     setIndividualPassword('');
     setWorkEmail('');
-  }
-
-  if (user && existingDestination) {
-    return (
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,112,243,0.16),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.16),transparent_30%)]" />
-        <Card className="relative w-full max-w-2xl border-white/10 bg-white/[0.05] backdrop-blur-2xl">
-          <CardHeader>
-            <Badge variant="accent" className="w-fit">Already signed in</Badge>
-            <CardTitle className="text-3xl">You are already signed in.</CardTitle>
-            <CardDescription className="text-base leading-7">
-              Go to your dashboard or head home.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-3">
-            <Button href={existingDestination}>Go to dashboard</Button>
-            <Button variant="outline" href="/">Back home</Button>
-          </CardContent>
-        </Card>
-      </main>
-    );
   }
 
   return (

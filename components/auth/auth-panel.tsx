@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useTalentAuthCompletion } from '@/lib/talent-auth-completion';
 import { cn } from '@/lib/utils';
 import type { Database } from '@/types/supabase';
 
@@ -21,14 +22,6 @@ type AuthPanelProps = {
   title?: string;
 };
 
-type ProfileBootstrapResponse = {
-  error?: string;
-  profile?: {
-    id: string;
-  };
-  success?: boolean;
-};
-
 export function AuthPanel({
   authEnabled,
   className,
@@ -38,6 +31,7 @@ export function AuthPanel({
   supabase,
   title = 'Start your free scan',
 }: AuthPanelProps) {
+  const completeTalentAuthentication = useTalentAuthCompletion();
   const [mode, setMode] = useState<'signin' | 'signup'>('signup');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -66,31 +60,6 @@ export function AuthPanel({
     setError(null);
     setMessage(null);
 
-    async function ensureProfile(accessToken?: string | null) {
-      const headers = new Headers({
-        'Content-Type': 'application/json',
-      });
-
-      if (accessToken) {
-        headers.set('Authorization', `Bearer ${accessToken}`);
-      }
-
-      const response = await fetch('/api/auth/profile', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({
-          role: 'talent',
-          full_name: fullName.trim() || email.trim().split('@')[0],
-        }),
-      });
-      const body = (await response.json().catch(() => null)) as ProfileBootstrapResponse | null;
-
-      if (!response.ok || !body?.success || !body.profile?.id) {
-        throw new Error(body?.error ?? 'Auth succeeded, but profile creation failed. Please try again.');
-      }
-    }
-
     try {
       if (mode === 'signup') {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -111,8 +80,10 @@ export function AuthPanel({
         }
 
         if (data.session) {
-          await ensureProfile(data.session.access_token);
-          window.location.assign('/choose-path');
+          await completeTalentAuthentication({
+            fullName: fullName.trim() || email.trim().split('@')[0],
+            session: data.session,
+          });
           return;
         }
 
@@ -127,9 +98,15 @@ export function AuthPanel({
           throw signInError;
         }
 
-        if (data.user) {
-          await ensureProfile(data.session?.access_token);
-          window.location.assign('/choose-path');
+        if (data.user && data.session) {
+          await completeTalentAuthentication({
+            fullName: fullName.trim() || email.trim().split('@')[0],
+            session: data.session,
+            username:
+              typeof data.user.user_metadata?.username === 'string'
+                ? data.user.user_metadata.username
+                : null,
+          });
         }
       }
     } catch (authError) {

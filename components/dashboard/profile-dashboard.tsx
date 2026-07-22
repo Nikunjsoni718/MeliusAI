@@ -5195,6 +5195,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
   };
 
+  if (loading) {
+    return null;
+  }
+
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
           <ProductTour

@@ -809,6 +809,11 @@ function OrganizationDashboardContent() {
     clearPersistedAuthState();
     router.replace('/');
   }
+
+  if (loading || !authEnabled || !user) {
+    return null;
+  }
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#060b26] text-slate-100 md:flex-row">
       <header className="fixed top-0 left-0 right-0 h-14 bg-[#0a0f29]/90 backdrop-blur-md border-b border-slate-900 flex items-center justify-between px-4 md:hidden z-50">

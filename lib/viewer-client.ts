@@ -22,6 +22,7 @@ export type ViewerProfile = Pick<
   | 'display_name'
   | 'username'
   | 'birth_date'
+  | 'bio'
   | 'headline'
   | 'company_name'
   | 'github_username'
@@ -53,6 +54,7 @@ function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerPro
     display_name: candidate.display_name ?? '',
     username: candidate.username ?? null,
     birth_date: candidate.birth_date ?? null,
+    bio: candidate.bio ?? null,
     headline: candidate.headline ?? null,
     company_name: candidate.company_name ?? null,
     github_username: candidate.github_username ?? null,
@@ -97,13 +99,24 @@ export function useViewerProfile() {
         setLoading(true);
       }
 
-      const readSession = () =>
-        Promise.race([
-          supabase.auth.getSession(),
-          new Promise<'timeout'>((resolve) =>
-            window.setTimeout(() => resolve('timeout'), VIEWER_SESSION_CHECK_TIMEOUT_MS)
-          ),
-        ]);
+      const readSession = async () => {
+        try {
+          return await Promise.race([
+            supabase.auth.getSession(),
+            new Promise<'timeout'>((resolve) =>
+              window.setTimeout(() => resolve('timeout'), VIEWER_SESSION_CHECK_TIMEOUT_MS)
+            ),
+          ]);
+        } catch (sessionReadError) {
+          return {
+            data: { session: null },
+            error:
+              sessionReadError instanceof Error
+                ? sessionReadError
+                : new Error('Unable to resolve the current session.'),
+          };
+        }
+      };
 
       let sessionResult = await readSession();
 
@@ -183,116 +196,126 @@ export function useViewerProfile() {
       setPersistedRole(readPersistedAuthState().userRole);
       setError(null);
       hasLoadedViewerRef.current = true;
-      setLoading(false);
 
-      const response = await fetch('/api/auth/profile', {
-        cache: 'no-store',
-        credentials: 'include',
-      });
-      const body = (await response.json().catch(() => null)) as ProfileResponse | null;
+      try {
+        const response = await fetch('/api/auth/profile', {
+          cache: 'no-store',
+          credentials: 'include',
+        });
+        const body = (await response.json().catch(() => null)) as ProfileResponse | null;
 
-      if (!active) {
-        return;
-      }
-
-      if (response.status === 401) {
-        setProfile(null);
-        setError(null);
-        return;
-      }
-
-      if (!response.ok) {
-        setError(body?.error ?? 'Unable to load profile.');
-        return;
-      }
-
-      let nextProfile = normalizeViewerProfileResponse(body);
-
-      if (nextProfile) {
-        const { data: storedProfile, error: profileLookupError } = await supabase
-          .from('profiles')
-          .select('username')
-          .eq('id', currentUser.id)
-          .maybeSingle();
-
-        if (profileLookupError) {
-          setError(`Unable to check your profile username: ${profileLookupError.message}`);
+        if (!active) {
           return;
         }
 
-        let resolvedUsername = storedProfile?.username?.trim() || nextProfile.username?.trim() || null;
+        if (response.status === 401) {
+          setProfile(null);
+          setError(null);
+          return;
+        }
 
-        if (!resolvedUsername) {
-          const generatedUsername = generateUsername(currentUser);
-          const { data: conflictingProfile, error: usernameLookupError } = await supabase
+        if (!response.ok) {
+          setError(body?.error ?? 'Unable to load profile.');
+          return;
+        }
+
+        let nextProfile = normalizeViewerProfileResponse(body);
+
+        if (nextProfile) {
+          const { data: storedProfile, error: profileLookupError } = await supabase
             .from('profiles')
-            .select('id')
-            .eq('username', generatedUsername)
-            .neq('id', currentUser.id)
-            .limit(1)
+            .select('username')
+            .eq('id', currentUser.id)
             .maybeSingle();
 
-          if (usernameLookupError) {
-            setError(`Unable to reserve your profile username: ${usernameLookupError.message}`);
+          if (profileLookupError) {
+            setError(`Unable to check your profile username: ${profileLookupError.message}`);
             return;
           }
 
-          resolvedUsername = conflictingProfile
-            ? appendUsernameSuffix(generatedUsername, currentUser.id)
-            : generatedUsername;
+          let resolvedUsername = storedProfile?.username?.trim() || nextProfile.username?.trim() || null;
 
-          let { error: usernameUpdateError } = await supabase
-            .from('profiles')
-            .update({ username: resolvedUsername })
-            .eq('id', currentUser.id);
+          if (!resolvedUsername) {
+            const generatedUsername = generateUsername(currentUser);
+            const { data: conflictingProfile, error: usernameLookupError } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('username', generatedUsername)
+              .neq('id', currentUser.id)
+              .limit(1)
+              .maybeSingle();
 
-          if (usernameUpdateError?.code === '23505') {
-            resolvedUsername = appendUsernameSuffix(generatedUsername, currentUser.id);
-            ({ error: usernameUpdateError } = await supabase
+            if (usernameLookupError) {
+              setError(`Unable to reserve your profile username: ${usernameLookupError.message}`);
+              return;
+            }
+
+            resolvedUsername = conflictingProfile
+              ? appendUsernameSuffix(generatedUsername, currentUser.id)
+              : generatedUsername;
+
+            let { error: usernameUpdateError } = await supabase
               .from('profiles')
               .update({ username: resolvedUsername })
-              .eq('id', currentUser.id));
+              .eq('id', currentUser.id);
+
+            if (usernameUpdateError?.code === '23505') {
+              resolvedUsername = appendUsernameSuffix(generatedUsername, currentUser.id);
+              ({ error: usernameUpdateError } = await supabase
+                .from('profiles')
+                .update({ username: resolvedUsername })
+                .eq('id', currentUser.id));
+            }
+
+            if (usernameUpdateError) {
+              setError(`Unable to save your profile username: ${usernameUpdateError.message}`);
+              return;
+            }
+
+            nextProfile = { ...nextProfile, username: resolvedUsername };
           }
 
-          if (usernameUpdateError) {
-            setError(`Unable to save your profile username: ${usernameUpdateError.message}`);
-            return;
+          if (resolvedUsername && nextProfile.username !== resolvedUsername) {
+            nextProfile = { ...nextProfile, username: resolvedUsername };
           }
 
-          nextProfile = { ...nextProfile, username: resolvedUsername };
+          if (resolvedUsername && currentUser.user_metadata?.username !== resolvedUsername) {
+            const { data: metadataData, error: metadataError } = await supabase.auth.updateUser({
+              data: {
+                ...currentUser.user_metadata,
+                username: resolvedUsername,
+              },
+            });
+
+            if (metadataError) {
+              console.warn('Profile username saved, but auth metadata sync failed:', metadataError.message);
+            } else if (metadataData.user) {
+              setUser(metadataData.user);
+              persistAuthenticatedUser(metadataData.user);
+            }
+          }
+
+          if (resolvedUsername) {
+            const legacyProfilePrefix = `/profile/${encodeURIComponent(currentUser.id)}`;
+            if (pathname === legacyProfilePrefix || pathname.startsWith(`${legacyProfilePrefix}/`)) {
+              const remainingPath = pathname.slice(legacyProfilePrefix.length);
+              router.replace(`/profile/${encodeURIComponent(resolvedUsername)}${remainingPath}`);
+            }
+          }
         }
 
-        if (resolvedUsername && nextProfile.username !== resolvedUsername) {
-          nextProfile = { ...nextProfile, username: resolvedUsername };
+        setProfile(nextProfile);
+        setError(null);
+      } catch (profileError) {
+        if (active) {
+          setProfile(null);
+          setError(profileError instanceof Error ? profileError.message : 'Unable to load profile.');
         }
-
-        if (resolvedUsername && currentUser.user_metadata?.username !== resolvedUsername) {
-          const { data: metadataData, error: metadataError } = await supabase.auth.updateUser({
-            data: {
-              ...currentUser.user_metadata,
-              username: resolvedUsername,
-            },
-          });
-
-          if (metadataError) {
-            console.warn('Profile username saved, but auth metadata sync failed:', metadataError.message);
-          } else if (metadataData.user) {
-            setUser(metadataData.user);
-            persistAuthenticatedUser(metadataData.user);
-          }
-        }
-
-        if (resolvedUsername) {
-          const legacyProfilePrefix = `/profile/${encodeURIComponent(currentUser.id)}`;
-          if (pathname === legacyProfilePrefix || pathname.startsWith(`${legacyProfilePrefix}/`)) {
-            const remainingPath = pathname.slice(legacyProfilePrefix.length);
-            router.replace(`/profile/${encodeURIComponent(resolvedUsername)}${remainingPath}`);
-          }
+      } finally {
+        if (active) {
+          setLoading(false);
         }
       }
-
-      setProfile(nextProfile);
-      setError(null);
     };
 
     void loadViewer();
@@ -307,9 +330,13 @@ export function useViewerProfile() {
       setSession(nextSession ?? null);
       setUser(nextSession?.user ?? null);
 
+      if (event === 'SIGNED_IN') {
+        setLoading(true);
+      }
+
       const refreshDelay = event === 'SIGNED_IN' || event === 'SIGNED_OUT' ? 0 : 350;
       authRefreshTimerRef.current = window.setTimeout(() => {
-        void loadViewer({ showLoading: false });
+        void loadViewer({ showLoading: event === 'SIGNED_IN' });
       }, refreshDelay);
     });
 
@@ -326,6 +353,8 @@ export function useViewerProfile() {
     authEnabled,
     error,
     hasAccessToken: Boolean(session?.access_token),
+    isAuthLoading: loading,
+    isSessionChecking: loading,
     loading,
     profile,
     persistedRole,

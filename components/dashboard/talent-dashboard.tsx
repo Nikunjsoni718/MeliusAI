@@ -122,6 +122,36 @@ export function TalentDashboard() {
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
+  const metadataRole =
+    typeof user?.user_metadata?.role === 'string'
+      ? user.user_metadata.role.toLowerCase()
+      : '';
+  const isRecruiter =
+    profile?.role === 'recruiter' ||
+    metadataRole === 'recruiter' ||
+    metadataRole === 'corporate' ||
+    metadataRole === 'organization' ||
+    metadataRole === 'organisation';
+  const profileHandle =
+    profile?.username?.trim() ||
+    (typeof user?.user_metadata?.username === 'string'
+      ? user.user_metadata.username.trim()
+      : '') ||
+    user?.id ||
+    '';
+  const profileSetupHref = profileHandle
+    ? `/profile/${encodeURIComponent(profileHandle)}`
+    : '/profile';
+  const needsProfileSetup = Boolean(
+    user &&
+      !isRecruiter &&
+      (!profile?.username?.trim() || !profile?.bio?.trim())
+  );
+  const shouldRedirectFromDashboard = Boolean(
+    authEnabled &&
+      !loading &&
+      (!user || isRecruiter || needsProfileSetup || (profile && !profile.role_selected_at))
+  );
 
   function handleOnboardingComplete(formData: OnboardingFormData) {
     void formData;
@@ -129,14 +159,29 @@ export function TalentDashboard() {
   }
 
   useEffect(() => {
-    if (profile?.role_selected_at && profile.role === 'recruiter') {
+    if (!authEnabled || loading) {
+      return;
+    }
+
+    if (!user) {
+      router.replace('/auth/login');
+      return;
+    }
+
+    if (isRecruiter) {
       router.replace('/company');
+      return;
+    }
+
+    if (needsProfileSetup) {
+      router.replace(profileSetupHref);
+      return;
     }
 
     if (profile && !profile.role_selected_at) {
       router.replace('/choose-path');
     }
-  }, [profile, router]);
+  }, [authEnabled, isRecruiter, loading, needsProfileSetup, profile, profileSetupHref, router, user]);
 
   useEffect(() => {
     if (!supabase || !user?.id) {
@@ -333,27 +378,8 @@ export function TalentDashboard() {
     });
   }
 
-  if (loading) {
-    return <main className="flex min-h-screen items-center justify-center text-slate-300">Loading your dashboard...</main>;
-  }
-
-  if (!user) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-3xl items-center px-4 py-10 sm:px-6">
-        <Card className="w-full">
-          <CardHeader>
-            <Badge variant="outline" className="w-fit">Sign in required</Badge>
-            <CardTitle className="text-3xl">Please sign in first.</CardTitle>
-            <CardDescription className="text-base leading-7">
-              Sign in to save your work and reviews.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button href="/auth">Sign In</Button>
-          </CardContent>
-        </Card>
-      </main>
-    );
+  if (loading || shouldRedirectFromDashboard) {
+    return null;
   }
 
   return renderDashboard({

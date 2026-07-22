@@ -902,7 +902,11 @@ function DashboardResumePageContent() {
     }
   }
 
-  if (loading || formLoading) {
+  if (loading) {
+    return null;
+  }
+
+  if (formLoading) {
     return (
       <main className="flex h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-400">
         <p className="text-sm">Loading resume workspace...</p>
@@ -1228,13 +1232,7 @@ function DashboardResumePageContent() {
 
 export default function DashboardResumePage() {
   return (
-    <Suspense
-      fallback={
-        <main className="flex h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-400">
-          <p className="text-sm">Loading resume workspace...</p>
-        </main>
-      }
-    >
+    <Suspense fallback={null}>
       <DashboardResumePageContent />
     </Suspense>
   );
