@@ -13,8 +13,10 @@ import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/compon
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import {
   advanceProductTour,
+  hasActiveProductTour,
   hasCompletedProductTour,
   pauseProductTour,
+  ProductTour,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
   resumeProductTour,
   startProductTour,
@@ -2866,7 +2868,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     const hasEmptyBio = !profileData.bio?.trim();
     const hasEmptyUsername = !profileData.username?.trim();
     const shouldRunTour =
-      (hasEmptyBio || hasEmptyUsername) && !hasCompletedProductTour(user.id);
+      ((hasEmptyBio || hasEmptyUsername) && !hasCompletedProductTour(user.id)) ||
+      hasActiveProductTour(user.id);
 
     setIsNewUser(shouldRunTour);
   }, [isOwner, profileData, profileLoading, user]);
@@ -5194,6 +5197,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
+          <ProductTour
+            isAuthenticated={Boolean(user && isOwner)}
+            isNewUser={isNewUser}
+            userId={user?.id ?? null}
+          />
           {isSidebarOpen ? (
             <button
               type="button"

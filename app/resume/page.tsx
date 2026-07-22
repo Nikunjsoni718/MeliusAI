@@ -16,7 +16,13 @@ import { BriefcaseBusiness, FileText, FolderLock, House, LoaderCircle, Pencil, S
 import { useSWRConfig } from 'swr';
 
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
-import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
+import {
+  advanceProductTour,
+  hasActiveProductTour,
+  pauseProductTour,
+  ProductTour,
+  resumeProductTour,
+} from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -477,6 +483,7 @@ function DashboardResumePageContent() {
     ? Boolean(!loading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
     : Boolean(user?.id);
   const isSpectator = Boolean(targetUsername && !loading && !isOwner);
+  const isNewUserTourActive = Boolean(user && hasActiveProductTour(user.id));
   const viewerProfileHandle =
     profile?.username?.trim() ||
     (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '') ||
@@ -526,6 +533,12 @@ function DashboardResumePageContent() {
       router.replace('/auth');
     }
   }, [authEnabled, isSpectator, loading, router, user]);
+
+  useEffect(() => {
+    if (isOwner && isNewUserTourActive) {
+      resumeProductTour(1);
+    }
+  }, [isNewUserTourActive, isOwner]);
 
   useEffect(() => {
     if (loading) {
@@ -899,6 +912,11 @@ function DashboardResumePageContent() {
 
   return (
     <main className="relative flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
+      <ProductTour
+        isAuthenticated={Boolean(user && isOwner && !isSpectator)}
+        isNewUser={isNewUserTourActive}
+        userId={user?.id ?? null}
+      />
       <div className="pointer-events-none absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-950/20 via-transparent to-transparent" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,rgba(0,112,243,0.16),transparent_55%)]" />
 

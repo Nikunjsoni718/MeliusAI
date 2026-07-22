@@ -18,6 +18,12 @@ type StoredProductTourState = {
   projectId: string | null;
 };
 
+type ProductTourProps = {
+  isAuthenticated: boolean;
+  isNewUser: boolean;
+  userId: string | null;
+};
+
 function getTourStateKey(userId: string) {
   return `${TOUR_STATE_PREFIX}${userId}`;
 }
@@ -83,6 +89,17 @@ export function hasCompletedProductTour(userId: string) {
   }
 
   return window.localStorage.getItem(getTourCompletedKey(userId)) === 'true';
+}
+
+export function hasActiveProductTour(userId: string | null | undefined) {
+  if (typeof window === 'undefined' || !userId || hasCompletedProductTour(userId)) {
+    return false;
+  }
+
+  return (
+    window.localStorage.getItem(ACTIVE_TOUR_USER_KEY) === userId &&
+    readTourStateForUser(userId) !== null
+  );
 }
 
 export function startProductTour(userId: string) {
@@ -180,8 +197,36 @@ function ActionInstruction({ children }: { children: string }) {
   );
 }
 
-export function ProductTour() {
+function resolveTourTarget(step: Step | undefined) {
+  if (!step || typeof document === 'undefined') {
+    return null;
+  }
+
+  const { target } = step;
+  if (typeof target === 'string') {
+    return document.querySelector<HTMLElement>(target);
+  }
+
+  if (typeof target === 'function') {
+    const resolvedTarget = target();
+    return resolvedTarget instanceof HTMLElement ? resolvedTarget : null;
+  }
+
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+
+  if (target && typeof target === 'object' && 'current' in target) {
+    const resolvedTarget = target.current;
+    return resolvedTarget instanceof HTMLElement ? resolvedTarget : null;
+  }
+
+  return null;
+}
+
+export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourProps) {
   const [tourState, setTourState] = useState<StoredProductTourState | null>(null);
+  const [targetReadyStep, setTargetReadyStep] = useState<ProductTourStep | null>(null);
 
   useEffect(() => {
     const syncTourState = () => setTourState(readActiveTourState());
@@ -278,6 +323,48 @@ export function ProductTour() {
     [tourState?.projectId]
   );
 
+  const currentStep = tourState ? steps[tourState.stepIndex] : undefined;
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !isNewUser ||
+      !userId ||
+      tourState?.userId !== userId ||
+      !tourState.run ||
+      !currentStep
+    ) {
+      setTargetReadyStep(null);
+      return;
+    }
+
+    const activeStepIndex = tourState.stepIndex;
+    const syncTargetReadiness = () => {
+      setTargetReadyStep(resolveTourTarget(currentStep) ? activeStepIndex : null);
+    };
+
+    syncTargetReadiness();
+    const observer = new MutationObserver(syncTargetReadiness);
+    observer.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [currentStep, isAuthenticated, isNewUser, tourState, userId]);
+
+  const canRunTour = Boolean(
+    isAuthenticated &&
+      isNewUser &&
+      userId &&
+      tourState?.userId === userId &&
+      tourState.run &&
+      targetReadyStep === tourState.stepIndex
+  );
+
   function handleTourEvent(event: EventData) {
     if (
       event.type === EVENTS.TOUR_END &&
@@ -287,9 +374,13 @@ export function ProductTour() {
     }
   }
 
+  if (!canRunTour) {
+    return null;
+  }
+
   return (
     <Joyride
-      run={Boolean(tourState?.run)}
+      run={canRunTour}
       stepIndex={tourState?.stepIndex ?? 0}
       steps={steps}
       continuous

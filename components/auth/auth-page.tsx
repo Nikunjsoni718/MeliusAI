@@ -371,8 +371,9 @@ type ProfileBootstrapResponse = {
 
 export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const router = useRouter();
-  const { authEnabled, error: viewerError, loading, profile, supabase, user } = useViewerProfile();
+  const { authEnabled, error: viewerError, profile, supabase, user } = useViewerProfile();
   const handledSignedInRef = useRef(false);
+  const roleSyncInFlightRef = useRef(false);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>('talent');
   const [hasLoadedIntent, setHasLoadedIntent] = useState(false);
   const [individualMode, setIndividualMode] = useState<'signin' | 'signup'>(initialMode);
@@ -384,7 +385,6 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   const [showIndividualPassword, setShowIndividualPassword] = useState(false);
   const [workEmail, setWorkEmail] = useState('');
   const [pendingAction, setPendingAction] = useState<'linkedin' | 'sso' | 'vault' | null>(null);
-  const [pendingSync, setPendingSync] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [authMessage, setAuthMessage] = useState({ text: '', isError: false });
@@ -510,14 +510,21 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
   }, [router, supabase]);
 
   useEffect(() => {
-    if (!hasLoadedIntent || !user || !profile || !selectedRole || profile.role_selected_at || pendingSync) {
+    if (
+      !hasLoadedIntent ||
+      !user ||
+      !profile ||
+      !selectedRole ||
+      profile.role_selected_at ||
+      roleSyncInFlightRef.current
+    ) {
       return;
     }
 
     let active = true;
 
     const syncRole = async () => {
-      setPendingSync(true);
+      roleSyncInFlightRef.current = true;
       setError(null);
       setMessage('Getting your account ready...');
 
@@ -551,9 +558,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
         setMessage(null);
         setError(syncError instanceof Error ? syncError.message : 'Unable to secure this path.');
       } finally {
-        if (active) {
-          setPendingSync(false);
-        }
+        roleSyncInFlightRef.current = false;
       }
     };
 
@@ -562,7 +567,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     return () => {
       active = false;
     };
-  }, [hasLoadedIntent, pendingSync, profile, router, selectedRole, user]);
+  }, [hasLoadedIntent, profile, router, selectedRole, user]);
 
   async function beginOAuth(provider: Provider) {
     if (!selectedRole) {
@@ -898,23 +903,6 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
     setIndividualEmail('');
     setIndividualPassword('');
     setWorkEmail('');
-  }
-
-  if (loading || !hasLoadedIntent || pendingSync) {
-    return (
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,112,243,0.16),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.14),transparent_30%)]" />
-        <Card className="relative w-full max-w-xl border-white/10 bg-white/[0.04] backdrop-blur-2xl">
-          <CardHeader>
-            <Badge variant="outline" className="w-fit">Getting ready</Badge>
-            <CardTitle className="text-3xl">Preparing your signup...</CardTitle>
-            <CardDescription className="text-base leading-7">
-              We are checking your session before showing the form.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </main>
-    );
   }
 
   if (user && existingDestination) {
