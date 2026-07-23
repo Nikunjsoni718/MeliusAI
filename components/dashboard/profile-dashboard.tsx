@@ -28,6 +28,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -1078,6 +1079,31 @@ function mergeVerifiedProject(
   };
 }
 
+function toProjectRowAuditPatch(projectPatch: Partial<ProjectItem>): Partial<ProjectRow> {
+  return {
+    ai_summary: projectPatch.ai_summary,
+    audit_summary: projectPatch.audit_summary ?? projectPatch.executive_summary,
+    cons: projectPatch.cons,
+    description:
+      projectPatch.description ??
+      projectPatch.executive_summary ??
+      projectPatch.audit_summary,
+    evaluation_score: projectPatch.evaluation_score ?? projectPatch.score,
+    has_been_audited: projectPatch.has_been_audited ?? true,
+    last_improved_summary: projectPatch.last_improved_summary,
+    logic_score: projectPatch.logic_score ?? projectPatch.score,
+    previous_score: projectPatch.previous_score,
+    pros: projectPatch.pros,
+    recommendations: projectPatch.recommendations,
+    score:
+      projectPatch.score ??
+      projectPatch.logic_score ??
+      projectPatch.evaluation_score,
+    summary: projectPatch.summary ?? projectPatch.executive_summary,
+    user_description: projectPatch.user_description,
+  };
+}
+
 function getOfficeBridgeSourceUrl(project: ProjectItem) {
   const href = project.file_url ?? project.preview_url ?? null;
 
@@ -1395,10 +1421,15 @@ function SilhouetteIcon({ className }: { className?: string }) {
 }
 
 function SkeletonBlock({ className }: { className: string }) {
-  return <div className={cn('animate-pulse rounded-full bg-slate-800/70', className)} />;
+  return <Skeleton className={cn('rounded-full', className)} />;
 }
 
-function DashboardSkeleton() {
+function DashboardSkeleton({ projectIds = [] }: { projectIds?: string[] }) {
+  const skeletonProjectIds = Array.from(
+    { length: 4 },
+    (_, index) => projectIds[index] ?? `loading-project-${index}`
+  );
+
   return (
     <div className="flex w-full min-w-0 flex-col gap-6 opacity-100 transition-opacity duration-500">
       <div className="w-full min-w-0 rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6 lg:p-7">
@@ -1422,7 +1453,9 @@ function DashboardSkeleton() {
             </div>
           </div>
           <div className="flex gap-2">
-            <SkeletonBlock className="h-9 w-28 rounded-lg" />
+            <div data-tour="edit-profile">
+              <SkeletonBlock className="h-9 w-28 rounded-lg" />
+            </div>
             <SkeletonBlock className="h-9 w-9 rounded-lg" />
           </div>
         </div>
@@ -1449,16 +1482,26 @@ function DashboardSkeleton() {
               <SkeletonBlock className="h-7 w-44 rounded-lg" />
               <SkeletonBlock className="h-4 w-32 rounded-lg" />
             </div>
-            <SkeletonBlock className="h-7 w-24" />
+            <div data-tour="project-upload">
+              <SkeletonBlock className="h-9 w-44 rounded-lg" />
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-4">
-            {[0, 1, 2, 3].map((item) => (
-              <Card key={item} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+            {skeletonProjectIds.map((projectId) => (
+              <Card
+                key={projectId}
+                data-tour-project-id={projectId}
+                data-tour="project-thumbnail"
+                className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md"
+              >
                 <CardContent className="p-5">
                   <SkeletonBlock className="h-4 w-2/3 rounded-lg" />
                   <SkeletonBlock className="mt-4 h-32 w-full rounded-2xl" />
                   <SkeletonBlock className="mt-4 h-4 w-full rounded-lg" />
                   <SkeletonBlock className="mt-2 h-4 w-4/5 rounded-lg" />
+                  <div data-tour="project-verify">
+                    <SkeletonBlock className="mt-4 h-8 w-full rounded-full" />
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -4625,6 +4668,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setProjects((currentProjects) =>
       currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
     );
+    const profileAssetPatch = toProjectRowAuditPatch(projectPatch);
+    setProfileAssets((currentAssets) =>
+      currentAssets.map((asset) =>
+        asset.id === projectId ? { ...asset, ...profileAssetPatch } : asset
+      )
+    );
 
     if ('user_description' in projectPatch) {
       setProjectDescriptions((currentDescriptions) => ({
@@ -4636,6 +4685,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setActivePreviewProjectOverride((currentProject) =>
       currentProject?.id === projectId ? { ...currentProject, ...projectPatch } : currentProject
     );
+    router.refresh();
   }
 
   async function handleVerifyWithMeliusAI(
@@ -4833,6 +4883,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         previous_score:
           payload.previous_score ?? updatedProject?.previous_score ?? project.previous_score,
       };
+      const verifiedProfileAssetPatch = toProjectRowAuditPatch(verifiedProjectPatch);
 
       setProjects((currentProjects) => {
         const projectExists = currentProjects.some((currentProject) => currentProject.id === project.id);
@@ -4845,6 +4896,33 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             )
           : [mergeVerifiedProject(project, verifiedProjectPatch, accumulatedReportText), ...currentProjects];
       });
+      setProfileAssets((currentAssets) => {
+        const assetExists = currentAssets.some((asset) => asset.id === project.id);
+        if (assetExists) {
+          return currentAssets.map((asset) =>
+            asset.id === project.id
+              ? { ...asset, ...verifiedProfileAssetPatch }
+              : asset
+          );
+        }
+
+        return [
+          {
+            id: project.id,
+            created_at: project.created_at ?? new Date().toISOString(),
+            user_id: project.user_id ?? undefined,
+            is_public: project.is_public ?? true,
+            name: project.title,
+            title: project.title,
+            folder_id: project.folder_id ?? null,
+            file_name: project.file_name ?? project.title,
+            file_type: project.file_type,
+            file_url: project.file_url ?? project.preview_url ?? null,
+            ...verifiedProfileAssetPatch,
+          },
+          ...currentAssets,
+        ];
+      });
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
         [project.id]: userContextDescription,
@@ -4856,6 +4934,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setVerifiedAssetId(project.id);
       advanceProductTour(9, 10, project.id);
+      if (targetUsername) {
+        setSpectatorRefreshToken((currentToken) => currentToken + 1);
+      }
+      router.refresh();
       verifiedAssetTimerRef.current = window.setTimeout(() => {
         setVerifiedAssetId(null);
         verifiedAssetTimerRef.current = null;
@@ -5235,10 +5317,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
   };
 
-  if (loading) {
-    return null;
-  }
-
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
           <ProductTour
@@ -5397,7 +5475,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            {isProjectUploading ? (
+            {loading ? (
+              <DashboardSkeleton projectIds={projects.map((project) => project.id)} />
+            ) : isProjectUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
                 <div className="w-full max-w-xl rounded-[2rem] border border-blue-950/50 bg-[#090d1f]/40 p-4 text-center backdrop-blur-md sm:p-6">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/10 text-sky-100">
@@ -5935,6 +6015,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 : project
                             )
                           );
+                          router.refresh();
                         }}
                       />
                     ) : null}

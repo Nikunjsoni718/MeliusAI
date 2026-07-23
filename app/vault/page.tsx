@@ -1604,6 +1604,7 @@ Return Markdown sections for goods, bads, project description, and a final score
         ...currentDrafts,
         [project.id]: accumulatedReportText,
       }));
+      router.refresh();
       window.alert(`Verification Complete! ${getVaultAssetName(project)} has been successfully audited.`);
     } catch (error) {
       console.error('Detailed Verification Diagnostic Log:', error);
@@ -1776,6 +1777,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                               : asset
                           )
                         );
+                        router.refresh();
                       }}
                     />
                   </div>
@@ -1824,6 +1826,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                         : asset
                     )
                   );
+                  router.refresh();
                 }}
               />
             )}

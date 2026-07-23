@@ -27,6 +27,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
@@ -492,6 +493,57 @@ function EditableStringListSection({
       ) : (
         <p className="text-sm text-zinc-600">{emptyLabel}</p>
       )}
+    </div>
+  );
+}
+
+const resumeSkeletonSections = [
+  { id: 'tour-edit-metrics', label: 'core metrics' },
+  { id: 'tour-edit-qualifications', label: 'qualifications' },
+  { id: 'tour-edit-skills', label: 'skills' },
+  { id: 'tour-edit-experience', label: 'experience' },
+  { id: 'tour-edit-hobbies', label: 'hobbies' },
+] as const;
+
+function ResumeWorkspaceSkeleton() {
+  return (
+    <div
+      className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8"
+      aria-busy="true"
+      aria-label="Loading developer profile"
+    >
+      <div className="mb-8 space-y-4">
+        <Skeleton className="h-3 w-44 rounded-full" />
+        <Skeleton className="h-10 w-64 rounded-xl" />
+        <Skeleton className="h-4 w-full max-w-2xl rounded-full" />
+      </div>
+
+      <div className="space-y-5">
+        {resumeSkeletonSections.map((section, index) => (
+          <div
+            key={section.id}
+            className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md"
+          >
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <Skeleton className="h-3 w-40 rounded-full" />
+              <button
+                id={section.id}
+                type="button"
+                disabled
+                aria-label={`Loading ${section.label} editor`}
+                className="h-8 w-8 shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5"
+              >
+                <Skeleton className="h-full w-full rounded-md" />
+              </button>
+            </div>
+            <div className={cn('grid gap-4', index === 0 ? 'sm:grid-cols-2' : null)}>
+              <Skeleton className="h-4 w-full rounded-full" />
+              <Skeleton className="h-4 w-4/5 rounded-full" />
+              {index === 0 ? <Skeleton className="h-20 w-full rounded-xl sm:col-span-2" /> : null}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -982,18 +1034,6 @@ function DashboardResumePageContent() {
     }
   }
 
-  if (loading) {
-    return null;
-  }
-
-  if (formLoading) {
-    return (
-      <main className="flex h-screen items-center justify-center bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-slate-400">
-        <p className="text-sm">Loading resume workspace...</p>
-      </main>
-    );
-  }
-
   return (
     <main className="relative flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
       <ProductTour
@@ -1091,7 +1131,10 @@ function DashboardResumePageContent() {
               <path d="M4 17h16" />
             </svg>
           </button>
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8">
+          {loading || formLoading ? (
+            <ResumeWorkspaceSkeleton />
+          ) : (
+            <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8">
             <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-cyan-400">Profile Intake Terminal</p>
@@ -1313,7 +1356,8 @@ function DashboardResumePageContent() {
                 </p>
               ) : null}
             </div>
-          </div>
+            </div>
+          )}
         </section>
       </div>
     </main>
@@ -1322,7 +1366,13 @@ function DashboardResumePageContent() {
 
 export default function DashboardResumePage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
+          <ResumeWorkspaceSkeleton />
+        </main>
+      }
+    >
       <DashboardResumePageContent />
     </Suspense>
   );

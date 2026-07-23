@@ -232,7 +232,7 @@ function getProjectTourTarget(projectId: string | null, targetName: string) {
 
   const projectCards = Array.from(document.querySelectorAll<HTMLElement>('[data-tour-project-id]'));
   const matchingCard = projectId
-    ? projectCards.find((element) => element.dataset.tourProjectId === projectId)
+    ? projectCards.find((element) => element.dataset.tourProjectId === projectId) ?? projectCards[0]
     : projectCards[0];
 
   if (matchingCard?.matches(`[data-tour="${targetName}"]`)) {
