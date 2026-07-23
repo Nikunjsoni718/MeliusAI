@@ -1,17 +1,28 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 const TOUR_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
+const PRODUCT_TOUR_VERSION = 2;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
-export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5;
+export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+
+type ProductTourJoyrideStep = Step & {
+  /**
+   * Documents action-only steps while `buttons: []` enforces the behavior in
+   * the installed react-joyride version.
+   */
+  hideNextButton?: boolean;
+};
 
 type StoredProductTourState = {
+  version: typeof PRODUCT_TOUR_VERSION;
   userId: string;
   stepIndex: ProductTourStep;
   run: boolean;
@@ -44,18 +55,23 @@ function readTourStateForUser(userId: string): StoredProductTourState | null {
     }
 
     const parsed = JSON.parse(value) as Partial<StoredProductTourState>;
-    if (
-      parsed.userId !== userId ||
-      typeof parsed.stepIndex !== 'number' ||
-      parsed.stepIndex < 0 ||
-      parsed.stepIndex > 5
-    ) {
+    if (parsed.userId !== userId || typeof parsed.stepIndex !== 'number') {
+      return null;
+    }
+
+    const migratedStepIndex =
+      parsed.version === PRODUCT_TOUR_VERSION || parsed.stepIndex < 2
+        ? parsed.stepIndex
+        : parsed.stepIndex + 5;
+
+    if (migratedStepIndex < 0 || migratedStepIndex > 10) {
       return null;
     }
 
     return {
+      version: PRODUCT_TOUR_VERSION,
       userId,
-      stepIndex: parsed.stepIndex as ProductTourStep,
+      stepIndex: migratedStepIndex as ProductTourStep,
       run: Boolean(parsed.run),
       projectId: typeof parsed.projectId === 'string' ? parsed.projectId : null,
     };
@@ -111,7 +127,13 @@ export function startProductTour(userId: string) {
   writeTourState(
     existingState
       ? { ...existingState, run: true }
-      : { userId, stepIndex: 0, run: true, projectId: null }
+      : {
+          version: PRODUCT_TOUR_VERSION,
+          userId,
+          stepIndex: 0,
+          run: true,
+          projectId: null,
+        }
   );
   return true;
 }
@@ -226,6 +248,7 @@ function resolveTourTarget(step: Step | undefined) {
 }
 
 export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourProps) {
+  const pathname = usePathname();
   const [tourState, setTourState] = useState<StoredProductTourState | null>(null);
   const [targetReadyStep, setTargetReadyStep] = useState<ProductTourStep | null>(null);
 
@@ -241,7 +264,27 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     };
   }, []);
 
-  const steps = useMemo<Step[]>(
+  useEffect(() => {
+    if (
+      pathname === '/resume' &&
+      isAuthenticated &&
+      isNewUser &&
+      userId &&
+      tourState?.userId === userId &&
+      tourState.stepIndex === 1
+    ) {
+      advanceProductTour(1, 2);
+    }
+  }, [
+    isAuthenticated,
+    isNewUser,
+    pathname,
+    tourState?.stepIndex,
+    tourState?.userId,
+    userId,
+  ]);
+
+  const steps = useMemo<ProductTourJoyrideStep[]>(
     () => [
       {
         id: 'profile-setup',
@@ -265,6 +308,71 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
           </ActionInstruction>
         ),
         placement: 'right',
+        buttons: [],
+      },
+      {
+        id: 'edit-metrics',
+        target: '#tour-edit-metrics',
+        title: 'Set Your Baseline',
+        content: (
+          <ActionInstruction>
+            Define your core details. Let the engine know exactly who is behind the keyboard.
+          </ActionInstruction>
+        ),
+        placement: 'left',
+        hideNextButton: true,
+        buttons: [],
+      },
+      {
+        id: 'edit-qualifications',
+        target: '#tour-edit-qualifications',
+        title: 'Validate Your Foundation',
+        content: (
+          <ActionInstruction>
+            Add your degrees and certifications to establish your academic bedrock.
+          </ActionInstruction>
+        ),
+        placement: 'left',
+        hideNextButton: true,
+        buttons: [],
+      },
+      {
+        id: 'edit-skills',
+        target: '#tour-edit-skills',
+        title: 'Load Your Arsenal',
+        content: (
+          <ActionInstruction>
+            List your frameworks and languages. Show recruiters exactly what you can build.
+          </ActionInstruction>
+        ),
+        placement: 'left',
+        hideNextButton: true,
+        buttons: [],
+      },
+      {
+        id: 'edit-experience',
+        target: '#tour-edit-experience',
+        title: 'Map Your Journey',
+        content: (
+          <ActionInstruction>
+            Log your past roles and projects. Prove your real-world battle scars.
+          </ActionInstruction>
+        ),
+        placement: 'left',
+        hideNextButton: true,
+        buttons: [],
+      },
+      {
+        id: 'edit-hobbies',
+        target: '#tour-edit-hobbies',
+        title: 'Humanize Your Code',
+        content: (
+          <ActionInstruction>
+            What do you do away from the screen? Give your profile some personality.
+          </ActionInstruction>
+        ),
+        placement: 'left',
+        hideNextButton: true,
         buttons: [],
       },
       {
@@ -335,7 +443,6 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       !tourState.run ||
       !currentStep
     ) {
-      setTargetReadyStep(null);
       return;
     }
 
@@ -371,7 +478,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       event.type === EVENTS.TOUR_END &&
       (event.status === STATUS.FINISHED || event.status === STATUS.SKIPPED)
     ) {
-      finishProductTour(5);
+      finishProductTour(10);
     }
   }
 

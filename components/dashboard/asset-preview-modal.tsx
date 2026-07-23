@@ -662,7 +662,7 @@ export function AssetPreviewModal({
             <button
               type="button"
               onClick={() => {
-                finishProductTour(5);
+                finishProductTour(10);
                 setIsShareModalOpen(true);
               }}
               disabled={!liveProject?.id}

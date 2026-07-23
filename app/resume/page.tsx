@@ -22,6 +22,7 @@ import {
   pauseProductTour,
   ProductTour,
   resumeProductTour,
+  type ProductTourStep,
 } from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -311,6 +312,7 @@ function getTopScoringAssets(assets: ProjectRow[]) {
 
 function SectionHeader({
   editDisabled,
+  editButtonId,
   isEditing,
   isOwner,
   isSaving,
@@ -319,6 +321,7 @@ function SectionHeader({
   onSave,
 }: {
   editDisabled: boolean;
+  editButtonId: string;
   isEditing: boolean;
   isOwner: boolean;
   isSaving: boolean;
@@ -346,6 +349,7 @@ function SectionHeader({
           </button>
         ) : (
           <button
+            id={editButtonId}
             type="button"
             onClick={onEdit}
             disabled={editDisabled}
@@ -364,6 +368,7 @@ function SectionHeader({
 function EditableStringListSection({
   addLabel,
   editDisabled,
+  editButtonId,
   emptyLabel,
   isOwner,
   isEditing,
@@ -380,6 +385,7 @@ function EditableStringListSection({
 }: {
   addLabel: string;
   editDisabled: boolean;
+  editButtonId: string;
   emptyLabel: string;
   isOwner: boolean;
   isEditing: boolean;
@@ -400,6 +406,7 @@ function EditableStringListSection({
     <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
       <SectionHeader
         editDisabled={editDisabled}
+        editButtonId={editButtonId}
         isEditing={isEditing}
         isOwner={isOwner}
         isSaving={isSaving}
@@ -533,12 +540,6 @@ function DashboardResumePageContent() {
       router.replace('/auth');
     }
   }, [authEnabled, isSpectator, loading, router, user]);
-
-  useEffect(() => {
-    if (isOwner && isNewUserTourActive) {
-      resumeProductTour(1);
-    }
-  }, [isNewUserTourActive, isOwner]);
 
   useEffect(() => {
     if (loading) {
@@ -742,6 +743,19 @@ function DashboardResumePageContent() {
     setFormError(null);
     setSuccessMessage(null);
     setSectionEditing(section, true);
+
+    const tourTransitionBySection: Record<
+      EditableResumeSection,
+      { current: ProductTourStep; next: ProductTourStep }
+    > = {
+      coreMetrics: { current: 2, next: 3 },
+      qualifications: { current: 3, next: 4 },
+      skills: { current: 4, next: 5 },
+      experience: { current: 5, next: 6 },
+      hobbies: { current: 6, next: 7 },
+    };
+    const tourTransition = tourTransitionBySection[section];
+    advanceProductTour(tourTransition.current, tourTransition.next);
   }
 
   async function handleSectionSave(section: EditableResumeSection) {
@@ -833,12 +847,7 @@ function DashboardResumePageContent() {
         ? 'Core metrics'
         : section.charAt(0).toUpperCase() + section.slice(1);
       setSuccessMessage(`${sectionLabel} saved.`);
-      const hasTechnicalProfileDetails = [
-        ...formData.qualifications,
-        ...formData.skills,
-        ...formData.experience,
-      ].some((item) => item.trim().length > 0);
-      if (hasTechnicalProfileDetails && advanceProductTour(1, 2)) {
+      if (section === 'hobbies' && resumeProductTour(7)) {
         router.push(displayedProfileHref);
       }
       if (successTimerRef.current) {
@@ -1032,6 +1041,7 @@ function DashboardResumePageContent() {
               <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
                 <SectionHeader
                   editDisabled={isEditingAnySection}
+                  editButtonId="tour-edit-metrics"
                   isEditing={isEditingCoreMetrics}
                   isOwner={isOwner}
                   isSaving={savingSection === 'coreMetrics'}
@@ -1136,6 +1146,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Qualification"
                 editDisabled={isEditingAnySection}
+                editButtonId="tour-edit-qualifications"
                 emptyLabel="No qualifications added yet."
                 isOwner={isOwner}
                 isEditing={isEditingQualifications}
@@ -1153,6 +1164,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Skill"
                 editDisabled={isEditingAnySection}
+                editButtonId="tour-edit-skills"
                 emptyLabel="No skills added yet."
                 isOwner={isOwner}
                 isEditing={isEditingSkills}
@@ -1171,6 +1183,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Experience"
                 editDisabled={isEditingAnySection}
+                editButtonId="tour-edit-experience"
                 emptyLabel="No professional experience added yet."
                 isOwner={isOwner}
                 isEditing={isEditingExperience}
@@ -1203,6 +1216,7 @@ function DashboardResumePageContent() {
               <EditableStringListSection
                 addLabel="Hobby"
                 editDisabled={isEditingAnySection}
+                editButtonId="tour-edit-hobbies"
                 emptyLabel="No hobbies added yet."
                 isOwner={isOwner}
                 isEditing={isEditingHobbies}
