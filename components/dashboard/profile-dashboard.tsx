@@ -1282,7 +1282,7 @@ function SidebarNavButton({
       title={label}
       onClick={(event) => {
         if (label === 'Developer Profile') {
-          pauseProductTour(1);
+          pauseProductTour(2);
         }
         onClick?.(event);
       }}
@@ -2415,7 +2415,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     const advanceOpenAssetTour = () => {
-      advanceProductTour(9, 10, activePreviewProjectId);
+      advanceProductTour(10, 11, activePreviewProjectId);
     };
 
     advanceOpenAssetTour();
@@ -3692,7 +3692,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     const bioSaved = await saveBio(bioText);
     if (bioSaved) {
-      advanceProductTour(0, 1);
+      advanceProductTour(1, 2);
     }
   }
 
@@ -3702,7 +3702,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setSettingsOpen(false);
 
     if (nextEditingState) {
-      pauseProductTour(0);
+      pauseProductTour(1);
       return;
     }
 
@@ -3713,7 +3713,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     const bioSaved = await saveBio(bioText);
     if (bioSaved) {
-      advanceProductTour(0, 1);
+      advanceProductTour(1, 2);
     }
   }
 
@@ -3866,7 +3866,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setActivePreviewProjectId(asset.id);
       setActivePreviewName(previewFileName);
       setActivePreviewUrl(previewUrl);
-      advanceProductTour(9, 10, asset.id);
+      advanceProductTour(10, 11, asset.id);
       return;
     }
 
@@ -3903,7 +3903,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setActivePreviewProjectId(folderPreviewProject.id);
     setActivePreviewName(previewName);
     setActivePreviewUrl(previewUrl);
-    advanceProductTour(9, 10, asset.id);
+    advanceProductTour(10, 11, asset.id);
   }
 
   function handleDownloadProject(project: ProjectItem) {
@@ -4181,7 +4181,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setStagingFolderName('');
       setProjectDescription('');
       if (savedProjects[0]?.id) {
-        advanceProductTour(7, 8, savedProjects[0].id);
+        advanceProductTour(8, 9, savedProjects[0].id);
       }
 
       if (targetUsername) {
@@ -4191,7 +4191,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);
-      resumeProductTour(7);
+      resumeProductTour(8);
     } finally {
       setIsUploading(false);
     }
@@ -4206,7 +4206,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    pauseProductTour(7);
+    pauseProductTour(8);
 
     if (uploadClearRef.current) {
       window.clearTimeout(uploadClearRef.current);
@@ -4273,7 +4273,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
       }));
       setProjectDescription('');
-      advanceProductTour(7, 8, projectWithExtractedCode.id);
+      advanceProductTour(8, 9, projectWithExtractedCode.id);
       router.refresh();
 
       uploadClearRef.current = window.setTimeout(() => {
@@ -4288,7 +4288,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         status: 'failed',
         error: error instanceof Error ? error.message : 'We could not save this project.',
       });
-      resumeProductTour(7);
+      resumeProductTour(8);
     }
   }
 
@@ -4680,7 +4680,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    pauseProductTour(8);
+    pauseProductTour(9);
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
     setProjectVerifyError(null);
@@ -4855,7 +4855,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           : currentProject
       );
       setVerifiedAssetId(project.id);
-      advanceProductTour(8, 9, project.id);
+      advanceProductTour(9, 10, project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
         setVerifiedAssetId(null);
         verifiedAssetTimerRef.current = null;
@@ -4864,7 +4864,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       console.error('Detailed Verification Diagnostic Log:', error);
       const message = error instanceof Error ? error.message : 'MeliusAI GPT verification failed.';
       showProjectVerifyError(message);
-      resumeProductTour(8);
+      resumeProductTour(9);
     } finally {
       setVerifyingAssetId(null);
     }
@@ -5760,7 +5760,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           className="btn primary"
                           type="button"
                           onClick={() => {
-                            pauseProductTour(7);
+                            pauseProductTour(8);
                             setIsIngestionModalOpen(true);
                           }}
                         >
@@ -6135,7 +6135,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   onClick={(event) => {
                     if (event.target === event.currentTarget) {
                       setIsIngestionModalOpen(false);
-                      resumeProductTour(7);
+                      resumeProductTour(8);
                     }
                   }}
                 >
@@ -6149,7 +6149,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         type="button"
                         onClick={() => {
                           setIsIngestionModalOpen(false);
-                          resumeProductTour(7);
+                          resumeProductTour(8);
                         }}
                       >
                         &times;
@@ -6238,7 +6238,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 />
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => { setIsGithubModalOpen(false); resumeProductTour(7); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button onClick={() => { setIsGithubModalOpen(false); resumeProductTour(8); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
                   <button
                     onClick={handleGithubFetch}
                     disabled={isFetchingGithub}
@@ -6341,7 +6341,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => { setIsStagingModalOpen(false); resumeProductTour(7); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+                  <button onClick={() => { setIsStagingModalOpen(false); resumeProductTour(8); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
                   <button
                     onClick={() => void handleConfirmUpload()}
                     disabled={isUploading}

@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
-import { finishProductTour } from '@/components/onboarding/product-tour';
+import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
 import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
@@ -391,10 +391,12 @@ export function AssetPreviewModal({
       if (event.key === 'Escape') {
         if (isShareModalOpen) {
           setIsShareModalOpen(false);
+          advanceProductTour(11, 12);
           return;
         }
 
         setIsExpandedViewer(false);
+        advanceProductTour(11, 12);
         onClose();
       }
     };
@@ -538,6 +540,7 @@ export function AssetPreviewModal({
             onClick={() => {
               setIsShareModalOpen(false);
               setIsExpandedViewer(false);
+              advanceProductTour(11, 12);
               onClose();
             }}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
@@ -662,7 +665,7 @@ export function AssetPreviewModal({
             <button
               type="button"
               onClick={() => {
-                finishProductTour(10);
+                pauseProductTour(11);
                 setIsShareModalOpen(true);
               }}
               disabled={!liveProject?.id}
@@ -756,7 +759,10 @@ export function AssetPreviewModal({
       {isShareModalOpen && liveProject?.id ? (
         <ShareScoreModal
           score={score}
-          onClose={() => setIsShareModalOpen(false)}
+          onClose={() => {
+            setIsShareModalOpen(false);
+            advanceProductTour(11, 12);
+          }}
         />
       ) : null}
     </div>

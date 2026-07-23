@@ -2,23 +2,27 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
+import { ACTIONS, EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
-const PRODUCT_TOUR_VERSION = 2;
+const PRODUCT_TOUR_VERSION = 3;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
-export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 type ProductTourJoyrideStep = Step & {
   /**
    * Documents action-only steps while `buttons: []` enforces the behavior in
    * the installed react-joyride version.
-   */
+  */
   hideNextButton?: boolean;
+  /** Legacy Joyride naming retained as a declarative step marker. */
+  disableOverlay?: boolean;
+  /** Legacy Joyride naming retained as a declarative step marker. */
+  hideFooter?: boolean;
 };
 
 type StoredProductTourState = {
@@ -54,17 +58,26 @@ function readTourStateForUser(userId: string): StoredProductTourState | null {
       return null;
     }
 
-    const parsed = JSON.parse(value) as Partial<StoredProductTourState>;
+    const parsed = JSON.parse(value) as Partial<Omit<StoredProductTourState, 'version'>> & {
+      version?: number;
+    };
     if (parsed.userId !== userId || typeof parsed.stepIndex !== 'number') {
       return null;
     }
 
-    const migratedStepIndex =
-      parsed.version === PRODUCT_TOUR_VERSION || parsed.stepIndex < 2
+    let migratedStepIndex: number;
+    if (parsed.version === PRODUCT_TOUR_VERSION) {
+      migratedStepIndex = parsed.stepIndex;
+    } else if (parsed.version === 2) {
+      migratedStepIndex = parsed.stepIndex + 1;
+    } else {
+      const expandedLegacyStep = parsed.stepIndex < 2
         ? parsed.stepIndex
         : parsed.stepIndex + 5;
+      migratedStepIndex = expandedLegacyStep + 1;
+    }
 
-    if (migratedStepIndex < 0 || migratedStepIndex > 10) {
+    if (migratedStepIndex < 0 || migratedStepIndex > 12) {
       return null;
     }
 
@@ -292,9 +305,9 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       isNewUser &&
       userId &&
       tourState?.userId === userId &&
-      tourState.stepIndex === 1
+      tourState.stepIndex === 2
     ) {
-      advanceProductTour(1, 2);
+      advanceProductTour(2, 3);
     }
   }, [
     isAuthenticated,
@@ -307,6 +320,14 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
 
   const steps = useMemo<ProductTourJoyrideStep[]>(
     () => [
+      {
+        id: 'welcome',
+        target: 'body',
+        placement: 'center',
+        title: 'Welcome to MeliusAI',
+        content: "Let's calibrate your workspace and get your first project audited.",
+        buttons: ['primary'],
+      },
       {
         id: 'profile-setup',
         target: '[data-tour="edit-profile"]',
@@ -441,13 +462,33 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
             <p className="m-0 text-sm leading-6 text-slate-200">
               Share your verified score to your network.
             </p>
-            <p className="mb-0 mt-3 text-xs font-medium text-slate-400">
-              Sharing is optional. Choose Skip to finish the tour without posting.
-            </p>
           </div>
         ),
         placement: 'top-end',
-        buttons: ['skip'],
+        disableOverlay: true,
+        hideOverlay: true,
+        hideFooter: true,
+        buttons: [],
+        styles: {
+          tooltip: {
+            backgroundColor: 'transparent',
+            border: 'none',
+            boxShadow: 'none',
+            padding: 0,
+          },
+          tooltipContainer: {
+            display: 'none',
+          },
+        },
+      },
+      {
+        id: 'completion',
+        target: 'body',
+        placement: 'center',
+        title: 'Calibration Complete',
+        content:
+          'Thanks for providing your details. You can now use your MeliusAI cards to showcase your verified skills to the network.',
+        buttons: ['primary'],
       },
     ],
     [tourState?.projectId]
@@ -495,11 +536,23 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   );
 
   function handleTourEvent(event: EventData) {
+    if (event.type === EVENTS.STEP_AFTER && event.action === ACTIONS.NEXT) {
+      if (event.index === 0) {
+        advanceProductTour(0, 1);
+        return;
+      }
+
+      if (event.index === 12) {
+        finishProductTour(12);
+        return;
+      }
+    }
+
     if (
       event.type === EVENTS.TOUR_END &&
       (event.status === STATUS.FINISHED || event.status === STATUS.SKIPPED)
     ) {
-      finishProductTour(10);
+      finishProductTour(event.status === STATUS.FINISHED ? 12 : undefined);
     }
   }
 
@@ -518,6 +571,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       locale={{
         next: 'Next',
         nextWithProgress: 'Next ({current} of {total})',
+        last: 'Finish',
         skip: 'Skip',
       }}
       options={{

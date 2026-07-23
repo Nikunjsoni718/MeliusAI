@@ -96,11 +96,11 @@ const resumeTourTransitionBySection: Record<
   EditableResumeSection,
   { current: ProductTourStep; next: ProductTourStep }
 > = {
-  coreMetrics: { current: 2, next: 3 },
-  qualifications: { current: 3, next: 4 },
-  skills: { current: 4, next: 5 },
-  experience: { current: 5, next: 6 },
-  hobbies: { current: 6, next: 7 },
+  coreMetrics: { current: 3, next: 4 },
+  qualifications: { current: 4, next: 5 },
+  skills: { current: 5, next: 6 },
+  experience: { current: 6, next: 7 },
+  hobbies: { current: 7, next: 8 },
 };
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
@@ -130,7 +130,7 @@ function SidebarLink({
       href={href}
       onClick={() => {
         if (label === 'Developer Profile') {
-          pauseProductTour(1);
+          pauseProductTour(2);
         }
         onClick?.();
       }}
@@ -569,10 +569,10 @@ function DashboardResumePageContent() {
 
   useEffect(() => {
     // Recover sessions persisted by the old pencil-click advancement behavior.
-    resetProductTourStep([3, 4, 5, 6], 2);
+    resetProductTourStep([4, 5, 6, 7], 3);
 
     const resetTourOnExit = () => {
-      resetProductTourStep([2, 3, 4, 5, 6], 1);
+      resetProductTourStep([3, 4, 5, 6, 7], 2);
     };
 
     window.addEventListener('pagehide', resetTourOnExit);

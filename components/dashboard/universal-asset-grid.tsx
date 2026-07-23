@@ -958,7 +958,7 @@ export function UniversalAssetGrid({
 
   function openFilePreview(project: ProjectRow) {
     setActivePreviewTarget({ kind: 'file', id: project.id });
-    advanceProductTour(9, 10, project.id);
+    advanceProductTour(10, 11, project.id);
   }
 
   useEffect(() => {
@@ -967,7 +967,7 @@ export function UniversalAssetGrid({
     }
 
     const advanceOpenAssetTour = () => {
-      advanceProductTour(9, 10, activePreviewTarget.id);
+      advanceProductTour(10, 11, activePreviewTarget.id);
     };
 
     advanceOpenAssetTour();
