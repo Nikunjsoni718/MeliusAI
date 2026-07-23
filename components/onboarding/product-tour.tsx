@@ -177,6 +177,23 @@ export function advanceProductTour(
   return true;
 }
 
+export function resetProductTourStep(
+  expectedSteps: readonly ProductTourStep[],
+  resetStep: ProductTourStep
+) {
+  const currentState = readActiveTourState();
+  if (!currentState || !expectedSteps.includes(currentState.stepIndex)) {
+    return false;
+  }
+
+  writeTourState({
+    ...currentState,
+    stepIndex: resetStep,
+    run: true,
+  });
+  return true;
+}
+
 export function finishProductTour(expectedStep?: ProductTourStep) {
   const currentState = readActiveTourState();
   if (!currentState || (expectedStep !== undefined && currentState.stepIndex !== expectedStep)) {
@@ -491,7 +508,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       run={canRunTour}
       stepIndex={tourState?.stepIndex ?? 0}
       steps={steps}
-      continuous
+      continuous={true}
       scrollToFirstStep
       onEvent={handleTourEvent}
       locale={{

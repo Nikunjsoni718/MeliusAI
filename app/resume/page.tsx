@@ -21,7 +21,7 @@ import {
   hasActiveProductTour,
   pauseProductTour,
   ProductTour,
-  resumeProductTour,
+  resetProductTourStep,
   type ProductTourStep,
 } from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
@@ -92,6 +92,16 @@ type WrappedSpectatorResumeResponse = {
 };
 type SpectatorResumeResponse = SpectatorResumePayload | WrappedSpectatorResumeResponse;
 
+const resumeTourTransitionBySection: Record<
+  EditableResumeSection,
+  { current: ProductTourStep; next: ProductTourStep }
+> = {
+  coreMetrics: { current: 2, next: 3 },
+  qualifications: { current: 3, next: 4 },
+  skills: { current: 4, next: 5 },
+  experience: { current: 5, next: 6 },
+  hobbies: { current: 6, next: 7 },
+};
 const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
 const navigationItems = [
@@ -317,6 +327,7 @@ function SectionHeader({
   isOwner,
   isSaving,
   label,
+  onCancel,
   onEdit,
   onSave,
 }: {
@@ -326,6 +337,7 @@ function SectionHeader({
   isOwner: boolean;
   isSaving: boolean;
   label: string;
+  onCancel: () => void;
   onEdit: () => void;
   onSave: () => void;
 }) {
@@ -334,19 +346,29 @@ function SectionHeader({
       <h2 className="text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</h2>
       {isOwner ? (
         isEditing ? (
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={isSaving}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/45 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSaving ? (
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-            {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={isSaving}
+              className="inline-flex h-9 items-center rounded-lg border border-white/10 bg-white/[0.03] px-3 text-xs font-medium text-slate-400 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={isSaving}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/45 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
         ) : (
           <button
             id={editButtonId}
@@ -376,6 +398,7 @@ function EditableStringListSection({
   items,
   label,
   onAdd,
+  onCancel,
   onDelete,
   onEdit,
   onSave,
@@ -393,6 +416,7 @@ function EditableStringListSection({
   items: string[];
   label: string;
   onAdd: () => void;
+  onCancel: () => void;
   onDelete: (index: number) => void;
   onEdit: () => void;
   onSave: () => void;
@@ -411,6 +435,7 @@ function EditableStringListSection({
         isOwner={isOwner}
         isSaving={isSaving}
         label={label}
+        onCancel={onCancel}
         onEdit={onEdit}
         onSave={onSave}
       />
@@ -511,6 +536,7 @@ function DashboardResumePageContent() {
   );
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const successTimerRef = useRef<number | null>(null);
+  const sectionEditSnapshotRef = useRef<ResumeFormData | null>(null);
   const [formData, setFormData] = useState<ResumeFormData>(() => createDefaultFormData());
   const [topProjects, setTopProjects] = useState<ProjectRow[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -540,6 +566,21 @@ function DashboardResumePageContent() {
       router.replace('/auth');
     }
   }, [authEnabled, isSpectator, loading, router, user]);
+
+  useEffect(() => {
+    // Recover sessions persisted by the old pencil-click advancement behavior.
+    resetProductTourStep([3, 4, 5, 6], 2);
+
+    const resetTourOnExit = () => {
+      resetProductTourStep([2, 3, 4, 5, 6], 1);
+    };
+
+    window.addEventListener('pagehide', resetTourOnExit);
+    return () => {
+      window.removeEventListener('pagehide', resetTourOnExit);
+      resetTourOnExit();
+    };
+  }, []);
 
   useEffect(() => {
     if (loading) {
@@ -740,22 +781,46 @@ function DashboardResumePageContent() {
       return;
     }
 
+    sectionEditSnapshotRef.current = {
+      ...formData,
+      qualifications: [...formData.qualifications],
+      experience: [...formData.experience],
+      hobbies: [...formData.hobbies],
+      skills: [...formData.skills],
+      featuredProjectIds: [...formData.featuredProjectIds],
+    };
     setFormError(null);
     setSuccessMessage(null);
     setSectionEditing(section, true);
+  }
 
-    const tourTransitionBySection: Record<
-      EditableResumeSection,
-      { current: ProductTourStep; next: ProductTourStep }
-    > = {
-      coreMetrics: { current: 2, next: 3 },
-      qualifications: { current: 3, next: 4 },
-      skills: { current: 4, next: 5 },
-      experience: { current: 5, next: 6 },
-      hobbies: { current: 6, next: 7 },
-    };
-    const tourTransition = tourTransitionBySection[section];
-    advanceProductTour(tourTransition.current, tourTransition.next);
+  function cancelEditingSection(section: EditableResumeSection) {
+    if (!isOwner || savingSection) {
+      return;
+    }
+
+    const snapshot = sectionEditSnapshotRef.current;
+    if (snapshot) {
+      setFormData((current) => {
+        if (section === 'coreMetrics') {
+          return {
+            ...current,
+            name: snapshot.name,
+            age: snapshot.age,
+            status: snapshot.status,
+          };
+        }
+
+        return {
+          ...current,
+          [section]: [...snapshot[section]],
+        };
+      });
+    }
+
+    sectionEditSnapshotRef.current = null;
+    setFormError(null);
+    setSectionEditing(section, false);
   }
 
   async function handleSectionSave(section: EditableResumeSection) {
@@ -843,11 +908,17 @@ function DashboardResumePageContent() {
         };
       });
       setSectionEditing(section, false);
+      sectionEditSnapshotRef.current = null;
       const sectionLabel = section === 'coreMetrics'
         ? 'Core metrics'
         : section.charAt(0).toUpperCase() + section.slice(1);
       setSuccessMessage(`${sectionLabel} saved.`);
-      if (section === 'hobbies' && resumeProductTour(7)) {
+      const tourTransition = resumeTourTransitionBySection[section];
+      const didAdvanceTour = advanceProductTour(
+        tourTransition.current,
+        tourTransition.next
+      );
+      if (section === 'hobbies' && didAdvanceTour) {
         router.push(displayedProfileHref);
       }
       if (successTimerRef.current) {
@@ -1046,6 +1117,7 @@ function DashboardResumePageContent() {
                   isOwner={isOwner}
                   isSaving={savingSection === 'coreMetrics'}
                   label="Core Metrics"
+                  onCancel={() => cancelEditingSection('coreMetrics')}
                   onEdit={() => beginEditingSection('coreMetrics')}
                   onSave={() => void handleSectionSave('coreMetrics')}
                 />
@@ -1154,6 +1226,7 @@ function DashboardResumePageContent() {
                 items={formData.qualifications}
                 label="Qualifications"
                 onAdd={() => addStringItem('qualifications')}
+                onCancel={() => cancelEditingSection('qualifications')}
                 onDelete={(index) => deleteStringItem('qualifications', index)}
                 onEdit={() => beginEditingSection('qualifications')}
                 onSave={() => void handleSectionSave('qualifications')}
@@ -1172,6 +1245,7 @@ function DashboardResumePageContent() {
                 items={formData.skills}
                 label="Skills"
                 onAdd={() => addStringItem('skills')}
+                onCancel={() => cancelEditingSection('skills')}
                 onDelete={(index) => deleteStringItem('skills', index)}
                 onEdit={() => beginEditingSection('skills')}
                 onSave={() => void handleSectionSave('skills')}
@@ -1191,6 +1265,7 @@ function DashboardResumePageContent() {
                 items={formData.experience}
                 label="Professional Experience"
                 onAdd={() => addStringItem('experience')}
+                onCancel={() => cancelEditingSection('experience')}
                 onDelete={(index) => deleteStringItem('experience', index)}
                 onEdit={() => beginEditingSection('experience')}
                 onSave={() => void handleSectionSave('experience')}
@@ -1224,6 +1299,7 @@ function DashboardResumePageContent() {
                 items={formData.hobbies}
                 label="Hobbies"
                 onAdd={() => addStringItem('hobbies')}
+                onCancel={() => cancelEditingSection('hobbies')}
                 onDelete={(index) => deleteStringItem('hobbies', index)}
                 onEdit={() => beginEditingSection('hobbies')}
                 onSave={() => void handleSectionSave('hobbies')}
