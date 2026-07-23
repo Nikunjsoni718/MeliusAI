@@ -189,7 +189,7 @@ function getProjectTourTarget(projectId: string | null, targetName: string) {
 function ActionInstruction({ children }: { children: string }) {
   return (
     <div>
-      <p className="m-0 text-sm leading-6 text-slate-200">{children}</p>
+      <p className="m-0 text-sm leading-6">{children}</p>
       <p className="mb-0 mt-3 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300">
         Complete the highlighted action to continue
       </p>
@@ -204,21 +204,22 @@ function resolveTourTarget(step: Step | undefined) {
 
   const { target } = step;
   if (typeof target === 'string') {
-    return document.querySelector<HTMLElement>(target);
+    const resolvedTarget = document.querySelector<HTMLElement>(target);
+    return resolvedTarget?.isConnected ? resolvedTarget : null;
   }
 
   if (typeof target === 'function') {
     const resolvedTarget = target();
-    return resolvedTarget instanceof HTMLElement ? resolvedTarget : null;
+    return resolvedTarget instanceof HTMLElement && resolvedTarget.isConnected ? resolvedTarget : null;
   }
 
-  if (target instanceof HTMLElement) {
+  if (target instanceof HTMLElement && target.isConnected) {
     return target;
   }
 
   if (target && typeof target === 'object' && 'current' in target) {
     const resolvedTarget = target.current;
-    return resolvedTarget instanceof HTMLElement ? resolvedTarget : null;
+    return resolvedTarget instanceof HTMLElement && resolvedTarget.isConnected ? resolvedTarget : null;
   }
 
   return null;
@@ -245,10 +246,10 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       {
         id: 'profile-setup',
         target: '[data-tour="edit-profile"]',
-        title: "Let's setup your Melius Profile",
+        title: 'Establish Your Identity',
         content: (
           <ActionInstruction>
-            Click here to add your username, display name, and bio. This makes your profile more searchable and interactive.
+            Set up your public MeliusAI profile so recruiters and peers know exactly who they are looking at.
           </ActionInstruction>
         ),
         placement: 'bottom-end',
@@ -257,10 +258,10 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       {
         id: 'developer-profile',
         target: '[data-tour="developer-profile-nav"]',
-        title: 'Define your technical identity',
+        title: 'Calibrate the Engine',
         content: (
           <ActionInstruction>
-            Open this page and fill in your developer profile. This makes your profile detailed, dynamic, and understandable to recruiters and peers.
+            Define your tech stack and experience. This data tailors your architectural audits to your exact skill level.
           </ActionInstruction>
         ),
         placement: 'right',
@@ -269,10 +270,10 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       {
         id: 'project-upload',
         target: '[data-tour="project-upload"]',
-        title: 'Initialize your Baseline',
+        title: 'Initialize Your Baseline',
         content: (
           <ActionInstruction>
-            Upload your first project codebase here to get it audited by the MeliusAI engine.
+            Time to prove your skills. Drop your first repository here to run a deep architectural audit and generate your baseline score.
           </ActionInstruction>
         ),
         placement: 'bottom-end',
@@ -398,26 +399,26 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         disableFocusTrap: true,
         dismissKeyAction: false,
         overlayClickAction: false,
-        overlayColor: 'rgba(2, 6, 23, 0.78)',
+        overlayColor: 'rgba(15, 23, 42, 0.6)',
         primaryColor: '#0ea5e9',
         showProgress: true,
         skipBeacon: true,
         spotlightPadding: 8,
         spotlightRadius: 12,
         targetWaitTimeout: 15000,
-        textColor: '#f8fafc',
+        textColor: '#ffffff',
         width: 380,
         zIndex: 12000,
       }}
       styles={{
         tooltip: {
           border: '1px solid rgba(255, 255, 255, 0.1)',
-          borderRadius: 16,
+          borderRadius: '12px',
           boxShadow: '0 24px 80px rgba(0, 0, 0, 0.62)',
-          padding: 0,
+          padding: '24px',
         },
         tooltipContainer: {
-          textAlign: 'left',
+          textAlign: 'center',
         },
         tooltipTitle: {
           color: '#ffffff',
@@ -426,7 +427,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
           lineHeight: 1.35,
         },
         tooltipContent: {
-          padding: '12px 20px 18px',
+          color: '#94a3b8',
         },
         tooltipFooter: {
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',

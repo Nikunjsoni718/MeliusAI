@@ -3678,6 +3678,27 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  async function handleEditProfileToggle() {
+    const nextEditingState = !isEditing;
+    setIsEditing(nextEditingState);
+    setSettingsOpen(false);
+
+    if (nextEditingState) {
+      pauseProductTour(0);
+      return;
+    }
+
+    const profileSaved = await saveProfileDraft();
+    if (!profileSaved) {
+      return;
+    }
+
+    const bioSaved = await saveBio(bioText);
+    if (bioSaved) {
+      advanceProductTour(0, 1);
+    }
+  }
+
   function updateBio(value: string) {
     if (!isOwner) {
       return;
@@ -5521,14 +5542,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            const nextEditingState = !isEditing;
-                            setIsEditing(nextEditingState);
-                            setSettingsOpen(false);
-                            if (nextEditingState) {
-                              pauseProductTour(0);
-                            }
-                          }}
+                          onClick={() => void handleEditProfileToggle()}
                           data-tour="edit-profile"
                           className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
                         >
