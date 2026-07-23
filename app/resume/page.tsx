@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
 import { useSWRConfig } from 'swr';
 
+import { DashboardSkeleton, SkeletonBlock } from '@/components/dashboard/profile-dashboard';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
 import {
   advanceProductTour,
@@ -27,7 +28,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
@@ -504,49 +504,6 @@ const resumeSkeletonSections = [
   { id: 'tour-edit-experience', label: 'experience' },
   { id: 'tour-edit-hobbies', label: 'hobbies' },
 ] as const;
-
-function ResumeWorkspaceSkeleton() {
-  return (
-    <div
-      className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8"
-      aria-busy="true"
-      aria-label="Loading developer profile"
-    >
-      <div className="mb-8 space-y-4">
-        <Skeleton className="h-3 w-44 rounded-full" />
-        <Skeleton className="h-10 w-64 rounded-xl" />
-        <Skeleton className="h-4 w-full max-w-2xl rounded-full" />
-      </div>
-
-      <div className="space-y-5">
-        {resumeSkeletonSections.map((section, index) => (
-          <div
-            key={section.id}
-            className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md"
-          >
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <Skeleton className="h-3 w-40 rounded-full" />
-              <button
-                id={section.id}
-                type="button"
-                disabled
-                aria-label={`Loading ${section.label} editor`}
-                className="h-8 w-8 shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5"
-              >
-                <Skeleton className="h-full w-full rounded-md" />
-              </button>
-            </div>
-            <div className={cn('grid gap-4', index === 0 ? 'sm:grid-cols-2' : null)}>
-              <Skeleton className="h-4 w-full rounded-full" />
-              <Skeleton className="h-4 w-4/5 rounded-full" />
-              {index === 0 ? <Skeleton className="h-20 w-full rounded-xl sm:col-span-2" /> : null}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function DashboardResumePageContent() {
   const pathname = usePathname();
@@ -1132,7 +1089,46 @@ function DashboardResumePageContent() {
             </svg>
           </button>
           {loading || formLoading ? (
-            <ResumeWorkspaceSkeleton />
+            <div
+              className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8"
+              aria-busy="true"
+              aria-label="Loading developer profile"
+            >
+              <div className="mb-8 space-y-4">
+                <SkeletonBlock className="h-3 w-44" />
+                <SkeletonBlock className="h-10 w-64 rounded-xl" />
+                <SkeletonBlock className="h-4 w-full max-w-2xl" />
+              </div>
+
+              <div className="space-y-5">
+                {resumeSkeletonSections.map((section, index) => (
+                  <div
+                    key={section.id}
+                    className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md"
+                  >
+                    <div className="mb-5 flex items-center justify-between gap-4">
+                      <SkeletonBlock className="h-3 w-40" />
+                      <button
+                        id={section.id}
+                        type="button"
+                        disabled
+                        aria-label={`Loading ${section.label} editor`}
+                        className="h-8 w-8 shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5"
+                      >
+                        <SkeletonBlock className="h-full w-full rounded-md" />
+                      </button>
+                    </div>
+                    <div className={cn('grid gap-4', index === 0 ? 'sm:grid-cols-2' : null)}>
+                      <SkeletonBlock className="h-4 w-full" />
+                      <SkeletonBlock className="h-4 w-4/5" />
+                      {index === 0 ? (
+                        <SkeletonBlock className="h-20 w-full rounded-xl sm:col-span-2" />
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8">
             <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -1369,7 +1365,9 @@ export default function DashboardResumePage() {
     <Suspense
       fallback={
         <main className="min-h-screen bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
-          <ResumeWorkspaceSkeleton />
+          <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+            <DashboardSkeleton />
+          </div>
         </main>
       }
     >

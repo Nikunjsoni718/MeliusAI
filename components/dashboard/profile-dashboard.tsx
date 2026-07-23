@@ -28,7 +28,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
@@ -1420,11 +1419,18 @@ function SilhouetteIcon({ className }: { className?: string }) {
   );
 }
 
-function SkeletonBlock({ className }: { className: string }) {
-  return <Skeleton className={cn('rounded-full', className)} />;
+export function SkeletonBlock({ className }: { className: string }) {
+  return (
+    <div
+      className={cn(
+        'animate-pulse rounded-full border border-slate-800 bg-slate-800/70',
+        className
+      )}
+    />
+  );
 }
 
-function DashboardSkeleton({ projectIds = [] }: { projectIds?: string[] }) {
+export function DashboardSkeleton({ projectIds = [] }: { projectIds?: string[] }) {
   const skeletonProjectIds = Array.from(
     { length: 4 },
     (_, index) => projectIds[index] ?? `loading-project-${index}`
