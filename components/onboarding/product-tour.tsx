@@ -324,8 +324,26 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         id: 'welcome',
         target: 'body',
         placement: 'center',
-        title: 'Welcome to MeliusAI',
-        content: "Let's calibrate your workspace and get your first project audited.",
+        title: (
+          <div className="mb-2 text-3xl font-bold text-white">
+            🚀 Welcome to MeliusAI
+          </div>
+        ),
+        content: (
+          <div className="py-4 text-lg leading-relaxed text-slate-300">
+            Let&apos;s calibrate your workspace and get your first project audited. This will only
+            take a minute.
+          </div>
+        ),
+        locale: {
+          next: 'Get Started →',
+        },
+        styles: {
+          tooltip: {
+            width: 500,
+            padding: '30px',
+          },
+        },
         buttons: ['primary'],
       },
       {
@@ -485,9 +503,26 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         id: 'completion',
         target: 'body',
         placement: 'center',
-        title: 'Calibration Complete',
-        content:
-          'Thanks for providing your details. You can now use your MeliusAI cards to showcase your verified skills to the network.',
+        title: (
+          <div className="mb-2 text-3xl font-bold text-white">
+            🎉 Calibration Complete
+          </div>
+        ),
+        content: (
+          <div className="py-4 text-lg leading-relaxed text-slate-300">
+            Thanks for providing your details. You can now use your MeliusAI cards to showcase your
+            verified skills to the network.
+          </div>
+        ),
+        locale: {
+          last: 'Enter Workspace ✨',
+        },
+        styles: {
+          tooltip: {
+            width: 500,
+            padding: '30px',
+          },
+        },
         buttons: ['primary'],
       },
     ],
@@ -570,7 +605,6 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       onEvent={handleTourEvent}
       locale={{
         next: 'Next',
-        nextWithProgress: 'Next ({current} of {total})',
         last: 'Finish',
         skip: 'Skip',
       }}
@@ -582,8 +616,8 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         dismissKeyAction: false,
         overlayClickAction: false,
         overlayColor: 'rgba(15, 23, 42, 0.6)',
-        primaryColor: '#0ea5e9',
-        showProgress: true,
+        primaryColor: '#0070f3',
+        showProgress: false,
         skipBeacon: true,
         spotlightPadding: 8,
         spotlightRadius: 12,
@@ -617,11 +651,16 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
           padding: '14px 20px 18px',
         },
         buttonPrimary: {
-          backgroundColor: '#0ea5e9',
+          backgroundColor: '#0070f3',
+          border: '1px solid rgba(96, 165, 250, 0.7)',
           borderRadius: 999,
-          color: '#020617',
+          boxShadow: '0 10px 30px rgba(0, 112, 243, 0.32)',
+          color: '#ffffff',
+          cursor: 'pointer',
           fontSize: 13,
           fontWeight: 700,
+          letterSpacing: '0.01em',
+          outline: 'none',
           padding: '10px 18px',
         },
         buttonSkip: {
