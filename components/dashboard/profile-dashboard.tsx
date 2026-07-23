@@ -17,6 +17,7 @@ import {
   hasCompletedProductTour,
   pauseProductTour,
   ProductTour,
+  PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
   resumeProductTour,
   startProductTour,
@@ -2161,6 +2162,7 @@ function ProjectCard({
   return (
     <Card
       data-tour-project-id={project.id}
+      data-tour="project-thumbnail"
       className="relative w-full min-w-0 overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80"
     >
       <CardContent className="p-0">
@@ -2187,7 +2189,6 @@ function ProjectCard({
               tabIndex={0}
               onClick={handlePreviewClick}
               onKeyDown={handlePreviewKeyDown}
-              data-tour="project-thumbnail"
               className="relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 transition hover:border-cyan-500/30"
               aria-label={`Preview ${project.title}`}
             >
@@ -2407,6 +2408,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
+
+  useEffect(() => {
+    if (!activePreviewProjectId) {
+      return;
+    }
+
+    const advanceOpenAssetTour = () => {
+      advanceProductTour(9, 10, activePreviewProjectId);
+    };
+
+    advanceOpenAssetTour();
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, advanceOpenAssetTour);
+
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, advanceOpenAssetTour);
+    };
+  }, [activePreviewProjectId]);
 
   const targetUsername = useMemo(() => {
     const routeUsername = Array.isArray(routeParams?.username)
@@ -3883,8 +3901,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     setActivePreviewProjectOverride(folderPreviewProject);
     setActivePreviewProjectId(folderPreviewProject.id);
-      setActivePreviewName(previewName);
-      setActivePreviewUrl(previewUrl);
+    setActivePreviewName(previewName);
+    setActivePreviewUrl(previewUrl);
+    advanceProductTour(9, 10, asset.id);
   }
 
   function handleDownloadProject(project: ProjectItem) {

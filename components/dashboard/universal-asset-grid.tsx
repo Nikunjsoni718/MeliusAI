@@ -4,6 +4,10 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEv
 
 import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
+import {
+  advanceProductTour,
+  PRODUCT_TOUR_CHANGE_EVENT_NAME,
+} from '@/components/onboarding/product-tour';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -625,6 +629,7 @@ function UniversalAssetCard({
   return (
     <Card
       data-tour-project-id={project.id}
+      data-tour="project-thumbnail"
       className="relative w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#090e24] shadow-lg transition-all duration-300 hover:border-slate-700/80"
     >
       <CardContent className="p-0">
@@ -675,7 +680,6 @@ function UniversalAssetCard({
               aria-disabled={!assetUrl}
               onClick={handlePreviewClick}
               onKeyDown={handlePreviewKeyDown}
-              data-tour="project-thumbnail"
               className="group relative mb-4 flex h-32 w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-900 bg-slate-950/40 text-left transition hover:border-cyan-500/35 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-default disabled:hover:border-slate-900"
               aria-label={`Preview ${assetName}`}
             >
@@ -952,6 +956,28 @@ export function UniversalAssetGrid({
     onProjectUpdated?.(projectId, projectPatch);
   }
 
+  function openFilePreview(project: ProjectRow) {
+    setActivePreviewTarget({ kind: 'file', id: project.id });
+    advanceProductTour(9, 10, project.id);
+  }
+
+  useEffect(() => {
+    if (!activePreviewTarget) {
+      return;
+    }
+
+    const advanceOpenAssetTour = () => {
+      advanceProductTour(9, 10, activePreviewTarget.id);
+    };
+
+    advanceOpenAssetTour();
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, advanceOpenAssetTour);
+
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, advanceOpenAssetTour);
+    };
+  }, [activePreviewTarget]);
+
   if (gridItems.length === 0) {
     return <p className={cn('text-sm text-zinc-600', className)}>{emptyMessage}</p>;
   }
@@ -1018,12 +1044,8 @@ export function UniversalAssetGrid({
               isVisibilityUpdating={visibilityUpdatingIds.includes(item.asset.id)}
               verifyingAssetId={verifyingAssetId}
               onDelete={onDelete}
-              onPreview={(selectedProject) =>
-                setActivePreviewTarget({ kind: 'file', id: selectedProject.id })
-              }
-              onReadProtocol={(selectedProject) =>
-                setActivePreviewTarget({ kind: 'file', id: selectedProject.id })
-              }
+              onPreview={openFilePreview}
+              onReadProtocol={openFilePreview}
               onReupload={onReupload}
               onToggleVisibility={onToggleVisibility}
               onVerify={onVerify}
@@ -1083,12 +1105,8 @@ export function UniversalAssetGrid({
                       isVisibilityUpdating={visibilityUpdatingIds.includes(asset.id)}
                       verifyingAssetId={verifyingAssetId}
                       onDelete={onDelete}
-                      onPreview={(selectedProject) =>
-                        setActivePreviewTarget({ kind: 'file', id: selectedProject.id })
-                      }
-                      onReadProtocol={(selectedProject) =>
-                        setActivePreviewTarget({ kind: 'file', id: selectedProject.id })
-                      }
+                      onPreview={openFilePreview}
+                      onReadProtocol={openFilePreview}
                       onReupload={onReupload}
                       onToggleVisibility={onToggleVisibility}
                       onVerify={onVerify}

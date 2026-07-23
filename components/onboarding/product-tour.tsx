@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
-const TOUR_EVENT_NAME = 'meliusai:product-tour:change';
+export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
 const PRODUCT_TOUR_VERSION = 2;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
@@ -44,7 +44,7 @@ function getTourCompletedKey(userId: string) {
 }
 
 function emitTourChange() {
-  window.dispatchEvent(new CustomEvent(TOUR_EVENT_NAME));
+  window.dispatchEvent(new CustomEvent(PRODUCT_TOUR_CHANGE_EVENT_NAME));
 }
 
 function readTourStateForUser(userId: string): StoredProductTourState | null {
@@ -222,6 +222,10 @@ function getProjectTourTarget(projectId: string | null, targetName: string) {
     ? projectCards.find((element) => element.dataset.tourProjectId === projectId)
     : projectCards[0];
 
+  if (matchingCard?.matches(`[data-tour="${targetName}"]`)) {
+    return matchingCard;
+  }
+
   return matchingCard?.querySelector<HTMLElement>(`[data-tour="${targetName}"]`) ?? null;
 }
 
@@ -272,11 +276,11 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   useEffect(() => {
     const syncTourState = () => setTourState(readActiveTourState());
     syncTourState();
-    window.addEventListener(TOUR_EVENT_NAME, syncTourState);
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, syncTourState);
     window.addEventListener('storage', syncTourState);
 
     return () => {
-      window.removeEventListener(TOUR_EVENT_NAME, syncTourState);
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, syncTourState);
       window.removeEventListener('storage', syncTourState);
     };
   }, []);
