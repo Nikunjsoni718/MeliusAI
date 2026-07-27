@@ -493,6 +493,17 @@ def get_request_access_token(request: Request) -> str:
     return credentials.strip()
 
 
+def normalize_supabase_user_id(value: Any) -> str | None:
+    """Return the canonical Supabase Auth UUID, never a provider identity ID."""
+    if value is None:
+        return None
+
+    try:
+        return str(UUID(str(value).strip()))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def decode_supabase_jwt_sub(access_token: str) -> str:
     try:
         parts = access_token.split(".")
@@ -503,7 +514,7 @@ def decode_supabase_jwt_sub(access_token: str) -> str:
         padded_payload = payload_segment + "=" * (-len(payload_segment) % 4)
         decoded_payload = base64.urlsafe_b64decode(padded_payload.encode("utf-8"))
         payload = json.loads(decoded_payload.decode("utf-8"))
-        subject = str(payload.get("sub") or "").strip()
+        subject = normalize_supabase_user_id(payload.get("sub"))
     except Exception as decode_error:
         raise HTTPException(status_code=401, detail="Invalid bearer token") from decode_error
 
@@ -776,19 +787,67 @@ def apply_opportunity_organization_scope(query: Any, organization_id: str, curre
     return query.or_(",".join(f"organization_id.eq.{scoped_id}" for scoped_id in scoped_ids))
 
 
+def get_supabase_auth_user(user_response: Any) -> Any | None:
+    """Unwrap supabase-py UserResponse variants without using provider identities."""
+    if user_response is None:
+        return None
+
+    auth_user = (
+        user_response.get("user")
+        if isinstance(user_response, dict)
+        else getattr(user_response, "user", None)
+    )
+    if auth_user is not None:
+        return auth_user
+
+    response_data = (
+        user_response.get("data")
+        if isinstance(user_response, dict)
+        else getattr(user_response, "data", None)
+    )
+    if response_data is not None:
+        nested_user = (
+            response_data.get("user")
+            if isinstance(response_data, dict)
+            else getattr(response_data, "user", None)
+        )
+        if nested_user is not None:
+            return nested_user
+
+        if isinstance(response_data, dict) and (
+            response_data.get("id") or response_data.get("sub")
+        ):
+            return response_data
+
+        if getattr(response_data, "id", None) or getattr(response_data, "sub", None):
+            return response_data
+
+    if isinstance(user_response, dict) and (
+        user_response.get("id") or user_response.get("sub")
+    ):
+        return user_response
+
+    if getattr(user_response, "id", None) or getattr(user_response, "sub", None):
+        return user_response
+
+    return None
+
+
 def get_supabase_user_id(user_response: Any) -> str | None:
-    auth_user = getattr(user_response, "user", None)
+    auth_user = get_supabase_auth_user(user_response)
+    if auth_user is None:
+        return None
 
     if isinstance(auth_user, dict):
-        user_id = auth_user.get("id")
+        user_id = auth_user.get("id") or auth_user.get("sub")
     else:
-        user_id = getattr(auth_user, "id", None)
+        user_id = getattr(auth_user, "id", None) or getattr(auth_user, "sub", None)
 
-    return str(user_id).strip() if user_id else None
+    return normalize_supabase_user_id(user_id)
 
 
 def get_supabase_user_roles(user_response: Any) -> List[str]:
-    auth_user = getattr(user_response, "user", None)
+    auth_user = get_supabase_auth_user(user_response)
     role_values = []
 
     for metadata_name in ("app_metadata", "user_metadata"):
@@ -821,11 +880,12 @@ async def resolve_request_user(
             raise HTTPException(status_code=401, detail="Missing bearer token")
         return None, "anonymous"
 
+    access_token = token.credentials.strip()
     supabase_client = get_supabase_backend_client()
 
     try:
         user_response = await asyncio.to_thread(
-            lambda: supabase_client.auth.get_user(token.credentials)
+            lambda: supabase_client.auth.get_user(access_token)
         )
     except Exception as auth_error:
         logger.warning("Supabase JWT verification failed: %s", auth_error)
@@ -833,23 +893,41 @@ async def resolve_request_user(
             raise HTTPException(status_code=401, detail="Invalid bearer token") from auth_error
         return None, "invalid"
 
-    user_id = get_supabase_user_id(user_response)
-    if not user_id:
+    verified_user_id = get_supabase_user_id(user_response)
+    if not verified_user_id:
         if required:
             raise HTTPException(status_code=401, detail="Invalid bearer token")
         return None, "invalid"
 
-    request.state.user_id = user_id
-    request.state.access_token = token.credentials
-    request.state.user_roles = get_supabase_user_roles(user_response)
-    request.state.supabase = get_supabase_authenticated_client(token.credentials)
+    try:
+        jwt_user_id = decode_supabase_jwt_sub(access_token)
+    except HTTPException:
+        if required:
+            raise
+        return None, "invalid"
 
-    return user_id, "authenticated"
+    if verified_user_id != jwt_user_id:
+        logger.warning(
+            "Supabase JWT subject mismatch: verified_user_id=%s token_sub=%s",
+            verified_user_id,
+            jwt_user_id,
+        )
+        if required:
+            raise HTTPException(status_code=401, detail="Invalid bearer token")
+        return None, "invalid"
+
+    request.state.user_id = verified_user_id
+    request.state.access_token = access_token
+    request.state.user_roles = get_supabase_user_roles(user_response)
+    request.state.supabase = get_supabase_authenticated_client(access_token)
+    request.state.is_authenticated = True
+
+    return verified_user_id, "authenticated"
 
 
 async def verify_user(
     request: Request,
-    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    token: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> str:
     user_id, _ = await resolve_request_user(request, token, required=True)
     if not user_id:
