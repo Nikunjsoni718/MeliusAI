@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 
 import faviconLogo from '@/app/favicon.png';
+import GitHubSignInButton from '@/components/GitHubSignInButton';
 import GoogleSignInButton from '@/components/GoogleSignInButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -869,7 +870,10 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
 
                               {authEnabled && SUPABASE_PUBLIC_CONFIG_READY ? (
                                 <div className="space-y-4">
-                                  <GoogleSignInButton />
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <GoogleSignInButton />
+                                    <GitHubSignInButton />
+                                  </div>
                                   <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
                                     <span className="h-px flex-1 bg-white/10" />
                                     <span>or use email</span>
