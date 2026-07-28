@@ -5,6 +5,7 @@ import { GitBranch, LoaderCircle } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { GITHUB_IMPORT_INTENT } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export default function GitHubSignInButton() {
@@ -17,12 +18,13 @@ export default function GitHubSignInButton() {
 
     try {
       const supabase: SupabaseClient = createSupabaseBrowserClient();
-      const redirectTo = new URL('/auth/callback', window.location.origin).toString();
+      const redirectUrl = new URL('/auth/callback', window.location.origin);
+      redirectUrl.searchParams.set('intent', GITHUB_IMPORT_INTENT);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-          redirectTo,
-          scopes: 'read:user user:email',
+          redirectTo: redirectUrl.toString(),
+          scopes: 'read:user user:email public_repo admin:repo_hook',
         },
       });
 

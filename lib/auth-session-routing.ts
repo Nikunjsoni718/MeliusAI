@@ -1,8 +1,15 @@
 export const AUTH_LOGIN_STATUS_KEY = 'loginStatus';
 export const AUTH_USER_ROLE_KEY = 'userRole';
 export const AUTH_USER_DESTINATION_KEY = 'userDestination';
+export const GITHUB_IMPORT_INTENT = 'github_import';
+export const GITHUB_IMPORT_QUERY_KEY = 'github_import';
+const GITHUB_IMPORT_PENDING_STORAGE_PREFIX = 'meliusai:github-import:pending:';
 
 export type PersistedUserRole = 'individual' | 'organization';
+
+export function getPendingGitHubImportStorageKey(userId: string) {
+  return `${GITHUB_IMPORT_PENDING_STORAGE_PREFIX}${userId}`;
+}
 
 export type AuthRouteUser = {
   id: string;
