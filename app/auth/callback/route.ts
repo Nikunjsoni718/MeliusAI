@@ -3,10 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import { after, NextRequest, NextResponse } from 'next/server';
 
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
-import {
-  GITHUB_IMPORT_INTENT,
-  GITHUB_IMPORT_QUERY_KEY,
-} from '@/lib/auth-session-routing';
 import { appendUsernameSuffix, generateUsername, normalizeUsername } from '@/lib/username';
 
 export const runtime = 'nodejs';
@@ -121,7 +117,6 @@ async function triggerProfileEmbeddingSync({
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const oauthIntent = requestUrl.searchParams.get('intent');
   const origin = requestUrl.origin;
 
   if (!hasSupabaseServerEnv()) {
@@ -150,10 +145,6 @@ export async function GET(request: NextRequest) {
     const fullName = getFullName(user);
     const avatarUrl = getAvatarUrl(user);
     const generatedUsername = generateUsername(user);
-    const hasLinkedGitHubIdentity =
-      user.identities?.some((identity) => identity.provider === 'github') ?? false;
-    const shouldOpenGitHubImport =
-      oauthIntent === GITHUB_IMPORT_INTENT && hasLinkedGitHubIdentity;
 
     const { data: existingProfile, error: existingProfileError } = await supabaseAdmin
       .from('profiles')
@@ -244,15 +235,7 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    const destination = new URL(
-      `/profile/${encodeURIComponent(finalUsername)}`,
-      origin
-    );
-    if (shouldOpenGitHubImport) {
-      destination.searchParams.set(GITHUB_IMPORT_QUERY_KEY, '1');
-    }
-
-    return NextResponse.redirect(destination);
+    return NextResponse.redirect(`${origin}/profile/${encodeURIComponent(finalUsername)}`);
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const message =

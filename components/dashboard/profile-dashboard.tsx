@@ -3,7 +3,7 @@
 import { Suspense, startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
@@ -31,11 +31,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  clearPersistedAuthState,
-  getPendingGitHubImportStorageKey,
-  GITHUB_IMPORT_QUERY_KEY,
-} from '@/lib/auth-session-routing';
+import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
@@ -2499,7 +2495,6 @@ type ProfileDashboardProps = {
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const routeParams = useParams<{ username?: string | string[] }>();
   const isOrganizationWorkspace = variant === 'organization';
   const {
@@ -2588,7 +2583,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [isNewUser, setIsNewUser] = useState(false);
   const [onboardingCompletionReady, setOnboardingCompletionReady] = useState(false);
-  const [hasPendingGitHubImport, setHasPendingGitHubImport] = useState(false);
+  const [hasImportedGitHubRepository, setHasImportedGitHubRepository] = useState<
+    boolean | null
+  >(null);
   const [bioText, setBioText] = useState('');
   const [rawSkillsInput, setRawSkillsInput] = useState('');
   const [bioSaveState, setBioSaveState] = useState<BioSaveState>('idle');
@@ -2613,7 +2610,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
   const bioDraftRef = useRef<string | null>(null);
-  const handledGitHubImportUserRef = useRef<string | null>(null);
+  const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
   const lastSavedSkillsInputRef = useRef('');
@@ -3162,31 +3159,59 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [handleTourComplete, user]);
 
   useEffect(() => {
-    if (!user) {
-      setHasPendingGitHubImport(false);
+    if (
+      !supabase ||
+      !user ||
+      !isOwner ||
+      profileLoading ||
+      !profileData ||
+      !hasLinkedGitHubIdentity
+    ) {
+      setHasImportedGitHubRepository(null);
       return;
     }
 
-    const githubImportRequested = searchParams.get(GITHUB_IMPORT_QUERY_KEY) === '1';
-    const pendingStorageKey = getPendingGitHubImportStorageKey(user.id);
-    let isPending = githubImportRequested;
+    let isActive = true;
+    setHasImportedGitHubRepository(null);
 
-    try {
-      if (githubImportRequested) {
-        window.sessionStorage.setItem(pendingStorageKey, 'true');
-      } else {
-        isPending = window.sessionStorage.getItem(pendingStorageKey) === 'true';
+    const checkForImportedGitHubRepository = async () => {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('user_id', user.id)
+        .not('github_repository', 'is', null)
+        .limit(1);
+
+      if (!isActive) {
+        return;
       }
-    } catch (error) {
-      console.warn('Unable to preserve the pending GitHub import handoff:', error);
-    }
 
-    setHasPendingGitHubImport(isPending);
-  }, [searchParams, user]);
+      if (error) {
+        console.warn('Unable to check GitHub repository import status:', error);
+        setHasImportedGitHubRepository(null);
+        return;
+      }
+
+      setHasImportedGitHubRepository(Boolean(data?.length));
+    };
+
+    void checkForImportedGitHubRepository();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    hasLinkedGitHubIdentity,
+    isOwner,
+    profileData,
+    profileLoading,
+    supabase,
+    user,
+  ]);
 
   useEffect(() => {
     if (
-      !hasPendingGitHubImport ||
+      hasImportedGitHubRepository !== false ||
       !user ||
       !isOwner ||
       profileLoading ||
@@ -3194,40 +3219,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !hasLinkedGitHubIdentity ||
       !onboardingCompletionReady ||
       isNewUser ||
-      handledGitHubImportUserRef.current === user.id
+      autoOpenedGitHubImportUserRef.current === user.id
     ) {
       return;
     }
 
-    handledGitHubImportUserRef.current = user.id;
+    autoOpenedGitHubImportUserRef.current = user.id;
     setIsIngestionModalOpen(false);
     setIsGithubModalOpen(true);
     void loadGitHubRepositoriesRef.current?.();
-
-    try {
-      window.sessionStorage.removeItem(getPendingGitHubImportStorageKey(user.id));
-    } catch (error) {
-      console.warn('Unable to clear the completed GitHub import handoff:', error);
-    }
-    setHasPendingGitHubImport(false);
-
-    const nextSearchParams = new URLSearchParams(searchParams.toString());
-    nextSearchParams.delete(GITHUB_IMPORT_QUERY_KEY);
-    const nextQuery = nextSearchParams.toString();
-    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, {
-      scroll: false,
-    });
   }, [
-    hasPendingGitHubImport,
+    hasImportedGitHubRepository,
     hasLinkedGitHubIdentity,
     isNewUser,
     isOwner,
     onboardingCompletionReady,
-    pathname,
     profileData,
     profileLoading,
-    router,
-    searchParams,
     user,
   ]);
 
@@ -4821,6 +4829,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       let webhookConnectionWarning: string | null = null;
 
       if (importedGithubRepositories.length > 0) {
+        setHasImportedGitHubRepository(true);
         try {
           await connectGitHubRepositoriesToWebhook(importedGithubRepositories);
         } catch (webhookError) {

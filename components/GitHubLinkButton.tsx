@@ -4,7 +4,6 @@ import { GitBranch, LoaderCircle } from 'lucide-react';
 import { useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { GITHUB_IMPORT_INTENT } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export function GitHubLinkButton() {
@@ -19,7 +18,6 @@ export function GitHubLinkButton() {
     try {
       const supabase = createSupabaseBrowserClient();
       const redirectUrl = new URL('/auth/callback', window.location.origin);
-      redirectUrl.searchParams.set('intent', GITHUB_IMPORT_INTENT);
       const { error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
