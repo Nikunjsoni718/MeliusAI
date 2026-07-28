@@ -131,6 +131,44 @@ type StagedFile = {
   selected: boolean;
 };
 
+type GitHubRepository = {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string | null;
+  default_branch: string;
+  html_url: string;
+  language: string | null;
+  stargazers_count: number;
+  updated_at: string;
+  private: boolean;
+  owner: {
+    login: string;
+  };
+};
+
+type GitHubTreeEntry = {
+  path: string;
+  type: 'blob' | 'tree';
+  sha: string;
+  size?: number;
+};
+
+type GitHubRepositoryTreeState = {
+  entries: GitHubTreeEntry[];
+  loading: boolean;
+  error: string | null;
+  truncated: boolean;
+};
+
+type GitHubTreeNode = {
+  name: string;
+  path: string;
+  type: 'file' | 'folder';
+  children: GitHubTreeNode[];
+  entry?: GitHubTreeEntry;
+};
+
 const BLOCKED_FILES = [
   'package.json',
   'package-lock.json',
@@ -157,6 +195,15 @@ const BLOCKED_EXTENSIONS = [
   '.pkl',
 ];
 
+const GITHUB_IGNORED_DIRECTORIES = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  'venv',
+  'dist',
+  'build',
+]);
+
 function isBlockedStagedFile(sourceFileName: string) {
   const fileName = sourceFileName.split('/').pop()?.toLowerCase() || "";
   const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) =>
@@ -165,6 +212,101 @@ function isBlockedStagedFile(sourceFileName: string) {
   const isBlockedFile = BLOCKED_FILES.includes(fileName);
 
   return isBlockedExtension || isBlockedFile;
+}
+
+function buildGitHubTree(entries: GitHubTreeEntry[]) {
+  const root: GitHubTreeNode = {
+    name: '',
+    path: '',
+    type: 'folder',
+    children: [],
+  };
+
+  const ensureFolder = (parts: string[]) => {
+    let currentNode = root;
+
+    parts.forEach((part, index) => {
+      const path = parts.slice(0, index + 1).join('/');
+      let child = currentNode.children.find(
+        (candidate) => candidate.type === 'folder' && candidate.name === part
+      );
+
+      if (!child) {
+        child = {
+          name: part,
+          path,
+          type: 'folder',
+          children: [],
+        };
+        currentNode.children.push(child);
+      }
+
+      currentNode = child;
+    });
+
+    return currentNode;
+  };
+
+  [...entries]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .forEach((entry) => {
+      const parts = entry.path.split('/').filter(Boolean);
+      if (parts.length === 0) {
+        return;
+      }
+
+      if (entry.type === 'tree') {
+        ensureFolder(parts);
+        return;
+      }
+
+      const parent = ensureFolder(parts.slice(0, -1));
+      const name = parts[parts.length - 1];
+      if (!parent.children.some((candidate) => candidate.type === 'file' && candidate.name === name)) {
+        parent.children.push({
+          name,
+          path: entry.path,
+          type: 'file',
+          children: [],
+          entry,
+        });
+      }
+    });
+
+  const sortChildren = (node: GitHubTreeNode) => {
+    node.children.sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === 'folder' ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+    node.children.forEach(sortChildren);
+  };
+
+  sortChildren(root);
+  return root.children;
+}
+
+function getGitHubDescendantFilePaths(node: GitHubTreeNode): string[] {
+  if (node.type === 'file') {
+    return isBlockedStagedFile(node.path) ? [] : [node.path];
+  }
+
+  return node.children.flatMap(getGitHubDescendantFilePaths);
+}
+
+function getStagedFileKey(file: StagedFile) {
+  return `${file.githubRepository ?? 'local'}:${file.path}`;
+}
+
+function getStagedFileGroupKey(file: StagedFile, fallbackFolderName: string) {
+  const directory = file.path.substring(0, file.path.lastIndexOf('/'));
+
+  if (file.githubRepository) {
+    return directory ? `${file.githubRepository}/${directory}` : file.githubRepository;
+  }
+
+  return directory || fallbackFolderName;
 }
 
 function normalizeAuditScore(rawScore: number | string | null | undefined) {
@@ -2379,8 +2521,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [stagingFolderName, setStagingFolderName] = useState<string>('');
   const [isStagingModalOpen, setIsStagingModalOpen] = useState(false);
   const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
-  const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
+  const [isPreparingGithubImport, setIsPreparingGithubImport] = useState(false);
+  const [githubRepositories, setGithubRepositories] = useState<GitHubRepository[]>([]);
+  const [githubRepositoriesError, setGithubRepositoriesError] = useState<string | null>(null);
+  const [githubProviderToken, setGithubProviderToken] = useState<string | null>(null);
+  const [githubRepositoryTrees, setGithubRepositoryTrees] = useState<
+    Record<string, GitHubRepositoryTreeState>
+  >({});
+  const [expandedGithubRepositories, setExpandedGithubRepositories] = useState<
+    Record<string, boolean>
+  >({});
+  const [expandedGithubFolders, setExpandedGithubFolders] = useState<Record<string, boolean>>({});
+  const [selectedGithubFiles, setSelectedGithubFiles] = useState<Record<string, string[]>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [isScorecardPublic, setIsScorecardPublic] = useState(true);
   const [, setProjectRetryFile] = useState<File | null>(null);
@@ -3977,88 +4130,341 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     link.click();
   }
 
-  const handleGithubFetch = async () => {
-    if (!githubRepoUrl.includes("github.com")) {
-      return alert("Please enter a valid GitHub repository URL.");
+  async function fetchGitHubApi<T>(url: string, providerToken: string | null): Promise<T> {
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2026-03-10',
+    };
+
+    if (providerToken) {
+      headers.Authorization = `Bearer ${providerToken}`;
+    }
+
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as { message?: string } | null;
+      const requestError = new Error(
+        errorBody?.message || `GitHub request failed with status ${response.status}.`
+      ) as Error & { status?: number };
+      requestError.status = response.status;
+      throw requestError;
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  function getLinkedGitHubUsername() {
+    const githubIdentity = user?.identities?.find((identity) => identity.provider === 'github');
+    const identityData = githubIdentity?.identity_data as Record<string, unknown> | undefined;
+    const candidates = [
+      identityData?.user_name,
+      identityData?.preferred_username,
+      identityData?.login,
+      user?.user_metadata?.user_name,
+      user?.user_metadata?.preferred_username,
+    ];
+
+    return candidates.find(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
+    )?.trim() ?? null;
+  }
+
+  async function loadGitHubRepositories() {
+    if (!supabase) {
+      setGithubRepositoriesError('GitHub import is unavailable until your session is ready.');
+      return;
     }
 
     try {
       setIsFetchingGithub(true);
+      setGithubRepositoriesError(null);
 
-      // 1. Extract owner and repo name from the URL
-      const urlParts = githubRepoUrl.replace(/\/$/, '').split('/');
-      const repoName = urlParts.pop();
-      const owner = urlParts.pop();
-
-      if (!owner || !repoName) {
-        throw new Error("Could not parse GitHub URL. Ensure it looks like https://github.com/username/repo");
+      const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        throw sessionError;
       }
 
-      // 2. Fetch repository details to find the default branch (main vs master)
-      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}`);
-      if (!repoRes.ok) throw new Error("Repository not found or is private.");
-      const repoData = await repoRes.json();
-      const defaultBranch = repoData.default_branch;
-      const githubRepository = `${owner}/${repoName}`.toLowerCase();
+      let providerToken =
+        currentSessionData.session?.provider_token ?? session?.provider_token ?? null;
+      let githubUsername = getLinkedGitHubUsername();
 
-      // 3. Fetch the entire file tree recursively
-      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}/git/trees/${defaultBranch}?recursive=1`);
-      if (!treeRes.ok) throw new Error("Failed to fetch repository tree.");
-      const treeData = await treeRes.json();
-
-      // 4. Filter and process the files
-      const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build'];
-      const parsedFiles: any[] = [];
-      const validFiles = treeData.tree.filter((item: any) => item.type === 'blob');
-
-      for (const file of validFiles) {
-        const pathParts = file.path.split('/');
-
-        // Skip junk folders and files we never want to import
-        if (pathParts.some((part: string) => ignoreList.includes(part))) continue;
-        if (isBlockedStagedFile(file.path)) continue;
-
-        // 5. Fetch the raw content for the valid files
-        const rawRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/${file.path}`);
-        if (!rawRes.ok) continue;
-        const fileName = pathParts[pathParts.length - 1];
-        const rawBlob = await rawRes.blob();
-        const shouldReadAsText = shouldForceUtf8CodeRead(file.path) || rawBlob.type.startsWith('text/');
-        const content = shouldReadAsText ? await rawBlob.text() : '';
-        const sourceFile = shouldReadAsText
-          ? undefined
-          : new File([rawBlob], fileName, { type: rawBlob.type || 'application/octet-stream' });
-
-        parsedFiles.push({
-          path: file.path,
-          name: fileName,
-          content,
-          sourceFile,
-          contentType: rawBlob.type || undefined,
-          githubRepository,
-          githubRef: defaultBranch,
-          selected: true
-        });
+      if (!githubUsername && providerToken) {
+        const githubViewer = await fetchGitHubApi<{ login: string }>(
+          'https://api.github.com/user',
+          providerToken
+        );
+        githubUsername = githubViewer.login;
       }
 
-      if (parsedFiles.length === 0) {
-        throw new Error("No readable code files found in this repository.");
+      if (!githubUsername) {
+        throw new Error('No linked GitHub username was found. Reconnect GitHub and try again.');
       }
 
-      // 6. Transition to the Staging Modal
-      setStagedFiles(parsedFiles);
-      setStagingFolderName(repoName);
-      setIsGithubModalOpen(false); // Close Github URL modal
-      setGithubRepoUrl(""); // Clear the input
-      setIsStagingModalOpen(true); // Open the file checklist modal
+      const fetchRepositoryPages = async (token: string | null) => {
+        const repositories: GitHubRepository[] = [];
 
-    } catch (error: any) {
-      console.error("GitHub Fetch Error:", error);
-      alert(`GitHub Import Failed: ${error.message}`);
+        for (let page = 1; page <= 100; page += 1) {
+          const pageItems = await fetchGitHubApi<GitHubRepository[]>(
+            `https://api.github.com/users/${encodeURIComponent(githubUsername)}/repos?type=owner&sort=updated&direction=desc&per_page=100&page=${page}`,
+            token
+          );
+          repositories.push(...pageItems.filter((repository) => !repository.private));
+
+          if (pageItems.length < 100) {
+            break;
+          }
+        }
+
+        return repositories;
+      };
+
+      let repositories: GitHubRepository[];
+      try {
+        repositories = await fetchRepositoryPages(providerToken);
+      } catch (repositoryError) {
+        const status = (repositoryError as Error & { status?: number }).status;
+        if (!providerToken || status !== 401) {
+          throw repositoryError;
+        }
+
+        providerToken = null;
+        repositories = await fetchRepositoryPages(null);
+      }
+
+      setGithubProviderToken(providerToken);
+      setGithubRepositories(repositories);
+      setGithubRepositoryTrees({});
+      setExpandedGithubRepositories({});
+      setExpandedGithubFolders({});
+      setSelectedGithubFiles({});
+    } catch (error) {
+      console.error('GitHub repository list error:', error);
+      setGithubRepositories([]);
+      setGithubRepositoriesError(
+        error instanceof Error ? error.message : 'Unable to load public GitHub repositories.'
+      );
     } finally {
       setIsFetchingGithub(false);
     }
-  };
+  }
+
+  async function loadGitHubRepositoryTree(repository: GitHubRepository) {
+    const existingTree = githubRepositoryTrees[repository.full_name];
+    if (existingTree && !existingTree.loading && existingTree.entries.length > 0) {
+      return existingTree.entries;
+    }
+
+    setGithubRepositoryTrees((currentTrees) => ({
+      ...currentTrees,
+      [repository.full_name]: {
+        entries: currentTrees[repository.full_name]?.entries ?? [],
+        loading: true,
+        error: null,
+        truncated: false,
+      },
+    }));
+
+    try {
+      const treeUrl = `https://api.github.com/repos/${repository.full_name}/git/trees/${encodeURIComponent(repository.default_branch)}?recursive=1`;
+      let treeData: { tree?: GitHubTreeEntry[]; truncated?: boolean };
+
+      try {
+        treeData = await fetchGitHubApi(treeUrl, githubProviderToken);
+      } catch (treeError) {
+        const status = (treeError as Error & { status?: number }).status;
+        if (!githubProviderToken || status !== 401) {
+          throw treeError;
+        }
+
+        setGithubProviderToken(null);
+        treeData = await fetchGitHubApi(treeUrl, null);
+      }
+
+      const entries = (treeData.tree ?? []).filter((entry) => {
+        if (entry.type !== 'blob') {
+          return false;
+        }
+
+        const pathParts = entry.path.split('/');
+        return !pathParts.some((part) => GITHUB_IGNORED_DIRECTORIES.has(part));
+      });
+
+      setGithubRepositoryTrees((currentTrees) => ({
+        ...currentTrees,
+        [repository.full_name]: {
+          entries,
+          loading: false,
+          error: null,
+          truncated: Boolean(treeData.truncated),
+        },
+      }));
+
+      return entries;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load repository files.';
+      setGithubRepositoryTrees((currentTrees) => ({
+        ...currentTrees,
+        [repository.full_name]: {
+          entries: [],
+          loading: false,
+          error: message,
+          truncated: false,
+        },
+      }));
+      throw error;
+    }
+  }
+
+  async function toggleGitHubRepository(repository: GitHubRepository) {
+    const shouldExpand = !expandedGithubRepositories[repository.full_name];
+    setExpandedGithubRepositories((current) => ({
+      ...current,
+      [repository.full_name]: shouldExpand,
+    }));
+
+    if (shouldExpand && !githubRepositoryTrees[repository.full_name]?.entries.length) {
+      await loadGitHubRepositoryTree(repository).catch(() => undefined);
+    }
+  }
+
+  async function setGitHubRepositorySelected(
+    repository: GitHubRepository,
+    shouldSelect: boolean
+  ) {
+    try {
+      const entries = await loadGitHubRepositoryTree(repository);
+      setSelectedGithubFiles((current) => ({
+        ...current,
+        [repository.full_name]: shouldSelect
+          ? entries
+              .filter(
+                (entry) => entry.type === 'blob' && !isBlockedStagedFile(entry.path)
+              )
+              .map((entry) => entry.path)
+          : [],
+      }));
+
+      if (shouldSelect) {
+        setExpandedGithubRepositories((current) => ({
+          ...current,
+          [repository.full_name]: true,
+        }));
+      }
+    } catch (error) {
+      alert(
+        `Unable to select ${repository.name}: ${
+          error instanceof Error ? error.message : 'Repository tree could not be loaded.'
+        }`
+      );
+    }
+  }
+
+  function setGitHubPathsSelected(
+    repositoryFullName: string,
+    paths: string[],
+    shouldSelect: boolean
+  ) {
+    setSelectedGithubFiles((current) => {
+      const selectedPaths = new Set(current[repositoryFullName] ?? []);
+      paths.forEach((path) => {
+        if (shouldSelect) {
+          selectedPaths.add(path);
+        } else {
+          selectedPaths.delete(path);
+        }
+      });
+
+      return {
+        ...current,
+        [repositoryFullName]: Array.from(selectedPaths),
+      };
+    });
+  }
+
+  async function handleStageSelectedGitHubFiles() {
+    const selectedItems = githubRepositories.flatMap((repository) => {
+      const selectedPaths = new Set(selectedGithubFiles[repository.full_name] ?? []);
+      const entries = githubRepositoryTrees[repository.full_name]?.entries ?? [];
+      return entries
+        .filter((entry) => entry.type === 'blob' && selectedPaths.has(entry.path))
+        .map((entry) => ({ repository, entry }));
+    });
+
+    if (selectedItems.length === 0) {
+      alert('Select at least one GitHub file to import.');
+      return;
+    }
+
+    try {
+      setIsPreparingGithubImport(true);
+      const parsedFiles: StagedFile[] = [];
+
+      for (let index = 0; index < selectedItems.length; index += 6) {
+        const batch = selectedItems.slice(index, index + 6);
+        const batchFiles = await Promise.all(
+          batch.map(async ({ repository, entry }) => {
+            const blobData = await fetchGitHubApi<{ content: string; encoding: string }>(
+              `https://api.github.com/repos/${repository.full_name}/git/blobs/${entry.sha}`,
+              githubProviderToken
+            );
+
+            if (blobData.encoding !== 'base64') {
+              throw new Error(`GitHub returned an unsupported encoding for ${entry.path}.`);
+            }
+
+            const binaryContent = window.atob(blobData.content.replace(/\s/g, ''));
+            const bytes = Uint8Array.from(binaryContent, (character) => character.charCodeAt(0));
+            const fileName = entry.path.split('/').pop() || entry.path;
+            const shouldReadAsText = shouldForceUtf8CodeRead(entry.path);
+            const sourceFile = shouldReadAsText
+              ? undefined
+              : new File([bytes], fileName, { type: 'application/octet-stream' });
+
+            return {
+              path: entry.path,
+              name: fileName,
+              content: shouldReadAsText ? new TextDecoder('utf-8').decode(bytes) : '',
+              sourceFile,
+              contentType: shouldReadAsText
+                ? 'text/plain; charset=utf-8'
+                : sourceFile
+                  ? getUploadContentType(sourceFile)
+                  : undefined,
+              githubRepository: repository.full_name.toLowerCase(),
+              githubRef: repository.default_branch,
+              selected: true,
+            } satisfies StagedFile;
+          })
+        );
+        parsedFiles.push(...batchFiles);
+      }
+
+      const selectedRepositories = new Set(
+        parsedFiles.map((file) => file.githubRepository).filter(Boolean)
+      );
+      const onlyRepository =
+        selectedRepositories.size === 1
+          ? githubRepositories.find(
+              (repository) =>
+                repository.full_name.toLowerCase() === Array.from(selectedRepositories)[0]
+            )
+          : null;
+
+      setStagedFiles(parsedFiles);
+      setStagingFolderName(onlyRepository?.name ?? 'GitHub repositories');
+      setIsGithubModalOpen(false);
+      setIsStagingModalOpen(true);
+    } catch (error) {
+      console.error('GitHub file staging error:', error);
+      alert(
+        `GitHub Import Failed: ${
+          error instanceof Error ? error.message : 'Unable to download the selected files.'
+        }`
+      );
+    } finally {
+      setIsPreparingGithubImport(false);
+    }
+  }
 
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
@@ -4106,6 +4512,70 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  async function connectGitHubRepositoriesToWebhook(repositoryNames: string[]) {
+    if (!supabase || repositoryNames.length === 0) {
+      return;
+    }
+
+    const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    const accessToken =
+      currentSessionData.session?.access_token ?? session?.access_token ?? null;
+    const providerToken =
+      githubProviderToken ??
+      currentSessionData.session?.provider_token ??
+      session?.provider_token ??
+      null;
+
+    if (!accessToken) {
+      throw new Error('Your MeliusAI session expired before webhook setup.');
+    }
+    if (!providerToken) {
+      throw new Error(
+        'GitHub did not provide a reusable access token. Reconnect GitHub before enabling automatic sync.'
+      );
+    }
+
+    const connectionResults = await Promise.allSettled(
+      repositoryNames.map(async (repository) => {
+        const response = await fetch(
+          `${PROFILE_SPECTATOR_BASE_URL}/api/github/connect-repository`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              repository,
+              github_token: providerToken,
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const responseBody = await response.json().catch(() => null) as { detail?: string } | null;
+          throw new Error(
+            `${repository}: ${responseBody?.detail || `webhook setup failed (${response.status})`}`
+          );
+        }
+      })
+    );
+
+    const failedConnections = connectionResults.flatMap((result) =>
+      result.status === 'rejected'
+        ? [result.reason instanceof Error ? result.reason.message : 'Unknown webhook setup error']
+        : []
+    );
+
+    if (failedConnections.length > 0) {
+      throw new Error(failedConnections.join('\n'));
+    }
+  }
+
   async function handleConfirmUpload() {
     if (isUploading) {
       return;
@@ -4139,103 +4609,151 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     try {
       setIsUploading(true);
-      const stagedGithubRepository =
-        safeFilesToUpload.find((file) => file.githubRepository)?.githubRepository ?? null;
+      const groupedUploads = new Map<string, StagedFile[]>();
+      safeFilesToUpload.forEach((file) => {
+        const groupKey = file.githubRepository ?? 'local';
+        groupedUploads.set(groupKey, [...(groupedUploads.get(groupKey) ?? []), file]);
+      });
 
-      const { data: folderData, error: folderError } = await supabase
-        .from('project_folders')
-        .insert({
-          name: stagingFolderName,
-          source: stagedGithubRepository ? 'github' : 'local',
-          user_id: user.id,
-        })
-        .select()
-        .single();
-
-      if (folderError) {
-        throw folderError;
-      }
-
-      if (!folderData?.id) {
-        throw new Error('Folder was created without a returned ID.');
-      }
-
-      const uploadResults = await Promise.all(
-        safeFilesToUpload.map(async (file) => {
-          const uploadBody = file.sourceFile ?? new Blob([file.content], { type: 'text/plain; charset=utf-8' });
-          const isGithubAsset = Boolean(file.githubRepository && file.githubRef);
-          const storageFileName = isGithubAsset
-            ? getStorageFileName(file.path.replaceAll('/', '--'))
-            : getStorageFileName(file.name);
-          const filePath = `${user.id}/${folderData.id}/${storageFileName}`;
-          const contentType =
-            file.contentType || (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') || 'application/octet-stream';
-
-          const { error: storageError } = await supabase.storage
-            .from(STORAGE_BUCKET_NAME)
-            .upload(filePath, uploadBody, {
-              upsert: true,
-              contentType,
-            });
-
-          if (storageError) {
-            throw storageError;
-          }
-
-          const { data: publicUrlData } = supabase.storage
-            .from(STORAGE_BUCKET_NAME)
-            .getPublicUrl(filePath);
-
-          if (!publicUrlData.publicUrl) {
-            throw new Error(`Could not create a public file URL for ${file.name}.`);
-          }
-
-          return supabase
-            .from('projects')
+      const savedGroups = await Promise.all(
+        Array.from(groupedUploads.entries()).map(async ([groupKey, files]) => {
+          const githubRepository = groupKey === 'local' ? null : groupKey;
+          const matchingRepository = githubRepositories.find(
+            (repository) =>
+              repository.full_name.toLowerCase() === githubRepository?.toLowerCase()
+          );
+          const folderName =
+            matchingRepository?.name ??
+            githubRepository?.split('/').pop() ??
+            stagingFolderName;
+          const { data: folderData, error: folderError } = await supabase
+            .from('project_folders')
             .insert({
-              name: file.name,
-              folder_id: folderData.id,
+              name: folderName,
+              source: githubRepository ? 'github' : 'local',
               user_id: user.id,
-              file_type: file.name.split('.').pop(),
-              file_url: publicUrlData.publicUrl,
-              storage_path: filePath,
-              is_public: isScorecardPublic,
-              status: 'pending',
-              github_repository: file.githubRepository ?? null,
-              github_file_path: isGithubAsset ? file.path : null,
-              github_ref: file.githubRef ?? null,
-              github_sync_status: isGithubAsset ? 'synced' : 'untracked',
-              github_synced_at: isGithubAsset ? new Date().toISOString() : null,
             })
-            .select(PROJECT_DASHBOARD_COLUMNS)
+            .select()
             .single();
+
+          if (folderError) {
+            throw folderError;
+          }
+          if (!folderData?.id) {
+            throw new Error('Folder was created without a returned ID.');
+          }
+
+          const uploadResults = await Promise.all(
+            files.map(async (file) => {
+              const uploadBody =
+                file.sourceFile ??
+                new Blob([file.content], { type: 'text/plain; charset=utf-8' });
+              const isGithubAsset = Boolean(file.githubRepository && file.githubRef);
+              const storageFileName = isGithubAsset
+                ? getStorageFileName(file.path.replaceAll('/', '--'))
+                : getStorageFileName(file.name);
+              const filePath = `${user.id}/${folderData.id}/${storageFileName}`;
+              const contentType =
+                file.contentType ||
+                (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') ||
+                'application/octet-stream';
+
+              const { error: storageError } = await supabase.storage
+                .from(STORAGE_BUCKET_NAME)
+                .upload(filePath, uploadBody, {
+                  upsert: true,
+                  contentType,
+                });
+
+              if (storageError) {
+                throw storageError;
+              }
+
+              const { data: publicUrlData } = supabase.storage
+                .from(STORAGE_BUCKET_NAME)
+                .getPublicUrl(filePath);
+
+              if (!publicUrlData.publicUrl) {
+                throw new Error(`Could not create a public file URL for ${file.name}.`);
+              }
+
+              return supabase
+                .from('projects')
+                .insert({
+                  name: file.name,
+                  folder_id: folderData.id,
+                  user_id: user.id,
+                  file_type: file.name.split('.').pop(),
+                  file_url: publicUrlData.publicUrl,
+                  storage_path: filePath,
+                  is_public: isScorecardPublic,
+                  status: 'pending',
+                  github_repository: file.githubRepository ?? null,
+                  github_file_path: isGithubAsset ? file.path : null,
+                  github_ref: file.githubRef ?? null,
+                  github_sync_status: isGithubAsset ? 'synced' : 'untracked',
+                  github_synced_at: isGithubAsset ? new Date().toISOString() : null,
+                })
+                .select(PROJECT_DASHBOARD_COLUMNS)
+                .single();
+            })
+          );
+          const projectError = uploadResults.find((result) => result.error)?.error;
+          if (projectError) {
+            throw projectError;
+          }
+
+          const projectRows = uploadResults.flatMap((result) =>
+            result.data ? [result.data as ProjectRow] : []
+          );
+
+          return {
+            folder: {
+              ...(folderData as ProjectFolderRow),
+              nested_projects: projectRows,
+              assets: projectRows,
+              files: projectRows,
+              file_count: projectRows.length,
+            } satisfies ProjectFolderWithNestedProjects,
+            projectRows,
+          };
         })
       );
-      const projectError = uploadResults.find((result) => result.error)?.error;
 
-      if (projectError) {
-        throw projectError;
-      }
-
-      const savedProjectRows = uploadResults.flatMap((result) =>
-        result.data ? [result.data as ProjectRow] : []
-      );
+      const savedProjectRows = savedGroups.flatMap((group) => group.projectRows);
       const savedProjects = savedProjectRows.map((row) => mapProjectRowToProjectItem(row));
-      const savedFolder = {
-        ...(folderData as ProjectFolderRow),
-        nested_projects: savedProjectRows,
-        assets: savedProjectRows,
-        files: savedProjectRows,
-        file_count: savedProjectRows.length,
-      } satisfies ProjectFolderWithNestedProjects;
+      const savedFolders = savedGroups.map((group) => group.folder);
+      const importedGithubRepositories = Array.from(
+        new Set(
+          safeFilesToUpload.flatMap((file) =>
+            file.githubRepository ? [file.githubRepository] : []
+          )
+        )
+      );
+      let webhookConnectionWarning: string | null = null;
+
+      if (importedGithubRepositories.length > 0) {
+        try {
+          await connectGitHubRepositoriesToWebhook(importedGithubRepositories);
+        } catch (webhookError) {
+          webhookConnectionWarning =
+            webhookError instanceof Error
+              ? webhookError.message
+              : 'Automatic GitHub sync could not be enabled.';
+          console.warn('GitHub webhook registration warning:', webhookError);
+        }
+      }
 
       setIsStagingModalOpen(false);
       setStagedFiles([]);
-      setGithubRepoUrl("");
+      setSelectedGithubFiles({});
+      setExpandedGithubFolders({});
 
       setProjectFolders((currentFolders) => [
-        savedFolder,
-        ...currentFolders.filter((folder) => folder.id !== savedFolder.id),
+        ...savedFolders,
+        ...currentFolders.filter(
+          (folder) => !savedFolders.some((savedFolder) => savedFolder.id === folder.id)
+        ),
       ]);
       setProfileAssets((currentAssets) => [
         ...savedProjectRows,
@@ -4249,7 +4767,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           (project) => !savedProjects.some((savedProject) => savedProject.id === project.id)
         ),
       ]);
-      setActiveFolderId(savedFolder.id);
+      setActiveFolderId(savedFolders[0]?.id ?? null);
       setStagingFolderName('');
       setProjectDescription('');
       if (savedProjects[0]?.id) {
@@ -4260,6 +4778,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
       router.refresh();
+      if (webhookConnectionWarning) {
+        alert(
+          `Files imported successfully, but automatic GitHub sync was not enabled:\n${webhookConnectionWarning}`
+        );
+      }
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);
@@ -5328,23 +5851,157 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   // Group files by their immediate parent directory path
   const groupedFiles = stagedFiles.reduce((acc, file) => {
-    // Extract directory path (e.g., "folder/subfolder/file.js" -> "folder/subfolder")
-    const dirPath = file.path.substring(0, file.path.lastIndexOf('/')) || stagingFolderName;
-    if (!acc[dirPath]) acc[dirPath] = [];
-    acc[dirPath].push(file);
+    const groupKey = getStagedFileGroupKey(file, stagingFolderName);
+    if (!acc[groupKey]) acc[groupKey] = [];
+    acc[groupKey].push(file);
     return acc;
   }, {} as Record<string, typeof stagedFiles>);
 
-  const toggleFolderSelection = (dirPath: string, isSelected: boolean) => {
+  const toggleFolderSelection = (groupKey: string, isSelected: boolean) => {
     setStagedFiles((prev) =>
-      prev.map((file) => {
-        if (file.path.startsWith(dirPath)) {
-          return { ...file, selected: isSelected };
-        }
-        return file;
-      })
+      prev.map((file) =>
+        getStagedFileGroupKey(file, stagingFolderName) === groupKey
+          ? { ...file, selected: isSelected }
+          : file
+      )
     );
   };
+
+  const selectedGitHubFileCount = Object.values(selectedGithubFiles).reduce(
+    (total, paths) => total + paths.length,
+    0
+  );
+
+  const renderGitHubTreeNodes = (
+    repository: GitHubRepository,
+    nodes: GitHubTreeNode[],
+    depth = 0
+  ): ReactNode =>
+    nodes.map((node) => {
+      const selectedPaths = new Set(selectedGithubFiles[repository.full_name] ?? []);
+      const rowPaddingLeft = 12 + depth * 20;
+
+      if (node.type === 'folder') {
+        const folderKey = `${repository.full_name}:${node.path}`;
+        const descendantPaths = getGitHubDescendantFilePaths(node);
+        const selectedDescendantCount = descendantPaths.filter((path) =>
+          selectedPaths.has(path)
+        ).length;
+        const isSelected =
+          descendantPaths.length > 0 && selectedDescendantCount === descendantPaths.length;
+        const isPartiallySelected =
+          selectedDescendantCount > 0 && selectedDescendantCount < descendantPaths.length;
+        const isExpanded = Boolean(expandedGithubFolders[folderKey]);
+
+        return (
+          <div key={folderKey}>
+            <div
+              className="flex min-h-9 items-center gap-2 border-b border-white/[0.04] pr-3 text-sm text-slate-300 hover:bg-white/[0.03]"
+              style={{ paddingLeft: rowPaddingLeft }}
+            >
+              <input
+                type="checkbox"
+                checked={isSelected}
+                disabled={descendantPaths.length === 0}
+                ref={(element) => {
+                  if (element) {
+                    element.indeterminate = isPartiallySelected;
+                  }
+                }}
+                onChange={(event) =>
+                  setGitHubPathsSelected(
+                    repository.full_name,
+                    descendantPaths,
+                    event.target.checked
+                  )
+                }
+                className="h-4 w-4 shrink-0 cursor-pointer accent-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label={`${isSelected ? 'Deselect' : 'Select'} folder ${node.path}`}
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedGithubFolders((current) => ({
+                    ...current,
+                    [folderKey]: !current[folderKey],
+                  }))
+                }
+                className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left"
+                aria-expanded={isExpanded}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-slate-500 transition-transform',
+                    isExpanded && 'rotate-90'
+                  )}
+                  aria-hidden="true"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="h-4 w-4 shrink-0 text-cyan-300"
+                  aria-hidden="true"
+                >
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                <span className="truncate">{node.name}</span>
+                <span className="ml-auto text-[11px] text-slate-600">
+                  {selectedDescendantCount}/{descendantPaths.length}
+                </span>
+              </button>
+            </div>
+            {isExpanded ? renderGitHubTreeNodes(repository, node.children, depth + 1) : null}
+          </div>
+        );
+      }
+
+      const isSelected = selectedPaths.has(node.path);
+      const isBlocked = isBlockedStagedFile(node.path);
+      return (
+        <label
+          key={`${repository.full_name}:${node.path}`}
+          className={cn(
+            'flex min-h-9 items-center gap-2 border-b border-white/[0.04] pr-3 text-sm',
+            isBlocked
+              ? 'cursor-not-allowed text-slate-600'
+              : 'cursor-pointer text-slate-400 hover:bg-white/[0.03] hover:text-slate-200'
+          )}
+          style={{ paddingLeft: rowPaddingLeft + 24 }}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected}
+            disabled={isBlocked}
+            onChange={(event) =>
+              setGitHubPathsSelected(repository.full_name, [node.path], event.target.checked)
+            }
+            className="h-4 w-4 shrink-0 cursor-pointer accent-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
+          />
+          <FileText className="h-4 w-4 shrink-0 text-slate-600" aria-hidden="true" />
+          <span className="truncate">{node.name}</span>
+          {isBlocked ? (
+            <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-slate-600">
+              Not importable
+            </span>
+          ) : null}
+          {!isBlocked && node.entry?.size !== undefined ? (
+            <span className="ml-auto shrink-0 text-[11px] text-slate-600">
+              {node.entry.size < 1024
+                ? `${node.entry.size} B`
+                : `${Math.max(1, Math.round(node.entry.size / 1024))} KB`}
+            </span>
+          ) : null}
+        </label>
+      );
+    });
 
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-white md:flex-row">
@@ -6278,6 +6935,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         onClick={() => {
                           setIsIngestionModalOpen(false);
                           setIsGithubModalOpen(true);
+                          void loadGitHubRepositories();
                         }}
                       >
                         <div className="icon-circle">
@@ -6285,7 +6943,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z"></path>
                           </svg>
                         </div>
-                        <span className="btn-label">GitHub URL</span>
+                        <span className="btn-label">GitHub Account</span>
                       </button>
 
                       <button
@@ -6337,28 +6995,221 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           </main>
 
           {isGithubModalOpen && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ background: '#0b1120', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '500px', border: '1px solid #00d2ff', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-                <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '10px' }}>Import from GitHub</h2>
-                <p style={{ color: '#8892b0', marginBottom: '20px', fontSize: '14px' }}>Paste the public URL of the repository you want to audit.</p>
-
-                <input
-                  type="text"
-                  placeholder="https://github.com/username/repository"
-                  value={githubRepoUrl}
-                  onChange={(e) => setGithubRepoUrl(e.target.value)}
-                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', marginBottom: '20px', outline: 'none' }}
-                />
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => { setIsGithubModalOpen(false); resumeProductTour(8); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+              <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-400/50 bg-[#0b1120] shadow-2xl shadow-black/60">
+                <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">
+                  <div>
+                    <h2 className="m-0 text-xl font-semibold text-white">Import from GitHub</h2>
+                    <p className="mb-0 mt-1 text-sm text-slate-400">
+                      Choose complete repositories, folders, or individual files from your linked account.
+                    </p>
+                  </div>
                   <button
-                    onClick={handleGithubFetch}
-                    disabled={isFetchingGithub}
-                    style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: isFetchingGithub ? 'not-allowed' : 'pointer', opacity: isFetchingGithub ? 0.7 : 1 }}
+                    type="button"
+                    onClick={() => void loadGitHubRepositories()}
+                    disabled={isFetchingGithub || isPreparingGithubImport}
+                    className="shrink-0 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isFetchingGithub ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+                  {isFetchingGithub ? (
+                    <div className="space-y-3" aria-label="Loading GitHub repositories">
+                      {[0, 1, 2].map((item) => (
+                        <div
+                          key={item}
+                          className="h-20 animate-pulse rounded-xl border border-white/5 bg-white/[0.04]"
+                        />
+                      ))}
+                    </div>
+                  ) : githubRepositoriesError ? (
+                    <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-4">
+                      <p className="m-0 text-sm text-rose-200">{githubRepositoriesError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadGitHubRepositories()}
+                        className="mt-3 rounded-lg border border-rose-300/30 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-400/10"
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  ) : githubRepositories.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-700 px-5 py-10 text-center">
+                      <p className="m-0 text-sm font-medium text-slate-300">
+                        No public repositories found.
+                      </p>
+                      <p className="mb-0 mt-1 text-xs text-slate-500">
+                        Only repositories owned by the linked GitHub account are shown.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {githubRepositories.map((repository) => {
+                        const treeState = githubRepositoryTrees[repository.full_name];
+                        const repositoryFilePaths =
+                          treeState?.entries
+                            .filter(
+                              (entry) =>
+                                entry.type === 'blob' && !isBlockedStagedFile(entry.path)
+                            )
+                            .map((entry) => entry.path) ?? [];
+                        const selectedPaths = new Set(
+                          selectedGithubFiles[repository.full_name] ?? []
+                        );
+                        const selectedCount = repositoryFilePaths.filter((path) =>
+                          selectedPaths.has(path)
+                        ).length;
+                        const isSelected =
+                          repositoryFilePaths.length > 0 &&
+                          selectedCount === repositoryFilePaths.length;
+                        const isPartiallySelected =
+                          selectedCount > 0 && selectedCount < repositoryFilePaths.length;
+                        const isExpanded = Boolean(
+                          expandedGithubRepositories[repository.full_name]
+                        );
+
+                        return (
+                          <section
+                            key={repository.id}
+                            className="overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/55"
+                          >
+                            <div className="flex items-start gap-3 px-4 py-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={Boolean(treeState?.loading)}
+                                ref={(element) => {
+                                  if (element) {
+                                    element.indeterminate = isPartiallySelected;
+                                  }
+                                }}
+                                onChange={(event) =>
+                                  void setGitHubRepositorySelected(
+                                    repository,
+                                    event.target.checked
+                                  )
+                                }
+                                className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-cyan-400 disabled:cursor-wait disabled:opacity-50"
+                                aria-label={`${isSelected ? 'Deselect' : 'Select'} repository ${repository.name}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void toggleGitHubRepository(repository)}
+                                className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                                aria-expanded={isExpanded}
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  className={cn(
+                                    'mt-0.5 h-5 w-5 shrink-0 text-slate-500 transition-transform',
+                                    isExpanded && 'rotate-90'
+                                  )}
+                                  aria-hidden="true"
+                                >
+                                  <path d="m9 18 6-6-6-6" />
+                                </svg>
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span className="truncate text-sm font-semibold text-slate-100">
+                                      {repository.name}
+                                    </span>
+                                    {repository.language ? (
+                                      <span className="rounded-full border border-cyan-400/15 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200">
+                                        {repository.language}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  {repository.description ? (
+                                    <span className="mt-1 block truncate text-xs text-slate-500">
+                                      {repository.description}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="shrink-0 text-right text-[11px] text-slate-500">
+                                  {treeState?.entries.length
+                                    ? `${selectedCount}/${repositoryFilePaths.length} selected`
+                                    : `★ ${repository.stargazers_count}`}
+                                </span>
+                              </button>
+                            </div>
+
+                            {isExpanded ? (
+                              <div className="border-t border-white/[0.06] bg-black/10">
+                                {treeState?.loading ? (
+                                  <div className="flex items-center gap-2 px-5 py-5 text-sm text-slate-400">
+                                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-300" />
+                                    Loading files…
+                                  </div>
+                                ) : treeState?.error ? (
+                                  <div className="px-5 py-4">
+                                    <p className="m-0 text-sm text-rose-300">{treeState.error}</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => void loadGitHubRepositoryTree(repository)}
+                                      className="mt-2 text-xs font-medium text-cyan-300 hover:text-cyan-200"
+                                    >
+                                      Retry
+                                    </button>
+                                  </div>
+                                ) : treeState?.entries.length ? (
+                                  <>
+                                    {treeState.truncated ? (
+                                      <p className="m-0 border-b border-amber-300/10 bg-amber-400/5 px-4 py-2 text-xs text-amber-200/80">
+                                        GitHub truncated this unusually large tree; only returned files are available.
+                                      </p>
+                                    ) : null}
+                                    <div className="max-h-72 overflow-y-auto">
+                                      {renderGitHubTreeNodes(
+                                        repository,
+                                        buildGitHubTree(treeState.entries)
+                                      )}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p className="m-0 px-5 py-4 text-sm text-slate-500">
+                                    No importable files found in this repository.
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
+                          </section>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                  <button
+                    onClick={() => {
+                      setIsGithubModalOpen(false);
+                      resumeProductTour(8);
+                    }}
+                    className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-400 hover:text-white"
                     type="button"
                   >
-                    {isFetchingGithub ? 'Fetching...' : 'Fetch Repository'}
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => void handleStageSelectedGitHubFiles()}
+                    disabled={
+                      selectedGitHubFileCount === 0 ||
+                      isFetchingGithub ||
+                      isPreparingGithubImport
+                    }
+                    className="rounded-lg bg-cyan-400 px-5 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    type="button"
+                  >
+                    {isPreparingGithubImport
+                      ? 'Downloading selected files…'
+                      : `Review ${selectedGitHubFileCount} selected file${
+                          selectedGitHubFileCount === 1 ? '' : 's'
+                        }`}
                   </button>
                 </div>
               </div>
@@ -6425,14 +7276,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                         <div style={{ paddingLeft: '32px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           {filesInDir.map((file) => (
-                            <label key={file.path} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: '#94a3b8', padding: '4px 0' }}>
+                            <label key={getStagedFileKey(file)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: '#94a3b8', padding: '4px 0' }}>
                               <input
                                 type="checkbox"
                                 checked={file.selected}
                                 onChange={() => {
                                   setStagedFiles((prev) =>
                                     prev.map((previousFile) =>
-                                      previousFile.path === file.path
+                                      getStagedFileKey(previousFile) === getStagedFileKey(file)
                                         ? { ...previousFile, selected: !previousFile.selected }
                                         : previousFile
                                     )
