@@ -156,6 +156,8 @@ async function readProfile(userId: string) {
 
 function toViewerProfile(user: User, profile: ProfileRecord) {
   const role = normalizeRole(user.user_metadata?.role);
+  const isGitHubLinked =
+    user.identities?.some((identity) => identity.provider === 'github') ?? false;
   const displayName =
     profile.full_name ??
     getMetadataText(user, 'display_name') ??
@@ -175,6 +177,7 @@ function toViewerProfile(user: User, profile: ProfileRecord) {
     company_name: null,
     github_username: null,
     avatar_url: profile.avatar_url ?? getMetadataText(user, 'avatar_url'),
+    is_github_linked: isGitHubLinked,
   };
 }
 

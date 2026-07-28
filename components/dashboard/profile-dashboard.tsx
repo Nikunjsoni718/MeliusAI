@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
+import { GitHubLinkButton } from '@/components/GitHubLinkButton';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
@@ -125,6 +126,8 @@ type StagedFile = {
   content: string;
   sourceFile?: File;
   contentType?: string;
+  githubRepository?: string;
+  githubRef?: string;
   selected: boolean;
 };
 
@@ -3996,6 +3999,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       if (!repoRes.ok) throw new Error("Repository not found or is private.");
       const repoData = await repoRes.json();
       const defaultBranch = repoData.default_branch;
+      const githubRepository = `${owner}/${repoName}`.toLowerCase();
 
       // 3. Fetch the entire file tree recursively
       const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repoName}/git/trees/${defaultBranch}?recursive=1`);
@@ -4031,6 +4035,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           content,
           sourceFile,
           contentType: rawBlob.type || undefined,
+          githubRepository,
+          githubRef: defaultBranch,
           selected: true
         });
       }
@@ -4041,6 +4047,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       // 6. Transition to the Staging Modal
       setStagedFiles(parsedFiles);
+      setStagingFolderName(repoName);
       setIsGithubModalOpen(false); // Close Github URL modal
       setGithubRepoUrl(""); // Clear the input
       setIsStagingModalOpen(true); // Open the file checklist modal
@@ -4132,10 +4139,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     try {
       setIsUploading(true);
+      const stagedGithubRepository =
+        safeFilesToUpload.find((file) => file.githubRepository)?.githubRepository ?? null;
 
       const { data: folderData, error: folderError } = await supabase
         .from('project_folders')
-        .insert({ name: stagingFolderName, source: 'local', user_id: user.id })
+        .insert({
+          name: stagingFolderName,
+          source: stagedGithubRepository ? 'github' : 'local',
+          user_id: user.id,
+        })
         .select()
         .single();
 
@@ -4150,7 +4163,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const uploadResults = await Promise.all(
         safeFilesToUpload.map(async (file) => {
           const uploadBody = file.sourceFile ?? new Blob([file.content], { type: 'text/plain; charset=utf-8' });
-          const filePath = `${user.id}/${folderData.id}/${getStorageFileName(file.name)}`;
+          const isGithubAsset = Boolean(file.githubRepository && file.githubRef);
+          const storageFileName = isGithubAsset
+            ? getStorageFileName(file.path.replaceAll('/', '--'))
+            : getStorageFileName(file.name);
+          const filePath = `${user.id}/${folderData.id}/${storageFileName}`;
           const contentType =
             file.contentType || (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') || 'application/octet-stream';
 
@@ -4181,8 +4198,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               user_id: user.id,
               file_type: file.name.split('.').pop(),
               file_url: publicUrlData.publicUrl,
+              storage_path: filePath,
               is_public: isScorecardPublic,
               status: 'pending',
+              github_repository: file.githubRepository ?? null,
+              github_file_path: isGithubAsset ? file.path : null,
+              github_ref: file.githubRef ?? null,
+              github_sync_status: isGithubAsset ? 'synced' : 'untracked',
+              github_synced_at: isGithubAsset ? new Date().toISOString() : null,
             })
             .select(PROJECT_DASHBOARD_COLUMNS)
             .single();
@@ -5644,7 +5667,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
-                      <div className="flex flex-wrap justify-end gap-2">
+                      <div className="flex flex-wrap items-start justify-end gap-2">
+                        {profile && !profile.is_github_linked ? (
+                          <GitHubLinkButton />
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => void handleEditProfileToggle()}

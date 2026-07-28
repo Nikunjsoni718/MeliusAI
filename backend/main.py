@@ -2,20 +2,24 @@ import os
 import asyncio
 import base64
 import gc
+import hashlib
+import hmac
 import io
 import json
 import logging
 import math
+import mimetypes
 import re
 import time
 import uuid
 import ast
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from pathlib import Path
-from urllib.parse import unquote
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote, unquote, urlparse
 from uuid import UUID
 import httpx
 import pypdf
@@ -27,7 +31,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, model_validator
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     from supabase import Client, ClientOptions, create_client
@@ -446,6 +450,951 @@ def get_supabase_service_client():
         supabase_service_client = create_client(supabase_url, service_role_key)
 
     return supabase_service_client
+
+
+GITHUB_API_BASE_URL = "https://api.github.com"
+GITHUB_API_VERSION = "2026-03-10"
+GITHUB_STORAGE_BUCKET = "vault"
+GITHUB_WORKSPACE_ASSETS_TABLE = "projects"
+MAX_GITHUB_FILE_BYTES = 5 * 1024 * 1024
+MAX_GITHUB_SYNC_CONCURRENCY = 4
+
+TRACKABLE_GITHUB_ASSET_EXTENSIONS = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".cxx",
+    ".go",
+    ".h",
+    ".hpp",
+    ".htm",
+    ".html",
+    ".ipynb",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".kts",
+    ".md",
+    ".mdx",
+    ".mjs",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scss",
+    ".sh",
+    ".sql",
+    ".svelte",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".vue",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+
+_REPOSITORY_FULL_NAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+)
+_SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class GitHubPushChanges:
+    added: frozenset[str]
+    modified: frozenset[str]
+    removed: frozenset[str]
+
+    @property
+    def upserted(self) -> frozenset[str]:
+        return self.added | self.modified
+
+
+@dataclass
+class GitHubWebhookSyncResult:
+    repository: str
+    commit_sha: str
+    trackable_files: int
+    removed_files: int
+    updated_records: int = 0
+    created_records: int = 0
+    deleted_records: int = 0
+    skipped_files: int = 0
+    failed_files: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repository": self.repository,
+            "commit_sha": self.commit_sha,
+            "trackable_files": self.trackable_files,
+            "removed_files": self.removed_files,
+            "updated_records": self.updated_records,
+            "created_records": self.created_records,
+            "deleted_records": self.deleted_records,
+            "skipped_files": self.skipped_files,
+            "failed_files": self.failed_files,
+            "errors": self.errors,
+        }
+
+
+class GitHubFileTooLargeError(ValueError):
+    pass
+
+
+def verify_github_webhook_signature(
+    raw_body: bytes,
+    signature_header: str | None,
+    secret: str,
+) -> bool:
+    """Verify GitHub's X-Hub-Signature-256 value in constant time."""
+    if not secret or not signature_header:
+        return False
+
+    algorithm, separator, supplied_digest = signature_header.partition("=")
+    if separator != "=" or algorithm.lower() != "sha256" or not supplied_digest:
+        return False
+
+    expected_digest = hmac.new(
+        secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected_digest, supplied_digest.lower())
+
+
+def normalize_github_file_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    normalized_path = value.replace("\\", "/").strip().lstrip("/")
+    if (
+        not normalized_path
+        or len(normalized_path) > 1024
+        or "\x00" in normalized_path
+    ):
+        return None
+
+    path_parts = normalized_path.split("/")
+    if any(part in {"", ".", ".."} for part in path_parts):
+        return None
+
+    return "/".join(path_parts)
+
+
+def is_trackable_github_asset(file_path: str) -> bool:
+    normalized_path = normalize_github_file_path(file_path)
+    if not normalized_path:
+        return False
+
+    return PurePosixPath(normalized_path.lower()).suffix in TRACKABLE_GITHUB_ASSET_EXTENSIONS
+
+
+def extract_github_push_changes(payload: dict[str, Any]) -> GitHubPushChanges:
+    """Collapse all commits into each file path's final operation."""
+    final_operations: dict[str, str] = {}
+    commits = payload.get("commits")
+
+    if not isinstance(commits, list):
+        commits = []
+
+    for commit in commits:
+        if not isinstance(commit, dict):
+            continue
+
+        for operation in ("added", "modified", "removed"):
+            raw_paths = commit.get(operation)
+            if not isinstance(raw_paths, list):
+                continue
+
+            for raw_path in raw_paths:
+                normalized_path = normalize_github_file_path(raw_path)
+                if normalized_path:
+                    final_operations[normalized_path] = operation
+
+    return GitHubPushChanges(
+        added=frozenset(
+            path for path, operation in final_operations.items() if operation == "added"
+        ),
+        modified=frozenset(
+            path
+            for path, operation in final_operations.items()
+            if operation == "modified"
+        ),
+        removed=frozenset(
+            path
+            for path, operation in final_operations.items()
+            if operation == "removed"
+        ),
+    )
+
+
+def get_github_repository_full_name(payload: dict[str, Any]) -> str:
+    repository = payload.get("repository")
+    full_name = repository.get("full_name") if isinstance(repository, dict) else None
+
+    if not isinstance(full_name, str) or not _REPOSITORY_FULL_NAME_PATTERN.fullmatch(
+        full_name.strip()
+    ):
+        raise ValueError("GitHub push payload is missing a valid repository.full_name.")
+
+    return full_name.strip().casefold()
+
+
+def get_github_after_sha(payload: dict[str, Any]) -> str:
+    after_sha = payload.get("after")
+    if not isinstance(after_sha, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}",
+        after_sha.strip(),
+    ):
+        raise ValueError("GitHub push payload is missing a valid after commit SHA.")
+
+    return after_sha.strip().lower()
+
+
+def _get_positive_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return default
+
+
+def _get_workspace_assets_table_name() -> str:
+    table_name = (
+        os.getenv("GITHUB_WORKSPACE_ASSETS_TABLE")
+        or GITHUB_WORKSPACE_ASSETS_TABLE
+    ).strip()
+    if not _SQL_IDENTIFIER_PATTERN.fullmatch(table_name):
+        raise ValueError("GITHUB_WORKSPACE_ASSETS_TABLE must be a SQL identifier.")
+    return table_name
+
+
+def _get_storage_bucket_name() -> str:
+    bucket_name = (
+        os.getenv("GITHUB_WORKSPACE_STORAGE_BUCKET") or GITHUB_STORAGE_BUCKET
+    ).strip()
+    if not bucket_name or "/" in bucket_name:
+        raise ValueError("GITHUB_WORKSPACE_STORAGE_BUCKET is invalid.")
+    return bucket_name
+
+
+def _get_github_access_token() -> str | None:
+    for variable_name in (
+        "GITHUB_WEBHOOK_ACCESS_TOKEN",
+        "GITHUB_ACCESS_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        value = os.getenv(variable_name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+async def download_github_raw_file(
+    http_client: httpx.AsyncClient,
+    *,
+    repository: str,
+    commit_sha: str,
+    file_path: str,
+    access_token: str | None = None,
+    max_file_bytes: int | None = None,
+) -> tuple[bytes, str]:
+    """Download a file at an immutable commit through GitHub's raw media API."""
+    normalized_path = normalize_github_file_path(file_path)
+    if not normalized_path:
+        raise ValueError("GitHub file path is invalid.")
+
+    if not _REPOSITORY_FULL_NAME_PATTERN.fullmatch(repository):
+        raise ValueError("GitHub repository name is invalid.")
+
+    byte_limit = max_file_bytes or _get_positive_int_env(
+        "GITHUB_WEBHOOK_MAX_FILE_BYTES",
+        MAX_GITHUB_FILE_BYTES,
+    )
+    encoded_repository = quote(repository, safe="/")
+    encoded_path = quote(normalized_path, safe="/")
+    request_url = (
+        f"{GITHUB_API_BASE_URL}/repos/{encoded_repository}/contents/{encoded_path}"
+    )
+    headers = {
+        "Accept": "application/vnd.github.raw+json",
+        "User-Agent": "MeliusAI-GitHub-Webhook/1.0",
+        "X-GitHub-Api-Version": os.getenv(
+            "GITHUB_API_VERSION",
+            GITHUB_API_VERSION,
+        ),
+    }
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+
+    async with http_client.stream(
+        "GET",
+        request_url,
+        headers=headers,
+        params={"ref": commit_sha},
+    ) as response:
+        response.raise_for_status()
+
+        content_length = response.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > byte_limit:
+            raise GitHubFileTooLargeError(
+                f"{normalized_path} exceeds the {byte_limit}-byte webhook sync limit."
+            )
+
+        content = bytearray()
+        async for chunk in response.aiter_bytes():
+            content.extend(chunk)
+            if len(content) > byte_limit:
+                raise GitHubFileTooLargeError(
+                    f"{normalized_path} exceeds the {byte_limit}-byte webhook sync limit."
+                )
+
+        content_type = (
+            response.headers.get("content-type")
+            or mimetypes.guess_type(normalized_path)[0]
+            or "application/octet-stream"
+        ).split(";", 1)[0]
+
+    return bytes(content), content_type
+
+
+def _response_rows(response: Any) -> list[dict[str, Any]]:
+    data = getattr(response, "data", None)
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
+async def _run_supabase(operation: Callable[[], Any]) -> Any:
+    return await asyncio.to_thread(operation)
+
+
+async def _load_repository_assets(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    repository: str,
+) -> list[dict[str, Any]]:
+    response = await _run_supabase(
+        lambda: supabase_client.table(table_name)
+        .select(
+            "id, user_id, owner_id, folder_id, name, title, file_url, file_type, "
+            "file_size, is_public, status, storage_path, github_repository, "
+            "github_file_path, github_ref, github_commit_sha, github_sync_status"
+        )
+        .eq("github_repository", repository)
+        .execute()
+    )
+    return _response_rows(response)
+
+
+def _extract_storage_path_from_public_url(
+    file_url: Any,
+    *,
+    bucket_name: str,
+) -> str | None:
+    if not isinstance(file_url, str) or not file_url.strip():
+        return None
+
+    parsed_url = urlparse(file_url.strip())
+    marker = f"/storage/v1/object/public/{bucket_name}/"
+    marker_index = parsed_url.path.find(marker)
+    if marker_index < 0:
+        return None
+
+    storage_path = unquote(parsed_url.path[marker_index + len(marker) :]).lstrip("/")
+    return storage_path or None
+
+
+def _build_github_storage_path(
+    *,
+    workspace_user_id: str,
+    folder_id: str | None,
+    repository: str,
+    file_path: str,
+) -> str:
+    repository_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", repository).strip("-")
+    original_name = PurePosixPath(file_path).name
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", original_name).strip("-")
+    if not safe_name:
+        safe_name = "github-asset"
+    path_digest = hashlib.sha256(file_path.encode("utf-8")).hexdigest()[:16]
+    workspace_folder = folder_id or "standalone"
+    return (
+        f"{workspace_user_id}/{workspace_folder}/github-sync/"
+        f"{repository_slug}/{path_digest}-{safe_name[:160]}"
+    )
+
+
+def _get_public_storage_url(
+    supabase_client: Any,
+    *,
+    bucket_name: str,
+    storage_path: str,
+) -> str:
+    public_url_response = (
+        supabase_client.storage.from_(bucket_name).get_public_url(storage_path)
+    )
+    if isinstance(public_url_response, str):
+        return public_url_response
+    if isinstance(public_url_response, dict):
+        return str(
+            public_url_response.get("publicUrl")
+            or public_url_response.get("public_url")
+            or ""
+        )
+    return ""
+
+
+def _workspace_context_key(row: dict[str, Any]) -> tuple[str, str | None] | None:
+    workspace_user_id = str(
+        row.get("user_id") or row.get("owner_id") or ""
+    ).strip()
+    if not workspace_user_id:
+        return None
+
+    raw_folder_id = row.get("folder_id")
+    folder_id = str(raw_folder_id).strip() if raw_folder_id else None
+    return workspace_user_id, folder_id
+
+
+def _build_workspace_contexts(
+    repository_rows: list[dict[str, Any]],
+) -> dict[tuple[str, str | None], dict[str, Any]]:
+    contexts: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for row in repository_rows:
+        context_key = _workspace_context_key(row)
+        if context_key is not None and context_key not in contexts:
+            contexts[context_key] = row
+    return contexts
+
+
+async def _upload_workspace_asset(
+    supabase_client: Any,
+    *,
+    bucket_name: str,
+    storage_path: str,
+    content: bytes,
+    content_type: str,
+) -> None:
+    await _run_supabase(
+        lambda: supabase_client.storage.from_(bucket_name).upload(
+            storage_path,
+            content,
+            file_options={
+                "cache-control": "0",
+                "content-type": content_type,
+                "upsert": "true",
+            },
+        )
+    )
+
+
+def _synced_asset_payload(
+    *,
+    repository: str,
+    file_path: str,
+    ref: str,
+    commit_sha: str,
+    storage_path: str,
+    public_url: str,
+    content_size: int,
+) -> dict[str, Any]:
+    return {
+        "file_url": public_url,
+        "file_size": content_size,
+        "file_type": PurePosixPath(file_path).suffix.lstrip(".").lower(),
+        "storage_path": storage_path,
+        "github_repository": repository,
+        "github_file_path": file_path,
+        "github_ref": ref,
+        "github_commit_sha": commit_sha,
+        "github_sync_status": "synced",
+        "github_synced_at": datetime.now(timezone.utc).isoformat(),
+        "github_sync_error": None,
+        "has_been_audited": False,
+        "status": "draft",
+    }
+
+
+async def _update_existing_workspace_asset(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    bucket_name: str,
+    row: dict[str, Any],
+    repository: str,
+    file_path: str,
+    ref: str,
+    commit_sha: str,
+    content: bytes,
+    content_type: str,
+) -> int:
+    row_id = str(row.get("id") or "").strip()
+    context_key = _workspace_context_key(row)
+    if not row_id or context_key is None:
+        return 0
+
+    workspace_user_id, folder_id = context_key
+    storage_path = str(row.get("storage_path") or "").strip()
+    if not storage_path:
+        storage_path = (
+            _extract_storage_path_from_public_url(
+                row.get("file_url"),
+                bucket_name=bucket_name,
+            )
+            or _build_github_storage_path(
+                workspace_user_id=workspace_user_id,
+                folder_id=folder_id,
+                repository=repository,
+                file_path=file_path,
+            )
+        )
+
+    await _upload_workspace_asset(
+        supabase_client,
+        bucket_name=bucket_name,
+        storage_path=storage_path,
+        content=content,
+        content_type=content_type,
+    )
+    public_url = await _run_supabase(
+        lambda: _get_public_storage_url(
+            supabase_client,
+            bucket_name=bucket_name,
+            storage_path=storage_path,
+        )
+    )
+    update_payload = _synced_asset_payload(
+        repository=repository,
+        file_path=file_path,
+        ref=ref,
+        commit_sha=commit_sha,
+        storage_path=storage_path,
+        public_url=public_url,
+        content_size=len(content),
+    )
+    response = await _run_supabase(
+        lambda: supabase_client.table(table_name)
+        .update(update_payload)
+        .eq("id", row_id)
+        .execute()
+    )
+    return len(_response_rows(response)) or 1
+
+
+async def _create_workspace_asset(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    bucket_name: str,
+    template_row: dict[str, Any],
+    repository: str,
+    file_path: str,
+    ref: str,
+    commit_sha: str,
+    content: bytes,
+    content_type: str,
+) -> int:
+    context_key = _workspace_context_key(template_row)
+    if context_key is None:
+        return 0
+
+    workspace_user_id, folder_id = context_key
+    storage_path = _build_github_storage_path(
+        workspace_user_id=workspace_user_id,
+        folder_id=folder_id,
+        repository=repository,
+        file_path=file_path,
+    )
+    await _upload_workspace_asset(
+        supabase_client,
+        bucket_name=bucket_name,
+        storage_path=storage_path,
+        content=content,
+        content_type=content_type,
+    )
+    public_url = await _run_supabase(
+        lambda: _get_public_storage_url(
+            supabase_client,
+            bucket_name=bucket_name,
+            storage_path=storage_path,
+        )
+    )
+    file_name = PurePosixPath(file_path).name
+    insert_payload = {
+        "user_id": workspace_user_id,
+        "folder_id": folder_id,
+        "name": file_name,
+        "title": file_name,
+        "is_public": bool(template_row.get("is_public", True)),
+        **_synced_asset_payload(
+            repository=repository,
+            file_path=file_path,
+            ref=ref,
+            commit_sha=commit_sha,
+            storage_path=storage_path,
+            public_url=public_url,
+            content_size=len(content),
+        ),
+    }
+    owner_id = str(template_row.get("owner_id") or "").strip()
+    if owner_id:
+        insert_payload["owner_id"] = owner_id
+
+    response = await _run_supabase(
+        lambda: supabase_client.table(table_name).insert(insert_payload).execute()
+    )
+    return len(_response_rows(response)) or 1
+
+
+async def _mark_existing_assets_sync_failed(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    error_message: str,
+) -> None:
+    failure_payload = {
+        "github_sync_status": "error",
+        "github_sync_error": error_message[:500],
+        "github_synced_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        if row_id:
+            await _run_supabase(
+                lambda row_id=row_id: supabase_client.table(table_name)
+                .update(failure_payload)
+                .eq("id", row_id)
+                .execute()
+            )
+
+
+async def _mark_removed_workspace_assets(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    ref: str,
+    commit_sha: str,
+) -> int:
+    removed_payload = {
+        "status": "archived",
+        "github_sync_status": "deleted",
+        "github_ref": ref,
+        "github_commit_sha": commit_sha,
+        "github_synced_at": datetime.now(timezone.utc).isoformat(),
+        "github_sync_error": None,
+    }
+    updated_count = 0
+    for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        if not row_id:
+            continue
+        response = await _run_supabase(
+            lambda row_id=row_id: supabase_client.table(table_name)
+            .update(removed_payload)
+            .eq("id", row_id)
+            .execute()
+        )
+        updated_count += len(_response_rows(response)) or 1
+    return updated_count
+
+
+async def process_github_push_event(
+    payload: dict[str, Any],
+    *,
+    supabase_client: Any,
+    http_client: httpx.AsyncClient | None = None,
+) -> GitHubWebhookSyncResult:
+    """Synchronize GitHub push changes into MeliusAI workspace asset records."""
+    repository = get_github_repository_full_name(payload)
+    commit_sha = get_github_after_sha(payload)
+    ref = str(payload.get("ref") or "").strip()
+    changes = extract_github_push_changes(payload)
+    trackable_paths = sorted(
+        path for path in changes.upserted if is_trackable_github_asset(path)
+    )
+    removed_paths = sorted(changes.removed)
+    result = GitHubWebhookSyncResult(
+        repository=repository,
+        commit_sha=commit_sha,
+        trackable_files=len(trackable_paths),
+        removed_files=len(removed_paths),
+    )
+
+    table_name = _get_workspace_assets_table_name()
+    bucket_name = _get_storage_bucket_name()
+    repository_rows = await _load_repository_assets(
+        supabase_client,
+        table_name=table_name,
+        repository=repository,
+    )
+    rows_by_path: dict[str, list[dict[str, Any]]] = {}
+    for row in repository_rows:
+        row_path = normalize_github_file_path(row.get("github_file_path"))
+        if row_path:
+            rows_by_path.setdefault(row_path, []).append(row)
+
+    workspace_contexts = _build_workspace_contexts(repository_rows)
+    if not repository_rows:
+        result.skipped_files = len(trackable_paths) + len(removed_paths)
+        result.errors.append(
+            "No workspace assets are mapped to this GitHub repository."
+        )
+        return result
+
+    access_token = _get_github_access_token()
+    owns_http_client = http_client is None
+    active_http_client = http_client or httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(30.0),
+    )
+    concurrency = _get_positive_int_env(
+        "GITHUB_WEBHOOK_SYNC_CONCURRENCY",
+        MAX_GITHUB_SYNC_CONCURRENCY,
+    )
+    semaphore = asyncio.Semaphore(min(concurrency, 10))
+
+    async def sync_path(file_path: str) -> tuple[int, int, str | None]:
+        existing_rows = rows_by_path.get(file_path, [])
+        try:
+            async with semaphore:
+                content, content_type = await download_github_raw_file(
+                    active_http_client,
+                    repository=repository,
+                    commit_sha=commit_sha,
+                    file_path=file_path,
+                    access_token=access_token,
+                )
+
+            updated_records = 0
+            created_records = 0
+            if existing_rows:
+                for row in existing_rows:
+                    updated_records += await _update_existing_workspace_asset(
+                        supabase_client,
+                        table_name=table_name,
+                        bucket_name=bucket_name,
+                        row=row,
+                        repository=repository,
+                        file_path=file_path,
+                        ref=ref,
+                        commit_sha=commit_sha,
+                        content=content,
+                        content_type=content_type,
+                    )
+            else:
+                for template_row in workspace_contexts.values():
+                    created_records += await _create_workspace_asset(
+                        supabase_client,
+                        table_name=table_name,
+                        bucket_name=bucket_name,
+                        template_row=template_row,
+                        repository=repository,
+                        file_path=file_path,
+                        ref=ref,
+                        commit_sha=commit_sha,
+                        content=content,
+                        content_type=content_type,
+                    )
+
+            if updated_records == 0 and created_records == 0:
+                return 0, 0, f"{file_path}: no writable workspace mapping found"
+            return updated_records, created_records, None
+        except Exception as sync_error:
+            error_message = f"{file_path}: {sync_error}"
+            if existing_rows:
+                try:
+                    await _mark_existing_assets_sync_failed(
+                        supabase_client,
+                        table_name=table_name,
+                        rows=existing_rows,
+                        error_message=str(sync_error),
+                    )
+                except Exception:
+                    pass
+            return 0, 0, error_message
+
+    try:
+        sync_outcomes = await asyncio.gather(
+            *(sync_path(file_path) for file_path in trackable_paths)
+        )
+    finally:
+        if owns_http_client:
+            await active_http_client.aclose()
+
+    for updated_records, created_records, error_message in sync_outcomes:
+        result.updated_records += updated_records
+        result.created_records += created_records
+        if error_message:
+            result.failed_files += 1
+            result.errors.append(error_message)
+
+    for removed_path in removed_paths:
+        removed_rows = rows_by_path.get(removed_path, [])
+        if not removed_rows:
+            result.skipped_files += 1
+            continue
+        try:
+            result.deleted_records += await _mark_removed_workspace_assets(
+                supabase_client,
+                table_name=table_name,
+                rows=removed_rows,
+                ref=ref,
+                commit_sha=commit_sha,
+            )
+        except Exception as delete_error:
+            result.failed_files += 1
+            result.errors.append(f"{removed_path}: {delete_error}")
+
+    return result
+
+
+async def process_github_push_in_background(
+    payload: Dict[str, Any],
+    delivery_id: str | None,
+) -> None:
+    try:
+        service_client = get_supabase_service_client()
+        if service_client is None:
+            raise RuntimeError(
+                "SUPABASE_SERVICE_ROLE_KEY is required for GitHub webhook synchronization."
+            )
+
+        result = await process_github_push_event(
+            payload,
+            supabase_client=service_client,
+        )
+        logger.info(
+            "github_webhook.processed delivery_id=%s result=%s",
+            delivery_id or "unknown",
+            result.to_dict(),
+        )
+    except Exception:
+        logger.exception(
+            "github_webhook.processing_failed delivery_id=%s",
+            delivery_id or "unknown",
+        )
+
+
+@app.post("/api/webhooks/github", status_code=202)
+async def receive_github_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        logger.error("github_webhook.rejected reason=missing_webhook_secret")
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub webhook processing is not configured.",
+        )
+
+    max_payload_bytes = 2 * 1024 * 1024
+    configured_max_payload = os.getenv("GITHUB_WEBHOOK_MAX_PAYLOAD_BYTES")
+    if configured_max_payload:
+        try:
+            max_payload_bytes = max(1, int(configured_max_payload))
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid GITHUB_WEBHOOK_MAX_PAYLOAD_BYTES=%s",
+                configured_max_payload,
+            )
+
+    content_length = request.headers.get("content-length")
+    if (
+        content_length
+        and content_length.isdigit()
+        and int(content_length) > max_payload_bytes
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail="GitHub webhook payload is too large.",
+        )
+
+    raw_body = await request.body()
+    if len(raw_body) > max_payload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail="GitHub webhook payload is too large.",
+        )
+
+    signature = request.headers.get("x-hub-signature-256")
+    if not verify_github_webhook_signature(raw_body, signature, webhook_secret):
+        logger.warning(
+            "github_webhook.rejected reason=invalid_signature delivery_id=%s",
+            request.headers.get("x-github-delivery") or "unknown",
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid GitHub webhook signature.",
+        )
+
+    event_name = (request.headers.get("x-github-event") or "").strip().lower()
+    delivery_id = (
+        (request.headers.get("x-github-delivery") or "").strip() or None
+    )
+    if event_name != "push":
+        return {
+            "accepted": True,
+            "delivery_id": delivery_id,
+            "event": event_name or "unknown",
+            "ignored": True,
+        }
+
+    try:
+        payload = json.loads(raw_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as payload_error:
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub webhook payload is not valid JSON.",
+        ) from payload_error
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub webhook payload must be a JSON object.",
+        )
+
+    try:
+        repository = get_github_repository_full_name(payload)
+        commit_sha = get_github_after_sha(payload)
+        changes = extract_github_push_changes(payload)
+    except ValueError as payload_error:
+        raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
+
+    trackable_paths = sorted(
+        path for path in changes.upserted if is_trackable_github_asset(path)
+    )
+    removed_paths = sorted(changes.removed)
+    background_tasks.add_task(
+        process_github_push_in_background,
+        payload,
+        delivery_id,
+    )
+
+    return {
+        "accepted": True,
+        "delivery_id": delivery_id,
+        "event": "push",
+        "repository": repository,
+        "commit_sha": commit_sha,
+        "trackable_files": trackable_paths,
+        "removed_files": removed_paths,
+    }
 
 
 def get_supabase_read_client(request: Request | None = None):

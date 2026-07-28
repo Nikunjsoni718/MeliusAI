@@ -56,6 +56,7 @@ export type ProjectRow = {
   file_name?: string | null;
   file_type?: string | null;
   file_url?: string | null;
+  storage_path?: string | null;
   file_size?: number | null;
   asset_content?: string | null;
   description?: string | null;
@@ -72,6 +73,13 @@ export type ProjectRow = {
   last_improved_summary?: string | null;
   previous_score?: number | null;
   last_improvement_summary?: string | null;
+  github_repository?: string | null;
+  github_file_path?: string | null;
+  github_ref?: string | null;
+  github_commit_sha?: string | null;
+  github_sync_status?: 'untracked' | 'synced' | 'deleted' | 'error' | null;
+  github_synced_at?: string | null;
+  github_sync_error?: string | null;
   profession?: string | null;
   target_company?: string | null;
   auto_apply_enabled?: boolean | null;

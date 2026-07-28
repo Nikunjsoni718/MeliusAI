@@ -27,7 +27,9 @@ export type ViewerProfile = Pick<
   | 'company_name'
   | 'github_username'
   | 'avatar_url'
->;
+> & {
+  is_github_linked: boolean;
+};
 
 type ProfileResponse = {
   data?: ViewerProfile | null;
@@ -59,6 +61,7 @@ function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerPro
     company_name: candidate.company_name ?? null,
     github_username: candidate.github_username ?? null,
     avatar_url: candidate.avatar_url ?? null,
+    is_github_linked: candidate.is_github_linked === true,
   };
 }
 
