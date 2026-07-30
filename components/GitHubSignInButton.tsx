@@ -22,7 +22,7 @@ export default function GitHubSignInButton() {
         provider: 'github',
         options: {
           redirectTo: redirectUrl.toString(),
-          scopes: 'read:user user:email public_repo admin:repo_hook',
+          scopes: 'repo',
         },
       });
 

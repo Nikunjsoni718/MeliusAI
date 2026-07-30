@@ -22,7 +22,7 @@ export function GitHubLinkButton() {
         provider: 'github',
         options: {
           redirectTo: redirectUrl.toString(),
-          scopes: 'public_repo admin:repo_hook',
+          scopes: 'repo',
         },
       });
 
