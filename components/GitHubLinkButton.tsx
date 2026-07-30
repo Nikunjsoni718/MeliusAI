@@ -51,6 +51,7 @@ export function GitHubLinkButton() {
 
     try {
       const supabase = createSupabaseBrowserClient();
+      console.log("Linking triggered");
       const { error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
@@ -59,6 +60,7 @@ export function GitHubLinkButton() {
       });
 
       if (error) {
+        console.error(error);
         throw error;
       }
     } catch (error) {
@@ -136,7 +138,7 @@ export function GitHubLinkButton() {
               </button>
             </div>
 
-            <form className="mt-5 space-y-4" onSubmit={(event) => void handleLinkGitHub(event)}>
+            <form className="mt-5 space-y-4" onSubmit={handleLinkGitHub}>
               <div className="space-y-2">
                 <Label htmlFor={inputId}>GitHub username or email</Label>
                 <Input
