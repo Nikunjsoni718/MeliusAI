@@ -7,6 +7,29 @@ import { appendUsernameSuffix, generateUsername, normalizeUsername } from '@/lib
 
 export const runtime = 'nodejs';
 
+const OAUTH_CALLBACK_OPERATION_TIMEOUT_MS = 12_000;
+const PROFILE_EMBEDDING_SYNC_TIMEOUT_MS = 5_000;
+
+async function withOAuthCallbackTimeout<T>(
+  operation: PromiseLike<T>,
+  operationName: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`OAuth callback ${operationName} timed out.`));
+    }, OAUTH_CALLBACK_OPERATION_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([Promise.resolve(operation), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function getProfileEmbeddingSyncEndpoint() {
   const explicitEndpoint =
     process.env.PYTHON_BACKEND_PROFILE_SYNC_URL ||
@@ -81,11 +104,17 @@ async function triggerProfileEmbeddingSync({
   }
 
   const endpoint = getProfileEmbeddingSyncEndpoint();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    PROFILE_EMBEDDING_SYNC_TIMEOUT_MS
+  );
 
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       cache: 'no-store',
+      signal: controller.signal,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -111,26 +140,34 @@ async function triggerProfileEmbeddingSync({
     console.log('OAuth profile embedding sync triggered successfully.');
   } catch (error) {
     console.error('OAuth profile embedding sync request failed:', error);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const origin = requestUrl.origin;
 
   if (!hasSupabaseServerEnv()) {
-    return NextResponse.redirect(`${origin}/auth/login`);
+    return NextResponse.redirect(new URL('/auth/login', requestUrl));
   }
 
   if (!code) {
-    return NextResponse.redirect(`${origin}/auth/login?error=missing_oauth_code`);
+    const missingCodeUrl = new URL('/auth/login', requestUrl);
+    missingCodeUrl.searchParams.set('error', 'missing_oauth_code');
+    return NextResponse.redirect(missingCodeUrl);
   }
+
+  let redirectUrl: URL;
 
   try {
     const supabase = await createSupabaseServerClient();
     const supabaseAdmin = createSupabaseAdminClient();
-    const { data: authData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    const { data: authData, error: exchangeError } = await withOAuthCallbackTimeout(
+      supabase.auth.exchangeCodeForSession(code),
+      'session exchange'
+    );
 
     if (exchangeError) {
       throw exchangeError;
@@ -146,11 +183,11 @@ export async function GET(request: NextRequest) {
     const avatarUrl = getAvatarUrl(user);
     const generatedUsername = generateUsername(user);
 
-    const { data: existingProfile, error: existingProfileError } = await supabaseAdmin
-      .from('profiles')
-      .select('username')
-      .eq('id', user.id)
-      .maybeSingle();
+    const { data: existingProfile, error: existingProfileError } =
+      await withOAuthCallbackTimeout(
+        supabaseAdmin.from('profiles').select('username').eq('id', user.id).maybeSingle(),
+        'profile lookup'
+      );
 
     if (existingProfileError) {
       console.error('OAuth callback profile lookup failed:', existingProfileError);
@@ -163,13 +200,17 @@ export async function GET(request: NextRequest) {
         : generatedUsername;
 
     if (!existingProfile?.username) {
-      const { data: conflictingProfile, error: usernameLookupError } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('username', finalUsername)
-        .neq('id', user.id)
-        .limit(1)
-        .maybeSingle();
+      const { data: conflictingProfile, error: usernameLookupError } =
+        await withOAuthCallbackTimeout(
+          supabaseAdmin
+            .from('profiles')
+            .select('id')
+            .eq('username', finalUsername)
+            .neq('id', user.id)
+            .limit(1)
+            .maybeSingle(),
+          'username lookup'
+        );
 
       if (usernameLookupError) {
         throw usernameLookupError;
@@ -191,11 +232,17 @@ export async function GET(request: NextRequest) {
         },
         { onConflict: 'id' }
       );
-    let { error: profileUpsertError } = await saveOAuthProfile();
+    let { error: profileUpsertError } = await withOAuthCallbackTimeout(
+      saveOAuthProfile(),
+      'profile upsert'
+    );
 
     if (profileUpsertError?.code === '23505' && !existingProfile?.username) {
       finalUsername = appendUsernameSuffix(generatedUsername, user.id);
-      ({ error: profileUpsertError } = await saveOAuthProfile());
+      ({ error: profileUpsertError } = await withOAuthCallbackTimeout(
+        saveOAuthProfile(),
+        'profile upsert retry'
+      ));
     }
 
     if (profileUpsertError) {
@@ -212,13 +259,16 @@ export async function GET(request: NextRequest) {
       !onboardingWasCompleted &&
       (user.user_metadata?.is_new_user === true || accountAgeMs < 15 * 60 * 1000);
 
-    const { error: metadataUpdateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-      user_metadata: {
-        ...user.user_metadata,
-        is_new_user: isNewUser,
-        username: finalUsername,
-      },
-    });
+    const { error: metadataUpdateError } = await withOAuthCallbackTimeout(
+      supabaseAdmin.auth.admin.updateUserById(user.id, {
+        user_metadata: {
+          ...user.user_metadata,
+          is_new_user: isNewUser,
+          username: finalUsername,
+        },
+      }),
+      'user metadata update'
+    );
 
     if (metadataUpdateError) {
       console.warn('OAuth profile saved, but username metadata could not be synchronized:', metadataUpdateError);
@@ -235,7 +285,7 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    return NextResponse.redirect(`${origin}/profile/${encodeURIComponent(finalUsername)}`);
+    redirectUrl = new URL(`/profile/${encodeURIComponent(finalUsername)}`, requestUrl);
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const message =
@@ -245,6 +295,9 @@ export async function GET(request: NextRequest) {
           ? String((error as { message?: unknown }).message)
           : 'oauth_callback_failed';
 
-    return NextResponse.redirect(`${origin}/auth/login?error=${encodeURIComponent(message)}`);
+    redirectUrl = new URL('/auth/login', requestUrl);
+    redirectUrl.searchParams.set('error', message);
   }
+
+  return NextResponse.redirect(redirectUrl);
 }
