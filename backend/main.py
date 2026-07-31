@@ -108,6 +108,7 @@ logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
 supabase_service_client = None
+supabase_spectate_client = None
 supabase: Client | None = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -127,6 +128,10 @@ AUDIT_THREAD_POOL = ThreadPoolExecutor(
 )
 PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
+SPECTATE_PROFILE_HTTP_TIMEOUT_SECONDS = 15.0
+SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 10.0
+SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS = 3
+SPECTATE_PROFILE_RETRY_DELAY_SECONDS = 0.5
 
 
 async def run_in_audit_thread(operation):
@@ -450,6 +455,49 @@ def get_supabase_service_client():
         supabase_service_client = create_client(supabase_url, service_role_key)
 
     return supabase_service_client
+
+
+def get_supabase_spectate_client():
+    """Return a service-role client with bounded timeouts for public profile reads."""
+    global supabase_spectate_client
+
+    if create_client is None or ClientOptions is None:
+        raise HTTPException(
+            status_code=500,
+            detail="The supabase-py package is not installed in the Python backend environment.",
+        )
+
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SERVICE_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE")
+    )
+    if not service_role_key:
+        return None
+
+    if supabase_spectate_client is None:
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        if not supabase_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Supabase URL environment variable is not configured.",
+            )
+
+        options = ClientOptions(
+            auto_refresh_token=False,
+            persist_session=False,
+            postgrest_client_timeout=httpx.Timeout(
+                SPECTATE_PROFILE_HTTP_TIMEOUT_SECONDS,
+                connect=SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS,
+            ),
+        )
+        supabase_spectate_client = create_client(
+            supabase_url,
+            service_role_key,
+            options,
+        )
+
+    return supabase_spectate_client
 
 
 GITHUB_API_BASE_URL = "https://api.github.com"
@@ -6297,6 +6345,110 @@ async def get_authenticated_vault(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def is_retryable_spectate_http_error(error: httpx.HTTPError) -> bool:
+    if isinstance(error, httpx.RequestError):
+        return True
+
+    if isinstance(error, httpx.HTTPStatusError):
+        status_code = error.response.status_code
+        return status_code == 429 or status_code >= 500
+
+    return True
+
+
+async def run_spectate_profile_query(
+    operation: Callable[[], Any],
+    *,
+    operation_name: str,
+) -> Any:
+    """Run one blocking Supabase request with async-safe transient retries."""
+    for attempt in range(1, SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncio.to_thread(operation)
+        except httpx.RequestError as request_error:
+            if attempt >= SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS:
+                logger.error(
+                    "spectate_profile.request_exhausted operation=%s attempts=%d error_type=%s",
+                    operation_name,
+                    attempt,
+                    type(request_error).__name__,
+                )
+                raise
+
+            logger.warning(
+                "spectate_profile.request_retry operation=%s attempt=%d/%d error_type=%s",
+                operation_name,
+                attempt,
+                SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS,
+                type(request_error).__name__,
+            )
+            await asyncio.sleep(SPECTATE_PROFILE_RETRY_DELAY_SECONDS * attempt)
+        except httpx.HTTPError as http_error:
+            if (
+                attempt >= SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS
+                or not is_retryable_spectate_http_error(http_error)
+            ):
+                logger.error(
+                    "spectate_profile.http_error operation=%s attempts=%d error_type=%s",
+                    operation_name,
+                    attempt,
+                    type(http_error).__name__,
+                )
+                raise
+
+            logger.warning(
+                "spectate_profile.http_retry operation=%s attempt=%d/%d error_type=%s",
+                operation_name,
+                attempt,
+                SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS,
+                type(http_error).__name__,
+            )
+            await asyncio.sleep(SPECTATE_PROFILE_RETRY_DELAY_SECONDS * attempt)
+
+    raise RuntimeError("Spectator profile request retry loop exited unexpectedly.")
+
+
+def build_spectate_profile_unavailable_response(username: str) -> dict[str, Any]:
+    empty_profile = {
+        "id": None,
+        "username": username,
+        "full_name": username,
+        "email": None,
+        "bio": "",
+        "avatar_url": None,
+        "current_status": None,
+        "age": None,
+        "avg_project_score": 0,
+        "skills": [],
+        "projects": [],
+        "project_folders": [],
+        "projectFolders": [],
+        "folders": [],
+        "folder_files": [],
+        "folderFiles": [],
+        "ratings": [],
+        "scores": [],
+        "scans": [],
+        "isOwner": False,
+        "viewerType": "visitor",
+        "authenticationStatus": "unavailable",
+    }
+    return {
+        **empty_profile,
+        "success": False,
+        "degraded": True,
+        "temporarilyUnavailable": True,
+        "detail": "Profile data is temporarily unavailable. Please try again shortly.",
+        "message": "Profile data is temporarily unavailable. Please try again shortly.",
+        "data": [],
+        "assets": [],
+        "profile": empty_profile,
+        "resume": empty_profile,
+        "vault_assets": [],
+        "vaultAssets": [],
+    }
+
+
 @app.get("/api/spectate-profile/{username}")
 async def spectate_profile(
     username: str,
@@ -6308,19 +6460,22 @@ async def spectate_profile(
         if not target_username:
             raise HTTPException(status_code=404, detail="User not found")
 
-        supabase = get_supabase_service_client()
+        supabase = get_supabase_spectate_client()
         if supabase is None:
             raise HTTPException(
                 status_code=500,
                 detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
             )
 
-        profile_response = await asyncio.to_thread(
-            lambda: supabase.table("profiles")
-            .select(SPECTATE_PROFILE_PUBLIC_SELECT)
-            .eq("username", target_username)
-            .limit(1)
-            .execute()
+        profile_response = await run_spectate_profile_query(
+            lambda: (
+                supabase.table("profiles")
+                .select(SPECTATE_PROFILE_PUBLIC_SELECT)
+                .eq("username", target_username)
+                .limit(1)
+                .execute()
+            ),
+            operation_name="profile",
         )
         profile_rows = profile_response.data or []
 
@@ -6333,39 +6488,69 @@ async def spectate_profile(
             raise HTTPException(status_code=404, detail="User not found")
 
         folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
-            asyncio.to_thread(
-                lambda: supabase.table("project_folders")
-                .select(SPECTATE_PROJECT_FOLDER_SELECT)
-                .eq("user_id", profile_uuid_text)
-                .order("created_at", desc=True)
-                .execute()
+            run_spectate_profile_query(
+                lambda: (
+                    supabase.table("project_folders")
+                    .select(SPECTATE_PROJECT_FOLDER_SELECT)
+                    .eq("user_id", profile_uuid_text)
+                    .order("created_at", desc=True)
+                    .execute()
+                ),
+                operation_name="project_folders",
             ),
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                .eq("user_id", profile_uuid_text)
-                .is_("folder_id", "null")
-                .order("created_at", desc=True)
-                .execute()
+            run_spectate_profile_query(
+                lambda: (
+                    supabase.table("projects")
+                    .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                    .eq("user_id", profile_uuid_text)
+                    .is_("folder_id", "null")
+                    .order("created_at", desc=True)
+                    .execute()
+                ),
+                operation_name="standalone_projects",
             ),
-            asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                .eq("user_id", profile_uuid_text)
-                .not_.is_("folder_id", "null")
-                .order("created_at", desc=True)
-                .execute()
+            run_spectate_profile_query(
+                lambda: (
+                    supabase.table("projects")
+                    .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                    .eq("user_id", profile_uuid_text)
+                    .not_.is_("folder_id", "null")
+                    .order("created_at", desc=True)
+                    .execute()
+                ),
+                operation_name="folder_files",
             ),
+            return_exceptions=True,
         )
 
+        degraded_sources = []
+
+        def get_response_rows(response: Any, source: str) -> list[dict[str, Any]]:
+            if isinstance(response, asyncio.CancelledError):
+                raise response
+            if isinstance(response, (httpx.RequestError, httpx.HTTPError)):
+                degraded_sources.append(source)
+                logger.error(
+                    "spectate_profile.partial_fallback username=%s source=%s error_type=%s",
+                    target_username,
+                    source,
+                    type(response).__name__,
+                )
+                return []
+            if isinstance(response, BaseException):
+                raise response
+            return clean_supabase_rows(response.data)
+
         assets = sort_rows_newest_first(
-            clean_supabase_rows(standalone_projects_response.data)
+            get_response_rows(standalone_projects_response, "standalone_projects")
         )
         folder_files = sort_rows_newest_first(
-            clean_supabase_rows(folder_files_response.data)
+            get_response_rows(folder_files_response, "folder_files")
         )
         project_folders = attach_folder_files(
-            sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
+            sort_rows_newest_first(
+                get_response_rows(folders_response, "project_folders")
+            ),
             folder_files,
         )
         print(
@@ -6395,6 +6580,8 @@ async def spectate_profile(
         profile["isOwner"] = is_owner
         profile["viewerType"] = viewer_type
         profile["authenticationStatus"] = authentication_status
+        profile["degraded"] = bool(degraded_sources)
+        profile["unavailableSources"] = degraded_sources
 
         return {
             **profile,
@@ -6416,7 +6603,35 @@ async def spectate_profile(
             "isOwner": is_owner,
             "viewerType": viewer_type,
             "authenticationStatus": authentication_status,
+            "degraded": bool(degraded_sources),
+            "unavailableSources": degraded_sources,
         }
+    except HTTPException:
+        raise
+    except httpx.RequestError as request_error:
+        logger.error(
+            "spectate_profile.network_fallback username=%s error_type=%s",
+            username,
+            type(request_error).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content=build_spectate_profile_unavailable_response(
+                username.strip().lower()
+            ),
+        )
+    except httpx.HTTPError as http_error:
+        logger.error(
+            "spectate_profile.http_fallback username=%s error_type=%s",
+            username,
+            type(http_error).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content=build_spectate_profile_unavailable_response(
+                username.strip().lower()
+            ),
+        )
     except Exception as e:
         print(str(e))
         logger.exception("spectate_profile.failed username=%s", username)
