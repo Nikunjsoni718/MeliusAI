@@ -1,7 +1,7 @@
 'use client';
 
 import { GitBranch, LoaderCircle, X } from 'lucide-react';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ export function GitHubLinkButton() {
   const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [githubIdentifier, setGitHubIdentifier] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const linkingAttemptRef = useRef(false);
 
   useEffect(() => {
     if (!isPromptOpen || isLinking) {
@@ -40,19 +41,38 @@ export function GitHubLinkButton() {
 
   async function handleLinkGitHub(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    event.stopPropagation();
 
-    if (!githubIdentifier.trim()) {
+    const identifier = githubIdentifier.trim();
+    if (!identifier) {
       setErrorMessage('Enter your GitHub username or email before continuing.');
       return;
     }
 
+    if (linkingAttemptRef.current) {
+      return;
+    }
+
+    linkingAttemptRef.current = true;
     setIsLinking(true);
     setErrorMessage(null);
 
     try {
       const supabase = createSupabaseBrowserClient();
-      console.log("Linking triggered");
-      const { error } = await supabase.auth.linkIdentity({
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        throw sessionError;
+      }
+      if (!session) {
+        throw new Error('Your session has expired. Sign in again before linking GitHub.');
+      }
+
+      console.log("Starting GitHub Link");
+      const { data, error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
           scopes: 'repo',
@@ -60,11 +80,19 @@ export function GitHubLinkButton() {
       });
 
       if (error) {
-        console.error(error);
         throw error;
       }
+
+      if (!data?.url) {
+        throw new Error('Supabase did not return a GitHub authorization URL.');
+      }
+
+      // linkIdentity redirects automatically in the browser. Assigning the
+      // returned URL also covers clients where that automatic handoff stalls.
+      window.location.assign(data.url);
     } catch (error) {
-      console.error('GitHub identity linking failed:', error);
+      console.error(error);
+      linkingAttemptRef.current = false;
       setErrorMessage(
         error instanceof Error
           ? error.message
