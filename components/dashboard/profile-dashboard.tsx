@@ -4,6 +4,7 @@ import { Suspense, startTransition, useCallback, useEffect, useId, useMemo, useR
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
+import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
@@ -35,6 +36,7 @@ import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
+import { usePendingGitHubImports } from '@/hooks/use-pending-github-imports';
 import type { ProjectFolderRow, ProjectRow, UserRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
@@ -2506,11 +2508,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     supabase,
     user,
   } = useViewerProfile();
+  const [verifiedAuthUser, setVerifiedAuthUser] = useState<User | null>(null);
+  const [isGitHubIdentityChecked, setIsGitHubIdentityChecked] = useState(false);
   const currentUser = user;
-  const hasLinkedGitHubIdentity = Boolean(
-    profile?.is_github_linked ||
-      user?.identities?.some((identity) => identity.provider === 'github')
-  );
+  const hasLinkedGitHubIdentity =
+    verifiedAuthUser?.identities?.some((identity) => identity.provider === 'github') === true;
+  const sessionHasLinkedGitHubIdentity =
+    user?.identities?.some((identity) => identity.provider === 'github') === true;
+  const sessionIdentitySignature =
+    user?.identities
+      ?.map((identity) => `${identity.provider}:${identity.id}`)
+      .sort()
+      .join('|') ?? '';
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2610,6 +2619,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
   const bioDraftRef = useRef<string | null>(null);
+  const refreshedGitHubLinkUserRef = useRef<string | null>(null);
+  const previousSessionHadGitHubIdentityRef = useRef(false);
   const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
@@ -2623,6 +2634,197 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
+  const [suppressedPendingImportId, setSuppressedPendingImportId] = useState<string | null>(null);
+  const {
+    error: pendingGitHubImportsError,
+    isReady: pendingGitHubImportsReady,
+    markRepositoriesImported: markPendingGitHubRepositoriesImported,
+    pendingImport: pendingGitHubImport,
+  } = usePendingGitHubImports({
+    enabled: Boolean(
+      supabase &&
+        user?.id &&
+        isOwner &&
+        !profileLoading &&
+        profileData &&
+        hasLinkedGitHubIdentity &&
+        onboardingCompletionReady &&
+        !isNewUser
+    ),
+    supabase,
+    userId: user?.id ?? null,
+  });
+
+  useEffect(() => {
+    let isActive = true;
+
+    const checkGitHubIdentity = async () => {
+      if (!supabase || !user?.id) {
+        if (isActive) {
+          setVerifiedAuthUser(null);
+          setIsGitHubIdentityChecked(true);
+        }
+        return;
+      }
+
+      // Fail closed while revalidating so an identity removed in another tab cannot
+      // leave any GitHub import controls visible from the previous user snapshot.
+      setVerifiedAuthUser(null);
+      setIsGitHubIdentityChecked(false);
+
+      const { data, error } = await supabase.auth.getUser();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        console.warn('Unable to verify the current GitHub identity:', error.message);
+        setVerifiedAuthUser(null);
+      } else {
+        const freshUserHasGitHubIdentity =
+          data.user?.identities?.some((identity) => identity.provider === 'github') === true;
+
+        if (freshUserHasGitHubIdentity !== sessionHasLinkedGitHubIdentity) {
+          const { error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError) {
+            console.warn('Unable to refresh the changed GitHub identity session:', refreshError.message);
+          }
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        setVerifiedAuthUser(data.user?.id === user.id ? data.user : null);
+      }
+
+      setIsGitHubIdentityChecked(true);
+    };
+
+    void checkGitHubIdentity();
+    window.addEventListener('focus', checkGitHubIdentity);
+
+    return () => {
+      isActive = false;
+      window.removeEventListener('focus', checkGitHubIdentity);
+    };
+  }, [sessionHasLinkedGitHubIdentity, sessionIdentitySignature, supabase, user?.id]);
+
+  useEffect(() => {
+    const previouslyHadGitHubIdentity = previousSessionHadGitHubIdentityRef.current;
+    previousSessionHadGitHubIdentityRef.current = sessionHasLinkedGitHubIdentity;
+
+    if (
+      !supabase ||
+      !user?.id ||
+      !previouslyHadGitHubIdentity ||
+      sessionHasLinkedGitHubIdentity
+    ) {
+      return;
+    }
+
+    let isActive = true;
+
+    const refreshAfterGitHubUnlink = async () => {
+      const { data, error } = await supabase.auth.refreshSession();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        console.warn('Unable to refresh the session after unlinking GitHub:', error.message);
+        setVerifiedAuthUser(null);
+      } else {
+        const refreshedUser = data.session?.user ?? null;
+        setVerifiedAuthUser(refreshedUser?.id === user.id ? refreshedUser : null);
+      }
+
+      setIsGitHubIdentityChecked(true);
+    };
+
+    void refreshAfterGitHubUnlink();
+
+    return () => {
+      isActive = false;
+    };
+  }, [sessionHasLinkedGitHubIdentity, supabase, user?.id]);
+
+  useEffect(() => {
+    if (!supabase || !user?.id) {
+      return;
+    }
+
+    const callbackUrl = new URL(window.location.href);
+    if (
+      callbackUrl.searchParams.get('github_linked') !== '1' ||
+      refreshedGitHubLinkUserRef.current === user.id
+    ) {
+      return;
+    }
+
+    refreshedGitHubLinkUserRef.current = user.id;
+
+    let isActive = true;
+
+    const refreshLinkedGitHubSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.refreshSession();
+
+        if (error) {
+          throw error;
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        const refreshedUser = data.session?.user ?? null;
+        setVerifiedAuthUser(refreshedUser?.id === user.id ? refreshedUser : null);
+        setIsGitHubIdentityChecked(true);
+
+      } catch (error) {
+        console.error('Unable to refresh the session after linking GitHub:', error);
+      } finally {
+        if (!isActive) {
+          return;
+        }
+
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.delete('github_linked');
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+        );
+        router.refresh();
+      }
+    };
+
+    void refreshLinkedGitHubSession();
+
+    return () => {
+      isActive = false;
+    };
+  }, [router, supabase, user?.id]);
+
+  useEffect(() => {
+    if (!isGitHubIdentityChecked || hasLinkedGitHubIdentity) {
+      return;
+    }
+
+    setIsGithubModalOpen(false);
+    setGithubRepositories([]);
+    setGithubRepositoriesError(null);
+    setGithubProviderToken(null);
+  }, [hasLinkedGitHubIdentity, isGitHubIdentityChecked]);
+
+  useEffect(() => {
+    if (pendingGitHubImportsError) {
+      console.warn('Unable to check pending GitHub repository imports:', pendingGitHubImportsError);
+    }
+  }, [pendingGitHubImportsError]);
 
   useEffect(() => {
     if (!activePreviewProjectId) {
@@ -3219,6 +3421,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !hasLinkedGitHubIdentity ||
       !onboardingCompletionReady ||
       isNewUser ||
+      !pendingGitHubImportsReady ||
+      pendingGitHubImport !== null ||
       autoOpenedGitHubImportUserRef.current === user.id
     ) {
       return;
@@ -3234,6 +3438,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     isNewUser,
     isOwner,
     onboardingCompletionReady,
+    pendingGitHubImport,
+    pendingGitHubImportsReady,
     profileData,
     profileLoading,
     user,
@@ -4247,15 +4453,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return response.json() as Promise<T>;
   }
 
-  function getLinkedGitHubUsername() {
-    const githubIdentity = user?.identities?.find((identity) => identity.provider === 'github');
+  function getLinkedGitHubUsername(authUser: User) {
+    const githubIdentity = authUser.identities?.find((identity) => identity.provider === 'github');
     const identityData = githubIdentity?.identity_data as Record<string, unknown> | undefined;
     const candidates = [
       identityData?.user_name,
       identityData?.preferred_username,
       identityData?.login,
-      user?.user_metadata?.user_name,
-      user?.user_metadata?.preferred_username,
+      authUser.user_metadata?.user_name,
+      authUser.user_metadata?.preferred_username,
     ];
 
     return candidates.find(
@@ -4273,6 +4479,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setIsFetchingGithub(true);
       setGithubRepositoriesError(null);
 
+      const { data: currentUserData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        throw userError;
+      }
+
+      const activeUser = currentUserData.user;
+      const hasCurrentGitHubIdentity =
+        activeUser?.identities?.some((identity) => identity.provider === 'github') === true;
+
+      setVerifiedAuthUser(activeUser ?? null);
+      setIsGitHubIdentityChecked(true);
+
+      if (!activeUser || activeUser.id !== user?.id || !hasCurrentGitHubIdentity) {
+        setIsGithubModalOpen(false);
+        throw new Error('No linked GitHub identity was found. Reconnect GitHub and try again.');
+      }
+
       const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
         throw sessionError;
@@ -4280,7 +4503,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       let providerToken =
         currentSessionData.session?.provider_token ?? session?.provider_token ?? null;
-      let githubUsername = getLinkedGitHubUsername();
+      let githubUsername = getLinkedGitHubUsername(activeUser);
 
       if (!githubUsername && providerToken) {
         const githubViewer = await fetchGitHubApi<{ login: string }>(
@@ -4830,6 +5053,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       if (importedGithubRepositories.length > 0) {
         setHasImportedGitHubRepository(true);
+        try {
+          await markPendingGitHubRepositoriesImported(importedGithubRepositories);
+        } catch (pendingImportError) {
+          console.warn('Repository imported, but its pending-import state was not cleared:', pendingImportError);
+        }
         try {
           await connectGitHubRepositoriesToWebhook(importedGithubRepositories);
         } catch (webhookError) {
@@ -6422,7 +6650,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {profile && !profile.is_github_linked ? (
+                        {profile && isGitHubIdentityChecked && !hasLinkedGitHubIdentity ? (
                           <GitHubLinkButton />
                         ) : null}
                         <button
@@ -7025,7 +7253,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <p className="tagline">Where is your code located?</p>
 
                     <div className="ingestion-grid">
-                      {onboardingCompletionReady && !isNewUser ? (
+                      {hasLinkedGitHubIdentity && onboardingCompletionReady && !isNewUser ? (
                         <button
                           className="ingestion-btn"
                           id="btn-github"
@@ -7093,7 +7321,62 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             />
           </main>
 
-          {isGithubModalOpen && (
+          {pendingGitHubImport &&
+          hasLinkedGitHubIdentity &&
+          pendingGitHubImportsReady &&
+          onboardingCompletionReady &&
+          !isNewUser &&
+          suppressedPendingImportId !== pendingGitHubImport.id &&
+          !isIngestionModalOpen &&
+          !isGithubModalOpen &&
+          !isStagingModalOpen ? (
+            <div
+              className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pending-github-import-title"
+            >
+              <div className="w-full max-w-md rounded-2xl border border-cyan-400/40 bg-[#0b1120] p-6 shadow-2xl shadow-black/60">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6" aria-hidden="true">
+                    <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+                  </svg>
+                </div>
+                <h2 id="pending-github-import-title" className="mb-0 mt-4 text-xl font-semibold text-white">
+                  New repository detected
+                </h2>
+                <p className="mb-0 mt-2 text-sm text-slate-300">
+                  New repository detected. Would you like to import it?
+                </p>
+                <p className="mb-0 mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-cyan-200">
+                  {pendingGitHubImport.repository_full_name}
+                </p>
+                <div className="mt-6 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSuppressedPendingImportId(pendingGitHubImport.id)}
+                    className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-white"
+                  >
+                    Not now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSuppressedPendingImportId(pendingGitHubImport.id);
+                      setIsIngestionModalOpen(false);
+                      setIsGithubModalOpen(true);
+                      void loadGitHubRepositories();
+                    }}
+                    className="rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+                  >
+                    Import repository
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {hasLinkedGitHubIdentity && isGithubModalOpen && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-400/50 bg-[#0b1120] shadow-2xl shadow-black/60">
                 <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">

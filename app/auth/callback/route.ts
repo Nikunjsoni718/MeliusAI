@@ -83,6 +83,32 @@ function getAvatarUrl(user: User) {
   return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
 }
 
+function normalizeGitHubUserId(value: unknown) {
+  const normalized =
+    typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : String(value ?? '').trim();
+
+  return /^[1-9][0-9]*$/.test(normalized) ? normalized : null;
+}
+
+function getGitHubIdentityDetails(user: User) {
+  const identity = user.identities?.find((candidate) => candidate.provider === 'github');
+  const identityData = identity?.identity_data as Record<string, unknown> | undefined;
+  const userIdCandidates = [identityData?.provider_id, identityData?.sub, identity?.id];
+  const usernameCandidates = [
+    identityData?.user_name,
+    identityData?.preferred_username,
+    identityData?.login,
+  ];
+
+  return {
+    userId: userIdCandidates.map(normalizeGitHubUserId).find(Boolean) ?? null,
+    username:
+      usernameCandidates.find(
+        (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
+      )?.trim() ?? null,
+  };
+}
+
 async function triggerProfileEmbeddingSync({
   accessToken,
   avatarUrl,
@@ -148,6 +174,7 @@ async function triggerProfileEmbeddingSync({
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
+  const oauthIntent = requestUrl.searchParams.get('intent');
 
   if (!hasSupabaseServerEnv()) {
     return NextResponse.redirect(new URL('/auth/login', requestUrl));
@@ -250,6 +277,24 @@ export async function GET(request: NextRequest) {
       throw profileUpsertError;
     }
 
+    const githubIdentity = getGitHubIdentityDetails(user);
+    if (githubIdentity.userId) {
+      const { error: githubIdentitySyncError } = await withOAuthCallbackTimeout(
+        supabaseAdmin
+          .from('users')
+          .update({
+            github_user_id: githubIdentity.userId,
+            ...(githubIdentity.username ? { github_username: githubIdentity.username } : {}),
+          })
+          .eq('id', user.id),
+        'GitHub identity sync'
+      );
+
+      if (githubIdentitySyncError) {
+        console.warn('GitHub identity linked, but its provider ID could not be saved:', githubIdentitySyncError);
+      }
+    }
+
     const onboardingWasCompleted =
       user.user_metadata?.is_new_user === false ||
       (typeof user.user_metadata?.onboarding_initialized_at === 'string' &&
@@ -286,6 +331,9 @@ export async function GET(request: NextRequest) {
     );
 
     redirectUrl = new URL(`/profile/${encodeURIComponent(finalUsername)}`, requestUrl);
+    if (oauthIntent === 'github_link') {
+      redirectUrl.searchParams.set('github_linked', '1');
+    }
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const message =

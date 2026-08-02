@@ -689,9 +689,62 @@ def get_github_repository_full_name(payload: dict[str, Any]) -> str:
     if not isinstance(full_name, str) or not _REPOSITORY_FULL_NAME_PATTERN.fullmatch(
         full_name.strip()
     ):
-        raise ValueError("GitHub push payload is missing a valid repository.full_name.")
+        raise ValueError("GitHub webhook payload is missing a valid repository.full_name.")
 
     return full_name.strip().casefold()
+
+
+def normalize_github_numeric_id(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
+
+    normalized_value = str(value or "").strip()
+    if not re.fullmatch(r"[1-9][0-9]*", normalized_value):
+        return None
+
+    return normalized_value
+
+
+def extract_github_repository_created_details(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if str(payload.get("action") or "").strip().lower() != "created":
+        raise ValueError("GitHub repository webhook action must be created.")
+
+    repository = payload.get("repository")
+    if not isinstance(repository, dict):
+        raise ValueError("GitHub repository.created payload is missing repository data.")
+
+    repository_owner = repository.get("owner")
+    if not isinstance(repository_owner, dict):
+        raise ValueError("GitHub repository.created payload is missing repository owner data.")
+
+    github_user_id = normalize_github_numeric_id(repository_owner.get("id"))
+    repository_id = normalize_github_numeric_id(repository.get("id"))
+    if not github_user_id or not repository_id:
+        raise ValueError("GitHub repository.created payload is missing stable provider IDs.")
+
+    repository_full_name = get_github_repository_full_name(payload)
+    repository_name = str(repository.get("name") or "").strip()
+    if not repository_name:
+        repository_name = repository_full_name.split("/", 1)[1]
+
+    return {
+        "github_user_id": github_user_id,
+        "provider_repository_id": repository_id,
+        "repository_full_name": repository_full_name,
+        "repository_name": repository_name,
+        "html_url": str(repository.get("html_url") or "").strip() or None,
+        "default_branch": str(repository.get("default_branch") or "").strip() or None,
+        "is_private": bool(repository.get("private")),
+        "repository_payload": {
+            "id": repository_id,
+            "full_name": repository_full_name,
+            "description": repository.get("description"),
+            "language": repository.get("language"),
+            "visibility": repository.get("visibility"),
+        },
+    }
 
 
 def get_github_after_sha(payload: dict[str, Any]) -> str:
@@ -1338,6 +1391,93 @@ async def process_github_push_in_background(
         )
 
 
+async def process_github_repository_created_event(
+    payload: dict[str, Any],
+    *,
+    supabase_client: Any,
+    delivery_id: str | None = None,
+) -> dict[str, Any]:
+    repository_details = extract_github_repository_created_details(payload)
+    github_user_id = repository_details["github_user_id"]
+
+    user_response = await _run_supabase(
+        lambda: supabase_client.table("users")
+        .select("id")
+        .eq("github_user_id", github_user_id)
+        .limit(1)
+        .execute()
+    )
+    matching_users = _response_rows(user_response)
+    if not matching_users:
+        return {
+            "matched": False,
+            "github_user_id": github_user_id,
+            "repository": repository_details["repository_full_name"],
+        }
+
+    user_id = str(matching_users[0].get("id") or "").strip()
+    if not user_id:
+        raise RuntimeError("Matched GitHub account is missing its Supabase user ID.")
+
+    pending_import = {
+        "user_id": user_id,
+        "provider": "github",
+        "provider_repository_id": repository_details["provider_repository_id"],
+        "repository_full_name": repository_details["repository_full_name"],
+        "repository_name": repository_details["repository_name"],
+        "html_url": repository_details["html_url"],
+        "default_branch": repository_details["default_branch"],
+        "is_private": repository_details["is_private"],
+        "status": "pending",
+        "webhook_delivery_id": delivery_id,
+        "repository_payload": repository_details["repository_payload"],
+    }
+    await _run_supabase(
+        lambda: supabase_client.table("pending_imports")
+        .upsert(
+            pending_import,
+            on_conflict="user_id,provider,provider_repository_id",
+            ignore_duplicates=True,
+        )
+        .execute()
+    )
+
+    return {
+        "matched": True,
+        "user_id": user_id,
+        "repository": repository_details["repository_full_name"],
+        "pending": True,
+    }
+
+
+async def process_github_repository_created_in_background(
+    payload: dict[str, Any],
+    delivery_id: str | None,
+) -> None:
+    try:
+        service_client = get_supabase_service_client()
+        if service_client is None:
+            raise RuntimeError(
+                "SUPABASE_SERVICE_ROLE_KEY is required for GitHub repository detection."
+            )
+
+        result = await process_github_repository_created_event(
+            payload,
+            supabase_client=service_client,
+            delivery_id=delivery_id,
+        )
+        logger.info(
+            "github_repository.created delivery_id=%s result=%s",
+            delivery_id or "unknown",
+            result,
+        )
+    except Exception:
+        logger.exception(
+            "github_repository.processing_failed delivery_id=%s",
+            delivery_id or "unknown",
+        )
+
+
 @app.post("/api/webhooks/github", status_code=202)
 async def receive_github_webhook(
     request: Request,
@@ -1395,7 +1535,7 @@ async def receive_github_webhook(
     delivery_id = (
         (request.headers.get("x-github-delivery") or "").strip() or None
     )
-    if event_name != "push":
+    if event_name not in {"push", "repository"}:
         return {
             "accepted": True,
             "delivery_id": delivery_id,
@@ -1416,6 +1556,40 @@ async def receive_github_webhook(
             status_code=400,
             detail="GitHub webhook payload must be a JSON object.",
         )
+
+    if event_name == "repository":
+        # New-repository delivery must come from an organization webhook or a
+        # GitHub App webhook; a webhook attached to an existing repository
+        # cannot observe another repository being created.
+        action = str(payload.get("action") or "").strip().lower()
+        if action != "created":
+            return {
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "repository",
+                "action": action or "unknown",
+                "ignored": True,
+            }
+
+        try:
+            repository_details = extract_github_repository_created_details(payload)
+        except ValueError as payload_error:
+            raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
+
+        background_tasks.add_task(
+            process_github_repository_created_in_background,
+            payload,
+            delivery_id,
+        )
+        return {
+            "accepted": True,
+            "delivery_id": delivery_id,
+            "event": "repository",
+            "action": "created",
+            "repository": repository_details["repository_full_name"],
+            "github_user_id": repository_details["github_user_id"],
+            "queued": True,
+        }
 
     try:
         repository = get_github_repository_full_name(payload)

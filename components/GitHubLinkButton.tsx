@@ -21,11 +21,13 @@ export function GitHubLinkButton() {
 
     try {
       const supabase = createSupabaseBrowserClient();
+      const callbackUrl = new URL('/auth/callback', window.location.origin);
+      callbackUrl.searchParams.set('intent', 'github_link');
       const { error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
           scopes: 'repo',
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: callbackUrl.toString(),
         },
       });
 
