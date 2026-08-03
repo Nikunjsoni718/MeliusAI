@@ -36,7 +36,6 @@ import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import { usePendingGitHubImports } from '@/hooks/use-pending-github-imports';
 import type { ProjectFolderRow, ProjectRow, UserRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
@@ -2634,27 +2633,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
-  const [suppressedPendingImportId, setSuppressedPendingImportId] = useState<string | null>(null);
-  const {
-    error: pendingGitHubImportsError,
-    isReady: pendingGitHubImportsReady,
-    markRepositoriesImported: markPendingGitHubRepositoriesImported,
-    pendingImport: pendingGitHubImport,
-  } = usePendingGitHubImports({
-    enabled: Boolean(
-      supabase &&
-        user?.id &&
-        isOwner &&
-        !profileLoading &&
-        profileData &&
-        hasLinkedGitHubIdentity &&
-        onboardingCompletionReady &&
-        !isNewUser
-    ),
-    supabase,
-    userId: user?.id ?? null,
-  });
-
   useEffect(() => {
     let isActive = true;
 
@@ -2819,12 +2797,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setGithubRepositoriesError(null);
     setGithubProviderToken(null);
   }, [hasLinkedGitHubIdentity, isGitHubIdentityChecked]);
-
-  useEffect(() => {
-    if (pendingGitHubImportsError) {
-      console.warn('Unable to check pending GitHub repository imports:', pendingGitHubImportsError);
-    }
-  }, [pendingGitHubImportsError]);
 
   useEffect(() => {
     if (!activePreviewProjectId) {
@@ -3421,8 +3393,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !hasLinkedGitHubIdentity ||
       !onboardingCompletionReady ||
       isNewUser ||
-      !pendingGitHubImportsReady ||
-      pendingGitHubImport !== null ||
       autoOpenedGitHubImportUserRef.current === user.id
     ) {
       return;
@@ -3438,8 +3408,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     isNewUser,
     isOwner,
     onboardingCompletionReady,
-    pendingGitHubImport,
-    pendingGitHubImportsReady,
     profileData,
     profileLoading,
     user,
@@ -4987,13 +4955,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       if (importedGithubRepositories.length > 0) {
         setHasImportedGitHubRepository(true);
-        // GitHub App installations provide webhook delivery globally. The import
-        // is complete once the Supabase writes above have succeeded.
-        try {
-          await markPendingGitHubRepositoriesImported(importedGithubRepositories);
-        } catch (pendingImportError) {
-          console.warn('Repository imported, but its pending-import state was not cleared:', pendingImportError);
-        }
       }
 
       setIsStagingModalOpen(false);
@@ -7242,61 +7203,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               }}
             />
           </main>
-
-          {pendingGitHubImport &&
-          hasLinkedGitHubIdentity &&
-          pendingGitHubImportsReady &&
-          onboardingCompletionReady &&
-          !isNewUser &&
-          suppressedPendingImportId !== pendingGitHubImport.id &&
-          !isIngestionModalOpen &&
-          !isGithubModalOpen &&
-          !isStagingModalOpen ? (
-            <div
-              className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="pending-github-import-title"
-            >
-              <div className="w-full max-w-md rounded-2xl border border-cyan-400/40 bg-[#0b1120] p-6 shadow-2xl shadow-black/60">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-6 w-6" aria-hidden="true">
-                    <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
-                  </svg>
-                </div>
-                <h2 id="pending-github-import-title" className="mb-0 mt-4 text-xl font-semibold text-white">
-                  New repository detected
-                </h2>
-                <p className="mb-0 mt-2 text-sm text-slate-300">
-                  New repository detected. Would you like to import it?
-                </p>
-                <p className="mb-0 mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-cyan-200">
-                  {pendingGitHubImport.repository_full_name}
-                </p>
-                <div className="mt-6 flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setSuppressedPendingImportId(pendingGitHubImport.id)}
-                    className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-white"
-                  >
-                    Not now
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSuppressedPendingImportId(pendingGitHubImport.id);
-                      setIsIngestionModalOpen(false);
-                      setIsGithubModalOpen(true);
-                      void loadGitHubRepositories();
-                    }}
-                    className="rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
-                  >
-                    Import repository
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
 
           {hasLinkedGitHubIdentity && isGithubModalOpen && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
