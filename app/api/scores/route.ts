@@ -150,7 +150,6 @@ export async function POST(request: NextRequest) {
     const createdAt = new Date().toISOString();
     const project_payload = {
       user_id: userId,
-      owner_id: userId,
       title: projectTitle,
       name: projectTitle,
       description: rawAssetContent,

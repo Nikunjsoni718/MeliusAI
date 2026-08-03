@@ -48,7 +48,7 @@ create table if not exists public.users (
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references public.users (id) on delete cascade,
+  user_id uuid not null references public.users (id) on delete cascade,
   title text not null,
   github_url text not null,
   summary text,
@@ -75,7 +75,7 @@ create table if not exists public.scores (
 );
 
 create index if not exists users_role_idx on public.users (role);
-create index if not exists projects_owner_id_idx on public.projects (owner_id);
+create index if not exists projects_user_id_idx on public.projects (user_id);
 create index if not exists projects_status_idx on public.projects (status);
 create index if not exists scores_project_id_idx on public.scores (project_id);
 create index if not exists scores_scored_by_idx on public.scores (scored_by);
@@ -212,26 +212,26 @@ drop policy if exists "Project owners and recruiters can read projects" on publi
 create policy "Project owners and recruiters can read projects"
 on public.projects
 for select
-using (owner_id = auth.uid() or public.is_recruiter());
+using (user_id = auth.uid() or public.is_recruiter());
 
 drop policy if exists "Talent can create their own projects" on public.projects;
 create policy "Talent can create their own projects"
 on public.projects
 for insert
-with check (owner_id = auth.uid() and public.is_talent());
+with check (user_id = auth.uid() and public.is_talent());
 
 drop policy if exists "Project owners can update their own projects" on public.projects;
 create policy "Project owners can update their own projects"
 on public.projects
 for update
-using (owner_id = auth.uid())
-with check (owner_id = auth.uid());
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 drop policy if exists "Project owners can delete their own projects" on public.projects;
 create policy "Project owners can delete their own projects"
 on public.projects
 for delete
-using (owner_id = auth.uid());
+using (user_id = auth.uid());
 
 drop policy if exists "Talent, scorers, and recruiters can read scores" on public.scores;
 create policy "Talent, scorers, and recruiters can read scores"
@@ -244,7 +244,7 @@ using (
     select 1
     from public.projects as p
     where p.id = scores.project_id
-      and p.owner_id = auth.uid()
+      and p.user_id = auth.uid()
   )
 );
 

@@ -863,7 +863,6 @@ export function UniversalAssetGrid({
           id: folderId,
           name: folderAssets[0]?.title?.trim() || folderAssets[0]?.name?.split('/')[0]?.trim() || 'Folder Project',
           user_id: folderAssets[0]?.user_id ?? null,
-          owner_id: folderAssets[0]?.owner_id ?? null,
           created_at: folderAssets[0]?.created_at ?? null,
           updated_at: folderAssets[0]?.updated_at ?? null,
         } satisfies ProjectFolderWithFiles,

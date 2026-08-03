@@ -196,9 +196,9 @@ export function TalentDashboard() {
         const { data, error } = await supabase
           .from('projects')
             .select(
-            'id, owner_id, user_id, file_url, file_type, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
+            'id, user_id, file_url, file_type, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
           )
-          .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(10);
 

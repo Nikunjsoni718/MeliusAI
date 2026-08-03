@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
           const { data: project, error: projectError } = await supabase
             .from('projects')
             .insert({
-              owner_id: sessionData.user.id,
+              user_id: sessionData.user.id,
               title: `${assessment.targetRole} verification scan`,
               file_url: body.sourceUrl,
               description: body.description?.trim() || null,

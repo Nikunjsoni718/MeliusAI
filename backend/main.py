@@ -894,7 +894,7 @@ async def _load_repository_assets(
     response = await _run_supabase(
         lambda: supabase_client.table(table_name)
         .select(
-            "id, user_id, owner_id, folder_id, name, title, file_url, file_type, "
+            "id, user_id, folder_id, name, title, file_url, file_type, "
             "file_size, is_public, status, storage_path, github_repository, "
             "github_file_path, github_ref, github_commit_sha, github_sync_status"
         )
@@ -963,9 +963,7 @@ def _get_public_storage_url(
 
 
 def _workspace_context_key(row: dict[str, Any]) -> tuple[str, str | None] | None:
-    workspace_user_id = str(
-        row.get("user_id") or row.get("owner_id") or ""
-    ).strip()
+    workspace_user_id = str(row.get("user_id") or "").strip()
     if not workspace_user_id:
         return None
 
@@ -1154,10 +1152,6 @@ async def _create_workspace_asset(
             content_size=len(content),
         ),
     }
-    owner_id = str(template_row.get("owner_id") or "").strip()
-    if owner_id:
-        insert_payload["owner_id"] = owner_id
-
     response = await _run_supabase(
         lambda: supabase_client.table(table_name).insert(insert_payload).execute()
     )
@@ -7385,12 +7379,8 @@ async def verify_asset(
             project = existing_project_data
             old_score = existing_project_data.get("score")
 
-            project_owner_ids = {
-                str(owner_id).strip()
-                for owner_id in (project.get("user_id"), project.get("owner_id"))
-                if owner_id and str(owner_id).strip()
-            }
-            if str(current_user_id).strip() not in project_owner_ids:
+            project_user_id = str(project.get("user_id") or "").strip()
+            if str(current_user_id).strip() != project_user_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only audit your own projects.",

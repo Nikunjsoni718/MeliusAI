@@ -50,7 +50,6 @@ export type ProfileRow = {
 export type ProjectRow = {
   id: string;
   user_id?: string;
-  owner_id?: string | null;
   is_public?: boolean | null;
   name?: string | null;
   title?: string | null;
@@ -95,7 +94,6 @@ export type ProjectRow = {
 export type ProjectFolderRow = {
   id: string;
   user_id?: string | null;
-  owner_id?: string | null;
   name: string;
   created_at?: string | null;
   updated_at?: string | null;
@@ -167,8 +165,8 @@ export interface Database {
       };
       projects: {
         Row: ProjectRow;
-        Insert: Partial<Omit<ProjectRow, 'id'>> & Pick<ProjectRow, 'owner_id' | 'title' | 'file_url'>;
-        Update: Partial<Omit<ProjectRow, 'id' | 'owner_id' | 'created_at' | 'updated_at'>>;
+        Insert: Partial<Omit<ProjectRow, 'id'>> & Pick<ProjectRow, 'user_id' | 'title' | 'file_url'>;
+        Update: Partial<Omit<ProjectRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>;
         Relationships: [];
       };
       project_folders: {

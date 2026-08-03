@@ -436,6 +436,7 @@ export default function MeliusAIPage() {
         const { data, error } = await supabase
           .from('projects')
           .select('*')
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (!active) {
@@ -448,11 +449,7 @@ export default function MeliusAIPage() {
           return;
         }
 
-        const scopedProjects = ((data ?? []) as ProjectAttachment[]).filter((project) => {
-          return project.user_id === user.id || project.owner_id === user.id;
-        });
-
-        setProfileProjects(scopedProjects);
+        setProfileProjects((data ?? []) as ProjectAttachment[]);
       } catch (error) {
         if (!active) {
           return;

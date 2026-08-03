@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectRow, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, owner_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, user_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
 const vaultBucketName = 'vault';
 
 type DeletableProjectRow = ProjectRow & {
@@ -29,10 +29,8 @@ function createOptionalAdminClient() {
   }
 }
 
-function getProjectOwnerIds(project: DeletableProjectRow) {
-  return [project.user_id, project.owner_id].filter(
-    (value): value is string => typeof value === 'string' && value.trim().length > 0
-  );
+function getProjectUserId(project: DeletableProjectRow) {
+  return typeof project.user_id === 'string' ? project.user_id.trim() : '';
 }
 
 function extractVaultStoragePath(value: unknown, userId: string) {
@@ -220,9 +218,9 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
       return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
     }
 
-    const ownerIds = getProjectOwnerIds(project);
+    const projectUserId = getProjectUserId(project);
 
-    if (!ownerIds.includes(sessionData.user.id)) {
+    if (projectUserId !== sessionData.user.id) {
       return NextResponse.json({ error: 'Forbidden: you can only delete your own assets.' }, { status: 403 });
     }
 
