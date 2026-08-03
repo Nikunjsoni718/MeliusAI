@@ -1,7 +1,7 @@
 begin;
 
 alter table public.profiles
-  add column if not exists qualifications jsonb not null default '[]'::jsonb,
+  add column if not exists qualifications text[] not null default ARRAY[]::text[],
   add column if not exists hobbies jsonb not null default '[]'::jsonb;
 
 do $$
@@ -33,7 +33,7 @@ begin
 end $$;
 
 alter table public.profiles
-  alter column qualifications set default '[]'::jsonb,
+  alter column qualifications set default ARRAY[]::text[],
   alter column experience set default '[]'::jsonb,
   alter column hobbies set default '[]'::jsonb;
 

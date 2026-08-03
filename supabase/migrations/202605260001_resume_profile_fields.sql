@@ -4,7 +4,7 @@ alter table public.profiles
   add column if not exists age integer,
   add column if not exists current_status text,
   add column if not exists education text,
-  add column if not exists qualifications jsonb not null default '[]'::jsonb,
+  add column if not exists qualifications text[] not null default ARRAY[]::text[],
   add column if not exists experience jsonb not null default '[]'::jsonb,
   add column if not exists hobbies jsonb not null default '[]'::jsonb;
 
