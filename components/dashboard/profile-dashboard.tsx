@@ -4831,70 +4831,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function connectGitHubRepositoriesToWebhook(repositoryNames: string[]) {
-    if (!supabase || repositoryNames.length === 0) {
-      return;
-    }
-
-    const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) {
-      throw sessionError;
-    }
-
-    const accessToken =
-      currentSessionData.session?.access_token ?? session?.access_token ?? null;
-    const providerToken =
-      githubProviderToken ??
-      currentSessionData.session?.provider_token ??
-      session?.provider_token ??
-      null;
-
-    if (!accessToken) {
-      throw new Error('Your MeliusAI session expired before webhook setup.');
-    }
-    if (!providerToken) {
-      throw new Error(
-        'GitHub did not provide a reusable access token. Reconnect GitHub before enabling automatic sync.'
-      );
-    }
-
-    const connectionResults = await Promise.allSettled(
-      repositoryNames.map(async (repository) => {
-        const response = await fetch(
-          `${PROFILE_SPECTATOR_BASE_URL}/api/github/connect-repository`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              repository,
-              github_token: providerToken,
-            }),
-          }
-        );
-
-        if (!response.ok) {
-          const responseBody = await response.json().catch(() => null) as { detail?: string } | null;
-          throw new Error(
-            `${repository}: ${responseBody?.detail || `webhook setup failed (${response.status})`}`
-          );
-        }
-      })
-    );
-
-    const failedConnections = connectionResults.flatMap((result) =>
-      result.status === 'rejected'
-        ? [result.reason instanceof Error ? result.reason.message : 'Unknown webhook setup error']
-        : []
-    );
-
-    if (failedConnections.length > 0) {
-      throw new Error(failedConnections.join('\n'));
-    }
-  }
-
   async function handleConfirmUpload() {
     if (isUploading) {
       return;
@@ -5049,23 +4985,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           )
         )
       );
-      let webhookConnectionWarning: string | null = null;
-
       if (importedGithubRepositories.length > 0) {
         setHasImportedGitHubRepository(true);
+        // GitHub App installations provide webhook delivery globally. The import
+        // is complete once the Supabase writes above have succeeded.
         try {
           await markPendingGitHubRepositoriesImported(importedGithubRepositories);
         } catch (pendingImportError) {
           console.warn('Repository imported, but its pending-import state was not cleared:', pendingImportError);
-        }
-        try {
-          await connectGitHubRepositoriesToWebhook(importedGithubRepositories);
-        } catch (webhookError) {
-          webhookConnectionWarning =
-            webhookError instanceof Error
-              ? webhookError.message
-              : 'Automatic GitHub sync could not be enabled.';
-          console.warn('GitHub webhook registration warning:', webhookError);
         }
       }
 
@@ -5103,11 +5030,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         setSpectatorRefreshToken((currentToken) => currentToken + 1);
       }
       router.refresh();
-      if (webhookConnectionWarning) {
-        alert(
-          `Files imported successfully, but automatic GitHub sync was not enabled:\n${webhookConnectionWarning}`
-        );
-      }
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);

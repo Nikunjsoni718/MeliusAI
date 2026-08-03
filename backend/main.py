@@ -2112,35 +2112,6 @@ class GitHubRepositoryConnectionRequest(BaseModel):
     github_token: str = Field(min_length=1, max_length=4096)
 
 
-def get_github_webhook_public_url(request: Request) -> str:
-    configured_url = os.getenv("GITHUB_WEBHOOK_PUBLIC_URL", "").strip()
-    if configured_url:
-        webhook_url = configured_url
-    else:
-        backend_base_url = (
-            os.getenv("PYTHON_BACKEND_PUBLIC_URL", "").strip()
-            or os.getenv("NEXT_PUBLIC_PYTHON_BACKEND_URL", "").strip()
-        )
-        webhook_url = (
-            f"{backend_base_url.rstrip('/')}/api/webhooks/github"
-            if backend_base_url
-            else str(request.url_for("receive_github_webhook"))
-        )
-
-    parsed_url = urlparse(webhook_url)
-    is_local_http = (
-        parsed_url.scheme == "http"
-        and parsed_url.hostname in {"localhost", "127.0.0.1"}
-    )
-    if parsed_url.scheme != "https" and not is_local_http:
-        raise HTTPException(
-            status_code=503,
-            detail="GITHUB_WEBHOOK_PUBLIC_URL must be an HTTPS URL.",
-        )
-
-    return webhook_url
-
-
 def get_github_api_error_detail(response: httpx.Response) -> str:
     try:
         response_body = response.json()
@@ -2157,7 +2128,6 @@ def get_github_api_error_detail(response: httpx.Response) -> str:
 
 async def _connect_github_repository(
     payload: GitHubRepositoryConnectionRequest,
-    request: Request,
     current_user_id: str,
 ):
     del current_user_id
@@ -2168,14 +2138,6 @@ async def _connect_github_repository(
             detail="Repository must use the owner/repository format.",
         )
 
-    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
-    if not webhook_secret:
-        raise HTTPException(
-            status_code=503,
-            detail="GitHub webhook processing is not configured.",
-        )
-
-    webhook_url = get_github_webhook_public_url(request)
     github_headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {payload.github_token}",
@@ -2202,7 +2164,7 @@ async def _connect_github_repository(
             raise HTTPException(
                 status_code=status_code,
                 detail=(
-                    "GitHub authorization expired or is missing repository-hook access. "
+                    "GitHub authorization expired or is missing repository access. "
                     "Reconnect GitHub and try again."
                 ),
             )
@@ -2235,83 +2197,13 @@ async def _connect_github_repository(
                 detail="Only public repositories can be connected.",
             )
 
-        hooks_response = await github_client.get(
-            f"{GITHUB_API_BASE_URL}/repos/{encoded_repository}/hooks",
-            params={"per_page": 100},
-            headers=github_headers,
-        )
-        if hooks_response.status_code != 200:
-            raise HTTPException(
-                status_code=403
-                if hooks_response.status_code in {401, 403}
-                else 502,
-                detail=(
-                    "GitHub did not allow webhook management for this repository. "
-                    "Reconnect with admin:repo_hook access."
-                ),
-            )
-
-        hooks = hooks_response.json()
-        matching_hook = next(
-            (
-                hook
-                for hook in hooks
-                if isinstance(hook, dict)
-                and isinstance(hook.get("config"), dict)
-                and hook["config"].get("url") == webhook_url
-            ),
-            None,
-        )
-        hook_payload = {
-            "name": "web",
-            "active": True,
-            "events": ["push"],
-            "config": {
-                "url": webhook_url,
-                "content_type": "json",
-                "secret": webhook_secret,
-                "insecure_ssl": "0",
-            },
-        }
-
-        if matching_hook:
-            hook_events = matching_hook.get("events") or []
-            if bool(matching_hook.get("active")) and "push" in hook_events:
-                return {
-                    "connected": True,
-                    "already_connected": True,
-                    "repository": repository,
-                }
-
-            hook_id = matching_hook.get("id")
-            update_response = await github_client.patch(
-                f"{GITHUB_API_BASE_URL}/repos/{encoded_repository}/hooks/{hook_id}",
-                headers=github_headers,
-                json=hook_payload,
-            )
-            if update_response.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=get_github_api_error_detail(update_response),
-                )
-        else:
-            create_response = await github_client.post(
-                f"{GITHUB_API_BASE_URL}/repos/{encoded_repository}/hooks",
-                headers=github_headers,
-                json=hook_payload,
-            )
-            if create_response.status_code != 201:
-                raise HTTPException(
-                    status_code=403
-                    if create_response.status_code in {401, 403, 404}
-                    else 502,
-                    detail=get_github_api_error_detail(create_response),
-                )
-
-    logger.info("github_webhook.connected repository=%s", repository)
+    # GitHub App installations deliver events globally, so no per-repository
+    # webhook should be created or updated here.
+    logger.info("github_repository.access_verified repository=%s", repository)
     return {
         "connected": True,
-        "already_connected": False,
+        "already_connected": True,
+        "managed_by": "github_app",
         "repository": repository,
     }
 
@@ -2319,26 +2211,24 @@ async def _connect_github_repository(
 @app.post("/api/github/connect-repository")
 async def connect_github_repository(
     payload: GitHubRepositoryConnectionRequest,
-    request: Request,
     current_user_id: str = Depends(verify_user),
 ):
     try:
         return await _connect_github_repository(
             payload,
-            request,
             current_user_id,
         )
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError, TypeError) as github_error:
         logger.warning(
-            "github_webhook.connection_failed repository=%s error_type=%s",
+            "github_repository.access_verification_failed repository=%s error_type=%s",
             payload.repository,
             type(github_error).__name__,
         )
         raise HTTPException(
             status_code=502,
-            detail="GitHub could not be reached to configure repository sync.",
+            detail="GitHub could not be reached to verify repository access.",
         ) from github_error
 
 
