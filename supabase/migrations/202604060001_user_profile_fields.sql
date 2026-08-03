@@ -1,11 +1,13 @@
 begin;
 
-alter table public.users
+alter table public.profiles
   add column if not exists username text,
-  add column if not exists birth_date date;
+  add column if not exists birth_date date,
+  add column if not exists full_name text,
+  add column if not exists email text;
 
-create unique index if not exists users_username_unique_idx
-  on public.users (lower(username))
+create unique index if not exists profiles_username_unique_idx
+  on public.profiles (lower(username))
   where username is not null;
 
 create or replace function public.handle_new_user()
@@ -14,54 +16,39 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  profile_role public.user_role;
-  profile_username text;
 begin
-  profile_role := coalesce(nullif(new.raw_user_meta_data ->> 'role', '')::public.user_role, 'talent');
-  profile_username := nullif(lower(regexp_replace(coalesce(new.raw_user_meta_data ->> 'username', ''), '^@+', '')), '');
-
-  insert into public.users (
+  insert into public.profiles (
     id,
-    role,
-    role_selected_at,
-    display_name,
     username,
     birth_date,
-    headline,
+    full_name,
+    email,
     bio,
-    avatar_url,
-    github_username,
-    company_name
+    avatar_url
   )
   values (
     new.id,
-    profile_role,
-    nullif(new.raw_user_meta_data ->> 'role_selected_at', '')::timestamptz,
-    coalesce(
-      new.raw_user_meta_data ->> 'display_name',
-      new.raw_user_meta_data ->> 'full_name',
-      split_part(coalesce(new.email, 'talent'), '@', 1)
-    ),
-    profile_username,
+    nullif(lower(regexp_replace(coalesce(new.raw_user_meta_data ->> 'username', ''), '^@+', '')), ''),
     nullif(new.raw_user_meta_data ->> 'birth_date', '')::date,
-    new.raw_user_meta_data ->> 'headline',
+    coalesce(
+      nullif(new.raw_user_meta_data ->> 'full_name', ''),
+      nullif(new.raw_user_meta_data ->> 'display_name', ''),
+      split_part(coalesce(new.email, 'member'), '@', 1)
+    ),
+    new.email,
     new.raw_user_meta_data ->> 'bio',
-    new.raw_user_meta_data ->> 'avatar_url',
-    new.raw_user_meta_data ->> 'github_username',
-    new.raw_user_meta_data ->> 'company_name'
+    coalesce(
+      new.raw_user_meta_data ->> 'avatar_url',
+      new.raw_user_meta_data ->> 'picture'
+    )
   )
   on conflict (id) do update
-    set role = excluded.role,
-        role_selected_at = coalesce(excluded.role_selected_at, public.users.role_selected_at),
-        display_name = excluded.display_name,
-        username = coalesce(excluded.username, public.users.username),
-        birth_date = coalesce(excluded.birth_date, public.users.birth_date),
-        headline = excluded.headline,
-        bio = excluded.bio,
-        avatar_url = excluded.avatar_url,
-        github_username = excluded.github_username,
-        company_name = excluded.company_name,
+    set username = coalesce(excluded.username, public.profiles.username),
+        birth_date = coalesce(excluded.birth_date, public.profiles.birth_date),
+        full_name = coalesce(excluded.full_name, public.profiles.full_name),
+        email = coalesce(excluded.email, public.profiles.email),
+        bio = coalesce(excluded.bio, public.profiles.bio),
+        avatar_url = coalesce(excluded.avatar_url, public.profiles.avatar_url),
         updated_at = now();
 
   return new;

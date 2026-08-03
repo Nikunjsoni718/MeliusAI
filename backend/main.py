@@ -1398,22 +1398,22 @@ async def process_github_repository_created_event(
     repository_details = extract_github_repository_created_details(payload)
     github_user_id = repository_details["github_user_id"]
 
-    user_response = await _run_supabase(
-        lambda: supabase_client.table("users")
+    profile_response = await _run_supabase(
+        lambda: supabase_client.table("profiles")
         .select("id")
         .eq("github_user_id", github_user_id)
         .limit(1)
         .execute()
     )
-    matching_users = _response_rows(user_response)
-    if not matching_users:
+    matching_profiles = _response_rows(profile_response)
+    if not matching_profiles:
         return {
             "matched": False,
             "github_user_id": github_user_id,
             "repository": repository_details["repository_full_name"],
         }
 
-    user_id = str(matching_users[0].get("id") or "").strip()
+    user_id = str(matching_profiles[0].get("id") or "").strip()
     if not user_id:
         raise RuntimeError("Matched GitHub account is missing its Supabase user ID.")
 
@@ -2235,21 +2235,6 @@ async def verify_reviewer_user(
     current_user_id: str = Depends(verify_user),
 ) -> str:
     roles = set(getattr(request.state, "user_roles", []) or [])
-
-    try:
-        supabase_client = get_request_supabase_client(request)
-        user_profile_response = await asyncio.to_thread(
-            lambda: supabase_client.table("users")
-            .select("role")
-            .eq("id", current_user_id)
-            .maybe_single()
-            .execute()
-        )
-        profile_role = (user_profile_response.data or {}).get("role")
-        if isinstance(profile_role, str) and profile_role.strip():
-            roles.add(profile_role.strip().lower())
-    except Exception as role_error:
-        logger.warning("Reviewer role lookup failed: %s", role_error)
 
     if not roles.intersection(AUTHORIZED_REVIEWER_ROLES):
         raise HTTPException(status_code=401, detail="Unauthorized")

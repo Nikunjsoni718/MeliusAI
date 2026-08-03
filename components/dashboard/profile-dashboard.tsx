@@ -36,7 +36,7 @@ import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProjectFolderRow, ProjectRow, UserRow } from '@/types/supabase';
+import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
 type ProjectPreviewKind =
   | 'image'

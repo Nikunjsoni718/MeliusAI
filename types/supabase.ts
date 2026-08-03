@@ -6,23 +6,6 @@ export type ScoreSource = 'gemini' | 'manual';
 export type PortfolioSourceKind = 'github' | 'behance' | 'drive' | 'website';
 export type PendingImportStatus = 'pending' | 'imported' | 'dismissed';
 
-export type UserRow = {
-  id: string;
-  role: UserRole;
-  role_selected_at: string | null;
-  display_name: string;
-  username: string | null;
-  birth_date: string | null;
-  headline: string | null;
-  bio: string | null;
-  avatar_url: string | null;
-  github_user_id: string | null;
-  github_username: string | null;
-  company_name: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 export type ProfileRow = {
   id: string;
   email?: string | null;
@@ -39,6 +22,9 @@ export type ProfileRow = {
   current_status: string | null;
   education: string | null;
   qualifications: string[] | null;
+  avg_project_score: number | null;
+  github_user_id?: string | null;
+  github_username?: string | null;
   experience: string[] | null;
   hobbies: string[] | null;
   resume_projects?: Json[] | null;
@@ -63,6 +49,7 @@ export type ProjectRow = {
   description?: string | null;
   user_description?: string | null;
   score?: number | null;
+  score_reasoning?: string | null;
   audit_summary?: string | null;
   pros?: string[] | null;
   cons?: string[] | null;
@@ -95,6 +82,12 @@ export type ProjectFolderRow = {
   id: string;
   user_id?: string | null;
   name: string;
+  score?: number | null;
+  logic_score?: number | null;
+  evaluation_score?: number | null;
+  score_reasoning?: string | null;
+  audit_summary?: string | null;
+  has_been_audited?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -114,18 +107,6 @@ export type PendingImportRow = {
   repository_payload: Json;
   detected_at: string;
   resolved_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ScoreRow = {
-  id: string;
-  project_id: string;
-  scored_by: string | null;
-  source: ScoreSource;
-  score: number;
-  summary: string | null;
-  improvement_tips: Json[];
   created_at: string;
   updated_at: string;
 };
@@ -151,12 +132,6 @@ export type UserApplicationRow = {
 export interface Database {
   public: {
     Tables: {
-      users: {
-        Row: UserRow;
-        Insert: Partial<Omit<UserRow, 'created_at' | 'updated_at'>> & Pick<UserRow, 'id' | 'role' | 'display_name'>;
-        Update: Partial<Omit<UserRow, 'id' | 'created_at' | 'updated_at'>>;
-        Relationships: [];
-      };
       profiles: {
         Row: ProfileRow;
         Insert: Partial<Omit<ProfileRow, 'id'>> & Pick<ProfileRow, 'id'>;
@@ -182,12 +157,6 @@ export interface Database {
         Update: Partial<
           Omit<PendingImportRow, 'id' | 'user_id' | 'provider' | 'provider_repository_id' | 'created_at' | 'updated_at'>
         >;
-        Relationships: [];
-      };
-      scores: {
-        Row: ScoreRow;
-        Insert: Partial<Omit<ScoreRow, 'created_at' | 'updated_at' | 'id'>> & Pick<ScoreRow, 'project_id' | 'score'>;
-        Update: Partial<Omit<ScoreRow, 'id' | 'project_id' | 'created_at' | 'updated_at'>>;
         Relationships: [];
       };
       jobs: {

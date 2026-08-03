@@ -1,7 +1,8 @@
 begin;
 
-alter table public.users
-  add column if not exists github_user_id text;
+alter table public.profiles
+  add column if not exists github_user_id text,
+  add column if not exists github_username text;
 
 with github_identities as (
   select distinct on (identity.user_id)
@@ -14,20 +15,20 @@ with github_identities as (
   where identity.provider = 'github'
   order by identity.user_id, identity.created_at desc
 )
-update public.users as app_user
+update public.profiles as app_profile
 set github_user_id = github_identity.github_user_id
 from github_identities as github_identity
-where app_user.id = github_identity.user_id
-  and app_user.github_user_id is null
+where app_profile.id = github_identity.user_id
+  and app_profile.github_user_id is null
   and github_identity.github_user_id ~ '^[1-9][0-9]*$';
 
-create unique index if not exists users_github_user_id_unique_idx
-  on public.users (github_user_id)
+create unique index if not exists profiles_github_user_id_unique_idx
+  on public.profiles (github_user_id)
   where github_user_id is not null;
 
 create table if not exists public.pending_imports (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.users (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
   provider text not null default 'github',
   provider_repository_id text not null,
   repository_full_name text not null,
@@ -73,7 +74,7 @@ with check (user_id = auth.uid());
 
 grant select, update on public.pending_imports to authenticated;
 
-comment on column public.users.github_user_id is
+comment on column public.profiles.github_user_id is
   'Stable numeric GitHub account ID captured from the linked Supabase identity.';
 
 comment on table public.pending_imports is

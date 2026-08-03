@@ -17,6 +17,7 @@ create table if not exists public.profiles (
   age integer,
   current_status text,
   education text,
+  avg_project_score double precision not null default 0,
   qualifications text[] not null default ARRAY[]::text[],
   experience jsonb not null default '[]'::jsonb,
   hobbies jsonb not null default '[]'::jsonb,
@@ -40,6 +41,7 @@ alter table public.profiles
   add column if not exists age integer,
   add column if not exists current_status text,
   add column if not exists education text,
+  add column if not exists avg_project_score double precision not null default 0,
   add column if not exists qualifications text[] not null default ARRAY[]::text[],
   add column if not exists experience jsonb not null default '[]'::jsonb,
   add column if not exists hobbies jsonb not null default '[]'::jsonb,
@@ -78,20 +80,12 @@ security definer
 set search_path = public
 as $$
 declare
-  metadata_role text;
-  profile_role public.user_role;
   profile_username text;
   profile_birth_date date;
   raw_birth_date text;
   profile_display_name text;
   profile_avatar_url text;
 begin
-  metadata_role := lower(coalesce(new.raw_user_meta_data ->> 'role', ''));
-  profile_role := case
-    when metadata_role in ('recruiter', 'corporate', 'organization', 'organisation') then 'recruiter'::public.user_role
-    else 'talent'::public.user_role
-  end;
-
   profile_username := nullif(
     left(
       lower(
@@ -130,48 +124,6 @@ begin
     nullif(new.raw_user_meta_data ->> 'avatar_url', ''),
     nullif(new.raw_user_meta_data ->> 'picture', '')
   );
-
-  insert into public.users (
-    id,
-    role,
-    role_selected_at,
-    display_name,
-    username,
-    birth_date,
-    headline,
-    bio,
-    avatar_url,
-    github_username,
-    company_name
-  )
-  values (
-    new.id,
-    profile_role,
-    case
-      when nullif(new.raw_user_meta_data ->> 'role_selected_at', '') is null then null
-      else (new.raw_user_meta_data ->> 'role_selected_at')::timestamptz
-    end,
-    profile_display_name,
-    profile_username,
-    profile_birth_date,
-    new.raw_user_meta_data ->> 'headline',
-    new.raw_user_meta_data ->> 'bio',
-    profile_avatar_url,
-    new.raw_user_meta_data ->> 'github_username',
-    new.raw_user_meta_data ->> 'company_name'
-  )
-  on conflict (id) do update
-    set role = excluded.role,
-        role_selected_at = coalesce(excluded.role_selected_at, public.users.role_selected_at),
-        display_name = excluded.display_name,
-        username = coalesce(excluded.username, public.users.username),
-        birth_date = coalesce(excluded.birth_date, public.users.birth_date),
-        headline = excluded.headline,
-        bio = excluded.bio,
-        avatar_url = excluded.avatar_url,
-        github_username = excluded.github_username,
-        company_name = excluded.company_name,
-        updated_at = now();
 
   insert into public.profiles (
     id,

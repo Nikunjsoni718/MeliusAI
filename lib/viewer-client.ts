@@ -12,22 +12,22 @@ import {
 } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { appendUsernameSuffix, generateUsername } from '@/lib/username';
-import type { UserRow } from '@/types/supabase';
+import type { ProfileRow, UserRole } from '@/types/supabase';
 
 export type ViewerProfile = Pick<
-  UserRow,
+  ProfileRow,
   | 'id'
-  | 'role'
-  | 'role_selected_at'
-  | 'display_name'
   | 'username'
   | 'birth_date'
   | 'bio'
-  | 'headline'
-  | 'company_name'
-  | 'github_username'
   | 'avatar_url'
 > & {
+  role: UserRole;
+  role_selected_at: string | null;
+  display_name: string;
+  headline: string | null;
+  company_name: string | null;
+  github_username: string | null;
   is_github_linked: boolean;
 };
 
@@ -35,7 +35,7 @@ type ProfileResponse = {
   data?: ViewerProfile | null;
   email?: string | null;
   id?: string | null;
-  role?: UserRow['role'] | 'user';
+  role?: UserRole | 'user';
   user?: ViewerProfile | null;
   error?: string;
 } & Partial<ViewerProfile>;
@@ -65,7 +65,7 @@ function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerPro
   };
 }
 
-export function getDashboardHref(role: UserRow['role']) {
+export function getDashboardHref(role: UserRole) {
   return role === 'recruiter' ? '/company' : '/home';
 }
 

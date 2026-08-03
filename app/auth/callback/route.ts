@@ -281,7 +281,7 @@ export async function GET(request: NextRequest) {
     if (githubIdentity.userId) {
       const { error: githubIdentitySyncError } = await withOAuthCallbackTimeout(
         supabaseAdmin
-          .from('users')
+          .from('profiles')
           .update({
             github_user_id: githubIdentity.userId,
             ...(githubIdentity.username ? { github_username: githubIdentity.username } : {}),

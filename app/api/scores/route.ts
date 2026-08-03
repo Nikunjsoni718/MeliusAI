@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { analyzeVaultProject } from '@/lib/mentor';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-const scoreSelect = 'id, project_id, scored_by, source, score, summary, improvement_tips, created_at, updated_at';
+const projectScoreSelect =
+  'id, user_id, score, logic_score, evaluation_score, score_reasoning, audit_summary, has_been_audited, github_repository, created_at, updated_at';
 
 function stringifyAssetContent(value: unknown): string {
   if (value === null || typeof value === 'undefined') {
@@ -49,8 +50,10 @@ export async function GET() {
     }
 
     const { data, error } = await supabase
-      .from('scores')
-      .select(scoreSelect)
+      .from('projects')
+      .select(projectScoreSelect)
+      .eq('user_id', sessionData.user.id)
+      .eq('has_been_audited', true)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -59,8 +62,8 @@ export async function GET() {
 
     return NextResponse.json({ data });
   } catch (error) {
-    console.error('Failed to list scores', error);
-    return NextResponse.json({ error: 'Unable to list scores.' }, { status: 500 });
+    console.error('Failed to list audited projects', error);
+    return NextResponse.json({ error: 'Unable to list project audits.' }, { status: 500 });
   }
 }
 
@@ -140,7 +143,7 @@ export async function POST(request: NextRequest) {
       description: rawAssetContent,
       aboutText: profile?.bio ?? '',
     });
-    const computed_score = Number.parseFloat(String(analysis.logicScore));
+    const computed_score = Math.round(Number.parseFloat(String(analysis.logicScore)));
 
     if (!Number.isFinite(computed_score)) {
       throw new Error('Industrial evaluation suite returned an invalid computed_score metric.');
@@ -156,6 +159,10 @@ export async function POST(request: NextRequest) {
       score: computed_score,
       evaluation_score: computed_score,
       logic_score: computed_score,
+      score_reasoning: [analysis.audit.conceptualAlignment, analysis.audit.architecturalLogic]
+        .filter(Boolean)
+        .join(' '),
+      audit_summary: analysis.audit.summary,
       has_been_audited: true,
       ai_summary: JSON.stringify(analysis.audit),
       summary: analysis.audit.summary,
