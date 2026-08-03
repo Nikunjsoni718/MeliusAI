@@ -128,10 +128,12 @@ AUDIT_THREAD_POOL = ThreadPoolExecutor(
 )
 PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
-SPECTATE_PROFILE_HTTP_TIMEOUT_SECONDS = 15.0
-SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 10.0
+SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 30.0
+SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 45.0
+SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS = 30.0
+SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS = 30.0
 SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS = 3
-SPECTATE_PROFILE_RETRY_DELAY_SECONDS = 0.5
+SPECTATE_PROFILE_RETRY_DELAY_SECONDS = 1.0
 
 
 async def run_in_audit_thread(operation):
@@ -487,8 +489,10 @@ def get_supabase_spectate_client():
             auto_refresh_token=False,
             persist_session=False,
             postgrest_client_timeout=httpx.Timeout(
-                SPECTATE_PROFILE_HTTP_TIMEOUT_SECONDS,
                 connect=SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS,
+                read=SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS,
+                write=SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS,
+                pool=SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS,
             ),
         )
         supabase_spectate_client = create_client(
@@ -6410,6 +6414,11 @@ async def get_authenticated_vault(
 
 
 def is_retryable_spectate_http_error(error: httpx.HTTPError) -> bool:
+    # ReadError is a RequestError subclass, but keeping it explicit documents the
+    # dropped-response failure seen during Render/Supabase cold starts.
+    if isinstance(error, httpx.ReadError):
+        return True
+
     if isinstance(error, httpx.RequestError):
         return True
 
@@ -6417,7 +6426,13 @@ def is_retryable_spectate_http_error(error: httpx.HTTPError) -> bool:
         status_code = error.response.status_code
         return status_code == 429 or status_code >= 500
 
-    return True
+    return False
+
+
+def get_spectate_profile_retry_delay_seconds(attempt: int) -> float:
+    """Return a bounded exponential delay for the next retry."""
+    retry_index = max(attempt - 1, 0)
+    return SPECTATE_PROFILE_RETRY_DELAY_SECONDS * (2 ** retry_index)
 
 
 async def run_spectate_profile_query(
@@ -6439,14 +6454,16 @@ async def run_spectate_profile_query(
                 )
                 raise
 
+            retry_delay = get_spectate_profile_retry_delay_seconds(attempt)
             logger.warning(
-                "spectate_profile.request_retry operation=%s attempt=%d/%d error_type=%s",
+                "spectate_profile.request_retry operation=%s attempt=%d/%d error_type=%s retry_in_seconds=%.1f",
                 operation_name,
                 attempt,
                 SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS,
                 type(request_error).__name__,
+                retry_delay,
             )
-            await asyncio.sleep(SPECTATE_PROFILE_RETRY_DELAY_SECONDS * attempt)
+            await asyncio.sleep(retry_delay)
         except httpx.HTTPError as http_error:
             if (
                 attempt >= SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS
@@ -6460,14 +6477,16 @@ async def run_spectate_profile_query(
                 )
                 raise
 
+            retry_delay = get_spectate_profile_retry_delay_seconds(attempt)
             logger.warning(
-                "spectate_profile.http_retry operation=%s attempt=%d/%d error_type=%s",
+                "spectate_profile.http_retry operation=%s attempt=%d/%d error_type=%s retry_in_seconds=%.1f",
                 operation_name,
                 attempt,
                 SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS,
                 type(http_error).__name__,
+                retry_delay,
             )
-            await asyncio.sleep(SPECTATE_PROFILE_RETRY_DELAY_SECONDS * attempt)
+            await asyncio.sleep(retry_delay)
 
     raise RuntimeError("Spectator profile request retry loop exited unexpectedly.")
 
