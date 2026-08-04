@@ -1475,14 +1475,29 @@ async def receive_github_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    raw_body = await request.body()
+    raw_bytes = await request.body()
 
-    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
-    if not webhook_secret:
-        logger.error("github_webhook.rejected reason=missing_webhook_secret")
+    secret = os.getenv("WEBHOOK_SECRET")
+    signature_header = request.headers.get("X-Hub-Signature-256", "")
+
+    if not secret:
+        logger.error("[WEBHOOK ERROR] WEBHOOK_SECRET environment variable is missing!")
         raise HTTPException(
-            status_code=503,
-            detail="GitHub webhook processing is not configured.",
+            status_code=500,
+            detail="Server configuration error.",
+        )
+
+    expected_signature = "sha256=" + hmac.new(
+        secret.strip().encode("utf-8"),
+        raw_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, signature_header):
+        logger.warning("Webhook signature mismatch for delivery.")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid GitHub webhook signature.",
         )
 
     max_payload_bytes = 2 * 1024 * 1024
@@ -1507,21 +1522,10 @@ async def receive_github_webhook(
             detail="GitHub webhook payload is too large.",
         )
 
-    if len(raw_body) > max_payload_bytes:
+    if len(raw_bytes) > max_payload_bytes:
         raise HTTPException(
             status_code=413,
             detail="GitHub webhook payload is too large.",
-        )
-
-    signature = request.headers.get("x-hub-signature-256")
-    if not verify_github_webhook_signature(raw_body, signature, webhook_secret):
-        logger.warning(
-            "github_webhook.rejected reason=invalid_signature delivery_id=%s",
-            request.headers.get("x-github-delivery") or "unknown",
-        )
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid GitHub webhook signature.",
         )
 
     event_name = (request.headers.get("x-github-event") or "").strip().lower()
@@ -1537,7 +1541,7 @@ async def receive_github_webhook(
         }
 
     try:
-        payload = json.loads(raw_body)
+        payload = json.loads(raw_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as payload_error:
         raise HTTPException(
             status_code=400,
