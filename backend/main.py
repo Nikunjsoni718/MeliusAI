@@ -602,22 +602,16 @@ class GitHubFileTooLargeError(ValueError):
 def verify_github_webhook_signature(
     raw_body: bytes,
     signature_header: str | None,
-    secret: str,
+    secret: str | None,
 ) -> bool:
     """Verify GitHub's X-Hub-Signature-256 value in constant time."""
     if not secret or not signature_header:
         return False
 
-    algorithm, separator, supplied_digest = signature_header.partition("=")
-    if separator != "=" or algorithm.lower() != "sha256" or not supplied_digest:
-        return False
-
-    expected_digest = hmac.new(
-        secret.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
+    expected_signature = "sha256=" + hmac.new(
+        secret.encode("utf-8"), raw_body, hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(expected_digest, supplied_digest.lower())
+    return hmac.compare_digest(expected_signature, signature_header)
 
 
 def normalize_github_file_path(value: Any) -> str | None:
@@ -1481,7 +1475,9 @@ async def receive_github_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
+    raw_body = await request.body()
+
+    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not webhook_secret:
         logger.error("github_webhook.rejected reason=missing_webhook_secret")
         raise HTTPException(
@@ -1511,7 +1507,6 @@ async def receive_github_webhook(
             detail="GitHub webhook payload is too large.",
         )
 
-    raw_body = await request.body()
     if len(raw_body) > max_payload_bytes:
         raise HTTPException(
             status_code=413,
