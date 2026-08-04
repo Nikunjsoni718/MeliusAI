@@ -2614,6 +2614,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const hydratedProfileKeyRef = useRef<string | null>(null);
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
   const profileSaveSequenceRef = useRef(0);
+  const profileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const bioSaveSequenceRef = useRef(0);
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
@@ -3892,7 +3893,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return cleanName || 'project-file';
   }
 
-  async function saveProfileDraft(nextDraft = profileDraft): Promise<boolean> {
+  async function commitProfileDraft(nextDraft: ProfileDraft): Promise<boolean> {
     if (!isOwner) {
       return false;
     }
@@ -3936,17 +3937,28 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         return false;
       }
 
-      const { error } = await supabase.from('profiles').upsert({
-        id: userId,
-        full_name: normalizedDraft.displayName,
-        username: normalizedDraft.username,
-        birth_date: normalizedDraft.birthDate || null,
-        avatar_url: avatarUrl,
-        updated_at: new Date().toISOString(),
-      });
+      const { data: savedProfile, error } = await supabase
+        .from('profiles')
+        .upsert({
+          id: userId,
+          full_name: normalizedDraft.displayName,
+          username: normalizedDraft.username,
+          birth_date: normalizedDraft.birthDate || null,
+          avatar_url: avatarUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .select('id, username')
+        .single();
 
       if (error) {
         throw error;
+      }
+
+      if (
+        savedProfile?.id !== userId ||
+        normalizeDisplayUsername(savedProfile.username) !== normalizedDraft.username
+      ) {
+        throw new Error('Profile update did not commit the requested username.');
       }
 
       void syncProfileVectorEmbedding({
@@ -3991,6 +4003,40 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       return false;
     }
+  }
+
+  async function saveProfileDraft(nextDraft = profileDraft): Promise<boolean> {
+    const queuedSave = profileSaveQueueRef.current.then(
+      () => commitProfileDraft(nextDraft),
+      () => commitProfileDraft(nextDraft)
+    );
+
+    profileSaveQueueRef.current = queuedSave.then(
+      () => undefined,
+      () => undefined
+    );
+
+    return queuedSave;
+  }
+
+  async function refreshSessionAndRedirectToUpdatedUsername() {
+    if (!supabase) {
+      return;
+    }
+
+    const updatedUsername = normalizeDisplayUsername(profileDraft.username);
+    const routeUsername = normalizeDisplayUsername(targetUsername);
+
+    if (!updatedUsername || updatedUsername === routeUsername) {
+      return;
+    }
+
+    const { error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError) {
+      console.warn('Profile username saved, but the session refresh failed:', refreshError.message);
+    }
+
+    router.replace(`/profile/${encodeURIComponent(updatedUsername)}`);
   }
 
   function updateProfileDraft(field: keyof ProfileDraft, value: string) {
@@ -4164,6 +4210,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     const bioSaved = await saveBio(bioText);
+    await refreshSessionAndRedirectToUpdatedUsername();
     if (bioSaved) {
       advanceProductTour(1, 2);
     }
@@ -4185,6 +4232,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     const bioSaved = await saveBio(bioText);
+    await refreshSessionAndRedirectToUpdatedUsername();
     if (bioSaved) {
       advanceProductTour(1, 2);
     }
