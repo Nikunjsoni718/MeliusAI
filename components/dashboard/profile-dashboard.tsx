@@ -515,6 +515,7 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
@@ -2746,6 +2747,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     refreshedGitHubLinkUserRef.current = user.id;
 
     let isActive = true;
+    let installationUsername: string | null = null;
 
     const refreshLinkedGitHubSession = async () => {
       try {
@@ -2760,8 +2762,27 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         }
 
         const refreshedUser = data.session?.user ?? null;
+        const hasRefreshedGitHubIdentity =
+          refreshedUser?.id === user.id &&
+          refreshedUser.identities?.some((identity) => identity.provider === 'github') === true;
+        if (!hasRefreshedGitHubIdentity) {
+          throw new Error('The refreshed session does not contain the linked GitHub identity.');
+        }
+
         setVerifiedAuthUser(refreshedUser?.id === user.id ? refreshedUser : null);
         setIsGitHubIdentityChecked(true);
+        const refreshedMetadataUsername =
+          typeof refreshedUser?.user_metadata?.username === 'string'
+            ? refreshedUser.user_metadata.username
+            : null;
+        installationUsername = normalizeDisplayUsername(
+          refreshedMetadataUsername ??
+            profile?.username ??
+            getProfileUsernameFromPathname(pathname)
+        );
+        if (!installationUsername) {
+          throw new Error('Unable to resolve the profile username for GitHub App installation.');
+        }
 
       } catch (error) {
         console.error('Unable to refresh the session after linking GitHub:', error);
@@ -2777,6 +2798,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           '',
           `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
         );
+
+        if (installationUsername) {
+          const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
+          installationUrl.searchParams.set('state', installationUsername);
+          window.location.assign(installationUrl.toString());
+          return;
+        }
+
         router.refresh();
       }
     };
@@ -2786,7 +2815,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       isActive = false;
     };
-  }, [router, supabase, user?.id]);
+  }, [pathname, profile?.username, router, supabase, user?.id]);
 
   useEffect(() => {
     if (!isGitHubIdentityChecked || hasLinkedGitHubIdentity) {
@@ -6582,9 +6611,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
                         {profile && isGitHubIdentityChecked && !hasLinkedGitHubIdentity ? (
-                          <GitHubLinkButton
-                            username={profile.username ?? viewerMetadataUsername}
-                          />
+                          <GitHubLinkButton />
                         ) : null}
                         <button
                           type="button"
