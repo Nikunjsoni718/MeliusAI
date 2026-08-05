@@ -21,9 +21,8 @@ export function GitHubLinkButton() {
 
     try {
       const supabase = createSupabaseBrowserClient();
-      const callbackUrl = new URL('/auth/callback', window.location.origin);
-      callbackUrl.searchParams.set('intent', 'github_link');
-      const { error } = await supabase.auth.linkIdentity({
+      const callbackUrl = new URL('/profile/setup-app', window.location.origin);
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
           scopes: 'repo',
@@ -35,7 +34,7 @@ export function GitHubLinkButton() {
         throw error;
       }
     } catch (error) {
-      console.error('GitHub identity linking failed:', error);
+      console.error('GitHub OAuth linking failed:', error);
       setErrorMessage(
         error instanceof Error
           ? error.message

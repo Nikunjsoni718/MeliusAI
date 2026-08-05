@@ -2494,6 +2494,16 @@ type ProfileDashboardProps = {
   variant?: 'profile' | 'organization';
 };
 
+function hasGitHubAuthProvider(authUser: User | null | undefined) {
+  const providers = authUser?.app_metadata?.providers;
+
+  return (
+    (Array.isArray(providers) && providers.includes('github')) ||
+    authUser?.app_metadata?.provider === 'github' ||
+    authUser?.identities?.some((identity) => identity.provider === 'github') === true
+  );
+}
+
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -2511,10 +2521,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [verifiedAuthUser, setVerifiedAuthUser] = useState<User | null>(null);
   const [isGitHubIdentityChecked, setIsGitHubIdentityChecked] = useState(false);
   const currentUser = user;
-  const hasLinkedGitHubIdentity =
-    verifiedAuthUser?.identities?.some((identity) => identity.provider === 'github') === true;
-  const sessionHasLinkedGitHubIdentity =
-    user?.identities?.some((identity) => identity.provider === 'github') === true;
+  const hasLinkedGitHubIdentity = hasGitHubAuthProvider(verifiedAuthUser);
+  const sessionHasLinkedGitHubIdentity = hasGitHubAuthProvider(session?.user ?? user);
   const sessionIdentitySignature =
     user?.identities
       ?.map((identity) => `${identity.provider}:${identity.id}`)
@@ -2662,8 +2670,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         console.warn('Unable to verify the current GitHub identity:', error.message);
         setVerifiedAuthUser(null);
       } else {
-        const freshUserHasGitHubIdentity =
-          data.user?.identities?.some((identity) => identity.provider === 'github') === true;
+        const freshUserHasGitHubIdentity = hasGitHubAuthProvider(data.user);
 
         if (freshUserHasGitHubIdentity !== sessionHasLinkedGitHubIdentity) {
           const { error: refreshError } = await supabase.auth.refreshSession();
@@ -2763,8 +2770,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         const refreshedUser = data.session?.user ?? null;
         const hasRefreshedGitHubIdentity =
-          refreshedUser?.id === user.id &&
-          refreshedUser.identities?.some((identity) => identity.provider === 'github') === true;
+          refreshedUser?.id === user.id && hasGitHubAuthProvider(refreshedUser);
         if (!hasRefreshedGitHubIdentity) {
           throw new Error('The refreshed session does not contain the linked GitHub identity.');
         }
