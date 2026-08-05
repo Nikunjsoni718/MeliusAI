@@ -884,18 +884,187 @@ async def _load_repository_assets(
     *,
     table_name: str,
     repository: str,
+    repository_url: str | None = None,
 ) -> list[dict[str, Any]]:
-    response = await _run_supabase(
-        lambda: supabase_client.table(table_name)
-        .select(
-            "id, user_id, folder_id, name, title, file_url, file_type, "
-            "file_size, is_public, status, storage_path, github_repository, "
-            "github_file_path, github_ref, github_commit_sha, github_sync_status"
-        )
-        .eq("github_repository", repository)
-        .execute()
+    select_columns = (
+        "id, user_id, folder_id, name, title, file_url, file_type, "
+        "file_size, is_public, status, storage_path, github_repository, "
+        "github_file_path, github_ref, github_commit_sha, github_sync_status"
     )
-    return _response_rows(response)
+    repository_values = list(
+        dict.fromkeys(
+            value
+            for value in (repository, repository_url)
+            if isinstance(value, str) and value.strip()
+        )
+    )
+    repository_rows: list[dict[str, Any]] = []
+    loaded_row_ids: set[str] = set()
+
+    for repository_value in repository_values:
+        response = await _run_supabase(
+            lambda repository_value=repository_value: supabase_client.table(table_name)
+            .select(select_columns)
+            .eq("github_repository", repository_value)
+            .execute()
+        )
+        for row in _response_rows(response):
+            row_id = str(row.get("id") or "").strip()
+            if row_id and row_id in loaded_row_ids:
+                continue
+            if row_id:
+                loaded_row_ids.add(row_id)
+            repository_rows.append(row)
+
+    return repository_rows
+
+
+def _get_github_repository_url(
+    payload: dict[str, Any],
+    *,
+    repository: str,
+) -> str:
+    repository_payload = payload.get("repository")
+    html_url = (
+        repository_payload.get("html_url")
+        if isinstance(repository_payload, dict)
+        else None
+    )
+    if isinstance(html_url, str) and html_url.strip():
+        return html_url.strip()
+    return f"https://github.com/{repository}"
+
+
+def _github_identity_candidates(payload: dict[str, Any]) -> dict[str, list[str]]:
+    repository_payload = payload.get("repository")
+    repository_owner = (
+        repository_payload.get("owner")
+        if isinstance(repository_payload, dict)
+        else None
+    )
+    sender = payload.get("sender")
+    pusher = payload.get("pusher")
+
+    actors = [
+        actor
+        for actor in (repository_owner, sender, pusher)
+        if isinstance(actor, dict)
+    ]
+
+    def unique_values(values: list[Any], *, strip_at: bool = False) -> list[str]:
+        normalized_values: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized_value = value.strip().casefold()
+            if strip_at:
+                normalized_value = normalized_value.lstrip("@")
+            if normalized_value and normalized_value not in normalized_values:
+                normalized_values.append(normalized_value)
+        return normalized_values
+
+    return {
+        "github_user_id": list(
+            dict.fromkeys(
+                github_user_id
+                for github_user_id in (
+                    normalize_github_numeric_id(actor.get("id")) for actor in actors
+                )
+                if github_user_id
+            )
+        ),
+        "github_username": unique_values(
+            [actor.get("login") or actor.get("name") for actor in actors],
+            strip_at=True,
+        ),
+        "email": unique_values([actor.get("email") for actor in actors]),
+    }
+
+
+async def _find_github_payload_user_id(
+    supabase_client: Any,
+    payload: dict[str, Any],
+) -> str | None:
+    identity_candidates = _github_identity_candidates(payload)
+    lookup_groups = (
+        ("github_user_id", identity_candidates["github_user_id"], False),
+        ("github_username", identity_candidates["github_username"], True),
+        ("email", identity_candidates["email"], True),
+    )
+
+    for column_name, values, case_insensitive in lookup_groups:
+        for value in values:
+            response = await _run_supabase(
+                lambda column_name=column_name, value=value, case_insensitive=case_insensitive: (
+                    supabase_client.table("profiles")
+                    .select("id")
+                    .ilike(column_name, value)
+                    .limit(1)
+                    .execute()
+                    if case_insensitive
+                    else supabase_client.table("profiles")
+                    .select("id")
+                    .eq(column_name, value)
+                    .limit(1)
+                    .execute()
+                )
+            )
+            matching_profiles = _response_rows(response)
+            if not matching_profiles:
+                continue
+            user_id = str(matching_profiles[0].get("id") or "").strip()
+            if user_id:
+                return user_id
+
+    return None
+
+
+async def _create_repository_project_mapping(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    payload: dict[str, Any],
+    repository: str,
+    repository_url: str,
+) -> dict[str, Any] | None:
+    user_id = await _find_github_payload_user_id(supabase_client, payload)
+    if not user_id:
+        return None
+
+    repository_name = repository.split("/", 1)[-1]
+    insert_payload = {
+        "user_id": user_id,
+        "name": repository_name,
+        "title": repository,
+        "file_url": repository_url,
+        "file_type": "github",
+        "github_repository": repository_url,
+        "is_public": not bool(
+            payload.get("repository", {}).get("private")
+            if isinstance(payload.get("repository"), dict)
+            else False
+        ),
+        "status": "draft",
+    }
+    response = await _run_supabase(
+        lambda: supabase_client.table(table_name).insert(insert_payload).execute()
+    )
+    created_rows = _response_rows(response)
+    if not created_rows:
+        raise RuntimeError("GitHub repository project insert returned no record.")
+
+    created_project = created_rows[0]
+    project_id = str(created_project.get("id") or "").strip()
+    if not project_id:
+        raise RuntimeError("GitHub repository project insert returned no project ID.")
+
+    logger.info(
+        "github_webhook.project_created repository=%s project_id=%s user_id=%s",
+        repository,
+        project_id,
+        user_id,
+    )
+    return created_project
 
 
 def _extract_storage_path_from_public_url(
@@ -1230,11 +1399,33 @@ async def process_github_push_event(
 
     table_name = _get_workspace_assets_table_name()
     bucket_name = _get_storage_bucket_name()
+    repository_url = _get_github_repository_url(
+        payload,
+        repository=repository,
+    )
     repository_rows = await _load_repository_assets(
         supabase_client,
         table_name=table_name,
         repository=repository,
+        repository_url=repository_url,
     )
+    if not repository_rows:
+        created_project = await _create_repository_project_mapping(
+            supabase_client,
+            table_name=table_name,
+            payload=payload,
+            repository=repository,
+            repository_url=repository_url,
+        )
+        if created_project is None:
+            result.skipped_files = len(trackable_paths) + len(removed_paths)
+            result.errors.append(
+                "No MeliusAI user matches the GitHub repository owner or sender."
+            )
+            return result
+        repository_rows = [created_project]
+        result.created_records += 1
+
     rows_by_path: dict[str, list[dict[str, Any]]] = {}
     for row in repository_rows:
         row_path = normalize_github_file_path(row.get("github_file_path"))
@@ -1242,12 +1433,6 @@ async def process_github_push_event(
             rows_by_path.setdefault(row_path, []).append(row)
 
     workspace_contexts = _build_workspace_contexts(repository_rows)
-    if not repository_rows:
-        result.skipped_files = len(trackable_paths) + len(removed_paths)
-        result.errors.append(
-            "No workspace assets are mapped to this GitHub repository."
-        )
-        return result
 
     access_token = _get_github_access_token()
     owns_http_client = http_client is None

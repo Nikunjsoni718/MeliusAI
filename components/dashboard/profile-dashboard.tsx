@@ -6582,7 +6582,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
                         {profile && isGitHubIdentityChecked && !hasLinkedGitHubIdentity ? (
-                          <GitHubLinkButton />
+                          <GitHubLinkButton
+                            username={profile.username ?? viewerMetadataUsername}
+                          />
                         ) : null}
                         <button
                           type="button"
