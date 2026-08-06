@@ -6577,7 +6577,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         ) : (
                           <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/30 px-3.5 py-2 text-slate-500">
                             <Mail className="h-4 w-4" aria-hidden="true" />
-                            Email unavailable
+                            No email provided
                           </span>
                         )}
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-2">Individual</span>

@@ -1900,7 +1900,7 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
-    "id, username, full_name, bio, avatar_url, current_status, age, avg_project_score, skills"
+    "id, username, full_name, email, bio, avatar_url, current_status, age, avg_project_score, skills"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
     "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
@@ -6811,7 +6811,7 @@ async def spectate_profile(
         )
         is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
         viewer_type = "owner" if is_owner else "visitor"
-        profile["email"] = None
+        profile["email"] = normalize_email(profile.get("email"))
         profile["projects"] = assets
         profile["project_folders"] = project_folders
         profile["projectFolders"] = project_folders
