@@ -17,6 +17,7 @@ import {
   AUDIT_CAPTURE_TARGET_ID,
   downloadFullAuditReport,
 } from '@/lib/download-audit-report';
+import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -72,6 +73,8 @@ const auditTextFileExtensions = new Set([
   'yaml',
   'yml',
 ]);
+const previewProjectSelect =
+  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, ai_summary, audit_summary, pros, cons, recommendations, updated_at, github_synced_at';
 
 export type PreviewProject = {
   id?: string;
@@ -104,6 +107,8 @@ export type PreviewProject = {
   auditData?: unknown;
   audit_report?: unknown;
   auditReport?: unknown;
+  updated_at?: string | null;
+  github_synced_at?: string | null;
 };
 
 export type AuditPreviewAsset = PreviewProject & {
@@ -220,8 +225,26 @@ function shouldForceUtf8CodeRead(previewUrl: string | null, fileName: string | n
   return auditTextFileExtensions.has(getPreviewExtension(previewUrl, fileName, project));
 }
 
+function appendCacheBuster(src: string, cacheKey: string) {
+  if (src.startsWith('blob:') || src.startsWith('data:')) {
+    return src;
+  }
+
+  try {
+    const url = new URL(src);
+    url.searchParams.set('t', cacheKey);
+    return url.toString();
+  } catch {
+    const hashIndex = src.indexOf('#');
+    const pathAndQuery = hashIndex >= 0 ? src.slice(0, hashIndex) : src;
+    const hash = hashIndex >= 0 ? src.slice(hashIndex) : '';
+    const separator = pathAndQuery.includes('?') ? '&' : '?';
+    return `${pathAndQuery}${separator}t=${encodeURIComponent(cacheKey)}${hash}`;
+  }
+}
+
 async function readRemoteTextAsUtf8(src: string) {
-  const response = await fetch(src);
+  const response = await fetch(src, { cache: 'no-store' });
 
   if (!response.ok) {
     throw new Error('Unable to read code content.');
@@ -292,29 +315,43 @@ export function AssetPreviewModal({
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
   const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
-  const [textPreview, setTextPreview] = useState<{
+  const onProjectUpdatedRef = useRef(onProjectUpdated);
+  const supabase = useMemo(
+    () => (hasSupabaseBrowserEnv() ? createSupabaseBrowserClient() : null),
+    []
+  );
+  const [previewCacheNonce, setPreviewCacheNonce] = useState(() => Date.now());
+  const [code, setCode] = useState('');
+  const [codePreview, setCodePreview] = useState<{
     url: string | null;
-    text: string | null;
     isLoading: boolean;
     error: string | null;
   }>({
     url: null,
-    text: null,
     isLoading: false,
     error: null,
   });
   const isFolder = asset?.kind === 'folder';
-  const activePreviewUrl = asset?.previewUrl ?? asset?.file_url ?? asset?.preview_url ?? null;
-  const previewName = asset?.name ?? asset?.title ?? getFallbackFileName(activePreviewUrl);
+  const activePreviewUrl =
+    liveProject?.file_url ?? asset?.previewUrl ?? asset?.file_url ?? asset?.preview_url ?? null;
+  const previewName =
+    liveProject?.name ??
+    liveProject?.title ??
+    asset?.name ??
+    asset?.title ??
+    getFallbackFileName(activePreviewUrl);
+  const previewCacheKey = `${liveProject?.updated_at ?? liveProject?.github_synced_at ?? 'current'}-${previewCacheNonce}`;
+  const codeFetchUrl = useMemo(
+    () => (activePreviewUrl ? appendCacheBuster(activePreviewUrl, previewCacheKey) : null),
+    [activePreviewUrl, previewCacheKey]
+  );
   const viewerSrc = useMemo(
     () => getViewerSrc(activePreviewUrl, previewName),
     [activePreviewUrl, previewName]
   );
   const extension = getPreviewExtension(activePreviewUrl, previewName, liveProject);
   const shouldRenderTextPreview = shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject);
-  const projectTextPreview = liveProject?.raw_text?.trim() || liveProject?.text_preview?.trim() || null;
-  const renderedTextPreview =
-    projectTextPreview || (textPreview.url === activePreviewUrl ? textPreview.text : null);
+  const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
   const lastImprovedSummary = liveProject?.last_improved_summary?.trim() || '';
@@ -339,38 +376,103 @@ export function AssetPreviewModal({
   }, []);
 
   useEffect(() => {
+    onProjectUpdatedRef.current = onProjectUpdated;
+  }, [onProjectUpdated]);
+
+  useEffect(() => {
     setLiveProject(asset ?? null);
+  }, [asset]);
+
+  useEffect(() => {
+    setPreviewCacheNonce(Date.now());
     setIsExpandedViewer(false);
     setIsShareModalOpen(false);
     setIsDownloadingReport(false);
     setDownloadFeedback(null);
-  }, [asset]);
+  }, [asset?.id]);
 
   useEffect(() => {
-    if (!activePreviewUrl || !shouldRenderTextPreview) {
-      setTextPreview({ url: null, text: null, isLoading: false, error: null });
-      return;
-    }
-
-    if (projectTextPreview) {
-      setTextPreview({ url: activePreviewUrl, text: projectTextPreview, isLoading: false, error: null });
+    if (!supabase || !asset?.id || isFolder) {
       return;
     }
 
     let isActive = true;
-    setTextPreview({ url: activePreviewUrl, text: null, isLoading: true, error: null });
+    const projectId = asset.id;
 
-    void readRemoteTextAsUtf8(activePreviewUrl)
+    const refreshProject = async () => {
+      const { data, error } = await supabase
+        .from('projects')
+        .select(previewProjectSelect)
+        .eq('id', projectId)
+        .maybeSingle();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        console.warn('Unable to refresh the asset preview from projects:', error);
+        return;
+      }
+
+      if (data) {
+        const freshProject = data as PreviewProject;
+        setLiveProject((currentProject) => ({ ...currentProject, ...freshProject }));
+        setPreviewCacheNonce(Date.now());
+        onProjectUpdatedRef.current?.(freshProject.id ?? projectId, freshProject);
+      }
+    };
+
+    const refreshOnFocus = () => {
+      void refreshProject();
+    };
+
+    void refreshProject();
+    window.addEventListener('focus', refreshOnFocus);
+    const projectChannel = supabase
+      .channel(`asset-preview-${projectId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'projects',
+          filter: `id=eq.${projectId}`,
+        },
+        refreshOnFocus
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      window.removeEventListener('focus', refreshOnFocus);
+      void supabase.removeChannel(projectChannel);
+    };
+  }, [asset?.id, isFolder, supabase]);
+
+  useEffect(() => {
+    if (!codeFetchUrl || !shouldRenderTextPreview) {
+      setCode('');
+      setCodePreview({ url: null, isLoading: false, error: null });
+      return;
+    }
+
+    let isActive = true;
+    setCode('');
+    setCodePreview({ url: codeFetchUrl, isLoading: true, error: null });
+
+    void readRemoteTextAsUtf8(codeFetchUrl)
       .then((text) => {
         if (isActive) {
-          setTextPreview({ url: activePreviewUrl, text, isLoading: false, error: null });
+          setCode(text);
+          setCodePreview({ url: codeFetchUrl, isLoading: false, error: null });
         }
       })
       .catch(() => {
         if (isActive) {
-          setTextPreview({
-            url: activePreviewUrl,
-            text: null,
+          setCode('');
+          setCodePreview({
+            url: codeFetchUrl,
             isLoading: false,
             error: 'Preview not available for this file yet.',
           });
@@ -380,7 +482,7 @@ export function AssetPreviewModal({
     return () => {
       isActive = false;
     };
-  }, [activePreviewUrl, projectTextPreview, shouldRenderTextPreview]);
+  }, [codeFetchUrl, shouldRenderTextPreview]);
 
   useEffect(() => {
     if (!asset) {
@@ -567,7 +669,7 @@ export function AssetPreviewModal({
               <pre className="m-0 min-h-full p-4 font-mono text-xs leading-6 text-slate-200">
                 <code className="block whitespace-pre-wrap break-words">
                   {renderedTextPreview ??
-                    (textPreview.isLoading ? 'Loading code preview...' : textPreview.error ?? 'Preview not available.')}
+                    (codePreview.isLoading ? 'Loading code preview...' : codePreview.error ?? 'Preview not available.')}
                 </code>
               </pre>
             </div>
