@@ -2494,11 +2494,14 @@ type ProfileDashboardProps = {
   variant?: 'profile' | 'organization';
 };
 
-function hasGitHubAuthProvider(authUser: User | null | undefined) {
-  const providers = authUser?.app_metadata?.providers || [];
-
-  return Array.isArray(providers) && providers.includes('github');
+function hasGitHubOAuthIdentity(authUser: User | null | undefined) {
+  return authUser?.identities?.some((identity) => identity.provider === 'github') ?? false;
 }
+
+type GitHubConnectionProfile = {
+  id: string;
+  github_username: string | null;
+};
 
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
@@ -2514,18 +2517,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     supabase,
     user,
   } = useViewerProfile();
-  const [verifiedAuthUser, setVerifiedAuthUser] = useState<User | null>(null);
-  const [isGitHubIdentityChecked, setIsGitHubIdentityChecked] = useState(false);
+  const [githubProfile, setGithubProfile] = useState<GitHubConnectionProfile | null>(null);
+  const [isGitHubProfileChecked, setIsGitHubProfileChecked] = useState(false);
   const currentUser = user;
-  const isGithubLinked = hasGitHubAuthProvider(verifiedAuthUser);
-  const sessionIsGithubLinked = hasGitHubAuthProvider(session?.user);
-  const sessionProviderSignature =
-    (Array.isArray(session?.user?.app_metadata?.providers)
-      ? session.user.app_metadata.providers
-      : [])
-      .filter((provider): provider is string => typeof provider === 'string')
-      .sort()
-      .join('|') ?? '';
+  const isGithubConnected = Boolean(githubProfile?.github_username);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2627,7 +2622,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioToastTimerRef = useRef<number | null>(null);
   const bioDraftRef = useRef<string | null>(null);
   const refreshedGitHubLinkUserRef = useRef<string | null>(null);
-  const previousSessionHadGitHubIdentityRef = useRef(false);
+  const githubProfileRequestIdRef = useRef(0);
   const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
@@ -2641,104 +2636,81 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
-  useEffect(() => {
-    let isActive = true;
+  const refreshGitHubProfile = useCallback(async () => {
+    const requestId = ++githubProfileRequestIdRef.current;
 
-    const checkGitHubIdentity = async () => {
-      if (!supabase || !user?.id) {
-        if (isActive) {
-          setVerifiedAuthUser(null);
-          setIsGitHubIdentityChecked(true);
-        }
-        return;
-      }
-
-      // Fail closed while revalidating so an identity removed in another tab cannot
-      // leave any GitHub import controls visible from the previous user snapshot.
-      setVerifiedAuthUser(null);
-      setIsGitHubIdentityChecked(false);
-
-      const {
-        data: { session: activeSession },
-        error,
-      } = await supabase.auth.getSession();
-
-      if (!isActive) {
-        return;
-      }
-
-      if (error) {
-        console.warn('Unable to verify the current GitHub identity:', error.message);
-        setVerifiedAuthUser(null);
-      } else {
-        const activeSessionUser = activeSession?.user ?? null;
-        const freshUserHasGitHubIdentity = hasGitHubAuthProvider(activeSessionUser);
-
-        if (freshUserHasGitHubIdentity !== sessionIsGithubLinked) {
-          const { error: refreshError } = await supabase.auth.refreshSession();
-          if (refreshError) {
-            console.warn('Unable to refresh the changed GitHub identity session:', refreshError.message);
-          }
-        }
-
-        if (!isActive) {
-          return;
-        }
-
-        setVerifiedAuthUser(activeSessionUser?.id === user.id ? activeSessionUser : null);
-      }
-
-      setIsGitHubIdentityChecked(true);
-    };
-
-    void checkGitHubIdentity();
-    window.addEventListener('focus', checkGitHubIdentity);
-
-    return () => {
-      isActive = false;
-      window.removeEventListener('focus', checkGitHubIdentity);
-    };
-  }, [sessionIsGithubLinked, sessionProviderSignature, supabase, user?.id]);
-
-  useEffect(() => {
-    const previouslyHadGitHubIdentity = previousSessionHadGitHubIdentityRef.current;
-    previousSessionHadGitHubIdentityRef.current = sessionIsGithubLinked;
-
-    if (
-      !supabase ||
-      !user?.id ||
-      !previouslyHadGitHubIdentity ||
-      sessionIsGithubLinked
-    ) {
-      return;
+    if (!supabase || !user?.id) {
+      setGithubProfile(null);
+      setIsGitHubProfileChecked(true);
+      return null;
     }
 
-    let isActive = true;
+    setGithubProfile((currentProfile) =>
+      currentProfile?.id === user.id ? currentProfile : null
+    );
+    setIsGitHubProfileChecked(false);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, github_username')
+      .eq('id', user.id)
+      .maybeSingle();
 
-    const refreshAfterGitHubUnlink = async () => {
-      const { data, error } = await supabase.auth.refreshSession();
+    if (requestId !== githubProfileRequestIdRef.current) {
+      return null;
+    }
 
-      if (!isActive) {
-        return;
-      }
+    if (error) {
+      console.warn('Unable to refresh the GitHub connection profile:', error.message);
+      setGithubProfile(null);
+      setIsGitHubProfileChecked(true);
+      return null;
+    }
 
-      if (error) {
-        console.warn('Unable to refresh the session after unlinking GitHub:', error.message);
-        setVerifiedAuthUser(null);
-      } else {
-        const refreshedUser = data.session?.user ?? null;
-        setVerifiedAuthUser(refreshedUser?.id === user.id ? refreshedUser : null);
-      }
-
-      setIsGitHubIdentityChecked(true);
+    const githubUsername =
+      typeof data?.github_username === 'string' && data.github_username.trim()
+        ? data.github_username.trim()
+        : null;
+    const freshProfile: GitHubConnectionProfile = {
+      id: data?.id ?? user.id,
+      github_username: githubUsername,
     };
 
-    void refreshAfterGitHubUnlink();
+    setGithubProfile(freshProfile);
+    setIsGitHubProfileChecked(true);
+    return freshProfile;
+  }, [supabase, user?.id]);
+
+  useEffect(() => {
+    void refreshGitHubProfile();
+    window.addEventListener('focus', refreshGitHubProfile);
+
+    if (!supabase || !user?.id) {
+      return () => {
+        githubProfileRequestIdRef.current += 1;
+        window.removeEventListener('focus', refreshGitHubProfile);
+      };
+    }
+
+    const githubProfileChannel = supabase
+      .channel(`github-profile-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`,
+        },
+        () => void refreshGitHubProfile()
+      )
+      .subscribe();
 
     return () => {
-      isActive = false;
+      githubProfileRequestIdRef.current += 1;
+      window.removeEventListener('focus', refreshGitHubProfile);
+      void supabase.removeChannel(githubProfileChannel);
     };
-  }, [sessionIsGithubLinked, supabase, user?.id]);
+  }, [refreshGitHubProfile, supabase, user?.id]);
 
   useEffect(() => {
     if (!supabase || !user?.id) {
@@ -2772,13 +2744,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
         const refreshedUser = data.session?.user ?? null;
         const hasRefreshedGitHubIdentity =
-          refreshedUser?.id === user.id && hasGitHubAuthProvider(refreshedUser);
+          refreshedUser?.id === user.id && hasGitHubOAuthIdentity(refreshedUser);
         if (!hasRefreshedGitHubIdentity) {
           throw new Error('The refreshed session does not contain the linked GitHub identity.');
         }
 
-        setVerifiedAuthUser(refreshedUser?.id === user.id ? refreshedUser : null);
-        setIsGitHubIdentityChecked(true);
+        const freshGitHubProfile = await refreshGitHubProfile();
+        if (!freshGitHubProfile?.github_username) {
+          throw new Error('The linked GitHub username was not saved to your profile.');
+        }
+
         const refreshedMetadataUsername =
           typeof refreshedUser?.user_metadata?.username === 'string'
             ? refreshedUser.user_metadata.username
@@ -2823,10 +2798,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       isActive = false;
     };
-  }, [pathname, profile?.username, router, supabase, user?.id]);
+  }, [pathname, profile?.username, refreshGitHubProfile, router, supabase, user?.id]);
 
   useEffect(() => {
-    if (!isGitHubIdentityChecked || isGithubLinked) {
+    if (!isGitHubProfileChecked || isGithubConnected) {
       return;
     }
 
@@ -2834,7 +2809,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setGithubRepositories([]);
     setGithubRepositoriesError(null);
     setGithubProviderToken(null);
-  }, [isGithubLinked, isGitHubIdentityChecked]);
+  }, [isGithubConnected, isGitHubProfileChecked]);
 
   useEffect(() => {
     if (!activePreviewProjectId) {
@@ -3377,7 +3352,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !isOwner ||
       profileLoading ||
       !profileData ||
-      !isGithubLinked
+      !isGithubConnected
     ) {
       setHasImportedGitHubRepository(null);
       return;
@@ -3413,7 +3388,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       isActive = false;
     };
   }, [
-    isGithubLinked,
+    isGithubConnected,
     isOwner,
     profileData,
     profileLoading,
@@ -3428,7 +3403,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !isOwner ||
       profileLoading ||
       !profileData ||
-      !isGithubLinked ||
+      !isGithubConnected ||
       !onboardingCompletionReady ||
       isNewUser ||
       autoOpenedGitHubImportUserRef.current === user.id
@@ -3442,7 +3417,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     void loadGitHubRepositoriesRef.current?.();
   }, [
     hasImportedGitHubRepository,
-    isGithubLinked,
+    isGithubConnected,
     isNewUser,
     isOwner,
     onboardingCompletionReady,
@@ -4506,22 +4481,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return response.json() as Promise<T>;
   }
 
-  function getLinkedGitHubUsername(authUser: User) {
-    const githubIdentity = authUser.identities?.find((identity) => identity.provider === 'github');
-    const identityData = githubIdentity?.identity_data as Record<string, unknown> | undefined;
-    const candidates = [
-      identityData?.user_name,
-      identityData?.preferred_username,
-      identityData?.login,
-      authUser.user_metadata?.user_name,
-      authUser.user_metadata?.preferred_username,
-    ];
-
-    return candidates.find(
-      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
-    )?.trim() ?? null;
-  }
-
   async function loadGitHubRepositories() {
     if (!supabase) {
       setGithubRepositoriesError('GitHub import is unavailable until your session is ready.');
@@ -4532,16 +4491,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setIsFetchingGithub(true);
       setGithubRepositoriesError(null);
 
+      const freshGitHubProfile = await refreshGitHubProfile();
+      if (!freshGitHubProfile?.github_username) {
+        setIsGithubModalOpen(false);
+        throw new Error('No linked GitHub profile was found. Reconnect GitHub and try again.');
+      }
+
       const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
         throw sessionError;
       }
 
       const activeUser = currentSessionData.session?.user ?? null;
-      const hasCurrentGitHubIdentity = hasGitHubAuthProvider(activeUser);
-
-      setVerifiedAuthUser(activeUser ?? null);
-      setIsGitHubIdentityChecked(true);
+      const hasCurrentGitHubIdentity = hasGitHubOAuthIdentity(activeUser);
 
       if (!activeUser || activeUser.id !== user?.id || !hasCurrentGitHubIdentity) {
         setIsGithubModalOpen(false);
@@ -4550,19 +4512,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       let providerToken =
         currentSessionData.session?.provider_token ?? session?.provider_token ?? null;
-      let githubUsername = getLinkedGitHubUsername(activeUser);
-
-      if (!githubUsername && providerToken) {
-        const githubViewer = await fetchGitHubApi<{ login: string }>(
-          'https://api.github.com/user',
-          providerToken
-        );
-        githubUsername = githubViewer.login;
-      }
-
-      if (!githubUsername) {
-        throw new Error('No linked GitHub username was found. Reconnect GitHub and try again.');
-      }
+      const githubUsername = freshGitHubProfile.github_username;
 
       const fetchRepositoryPages = async (token: string | null) => {
         const repositories: GitHubRepository[] = [];
@@ -6612,7 +6562,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isGitHubIdentityChecked && !isGithubLinked ? (
+                        {isGitHubProfileChecked && !isGithubConnected ? (
                           <GitHubLinkButton />
                         ) : null}
                         <button
@@ -7215,7 +7165,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <p className="tagline">Where is your code located?</p>
 
                     <div className="ingestion-grid">
-                      {isGithubLinked && onboardingCompletionReady && !isNewUser ? (
+                      {isGithubConnected && onboardingCompletionReady && !isNewUser ? (
                         <button
                           className="ingestion-btn"
                           id="btn-github"
@@ -7283,7 +7233,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             />
           </main>
 
-          {isGithubLinked && isGithubModalOpen && (
+          {isGithubConnected && isGithubModalOpen && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-400/50 bg-[#0b1120] shadow-2xl shadow-black/60">
                 <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">
