@@ -1656,29 +1656,37 @@ async def process_github_repository_created_in_background(
 
 
 @app.post("/api/webhooks/github", status_code=202)
-async def receive_github_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks,
-):
-    raw_bytes = await request.body()
+async def handle_github_webhook(request: Request):
+    secret_key = os.environ.get("GITHUB_WEBHOOK_SECRET")
+    sig_header = request.headers.get("x-hub-signature-256")
+    raw_body = await request.body()
 
-    secret = os.getenv("WEBHOOK_SECRET")
-    signature_header = request.headers.get("X-Hub-Signature-256", "")
+    # Check the secret (do not log the actual secret, just its existence/length).
+    logger.info(f"DEBUG - Secret exists: {bool(secret_key)}")
+    logger.info(f"DEBUG - Secret length: {len(secret_key) if secret_key else 0}")
 
-    if not secret:
-        logger.error("[WEBHOOK ERROR] WEBHOOK_SECRET environment variable is missing!")
+    # Check the header from GitHub.
+    logger.info(f"DEBUG - Received Header: {sig_header}")
+
+    # Check the raw body.
+    logger.info(f"DEBUG - Raw body length: {len(raw_body)} bytes")
+
+    if not secret_key:
+        logger.error(
+            "[WEBHOOK ERROR] GITHUB_WEBHOOK_SECRET environment variable is missing!"
+        )
         raise HTTPException(
             status_code=500,
             detail="Server configuration error.",
         )
 
     expected_signature = "sha256=" + hmac.new(
-        secret.strip().encode("utf-8"),
-        raw_bytes,
+        secret_key.encode("utf-8"),
+        raw_body,
         hashlib.sha256,
     ).hexdigest()
 
-    if not hmac.compare_digest(expected_signature, signature_header):
+    if not hmac.compare_digest(expected_signature, sig_header or ""):
         logger.warning("Webhook signature mismatch for delivery.")
         raise HTTPException(
             status_code=401,
@@ -1707,7 +1715,7 @@ async def receive_github_webhook(
             detail="GitHub webhook payload is too large.",
         )
 
-    if len(raw_bytes) > max_payload_bytes:
+    if len(raw_body) > max_payload_bytes:
         raise HTTPException(
             status_code=413,
             detail="GitHub webhook payload is too large.",
@@ -1726,7 +1734,7 @@ async def receive_github_webhook(
         }
 
     try:
-        payload = json.loads(raw_bytes)
+        payload = json.loads(raw_body)
     except (UnicodeDecodeError, json.JSONDecodeError) as payload_error:
         raise HTTPException(
             status_code=400,
@@ -1758,20 +1766,25 @@ async def receive_github_webhook(
         except ValueError as payload_error:
             raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
 
+        background_tasks = BackgroundTasks()
         background_tasks.add_task(
             process_github_repository_created_in_background,
             payload,
             delivery_id,
         )
-        return {
-            "accepted": True,
-            "delivery_id": delivery_id,
-            "event": "repository",
-            "action": "created",
-            "repository": repository_details["repository_full_name"],
-            "github_user_id": repository_details["github_user_id"],
-            "queued": True,
-        }
+        return JSONResponse(
+            status_code=202,
+            background=background_tasks,
+            content={
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "repository",
+                "action": "created",
+                "repository": repository_details["repository_full_name"],
+                "github_user_id": repository_details["github_user_id"],
+                "queued": True,
+            },
+        )
 
     try:
         repository = get_github_repository_full_name(payload)
@@ -1784,21 +1797,26 @@ async def receive_github_webhook(
         path for path in changes.upserted if is_trackable_github_asset(path)
     )
     removed_paths = sorted(changes.removed)
+    background_tasks = BackgroundTasks()
     background_tasks.add_task(
         process_github_push_in_background,
         payload,
         delivery_id,
     )
 
-    return {
-        "accepted": True,
-        "delivery_id": delivery_id,
-        "event": "push",
-        "repository": repository,
-        "commit_sha": commit_sha,
-        "trackable_files": trackable_paths,
-        "removed_files": removed_paths,
-    }
+    return JSONResponse(
+        status_code=202,
+        background=background_tasks,
+        content={
+            "accepted": True,
+            "delivery_id": delivery_id,
+            "event": "push",
+            "repository": repository,
+            "commit_sha": commit_sha,
+            "trackable_files": trackable_paths,
+            "removed_files": removed_paths,
+        },
+    )
 
 
 def get_supabase_read_client(request: Request | None = None):
