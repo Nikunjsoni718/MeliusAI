@@ -21,20 +21,27 @@ export function GitHubLinkButton() {
 
     try {
       const supabase = createSupabaseBrowserClient();
-      const callbackUrl = new URL('/profile/setup-app', window.location.origin);
-      const { error } = await supabase.auth.signInWithOAuth({
+      const redirectTo = `${window.location.origin}/profile/setup-app`;
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
           scopes: 'repo',
-          redirectTo: callbackUrl.toString(),
+          redirectTo,
+          skipBrowserRedirect: true,
         },
       });
 
       if (error) {
         throw error;
       }
+
+      if (!data.url) {
+        throw new Error('GitHub OAuth did not return an authorization URL.');
+      }
+
+      window.location.assign(data.url);
     } catch (error) {
-      console.error('GitHub OAuth linking failed:', error);
+      console.error('GitHub Auth Error:', error);
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -54,7 +61,7 @@ export function GitHubLinkButton() {
         disabled={isLinking}
         aria-busy={isLinking}
         aria-describedby={errorMessage ? errorId : undefined}
-        onClick={() => void handleLinkGitHub()}
+        onClick={handleLinkGitHub}
       >
         {isLinking ? (
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />

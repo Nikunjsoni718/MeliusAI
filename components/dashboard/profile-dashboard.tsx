@@ -515,6 +515,7 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
+const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
@@ -996,8 +997,24 @@ const readAssetAsDataURL = (asset: Blob) =>
     reader.readAsDataURL(asset);
   });
 
+function getFetchableResourceUrl(value: string) {
+  const resourceUrl = value.trim();
+
+  if (
+    resourceUrl.startsWith('/') ||
+    resourceUrl.startsWith('https://') ||
+    resourceUrl.startsWith('http://') ||
+    resourceUrl.startsWith('blob:') ||
+    resourceUrl.startsWith('data:')
+  ) {
+    return resourceUrl;
+  }
+
+  throw new Error(`Refusing to fetch malformed resource URL: ${resourceUrl || '(empty)'}`);
+}
+
 async function readRemoteTextAsUtf8(src: string) {
-  const response = await fetch(src, {
+  const response = await fetch(getFetchableResourceUrl(src), {
     headers: {
       Range: 'bytes=0-199',
     },
@@ -4458,7 +4475,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     link.click();
   }
 
-  async function fetchGitHubApi<T>(url: string, providerToken: string | null): Promise<T> {
+  async function fetchGitHubApi<T>(url: URL, providerToken: string | null): Promise<T> {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2026-03-10',
@@ -4468,7 +4485,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       headers.Authorization = `Bearer ${providerToken}`;
     }
 
-    const response = await fetch(url, { headers });
+    const response = await fetch(url.toString(), { headers });
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null) as { message?: string } | null;
       const requestError = new Error(
@@ -4518,8 +4535,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const repositories: GitHubRepository[] = [];
 
         for (let page = 1; page <= 100; page += 1) {
+          const repositoriesUrl = new URL(
+            `/users/${encodeURIComponent(githubUsername)}/repos`,
+            GITHUB_API_BASE_URL
+          );
+          repositoriesUrl.searchParams.set('type', 'owner');
+          repositoriesUrl.searchParams.set('sort', 'updated');
+          repositoriesUrl.searchParams.set('direction', 'desc');
+          repositoriesUrl.searchParams.set('per_page', '100');
+          repositoriesUrl.searchParams.set('page', String(page));
           const pageItems = await fetchGitHubApi<GitHubRepository[]>(
-            `https://api.github.com/users/${encodeURIComponent(githubUsername)}/repos?type=owner&sort=updated&direction=desc&per_page=100&page=${page}`,
+            repositoriesUrl,
             token
           );
           repositories.push(...pageItems.filter((repository) => !repository.private));
@@ -4581,7 +4607,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }));
 
     try {
-      const treeUrl = `https://api.github.com/repos/${repository.full_name}/git/trees/${encodeURIComponent(repository.default_branch)}?recursive=1`;
+      const encodedRepositoryName = repository.full_name
+        .split('/')
+        .map((pathPart) => encodeURIComponent(pathPart))
+        .join('/');
+      const treeUrl = new URL(
+        `/repos/${encodedRepositoryName}/git/trees/${encodeURIComponent(repository.default_branch)}`,
+        GITHUB_API_BASE_URL
+      );
+      treeUrl.searchParams.set('recursive', '1');
       let treeData: { tree?: GitHubTreeEntry[]; truncated?: boolean };
 
       try {
@@ -4719,8 +4753,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const batch = selectedItems.slice(index, index + 6);
         const batchFiles = await Promise.all(
           batch.map(async ({ repository, entry }) => {
+            const encodedRepositoryName = repository.full_name
+              .split('/')
+              .map((pathPart) => encodeURIComponent(pathPart))
+              .join('/');
+            const blobUrl = new URL(
+              `/repos/${encodedRepositoryName}/git/blobs/${encodeURIComponent(entry.sha)}`,
+              GITHUB_API_BASE_URL
+            );
             const blobData = await fetchGitHubApi<{ content: string; encoding: string }>(
-              `https://api.github.com/repos/${repository.full_name}/git/blobs/${entry.sha}`,
+              blobUrl,
               githubProviderToken
             );
 
@@ -5553,7 +5595,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           : project.asset_data_url || '';
 
       if (!assetTextContent && !isJupyterNotebook) {
-        const assetResponse = await fetch(projectSourceHref);
+        const assetResponse = await fetch(getFetchableResourceUrl(projectSourceHref));
 
         if (!assetResponse.ok) {
           throw new Error('Verification Failed: This asset could not be downloaded for review.');
