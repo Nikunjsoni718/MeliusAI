@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, GitBranch, House, LoaderCircle, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
 import { GitHubLinkButton } from '@/components/GitHubLinkButton';
@@ -2520,6 +2520,57 @@ type GitHubConnectionProfile = {
   github_username: string | null;
 };
 
+function GitHubConnectedCard({
+  githubUsername,
+  isUnlinking,
+  unlinkError,
+  onUnlink,
+}: {
+  githubUsername: string | null;
+  isUnlinking: boolean;
+  unlinkError: string | null;
+  onUnlink: () => Promise<void>;
+}) {
+  return (
+    <section className="w-full max-w-md rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-500/15 via-slate-950/90 to-cyan-500/10 p-4 text-left shadow-[0_18px_60px_rgba(16,185,129,0.14)] backdrop-blur-xl">
+      <div className="flex items-start gap-3">
+        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400/15 text-emerald-200 shadow-[0_0_28px_rgba(52,211,153,0.2)]">
+          <GitBranch className="h-5 w-5" aria-hidden="true" />
+          <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-slate-950 bg-emerald-400 text-slate-950">
+            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-bold text-emerald-50">🎉 GitHub Linked Successfully!</h3>
+          {githubUsername ? (
+            <p className="mt-1 truncate text-xs font-medium text-emerald-200/80">@{githubUsername}</p>
+          ) : null}
+          <p className="mt-2 text-xs leading-5 text-slate-300">
+            You can now enjoy live code syncing, automated background AI audits, and instant repository imports.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-emerald-300/10 pt-3">
+        <button
+          type="button"
+          onClick={() => void onUnlink()}
+          disabled={isUnlinking}
+          className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-200 transition hover:border-rose-300/50 hover:bg-rose-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isUnlinking ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          {isUnlinking ? 'Unlinking...' : 'Unlink GitHub'}
+        </button>
+        {unlinkError ? (
+          <p role="alert" className="mt-2 text-xs leading-5 text-rose-200">
+            {unlinkError}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -2536,6 +2587,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   } = useViewerProfile();
   const [githubProfile, setGithubProfile] = useState<GitHubConnectionProfile | null>(null);
   const [isGitHubProfileChecked, setIsGitHubProfileChecked] = useState(false);
+  const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
+  const [githubUnlinkError, setGithubUnlinkError] = useState<string | null>(null);
   const currentUser = user;
   const isGithubConnected = Boolean(githubProfile?.github_username);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
@@ -2696,6 +2749,40 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setIsGitHubProfileChecked(true);
     return freshProfile;
   }, [supabase, user?.id]);
+
+  const handleUnlinkGitHub = useCallback(async () => {
+    if (!supabase || !user?.id || isUnlinkingGitHub) {
+      return;
+    }
+
+    setIsUnlinkingGitHub(true);
+    setGithubUnlinkError(null);
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          github_username: null,
+          github_user_id: null,
+        })
+        .eq('id', user.id);
+
+      if (error) {
+        throw error;
+      }
+
+      setGithubProfile({ id: user.id, github_username: null });
+      setIsGitHubProfileChecked(true);
+      await refreshGitHubProfile();
+    } catch (error) {
+      console.error('Unable to unlink GitHub:', error);
+      setGithubUnlinkError(
+        error instanceof Error ? error.message : 'GitHub could not be unlinked. Please try again.'
+      );
+    } finally {
+      setIsUnlinkingGitHub(false);
+    }
+  }, [isUnlinkingGitHub, refreshGitHubProfile, supabase, user?.id]);
 
   useEffect(() => {
     void refreshGitHubProfile();
@@ -6604,8 +6691,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isGitHubProfileChecked && !isGithubConnected ? (
-                          <GitHubLinkButton />
+                        {isGitHubProfileChecked ? (
+                          isGithubConnected ? (
+                            <GitHubConnectedCard
+                              githubUsername={githubProfile?.github_username ?? null}
+                              isUnlinking={isUnlinkingGitHub}
+                              unlinkError={githubUnlinkError}
+                              onUnlink={handleUnlinkGitHub}
+                            />
+                          ) : (
+                            <GitHubLinkButton />
+                          )
                         ) : null}
                         <button
                           type="button"
