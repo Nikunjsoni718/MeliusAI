@@ -2590,7 +2590,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
   const [githubUnlinkError, setGithubUnlinkError] = useState<string | null>(null);
   const currentUser = user;
-  const isGithubConnected = Boolean(githubProfile?.github_username);
+  const githubMetaNameValue =
+    user?.user_metadata?.user_name || user?.user_metadata?.preferred_username;
+  const githubMetaName =
+    typeof githubMetaNameValue === 'string' && githubMetaNameValue.trim()
+      ? githubMetaNameValue.trim()
+      : null;
+  const hasGithubIdentity = hasGitHubOAuthIdentity(user);
+  const isGithubConnected = Boolean(
+    githubProfile?.github_username ||
+      profile?.github_username ||
+      githubMetaName ||
+      hasGithubIdentity
+  );
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2693,6 +2705,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioDraftRef = useRef<string | null>(null);
   const refreshedGitHubLinkUserRef = useRef<string | null>(null);
   const githubProfileRequestIdRef = useRef(0);
+  const suppressGitHubAutoSyncRef = useRef(false);
   const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
@@ -2750,6 +2763,62 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return freshProfile;
   }, [supabase, user?.id]);
 
+  useEffect(() => {
+    if (
+      !supabase ||
+      !user?.id ||
+      !isGithubConnected ||
+      !githubMetaName ||
+      githubProfile?.github_username ||
+      suppressGitHubAutoSyncRef.current
+    ) {
+      return;
+    }
+
+    let isActive = true;
+
+    const syncGitHubMetadataToProfile = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ github_username: githubMetaName })
+        .eq('id', user.id)
+        .is('github_username', null)
+        .select('id, github_username')
+        .maybeSingle();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        console.warn('Unable to sync GitHub metadata to the profile:', error.message);
+        return;
+      }
+
+      if (data?.github_username) {
+        setGithubProfile({
+          id: data.id ?? user.id,
+          github_username: data.github_username,
+        });
+      } else {
+        await refreshGitHubProfile();
+      }
+    };
+
+    void syncGitHubMetadataToProfile();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    githubMetaName,
+    githubProfile?.github_username,
+    isGithubConnected,
+    refreshGitHubProfile,
+    supabase,
+    user?.id,
+  ]);
+
   const handleUnlinkGitHub = useCallback(async () => {
     if (!supabase || !user?.id || isUnlinkingGitHub) {
       return;
@@ -2757,8 +2826,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     setIsUnlinkingGitHub(true);
     setGithubUnlinkError(null);
+    suppressGitHubAutoSyncRef.current = true;
 
     try {
+      const githubIdentity = user.identities?.find(
+        (identity) => identity.provider === 'github'
+      );
+
+      if (githubIdentity) {
+        const { error: identityError } = await supabase.auth.unlinkIdentity(githubIdentity);
+        if (identityError) {
+          throw identityError;
+        }
+      }
+
+      if (githubMetaName) {
+        const { error: metadataError } = await supabase.auth.updateUser({
+          data: {
+            preferred_username: null,
+            user_name: null,
+          },
+        });
+        if (metadataError) {
+          throw metadataError;
+        }
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -2779,10 +2872,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setGithubUnlinkError(
         error instanceof Error ? error.message : 'GitHub could not be unlinked. Please try again.'
       );
+      suppressGitHubAutoSyncRef.current = false;
     } finally {
       setIsUnlinkingGitHub(false);
     }
-  }, [isUnlinkingGitHub, refreshGitHubProfile, supabase, user?.id]);
+  }, [githubMetaName, isUnlinkingGitHub, refreshGitHubProfile, supabase, user]);
 
   useEffect(() => {
     void refreshGitHubProfile();
@@ -6691,17 +6785,19 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isGitHubProfileChecked ? (
-                          isGithubConnected ? (
-                            <GitHubConnectedCard
-                              githubUsername={githubProfile?.github_username ?? null}
-                              isUnlinking={isUnlinkingGitHub}
-                              unlinkError={githubUnlinkError}
-                              onUnlink={handleUnlinkGitHub}
-                            />
-                          ) : (
-                            <GitHubLinkButton />
-                          )
+                        {isGithubConnected ? (
+                          <GitHubConnectedCard
+                            githubUsername={
+                              githubProfile?.github_username ??
+                              profile?.github_username ??
+                              githubMetaName
+                            }
+                            isUnlinking={isUnlinkingGitHub}
+                            unlinkError={githubUnlinkError}
+                            onUnlink={handleUnlinkGitHub}
+                          />
+                        ) : isGitHubProfileChecked ? (
+                          <GitHubLinkButton />
                         ) : null}
                         <button
                           type="button"

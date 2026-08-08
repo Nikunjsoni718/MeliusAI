@@ -206,6 +206,8 @@ export async function GET(request: NextRequest) {
       throw new Error('OAuth callback did not return an authenticated user.');
     }
 
+    const gitHandle =
+      getMetadataText(user, 'user_name') ?? getMetadataText(user, 'preferred_username');
     const fullName = getFullName(user);
     const avatarUrl = getAvatarUrl(user);
     const generatedUsername = generateUsername(user);
@@ -256,6 +258,7 @@ export async function GET(request: NextRequest) {
           full_name: fullName,
           avatar_url: avatarUrl,
           username: finalUsername,
+          ...(gitHandle ? { github_username: gitHandle } : {}),
         },
         { onConflict: 'id' }
       );
@@ -284,7 +287,9 @@ export async function GET(request: NextRequest) {
           .from('profiles')
           .update({
             github_user_id: githubIdentity.userId,
-            ...(githubIdentity.username ? { github_username: githubIdentity.username } : {}),
+            ...(gitHandle || githubIdentity.username
+              ? { github_username: gitHandle ?? githubIdentity.username }
+              : {}),
           })
           .eq('id', user.id),
         'GitHub identity sync'
