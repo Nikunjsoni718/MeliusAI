@@ -6,10 +6,9 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, GitBranch, House, LoaderCircle, Mail, Search } from 'lucide-react';
+import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
-import { GitHubLinkButton } from '@/components/GitHubLinkButton';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
 import { CandidateOpportunityCard, CandidateOpportunitySkeleton } from '@/components/dashboard/candidate-opportunity-card';
 import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
@@ -2520,42 +2519,6 @@ type GitHubConnectionProfile = {
   github_username: string | null;
 };
 
-function GitHubConnectedCard({
-  githubUsername,
-  onDismiss,
-}: {
-  githubUsername: string | null;
-  onDismiss: () => void;
-}) {
-  return (
-    <section className="relative w-full max-w-md rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-4 text-left shadow-[0_18px_60px_rgba(16,185,129,0.14)] backdrop-blur-xl">
-      <button
-        type="button"
-        onClick={onDismiss}
-        className="absolute right-2 top-2 text-lg leading-none text-emerald-200/70 transition hover:text-emerald-100"
-        aria-label="Dismiss GitHub linked message"
-      >
-        &times;
-      </button>
-      <div className="flex items-start gap-3">
-        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400/15 text-emerald-200">
-          <GitBranch className="h-5 w-5" aria-hidden="true" />
-          <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-slate-950 bg-emerald-400 text-slate-950">
-            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="pr-5 text-sm font-bold text-emerald-50">🎉 GitHub Linked Successfully!</h3>
-          {githubUsername ? (
-            <p className="mt-1 truncate text-xs font-medium text-emerald-200/80">@{githubUsername}</p>
-          ) : null}
-          <p className="mt-2 text-xs leading-5 text-slate-300">You can now enjoy live code syncing and automated audits.</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -2573,8 +2536,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   } = useViewerProfile();
   const [isGitHubProfileChecked, setIsGitHubProfileChecked] = useState(false);
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
-  const [githubUnlinkError, setGithubUnlinkError] = useState<string | null>(null);
-  const [dismissedSuccess, setDismissedSuccess] = useState(false);
+  const [, setGithubUnlinkError] = useState<string | null>(null);
+  const [isLinked, setIsLinked] = useState(false);
+  const [hideCard, setHideCard] = useState(false);
   const currentUser = user;
   const isGithubConnected = Boolean(profile?.github_username);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
@@ -2740,10 +2704,52 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [setProfile, supabase, user?.id]);
 
   useEffect(() => {
-    if (!isGithubConnected) {
-      setDismissedSuccess(false);
+    if (!supabase) {
+      setIsLinked(Boolean(profile?.github_username));
+      return;
     }
-  }, [isGithubConnected]);
+
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const hasGithub = session?.user?.app_metadata?.providers?.includes('github') || profile?.github_username;
+      setIsLinked(Boolean(hasGithub));
+    };
+    checkSession();
+  }, [profile]);
+
+  useEffect(() => {
+    if (!isLinked) {
+      setHideCard(false);
+    }
+  }, [isLinked]);
+
+  const handleLinkGithub = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+
+    try {
+      const redirectTo = `${window.location.origin}/profile/setup-app`;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          scopes: 'repo',
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data.url) {
+        window.location.assign(data.url);
+      }
+    } catch (error) {
+      console.error('GitHub Auth Error:', error);
+    }
+  }, [supabase]);
 
   const handleUnlinkGitHub = useCallback(async () => {
     if (!supabase || !user?.id || isUnlinkingGitHub) {
@@ -2772,6 +2778,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           : previousProfile
       );
       setIsGitHubProfileChecked(true);
+      setIsLinked(false);
+      setHideCard(false);
 
       const githubIdentity = user.identities?.find(
         (identity) => identity.provider === 'github'
@@ -2792,6 +2800,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setIsUnlinkingGitHub(false);
     }
   }, [isUnlinkingGitHub, setProfile, supabase, user]);
+
+  const handleUnlinkGithub = useCallback(() => {
+    void handleUnlinkGitHub();
+  }, [handleUnlinkGitHub]);
 
   useEffect(() => {
     void refreshGitHubProfile();
@@ -6700,33 +6712,28 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isGithubConnected ? (
-                          dismissedSuccess ? (
-                            <div className="flex flex-col items-start gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => void handleUnlinkGitHub()}
-                                disabled={isUnlinkingGitHub}
-                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-200 transition hover:border-rose-300/50 hover:bg-rose-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {isUnlinkingGitHub ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
-                                {isUnlinkingGitHub ? 'Unlinking...' : 'Unlink GitHub'}
-                              </button>
-                              {githubUnlinkError ? (
-                                <p role="alert" className="max-w-44 text-xs leading-4 text-rose-200">
-                                  {githubUnlinkError}
-                                </p>
-                              ) : null}
-                            </div>
+                        {isLinked ? (
+                          hideCard ? (
+                            <button onClick={handleUnlinkGithub} className="px-4 py-2 border border-gray-600 rounded text-sm hover:bg-gray-800 transition-colors">
+                              Unlink GitHub
+                            </button>
                           ) : (
-                            <GitHubConnectedCard
-                              githubUsername={profile?.github_username ?? null}
-                              onDismiss={() => setDismissedSuccess(true)}
-                            />
+                            <div className="relative border border-green-500/50 bg-green-900/20 p-4 rounded-xl w-full">
+                              <button
+                                onClick={() => setHideCard(true)}
+                                className="absolute top-2 right-3 text-green-500 hover:text-green-300 font-bold"
+                              >
+                                &#10005;
+                              </button>
+                              <h4 className="font-bold text-green-400 mb-1">🎉 GitHub Linked Successfully!</h4>
+                              <p className="text-sm text-gray-300">You can now enjoy live code syncing and automated audits.</p>
+                            </div>
                           )
-                        ) : isGitHubProfileChecked ? (
-                          <GitHubLinkButton />
-                        ) : null}
+                        ) : (
+                          <button onClick={handleLinkGithub} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm transition-colors">
+                            Link GitHub
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => void handleEditProfileToggle()}
