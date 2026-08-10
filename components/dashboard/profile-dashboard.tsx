@@ -2522,50 +2522,35 @@ type GitHubConnectionProfile = {
 
 function GitHubConnectedCard({
   githubUsername,
-  isUnlinking,
-  unlinkError,
-  onUnlink,
+  onDismiss,
 }: {
   githubUsername: string | null;
-  isUnlinking: boolean;
-  unlinkError: string | null;
-  onUnlink: () => Promise<void>;
+  onDismiss: () => void;
 }) {
   return (
-    <section className="w-full max-w-md rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-500/15 via-slate-950/90 to-cyan-500/10 p-4 text-left shadow-[0_18px_60px_rgba(16,185,129,0.14)] backdrop-blur-xl">
+    <section className="relative w-full max-w-md rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-4 text-left shadow-[0_18px_60px_rgba(16,185,129,0.14)] backdrop-blur-xl">
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="absolute right-2 top-2 text-lg leading-none text-emerald-200/70 transition hover:text-emerald-100"
+        aria-label="Dismiss GitHub linked message"
+      >
+        &times;
+      </button>
       <div className="flex items-start gap-3">
-        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400/15 text-emerald-200 shadow-[0_0_28px_rgba(52,211,153,0.2)]">
+        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400/15 text-emerald-200">
           <GitBranch className="h-5 w-5" aria-hidden="true" />
           <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-slate-950 bg-emerald-400 text-slate-950">
             <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-bold text-emerald-50">🎉 GitHub Linked Successfully!</h3>
+          <h3 className="pr-5 text-sm font-bold text-emerald-50">🎉 GitHub Linked Successfully!</h3>
           {githubUsername ? (
             <p className="mt-1 truncate text-xs font-medium text-emerald-200/80">@{githubUsername}</p>
           ) : null}
-          <p className="mt-2 text-xs leading-5 text-slate-300">
-            You can now enjoy live code syncing, automated background AI audits, and instant repository imports.
-          </p>
+          <p className="mt-2 text-xs leading-5 text-slate-300">You can now enjoy live code syncing and automated audits.</p>
         </div>
-      </div>
-
-      <div className="mt-4 border-t border-emerald-300/10 pt-3">
-        <button
-          type="button"
-          onClick={() => void onUnlink()}
-          disabled={isUnlinking}
-          className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-200 transition hover:border-rose-300/50 hover:bg-rose-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isUnlinking ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
-          {isUnlinking ? 'Unlinking...' : 'Unlink GitHub'}
-        </button>
-        {unlinkError ? (
-          <p role="alert" className="mt-2 text-xs leading-5 text-rose-200">
-            {unlinkError}
-          </p>
-        ) : null}
       </div>
     </section>
   );
@@ -2581,28 +2566,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     hasAccessToken,
     loading,
     profile,
+    setProfile,
     session,
     supabase,
     user,
   } = useViewerProfile();
-  const [githubProfile, setGithubProfile] = useState<GitHubConnectionProfile | null>(null);
   const [isGitHubProfileChecked, setIsGitHubProfileChecked] = useState(false);
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
   const [githubUnlinkError, setGithubUnlinkError] = useState<string | null>(null);
+  const [dismissedSuccess, setDismissedSuccess] = useState(false);
   const currentUser = user;
-  const githubMetaNameValue =
-    user?.user_metadata?.user_name || user?.user_metadata?.preferred_username;
-  const githubMetaName =
-    typeof githubMetaNameValue === 'string' && githubMetaNameValue.trim()
-      ? githubMetaNameValue.trim()
-      : null;
-  const hasGithubIdentity = hasGitHubOAuthIdentity(user);
-  const isGithubConnected = Boolean(
-    githubProfile?.github_username ||
-      profile?.github_username ||
-      githubMetaName ||
-      hasGithubIdentity
-  );
+  const isGithubConnected = Boolean(profile?.github_username);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2705,7 +2679,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioDraftRef = useRef<string | null>(null);
   const refreshedGitHubLinkUserRef = useRef<string | null>(null);
   const githubProfileRequestIdRef = useRef(0);
-  const suppressGitHubAutoSyncRef = useRef(false);
   const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
@@ -2723,14 +2696,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     const requestId = ++githubProfileRequestIdRef.current;
 
     if (!supabase || !user?.id) {
-      setGithubProfile(null);
       setIsGitHubProfileChecked(true);
       return null;
     }
 
-    setGithubProfile((currentProfile) =>
-      currentProfile?.id === user.id ? currentProfile : null
-    );
     setIsGitHubProfileChecked(false);
     const { data, error } = await supabase
       .from('profiles')
@@ -2744,7 +2713,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     if (error) {
       console.warn('Unable to refresh the GitHub connection profile:', error.message);
-      setGithubProfile(null);
       setIsGitHubProfileChecked(true);
       return null;
     }
@@ -2758,66 +2726,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       github_username: githubUsername,
     };
 
-    setGithubProfile(freshProfile);
+    setProfile((previousProfile) =>
+      previousProfile?.id === user.id
+        ? {
+            ...previousProfile,
+            github_username: githubUsername,
+            is_github_linked: Boolean(githubUsername),
+          }
+        : previousProfile
+    );
     setIsGitHubProfileChecked(true);
     return freshProfile;
-  }, [supabase, user?.id]);
+  }, [setProfile, supabase, user?.id]);
 
   useEffect(() => {
-    if (
-      !supabase ||
-      !user?.id ||
-      !isGithubConnected ||
-      !githubMetaName ||
-      githubProfile?.github_username ||
-      suppressGitHubAutoSyncRef.current
-    ) {
-      return;
+    if (!isGithubConnected) {
+      setDismissedSuccess(false);
     }
-
-    let isActive = true;
-
-    const syncGitHubMetadataToProfile = async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({ github_username: githubMetaName })
-        .eq('id', user.id)
-        .is('github_username', null)
-        .select('id, github_username')
-        .maybeSingle();
-
-      if (!isActive) {
-        return;
-      }
-
-      if (error) {
-        console.warn('Unable to sync GitHub metadata to the profile:', error.message);
-        return;
-      }
-
-      if (data?.github_username) {
-        setGithubProfile({
-          id: data.id ?? user.id,
-          github_username: data.github_username,
-        });
-      } else {
-        await refreshGitHubProfile();
-      }
-    };
-
-    void syncGitHubMetadataToProfile();
-
-    return () => {
-      isActive = false;
-    };
-  }, [
-    githubMetaName,
-    githubProfile?.github_username,
-    isGithubConnected,
-    refreshGitHubProfile,
-    supabase,
-    user?.id,
-  ]);
+  }, [isGithubConnected]);
 
   const handleUnlinkGitHub = useCallback(async () => {
     if (!supabase || !user?.id || isUnlinkingGitHub) {
@@ -2826,32 +2752,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     setIsUnlinkingGitHub(true);
     setGithubUnlinkError(null);
-    suppressGitHubAutoSyncRef.current = true;
 
     try {
-      const githubIdentity = user.identities?.find(
-        (identity) => identity.provider === 'github'
-      );
-
-      if (githubIdentity) {
-        const { error: identityError } = await supabase.auth.unlinkIdentity(githubIdentity);
-        if (identityError) {
-          throw identityError;
-        }
-      }
-
-      if (githubMetaName) {
-        const { error: metadataError } = await supabase.auth.updateUser({
-          data: {
-            preferred_username: null,
-            user_name: null,
-          },
-        });
-        if (metadataError) {
-          throw metadataError;
-        }
-      }
-
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -2864,19 +2766,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw error;
       }
 
-      setGithubProfile({ id: user.id, github_username: null });
+      setProfile((previousProfile) =>
+        previousProfile?.id === user.id
+          ? { ...previousProfile, github_username: null, is_github_linked: false }
+          : previousProfile
+      );
       setIsGitHubProfileChecked(true);
-      await refreshGitHubProfile();
+
+      const githubIdentity = user.identities?.find(
+        (identity) => identity.provider === 'github'
+      );
+
+      if (githubIdentity) {
+        const { error: identityError } = await supabase.auth.unlinkIdentity(githubIdentity);
+        if (identityError) {
+          throw identityError;
+        }
+      }
     } catch (error) {
       console.error('Unable to unlink GitHub:', error);
       setGithubUnlinkError(
         error instanceof Error ? error.message : 'GitHub could not be unlinked. Please try again.'
       );
-      suppressGitHubAutoSyncRef.current = false;
     } finally {
       setIsUnlinkingGitHub(false);
     }
-  }, [githubMetaName, isUnlinkingGitHub, refreshGitHubProfile, supabase, user]);
+  }, [isUnlinkingGitHub, setProfile, supabase, user]);
 
   useEffect(() => {
     void refreshGitHubProfile();
@@ -6786,16 +6701,29 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
                         {isGithubConnected ? (
-                          <GitHubConnectedCard
-                            githubUsername={
-                              githubProfile?.github_username ??
-                              profile?.github_username ??
-                              githubMetaName
-                            }
-                            isUnlinking={isUnlinkingGitHub}
-                            unlinkError={githubUnlinkError}
-                            onUnlink={handleUnlinkGitHub}
-                          />
+                          dismissedSuccess ? (
+                            <div className="flex flex-col items-start gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void handleUnlinkGitHub()}
+                                disabled={isUnlinkingGitHub}
+                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-200 transition hover:border-rose-300/50 hover:bg-rose-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isUnlinkingGitHub ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                                {isUnlinkingGitHub ? 'Unlinking...' : 'Unlink GitHub'}
+                              </button>
+                              {githubUnlinkError ? (
+                                <p role="alert" className="max-w-44 text-xs leading-4 text-rose-200">
+                                  {githubUnlinkError}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <GitHubConnectedCard
+                              githubUsername={profile?.github_username ?? null}
+                              onDismiss={() => setDismissedSuccess(true)}
+                            />
+                          )
                         ) : isGitHubProfileChecked ? (
                           <GitHubLinkButton />
                         ) : null}

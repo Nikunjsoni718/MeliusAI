@@ -80,10 +80,6 @@ function getAvatarUrl(user: User) {
   return getMetadataText(user, 'avatar_url') ?? getMetadataText(user, 'picture');
 }
 
-function getGitHubUsername(user: User) {
-  return getMetadataText(user, 'user_name') ?? getMetadataText(user, 'preferred_username');
-}
-
 async function getProfileUsername(user: User, payload: ProfileBootstrapPayload, existingUsername?: string | null) {
   const savedUsername = normalizeUsername(existingUsername);
 
@@ -160,35 +156,9 @@ async function readProfile(userId: string) {
   return (profile as ProfileRecord | null) ?? null;
 }
 
-async function syncGitHubUsername(user: User, profile: ProfileRecord) {
-  const gitHandle = getGitHubUsername(user);
-
-  if (!gitHandle || profile.github_username) {
-    return profile;
-  }
-
-  const admin = createSupabaseAdminClient();
-  const { data: syncedProfile, error } = await admin
-    .from('profiles')
-    .update({ github_username: gitHandle })
-    .eq('id', user.id)
-    .is('github_username', null)
-    .select(PROFILE_SELECT)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`GitHub profile sync failed: ${error.message}`);
-  }
-
-  return (syncedProfile as ProfileRecord | null) ?? profile;
-}
-
 function toViewerProfile(user: User, profile: ProfileRecord) {
   const role = normalizeRole(user.user_metadata?.role);
-  const gitHandle = getGitHubUsername(user);
-  const hasGitHubIdentity =
-    user.identities?.some((identity) => identity.provider === 'github') ?? false;
-  const githubUsername = profile.github_username ?? gitHandle;
+  const githubUsername = profile.github_username ?? null;
   const displayName =
     profile.full_name ??
     getMetadataText(user, 'display_name') ??
@@ -208,7 +178,7 @@ function toViewerProfile(user: User, profile: ProfileRecord) {
     company_name: null,
     github_username: githubUsername,
     avatar_url: profile.avatar_url ?? getMetadataText(user, 'avatar_url'),
-    is_github_linked: Boolean(githubUsername || hasGitHubIdentity),
+    is_github_linked: Boolean(githubUsername),
   };
 }
 
@@ -218,7 +188,6 @@ async function upsertProfile(user: User, payload: ProfileBootstrapPayload) {
   const fullName = getDisplayName(user, payload);
   let username = await getProfileUsername(user, payload, existingProfile?.username);
   const avatarUrl = getAvatarUrl(user);
-  const gitHandle = getGitHubUsername(user);
 
   const saveProfile = () =>
     admin
@@ -230,7 +199,6 @@ async function upsertProfile(user: User, payload: ProfileBootstrapPayload) {
           full_name: fullName,
           avatar_url: avatarUrl,
           username,
-          ...(gitHandle ? { github_username: gitHandle } : {}),
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'id' }
@@ -293,8 +261,7 @@ export async function GET(request: NextRequest) {
       return jsonError('Unauthorized', 401);
     }
 
-    const storedProfile = (await readProfile(user.id)) ?? (await upsertProfile(user, {}));
-    const profile = await syncGitHubUsername(user, storedProfile);
+    const profile = (await readProfile(user.id)) ?? (await upsertProfile(user, {}));
 
     return profileResponse(user, profile);
   } catch (error) {

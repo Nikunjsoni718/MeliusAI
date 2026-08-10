@@ -360,6 +360,7 @@ export function useViewerProfile() {
     isSessionChecking: loading,
     loading,
     profile,
+    setProfile,
     persistedRole,
     session,
     supabase,
