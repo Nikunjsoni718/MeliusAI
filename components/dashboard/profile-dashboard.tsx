@@ -6714,31 +6714,39 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       <div className="flex flex-wrap items-start justify-end gap-2">
                         {isLinked ? (
                           !hideCard && (
-                            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-                              <div
-                                className="relative w-full max-w-md p-8 rounded-2xl transition-all duration-300"
-                                style={{
-                                  background: 'linear-gradient(145deg, #0d121f, #07090e)',
-                                  border: '1px solid #1e3a8a',
-                                  boxShadow: '0 0 20px -5px rgba(56, 189, 248, 0.4), inset 0 1px 1px 0 rgba(255, 255, 255, 0.1)',
-                                }}
-                              >
+                            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                              <div className="relative w-full max-w-md p-8 bg-[#0b1120] border border-gray-800/80 rounded-2xl shadow-2xl transition-all duration-300">
+
+                                {/* Fallback subtle 'X' in case they click outside the primary button */}
                                 <button
                                   onClick={() => setHideCard(true)}
-                                  className="absolute top-4 right-5 text-xl font-bold hover:text-white transition-colors"
-                                  style={{ color: '#60a5fa' }}
+                                  className="absolute top-4 right-5 text-gray-500 hover:text-white transition-colors"
                                 >
                                   &#10005;
                                 </button>
 
-                                <div className="text-center flex flex-col items-center gap-3">
-                                  <h4 className="text-xl font-bold" style={{ color: '#60a5fa' }}>
-                                    🎉 GitHub Linked Successfully!
-                                  </h4>
-                                  <p className="text-sm leading-relaxed" style={{ color: '#94a3b8' }}>
+                                <div className="text-center flex flex-col items-center gap-3 mt-2">
+                                  <h3 className="text-2xl font-semibold text-white tracking-tight flex items-center gap-2">
+                                    <span>🎉</span> GitHub Linked Successfully
+                                  </h3>
+                                  <p className="text-sm leading-relaxed text-gray-400 max-w-[90%]">
                                     Your account is now fully synced with MeliusAI. You can enjoy live code syncing and automated background AI audits.
                                   </p>
                                 </div>
+
+                                {/* Universal Divider */}
+                                <div className="w-full h-px bg-gray-800/60 my-6"></div>
+
+                                {/* Action Button matching the "Get Started ->" layout */}
+                                <div className="flex justify-end">
+                                  <button
+                                    onClick={() => setHideCard(true)}
+                                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-full shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center gap-2"
+                                  >
+                                    Continue &rarr;
+                                  </button>
+                                </div>
+
                               </div>
                             </div>
                           )
