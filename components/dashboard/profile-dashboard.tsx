@@ -2703,9 +2703,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return freshProfile;
   }, [setProfile, supabase, user?.id]);
 
+  // 1. Check for previous dismissal
+  useEffect(() => {
+    if (localStorage.getItem('github_success_dismissed') === 'true') {
+      setHideCard(true);
+    }
+  }, []);
+
+  // 2. Update existing session check to include cleanup
   useEffect(() => {
     if (!supabase) {
-      setIsLinked(Boolean(profile?.github_username));
+      const hasGithub = Boolean(profile?.github_username);
+      setIsLinked(hasGithub);
+
+      // If not linked, clean up the storage so the card can appear again if they relink later
+      if (!hasGithub) {
+        localStorage.removeItem('github_success_dismissed');
+        setHideCard(false);
+      }
       return;
     }
 
@@ -2713,15 +2728,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const { data: { session } } = await supabase.auth.getSession();
       const hasGithub = session?.user?.app_metadata?.providers?.includes('github') || profile?.github_username;
       setIsLinked(Boolean(hasGithub));
+
+      // If not linked, clean up the storage so the card can appear again if they relink later
+      if (!hasGithub) {
+        localStorage.removeItem('github_success_dismissed');
+        setHideCard(false);
+      }
     };
     checkSession();
-  }, [profile]);
+  }, [profile, supabase]);
 
-  useEffect(() => {
-    if (!isLinked) {
-      setHideCard(false);
-    }
-  }, [isLinked]);
+  const handleDismissGitHubSuccess = useCallback(() => {
+    localStorage.setItem('github_success_dismissed', 'true');
+    setHideCard(true);
+  }, []);
 
   const handleLinkGithub = useCallback(async () => {
     if (!supabase) {
@@ -6719,7 +6739,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                                 {/* Fallback subtle 'X' in case they click outside the primary button */}
                                 <button
-                                  onClick={() => setHideCard(true)}
+                                  onClick={handleDismissGitHubSuccess}
                                   className="absolute top-4 right-5 text-gray-500 hover:text-white transition-colors"
                                 >
                                   &#10005;
@@ -6740,7 +6760,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 {/* Action Button matching the "Get Started ->" layout */}
                                 <div className="flex justify-end">
                                   <button
-                                    onClick={() => setHideCard(true)}
+                                    onClick={handleDismissGitHubSuccess}
                                     className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-full shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center gap-2"
                                   >
                                     Continue &rarr;
