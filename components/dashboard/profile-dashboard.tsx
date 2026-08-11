@@ -3572,6 +3572,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   ]);
 
   useEffect(() => {
+    if (!window.location.search.includes('installation_success')) {
+      return;
+    }
+
+    localStorage.setItem('github_success_dismissed', 'true');
+    setHideCard(true);
+
+    if (!supabase || !user || !isOwner || profileLoading) {
+      return;
+    }
+
+    autoOpenedGitHubImportUserRef.current = user.id;
+    setIsIngestionModalOpen(false);
+    setIsGithubModalOpen(true);
+    void loadGitHubRepositoriesRef.current?.();
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete('installation_success');
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+    );
+  }, [isOwner, profileLoading, supabase, user]);
+
+  useEffect(() => {
     try {
       const storedBioDraft = window.localStorage.getItem(BIO_DRAFT_STORAGE_KEY);
       bioDraftRef.current = storedBioDraft;
@@ -6760,10 +6786,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 {/* Action Button matching the "Get Started ->" layout */}
                                 <div className="flex justify-end">
                                   <button
-                                    onClick={handleDismissGitHubSuccess}
+                                    onClick={() => {
+                                      window.location.href = "https://github.com/apps/meliusai/installations/new";
+                                    }}
                                     className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-full shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center gap-2"
                                   >
-                                    Continue &rarr;
+                                    Install GitHub App &rarr;
                                   </button>
                                 </div>
 
