@@ -518,6 +518,7 @@ const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
+const GITHUB_LINK_INTENT_KEY = 'intent_to_link_github';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
@@ -2712,6 +2713,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     githubAppRedirectRef.current = true;
+    sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
     localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
 
     const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
@@ -2729,7 +2731,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   useEffect(() => {
     let isActive = true;
 
-    const evaluateGitHubConnection = async () => {
+    const syncGitHubConnectionState = async () => {
       let hasGithub = Boolean(profile?.github_username);
 
       if (supabase) {
@@ -2750,6 +2752,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       if (!hasGithub) {
         localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
         localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
+        sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
         githubAppRedirectRef.current = false;
         setHideCard(true);
         return;
@@ -2757,23 +2760,50 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       const hasBeenPromptedForAppInstall =
         localStorage.getItem(GITHUB_APP_PROMPTED_KEY) === 'true';
-
-      if (!hasBeenPromptedForAppInstall) {
-        redirectToGitHubAppInstall();
-        return;
-      }
-
       const hasDismissedSuccessModal =
         localStorage.getItem(GITHUB_SUCCESS_DISMISSED_KEY) === 'true';
-      setHideCard(hasDismissedSuccessModal);
+      setHideCard(!hasBeenPromptedForAppInstall || hasDismissedSuccessModal);
     };
 
-    void evaluateGitHubConnection();
+    void syncGitHubConnectionState();
 
     return () => {
       isActive = false;
     };
-  }, [profile, redirectToGitHubAppInstall, supabase]);
+  }, [profile, supabase]);
+
+  useEffect(() => {
+    if (sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) !== 'true') {
+      return;
+    }
+
+    let isActive = true;
+
+    const redirectAfterGitHubLinkIntent = async () => {
+      let hasGithub = Boolean(profile?.github_username);
+
+      if (supabase) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        hasGithub =
+          Boolean(session?.user?.app_metadata?.providers?.includes('github')) ||
+          Boolean(profile?.github_username);
+      }
+
+      if (!isActive || !hasGithub) {
+        return;
+      }
+
+      redirectToGitHubAppInstall();
+    };
+
+    void redirectAfterGitHubLinkIntent();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isLinked, profile, redirectToGitHubAppInstall, supabase]);
 
   const handleDismissGitHubSuccess = useCallback(() => {
     localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
@@ -2784,6 +2814,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     if (!supabase) {
       return;
     }
+
+    sessionStorage.setItem(GITHUB_LINK_INTENT_KEY, 'true');
 
     try {
       const redirectTo = `${window.location.origin}/profile/setup-app`;
@@ -2802,8 +2834,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       if (data.url) {
         window.location.assign(data.url);
+      } else {
+        sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
       }
     } catch (error) {
+      sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
       console.error('GitHub Auth Error:', error);
     }
   }, [supabase]);
@@ -2839,6 +2874,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setHideCard(true);
       localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
       localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
+      sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
       githubAppRedirectRef.current = false;
 
       const githubIdentity = user.identities?.find(
@@ -2967,7 +3003,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
         );
 
-        if (installationUsername) {
+        if (
+          installationUsername &&
+          sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) === 'true'
+        ) {
+          sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
           localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
           githubAppRedirectRef.current = true;
           const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
