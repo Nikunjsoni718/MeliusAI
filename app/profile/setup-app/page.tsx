@@ -9,6 +9,7 @@ import {
 } from '@/lib/supabase/client';
 
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
+const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 
 export default function GitHubAppSetupPage() {
   const hasStartedRef = useRef(false);
@@ -54,6 +55,7 @@ export default function GitHubAppSetupPage() {
         }
 
         window.history.replaceState({}, document.title, '/profile/setup-app');
+        localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
         window.location.href = GITHUB_APP_INSTALLATION_URL;
       } catch (error) {
         if (!isActive) {

@@ -516,6 +516,8 @@ const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
+const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
+const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
@@ -2538,7 +2540,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
   const [, setGithubUnlinkError] = useState<string | null>(null);
   const [isLinked, setIsLinked] = useState(false);
-  const [hideCard, setHideCard] = useState(false);
+  const [hideCard, setHideCard] = useState(true);
+  const githubAppRedirectRef = useRef(false);
   const currentUser = user;
   const isGithubConnected = Boolean(profile?.github_username);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
@@ -2703,43 +2706,77 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return freshProfile;
   }, [setProfile, supabase, user?.id]);
 
-  // 1. Check for previous dismissal
-  useEffect(() => {
-    if (localStorage.getItem('github_success_dismissed') === 'true') {
-      setHideCard(true);
-    }
-  }, []);
-
-  // 2. Update existing session check to include cleanup
-  useEffect(() => {
-    if (!supabase) {
-      const hasGithub = Boolean(profile?.github_username);
-      setIsLinked(hasGithub);
-
-      // If not linked, clean up the storage so the card can appear again if they relink later
-      if (!hasGithub) {
-        localStorage.removeItem('github_success_dismissed');
-        setHideCard(false);
-      }
+  const redirectToGitHubAppInstall = useCallback(() => {
+    if (githubAppRedirectRef.current) {
       return;
     }
 
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const hasGithub = session?.user?.app_metadata?.providers?.includes('github') || profile?.github_username;
-      setIsLinked(Boolean(hasGithub));
+    githubAppRedirectRef.current = true;
+    localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
 
-      // If not linked, clean up the storage so the card can appear again if they relink later
-      if (!hasGithub) {
-        localStorage.removeItem('github_success_dismissed');
-        setHideCard(false);
+    const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
+    const installationUsername = normalizeDisplayUsername(
+      profile?.username ?? getProfileUsernameFromPathname(pathname)
+    );
+
+    if (installationUsername) {
+      installationUrl.searchParams.set('state', installationUsername);
+    }
+
+    window.location.assign(installationUrl.toString());
+  }, [pathname, profile?.username]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const evaluateGitHubConnection = async () => {
+      let hasGithub = Boolean(profile?.github_username);
+
+      if (supabase) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        hasGithub =
+          Boolean(session?.user?.app_metadata?.providers?.includes('github')) ||
+          Boolean(profile?.github_username);
       }
+
+      if (!isActive) {
+        return;
+      }
+
+      setIsLinked(hasGithub);
+
+      if (!hasGithub) {
+        localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
+        localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
+        githubAppRedirectRef.current = false;
+        setHideCard(true);
+        return;
+      }
+
+      const hasBeenPromptedForAppInstall =
+        localStorage.getItem(GITHUB_APP_PROMPTED_KEY) === 'true';
+
+      if (!hasBeenPromptedForAppInstall) {
+        redirectToGitHubAppInstall();
+        return;
+      }
+
+      const hasDismissedSuccessModal =
+        localStorage.getItem(GITHUB_SUCCESS_DISMISSED_KEY) === 'true';
+      setHideCard(hasDismissedSuccessModal);
     };
-    checkSession();
-  }, [profile, supabase]);
+
+    void evaluateGitHubConnection();
+
+    return () => {
+      isActive = false;
+    };
+  }, [profile, redirectToGitHubAppInstall, supabase]);
 
   const handleDismissGitHubSuccess = useCallback(() => {
-    localStorage.setItem('github_success_dismissed', 'true');
+    localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
     setHideCard(true);
   }, []);
 
@@ -2799,7 +2836,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setIsGitHubProfileChecked(true);
       setIsLinked(false);
-      setHideCard(false);
+      setHideCard(true);
+      localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
+      localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
+      githubAppRedirectRef.current = false;
 
       const githubIdentity = user.identities?.find(
         (identity) => identity.provider === 'github'
@@ -2928,6 +2968,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         );
 
         if (installationUsername) {
+          localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
+          githubAppRedirectRef.current = true;
           const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
           installationUrl.searchParams.set('state', installationUsername);
           window.location.assign(installationUrl.toString());
@@ -3576,7 +3618,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    localStorage.setItem('github_success_dismissed', 'true');
+    localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
     setHideCard(true);
 
     if (!supabase || !user || !isOwner || profileLoading) {
@@ -6776,22 +6818,20 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                     <span>🎉</span> GitHub Linked Successfully
                                   </h3>
                                   <p className="text-sm leading-relaxed text-gray-400 max-w-[90%]">
-                                    Your account is now fully synced with MeliusAI. You can enjoy live code syncing and automated background AI audits.
+                                    Your GitHub account is fully linked and your repositories are ready to import into MeliusAI.
                                   </p>
                                 </div>
 
                                 {/* Universal Divider */}
                                 <div className="w-full h-px bg-gray-800/60 my-6"></div>
 
-                                {/* Action Button matching the "Get Started ->" layout */}
                                 <div className="flex justify-end">
                                   <button
-                                    onClick={() => {
-                                      window.location.href = "https://github.com/apps/meliusai/installations/new";
-                                    }}
-                                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-full shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center gap-2"
+                                    type="button"
+                                    onClick={handleDismissGitHubSuccess}
+                                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-full shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all"
                                   >
-                                    Install GitHub App &rarr;
+                                    Continue
                                   </button>
                                 </div>
 

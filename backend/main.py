@@ -1135,15 +1135,236 @@ def _workspace_context_key(row: dict[str, Any]) -> tuple[str, str | None] | None
     return workspace_user_id, folder_id
 
 
+def _workspace_user_id(row: dict[str, Any]) -> str | None:
+    workspace_user_id = str(row.get("user_id") or "").strip()
+    return workspace_user_id or None
+
+
 def _build_workspace_contexts(
     repository_rows: list[dict[str, Any]],
-) -> dict[tuple[str, str | None], dict[str, Any]]:
-    contexts: dict[tuple[str, str | None], dict[str, Any]] = {}
+) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
     for row in repository_rows:
-        context_key = _workspace_context_key(row)
-        if context_key is not None and context_key not in contexts:
-            contexts[context_key] = row
+        workspace_user_id = _workspace_user_id(row)
+        if workspace_user_id is not None and workspace_user_id not in contexts:
+            contexts[workspace_user_id] = row
     return contexts
+
+
+def _is_missing_project_folder_column_error(error: Exception, column_name: str) -> bool:
+    message = str(error).casefold()
+    normalized_column = column_name.casefold()
+    return normalized_column in message and (
+        "column" in message
+        or "schema cache" in message
+        or "could not find" in message
+    )
+
+
+async def _project_folder_column_supported(
+    supabase_client: Any,
+    column_name: str,
+) -> bool:
+    try:
+        await _run_supabase(
+            lambda: supabase_client.table("project_folders")
+            .select(f"id, {column_name}")
+            .limit(1)
+            .execute()
+        )
+        return True
+    except Exception as error:
+        if _is_missing_project_folder_column_error(error, column_name):
+            return False
+        logger.warning(
+            "project_folders.column_probe_failed column=%s error=%s",
+            column_name,
+            error,
+        )
+        return False
+
+
+def _github_repository_folder_name(repository: str) -> str:
+    repository_name = repository.rsplit("/", 1)[-1].strip()
+    return repository_name or repository
+
+
+async def _find_project_folder(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    folder_name: str,
+    parent_id: str | None,
+    source_supported: bool,
+    parent_id_supported: bool,
+) -> dict[str, Any] | None:
+    select_columns = ["id", "user_id", "name"]
+    if source_supported:
+        select_columns.append("source")
+    if parent_id_supported:
+        select_columns.append("parent_id")
+
+    def query_folder() -> Any:
+        query = (
+            supabase_client.table("project_folders")
+            .select(", ".join(select_columns))
+            .eq("user_id", user_id)
+            .eq("name", folder_name)
+            .limit(1)
+        )
+        if source_supported:
+            query = query.eq("source", "github")
+        if parent_id_supported:
+            query = (
+                query.eq("parent_id", parent_id)
+                if parent_id
+                else query.is_("parent_id", "null")
+            )
+        return query.execute()
+
+    response = await _run_supabase(query_folder)
+    rows = _response_rows(response)
+    return rows[0] if rows else None
+
+
+async def _create_project_folder(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    folder_name: str,
+    parent_id: str | None,
+    source_supported: bool,
+    parent_id_supported: bool,
+) -> dict[str, Any]:
+    insert_payload: dict[str, Any] = {
+        "user_id": user_id,
+        "name": folder_name,
+    }
+    if source_supported:
+        insert_payload["source"] = "github"
+    if parent_id_supported:
+        insert_payload["parent_id"] = parent_id
+
+    response = await _run_supabase(
+        lambda: supabase_client.table("project_folders")
+        .insert(insert_payload)
+        .execute()
+    )
+    rows = _response_rows(response)
+    if not rows:
+        raise RuntimeError(f"Project folder insert returned no record for {folder_name}.")
+    return rows[0]
+
+
+async def _get_or_create_project_folder(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    folder_name: str,
+    parent_id: str | None,
+    source_supported: bool,
+    parent_id_supported: bool,
+) -> dict[str, Any]:
+    existing_folder = await _find_project_folder(
+        supabase_client,
+        user_id=user_id,
+        folder_name=folder_name,
+        parent_id=parent_id,
+        source_supported=source_supported,
+        parent_id_supported=parent_id_supported,
+    )
+    if existing_folder is not None:
+        return existing_folder
+
+    try:
+        return await _create_project_folder(
+            supabase_client,
+            user_id=user_id,
+            folder_name=folder_name,
+            parent_id=parent_id,
+            source_supported=source_supported,
+            parent_id_supported=parent_id_supported,
+        )
+    except Exception:
+        existing_folder = await _find_project_folder(
+            supabase_client,
+            user_id=user_id,
+            folder_name=folder_name,
+            parent_id=parent_id,
+            source_supported=source_supported,
+            parent_id_supported=parent_id_supported,
+        )
+        if existing_folder is not None:
+            return existing_folder
+        raise
+
+
+async def _build_github_folder_hierarchy(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+    file_paths: list[str],
+) -> dict[str, str]:
+    source_supported, parent_id_supported = await asyncio.gather(
+        _project_folder_column_supported(supabase_client, "source"),
+        _project_folder_column_supported(supabase_client, "parent_id"),
+    )
+    root_folder = await _get_or_create_project_folder(
+        supabase_client,
+        user_id=user_id,
+        folder_name=_github_repository_folder_name(repository),
+        parent_id=None,
+        source_supported=source_supported,
+        parent_id_supported=parent_id_supported,
+    )
+    root_folder_id = str(root_folder.get("id") or "").strip()
+    if not root_folder_id:
+        raise RuntimeError("GitHub repository folder was created without an ID.")
+
+    folder_ids_by_path = {"": root_folder_id}
+    file_folder_ids: dict[str, str] = {}
+
+    for raw_file_path in sorted(dict.fromkeys(file_paths)):
+        file_path = normalize_github_file_path(raw_file_path)
+        if not file_path:
+            continue
+
+        directory_parts = list(PurePosixPath(file_path).parts[:-1])
+        if not parent_id_supported or not directory_parts:
+            file_folder_ids[file_path] = root_folder_id
+            continue
+
+        parent_id = root_folder_id
+        directory_key_parts: list[str] = []
+        for directory_name in directory_parts:
+            directory_key_parts.append(directory_name)
+            directory_key = "/".join(directory_key_parts)
+            cached_folder_id = folder_ids_by_path.get(directory_key)
+            if cached_folder_id:
+                parent_id = cached_folder_id
+                continue
+
+            folder = await _get_or_create_project_folder(
+                supabase_client,
+                user_id=user_id,
+                folder_name=directory_name,
+                parent_id=parent_id,
+                source_supported=source_supported,
+                parent_id_supported=parent_id_supported,
+            )
+            folder_id = str(folder.get("id") or "").strip()
+            if not folder_id:
+                raise RuntimeError(
+                    f"GitHub folder insert returned no ID for {directory_key}."
+                )
+
+            folder_ids_by_path[directory_key] = folder_id
+            parent_id = folder_id
+
+        file_folder_ids[file_path] = parent_id
+
+    return file_folder_ids
 
 
 async def _upload_workspace_asset(
@@ -1200,6 +1421,7 @@ async def _update_existing_workspace_asset(
     table_name: str,
     bucket_name: str,
     row: dict[str, Any],
+    folder_id: str | None,
     repository: str,
     file_path: str,
     ref: str,
@@ -1212,7 +1434,8 @@ async def _update_existing_workspace_asset(
     if not row_id or context_key is None:
         return 0
 
-    workspace_user_id, folder_id = context_key
+    workspace_user_id, current_folder_id = context_key
+    target_folder_id = folder_id or current_folder_id
     storage_path = str(row.get("storage_path") or "").strip()
     if not storage_path:
         storage_path = (
@@ -1222,7 +1445,7 @@ async def _update_existing_workspace_asset(
             )
             or _build_github_storage_path(
                 workspace_user_id=workspace_user_id,
-                folder_id=folder_id,
+                folder_id=target_folder_id,
                 repository=repository,
                 file_path=file_path,
             )
@@ -1251,6 +1474,7 @@ async def _update_existing_workspace_asset(
         public_url=public_url,
         content_size=len(content),
     )
+    update_payload["folder_id"] = target_folder_id
     response = await _run_supabase(
         lambda: supabase_client.table(table_name)
         .update(update_payload)
@@ -1266,6 +1490,7 @@ async def _create_workspace_asset(
     table_name: str,
     bucket_name: str,
     template_row: dict[str, Any],
+    folder_id: str | None,
     repository: str,
     file_path: str,
     ref: str,
@@ -1277,10 +1502,11 @@ async def _create_workspace_asset(
     if context_key is None:
         return 0
 
-    workspace_user_id, folder_id = context_key
+    workspace_user_id, current_folder_id = context_key
+    target_folder_id = folder_id or current_folder_id
     storage_path = _build_github_storage_path(
         workspace_user_id=workspace_user_id,
-        folder_id=folder_id,
+        folder_id=target_folder_id,
         repository=repository,
         file_path=file_path,
     )
@@ -1301,7 +1527,7 @@ async def _create_workspace_asset(
     file_name = PurePosixPath(file_path).name
     insert_payload = {
         "user_id": workspace_user_id,
-        "folder_id": folder_id,
+        "folder_id": target_folder_id,
         "name": file_name,
         "title": file_name,
         "is_public": bool(template_row.get("is_public", True)),
@@ -1433,6 +1659,20 @@ async def process_github_push_event(
             rows_by_path.setdefault(row_path, []).append(row)
 
     workspace_contexts = _build_workspace_contexts(repository_rows)
+    workspace_folder_maps: dict[str, dict[str, str]] = {}
+    if trackable_paths:
+        folder_map_results = await asyncio.gather(
+            *(
+                _build_github_folder_hierarchy(
+                    supabase_client,
+                    user_id=workspace_user_id,
+                    repository=repository,
+                    file_paths=trackable_paths,
+                )
+                for workspace_user_id in workspace_contexts
+            )
+        )
+        workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
     access_token = _get_github_access_token()
     owns_http_client = http_client is None
@@ -1462,11 +1702,18 @@ async def process_github_push_event(
             created_records = 0
             if existing_rows:
                 for row in existing_rows:
+                    row_user_id = _workspace_user_id(row)
+                    folder_id = (
+                        workspace_folder_maps.get(row_user_id, {}).get(file_path)
+                        if row_user_id
+                        else None
+                    )
                     updated_records += await _update_existing_workspace_asset(
                         supabase_client,
                         table_name=table_name,
                         bucket_name=bucket_name,
                         row=row,
+                        folder_id=folder_id,
                         repository=repository,
                         file_path=file_path,
                         ref=ref,
@@ -1475,12 +1722,16 @@ async def process_github_push_event(
                         content_type=content_type,
                     )
             else:
-                for template_row in workspace_contexts.values():
+                for workspace_user_id, template_row in workspace_contexts.items():
+                    folder_id = workspace_folder_maps.get(workspace_user_id, {}).get(file_path)
+                    if not folder_id:
+                        continue
                     created_records += await _create_workspace_asset(
                         supabase_client,
                         table_name=table_name,
                         bucket_name=bucket_name,
                         template_row=template_row,
+                        folder_id=folder_id,
                         repository=repository,
                         file_path=file_path,
                         ref=ref,
