@@ -2517,6 +2517,17 @@ function hasGitHubOAuthIdentity(authUser: User | null | undefined) {
   return authUser?.identities?.some((identity) => identity.provider === 'github') ?? false;
 }
 
+function resolveHasGithubLink(
+  profile: { github_username?: string | null } | null | undefined,
+  authUser: User | null | undefined
+) {
+  const hasProfileGithub = Boolean(
+    typeof profile?.github_username === 'string' && profile.github_username.trim()
+  );
+  const hasGitHubIdentity = hasGitHubOAuthIdentity(authUser);
+  return hasProfileGithub || hasGitHubIdentity;
+}
+
 type GitHubConnectionProfile = {
   id: string;
   github_username: string | null;
@@ -2732,16 +2743,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     let isActive = true;
 
     const syncGitHubConnectionState = async () => {
-      let hasGithub = Boolean(profile?.github_username);
+      let authUser = user ?? session?.user ?? null;
 
       if (supabase) {
         const {
-          data: { session },
+          data: { session: activeSession },
         } = await supabase.auth.getSession();
-        hasGithub =
-          Boolean(session?.user?.app_metadata?.providers?.includes('github')) ||
-          Boolean(profile?.github_username);
+        authUser = activeSession?.user ?? authUser;
       }
+
+      const hasGithub = resolveHasGithubLink(profile, authUser);
 
       if (!isActive) {
         return;
@@ -2770,7 +2781,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       isActive = false;
     };
-  }, [profile, supabase]);
+  }, [profile, session?.user, supabase, user]);
+
+  useEffect(() => {
+    console.log('[GitHub Link State]', {
+      hasGithub: isLinked,
+      hideCard,
+      profileGithubUsername: profile?.github_username ?? null,
+      hasGitHubIdentity: hasGitHubOAuthIdentity(user ?? session?.user),
+      profile,
+      session,
+    });
+  }, [hideCard, isLinked, profile, session, user]);
 
   useEffect(() => {
     if (sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) !== 'true') {
@@ -2780,16 +2802,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     let isActive = true;
 
     const redirectAfterGitHubLinkIntent = async () => {
-      let hasGithub = Boolean(profile?.github_username);
+      let authUser = user ?? session?.user ?? null;
 
       if (supabase) {
         const {
-          data: { session },
+          data: { session: activeSession },
         } = await supabase.auth.getSession();
-        hasGithub =
-          Boolean(session?.user?.app_metadata?.providers?.includes('github')) ||
-          Boolean(profile?.github_username);
+        authUser = activeSession?.user ?? authUser;
       }
+
+      const hasGithub = resolveHasGithubLink(profile, authUser);
 
       if (!isActive || !hasGithub) {
         return;
@@ -2803,7 +2825,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       isActive = false;
     };
-  }, [isLinked, profile, redirectToGitHubAppInstall, supabase]);
+  }, [isLinked, profile, redirectToGitHubAppInstall, session?.user, supabase, user]);
 
   const handleDismissGitHubSuccess = useCallback(() => {
     localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
@@ -6840,8 +6862,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isLinked ? (
-                          !hideCard && (
+                        {isLinked && !hideCard ? (
                             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                               <div className="relative w-full max-w-md p-8 bg-[#0b1120] border border-gray-800/80 rounded-2xl shadow-2xl transition-all duration-300">
 
@@ -6877,9 +6898,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                               </div>
                             </div>
-                          )
-                        ) : (
+                        ) : null}
+                        {!isLinked ? (
                           <button
+                            type="button"
                             onClick={handleLinkGithub}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-600 rounded-lg hover:bg-gray-800 transition-colors"
                           >
@@ -6888,7 +6910,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             </svg>
                             Link GitHub
                           </button>
-                        )}
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => void handleEditProfileToggle()}
