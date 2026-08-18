@@ -2513,8 +2513,39 @@ type ProfileDashboardProps = {
   variant?: 'profile' | 'organization';
 };
 
+function getGitHubOAuthIdentity(authUser: User | null | undefined) {
+  return authUser?.identities?.find((identity) => identity.provider === 'github') ?? null;
+}
+
 function hasGitHubOAuthIdentity(authUser: User | null | undefined) {
-  return authUser?.identities?.some((identity) => identity.provider === 'github') ?? false;
+  return Boolean(getGitHubOAuthIdentity(authUser));
+}
+
+function getMetadataText(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string
+) {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getGitHubUsernameFromAuth(authUser: User | null | undefined) {
+  const userMetadata = authUser?.user_metadata as Record<string, unknown> | null | undefined;
+  const identityData = getGitHubOAuthIdentity(authUser)?.identity_data as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const candidates = [
+    getMetadataText(userMetadata, 'preferred_username'),
+    getMetadataText(userMetadata, 'user_name'),
+    getMetadataText(userMetadata, 'login'),
+    getMetadataText(userMetadata, 'github_username'),
+    getMetadataText(identityData, 'preferred_username'),
+    getMetadataText(identityData, 'user_name'),
+    getMetadataText(identityData, 'login'),
+  ];
+
+  return candidates.find((candidate): candidate is string => Boolean(candidate)) ?? null;
 }
 
 function resolveHasGithubLink(
@@ -2673,8 +2704,54 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
-  const refreshGitHubProfile = useCallback(async () => {
+  const syncGitHubUsernameToProfile = useCallback(
+    async (authUser: User | null | undefined) => {
+      const userId = user?.id ?? authUser?.id ?? null;
+      const githubUsername = getGitHubUsernameFromAuth(authUser);
+
+      if (
+        !supabase ||
+        !authUser ||
+        !userId ||
+        authUser.id !== userId ||
+        !hasGitHubOAuthIdentity(authUser) ||
+        !githubUsername
+      ) {
+        return null;
+      }
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          github_username: githubUsername,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (error) {
+        console.warn('Unable to save linked GitHub username:', error.message);
+        return null;
+      }
+
+      setProfile((previousProfile) =>
+        previousProfile?.id === userId
+          ? {
+              ...previousProfile,
+              github_username: githubUsername,
+              is_github_linked: true,
+            }
+          : previousProfile
+      );
+      setIsLinked(true);
+      setIsGitHubProfileChecked(true);
+      return githubUsername;
+    },
+    [setProfile, supabase, user?.id]
+  );
+
+  const refreshGitHubProfile = useCallback(async (authUserOverride?: User | null) => {
     const requestId = ++githubProfileRequestIdRef.current;
+    const authUser = authUserOverride ?? user ?? null;
 
     if (!supabase || !user?.id) {
       setIsGitHubProfileChecked(true);
@@ -2698,10 +2775,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return null;
     }
 
-    const githubUsername =
+    let githubUsername =
       typeof data?.github_username === 'string' && data.github_username.trim()
         ? data.github_username.trim()
         : null;
+
+    if (!githubUsername) {
+      githubUsername = await syncGitHubUsernameToProfile(authUser);
+      if (requestId !== githubProfileRequestIdRef.current) {
+        return null;
+      }
+    }
+
     const freshProfile: GitHubConnectionProfile = {
       id: data?.id ?? user.id,
       github_username: githubUsername,
@@ -2718,7 +2803,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     );
     setIsGitHubProfileChecked(true);
     return freshProfile;
-  }, [setProfile, supabase, user?.id]);
+  }, [setProfile, supabase, syncGitHubUsernameToProfile, user]);
 
   const redirectToGitHubAppInstall = useCallback(() => {
     if (githubAppRedirectRef.current) {
