@@ -2552,10 +2552,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
   const [, setGithubUnlinkError] = useState<string | null>(null);
   const [isLinked, setIsLinked] = useState(false);
-  const [hideCard, setHideCard] = useState(true);
+  const [isGitHubSuccessModalOpen, setIsGitHubSuccessModalOpen] = useState(false);
   const githubAppRedirectRef = useRef(false);
   const currentUser = user;
   const isGithubConnected = Boolean(profile?.github_username);
+  const hasGithub =
+    isLinked || resolveHasGithubLink(profile, user ?? session?.user);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2765,7 +2767,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
         sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
         githubAppRedirectRef.current = false;
-        setHideCard(true);
+        setIsGitHubSuccessModalOpen(false);
         return;
       }
 
@@ -2773,7 +2775,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         localStorage.getItem(GITHUB_APP_PROMPTED_KEY) === 'true';
       const hasDismissedSuccessModal =
         localStorage.getItem(GITHUB_SUCCESS_DISMISSED_KEY) === 'true';
-      setHideCard(!hasBeenPromptedForAppInstall || hasDismissedSuccessModal);
+      setIsGitHubSuccessModalOpen(
+        hasBeenPromptedForAppInstall && !hasDismissedSuccessModal
+      );
     };
 
     void syncGitHubConnectionState();
@@ -2785,14 +2789,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   useEffect(() => {
     console.log('[GitHub Link State]', {
-      hasGithub: isLinked,
-      hideCard,
+      hasGithub,
+      hasGithubState: isLinked,
+      isGitHubSuccessModalOpen,
       profileGithubUsername: profile?.github_username ?? null,
       hasGitHubIdentity: hasGitHubOAuthIdentity(user ?? session?.user),
       profile,
       session,
     });
-  }, [hideCard, isLinked, profile, session, user]);
+  }, [hasGithub, isGitHubSuccessModalOpen, isLinked, profile, session, user]);
 
   useEffect(() => {
     if (sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) !== 'true') {
@@ -2829,7 +2834,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   const handleDismissGitHubSuccess = useCallback(() => {
     localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
-    setHideCard(true);
+    setIsGitHubSuccessModalOpen(false);
+    setIsGithubModalOpen(true);
   }, []);
 
   const handleLinkGithub = useCallback(async () => {
@@ -2893,7 +2899,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setIsGitHubProfileChecked(true);
       setIsLinked(false);
-      setHideCard(true);
+      setIsGitHubSuccessModalOpen(false);
       localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
       localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
       sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
@@ -3059,6 +3065,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setGithubRepositoriesError(null);
     setGithubProviderToken(null);
   }, [isGithubConnected, isGitHubProfileChecked]);
+
+  useEffect(() => {
+    if (!hasGithub || !isGithubModalOpen) {
+      return;
+    }
+
+    void loadGitHubRepositoriesRef.current?.();
+  }, [hasGithub, isGithubModalOpen]);
 
   useEffect(() => {
     if (!activePreviewProjectId) {
@@ -3663,7 +3677,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     autoOpenedGitHubImportUserRef.current = user.id;
     setIsIngestionModalOpen(false);
     setIsGithubModalOpen(true);
-    void loadGitHubRepositoriesRef.current?.();
   }, [
     hasImportedGitHubRepository,
     isGithubConnected,
@@ -3681,7 +3694,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
-    setHideCard(true);
+    setIsGitHubSuccessModalOpen(false);
 
     if (!supabase || !user || !isOwner || profileLoading) {
       return;
@@ -3690,7 +3703,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     autoOpenedGitHubImportUserRef.current = user.id;
     setIsIngestionModalOpen(false);
     setIsGithubModalOpen(true);
-    void loadGitHubRepositoriesRef.current?.();
 
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete('installation_success');
@@ -4768,7 +4780,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
       const freshGitHubProfile = await refreshGitHubProfile();
       if (!freshGitHubProfile?.github_username) {
-        setIsGithubModalOpen(false);
         throw new Error('No linked GitHub profile was found. Reconnect GitHub and try again.');
       }
 
@@ -4781,7 +4792,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const hasCurrentGitHubIdentity = hasGitHubOAuthIdentity(activeUser);
 
       if (!activeUser || activeUser.id !== user?.id || !hasCurrentGitHubIdentity) {
-        setIsGithubModalOpen(false);
         throw new Error('No linked GitHub identity was found. Reconnect GitHub and try again.');
       }
 
@@ -6862,7 +6872,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {isLinked && !hideCard ? (
+                        {hasGithub && isGitHubSuccessModalOpen ? (
                             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                               <div className="relative w-full max-w-md p-8 bg-[#0b1120] border border-gray-800/80 rounded-2xl shadow-2xl transition-all duration-300">
 
@@ -6899,7 +6909,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               </div>
                             </div>
                         ) : null}
-                        {!isLinked ? (
+                        {hasGithub ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsIngestionModalOpen(false);
+                              setIsGithubModalOpen(true);
+                            }}
+                            className="flex items-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-500/20 hover:text-white"
+                          >
+                            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
+                            </svg>
+                            Import Repository
+                          </button>
+                        ) : (
                           <button
                             type="button"
                             onClick={handleLinkGithub}
@@ -6910,7 +6934,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             </svg>
                             Link GitHub
                           </button>
-                        ) : null}
+                        )}
                         <button
                           type="button"
                           onClick={() => void handleEditProfileToggle()}
@@ -7511,7 +7535,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <p className="tagline">Where is your code located?</p>
 
                     <div className="ingestion-grid">
-                      {isGithubConnected && onboardingCompletionReady && !isNewUser ? (
+                      {hasGithub && onboardingCompletionReady && !isNewUser ? (
                         <button
                           className="ingestion-btn"
                           id="btn-github"
@@ -7519,7 +7543,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           onClick={() => {
                             setIsIngestionModalOpen(false);
                             setIsGithubModalOpen(true);
-                            void loadGitHubRepositories();
                           }}
                         >
                           <div className="icon-circle">
@@ -7579,7 +7602,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             />
           </main>
 
-          {isGithubConnected && isGithubModalOpen && (
+          {hasGithub && isGithubModalOpen && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-400/50 bg-[#0b1120] shadow-2xl shadow-black/60">
                 <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">
