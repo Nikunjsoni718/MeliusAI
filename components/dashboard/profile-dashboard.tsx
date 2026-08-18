@@ -3015,13 +3015,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [handleUnlinkGitHub]);
 
   useEffect(() => {
+    const handleFocus = () => {
+      void refreshGitHubProfile();
+    };
+
     void refreshGitHubProfile();
-    window.addEventListener('focus', refreshGitHubProfile);
+    window.addEventListener('focus', handleFocus);
 
     if (!supabase || !user?.id) {
       return () => {
         githubProfileRequestIdRef.current += 1;
-        window.removeEventListener('focus', refreshGitHubProfile);
+        window.removeEventListener('focus', handleFocus);
       };
     }
 
@@ -3041,7 +3045,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       githubProfileRequestIdRef.current += 1;
-      window.removeEventListener('focus', refreshGitHubProfile);
+      window.removeEventListener('focus', handleFocus);
       void supabase.removeChannel(githubProfileChannel);
     };
   }, [refreshGitHubProfile, supabase, user?.id]);

@@ -1,5 +1,6 @@
 'use client';
 
+import type { User } from '@supabase/supabase-js';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -11,6 +12,34 @@ import {
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 const GITHUB_LINK_INTENT_KEY = 'intent_to_link_github';
+
+function getMetadataText(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string
+) {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getGitHubUsernameFromUser(user: User | null | undefined) {
+  const userMetadata = user?.user_metadata as Record<string, unknown> | null | undefined;
+  const githubIdentity = user?.identities?.find((identity) => identity.provider === 'github');
+  const identityData = githubIdentity?.identity_data as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const candidates = [
+    getMetadataText(userMetadata, 'preferred_username'),
+    getMetadataText(userMetadata, 'user_name'),
+    getMetadataText(userMetadata, 'login'),
+    getMetadataText(userMetadata, 'github_username'),
+    getMetadataText(identityData, 'preferred_username'),
+    getMetadataText(identityData, 'user_name'),
+    getMetadataText(identityData, 'login'),
+  ];
+
+  return candidates.find((candidate): candidate is string => Boolean(candidate)) ?? null;
+}
 
 export default function GitHubAppSetupPage() {
   const hasStartedRef = useRef(false);
@@ -49,6 +78,23 @@ export default function GitHubAppSetupPage() {
 
         if (!linkedUser || !hasGitHubProvider) {
           throw new Error('GitHub OAuth completed without a linked GitHub provider.');
+        }
+
+        const githubUsername = getGitHubUsernameFromUser(linkedUser);
+        if (!githubUsername) {
+          throw new Error('GitHub OAuth completed without a GitHub username.');
+        }
+
+        const { error: profileUpdateError } = await supabase
+          .from('profiles')
+          .update({
+            github_username: githubUsername,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', linkedUser.id);
+
+        if (profileUpdateError) {
+          throw profileUpdateError;
         }
 
         if (!isActive) {
