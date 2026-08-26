@@ -6154,14 +6154,14 @@ async def run_project_audit(
         # Supabase uses evaluation_score while the agentic JSON contract uses evaluated_score.
         folder_audit_payload = {
             "evaluation_score": parsed_project_summary.get("evaluated_score"),
-            "score": parsed_project_summary.get("evaluated_score"),
-            "logic_score": parsed_project_summary.get("evaluated_score"),
-            "audit_summary": folder_summary,
+            "score_delta": parsed_project_summary.get("score_delta"),
+            "delta_summary": parsed_project_summary.get("delta_summary"),
             "executive_summary": folder_summary,
             "pros": parsed_project_summary.get("pros"),
             "cons": parsed_project_summary.get("cons"),
             "recommendations": parsed_project_summary.get("recommendations"),
             "has_been_audited": True,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
         try:

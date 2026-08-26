@@ -85,10 +85,13 @@ export type ProjectFolderRow = {
   user_id?: string | null;
   name: string;
   score?: number | null;
-  logic_score?: number | null;
   evaluation_score?: number | null;
-  score_reasoning?: string | null;
-  audit_summary?: string | null;
+  score_delta?: number | null;
+  delta_summary?: string | null;
+  executive_summary?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
   has_been_audited?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
