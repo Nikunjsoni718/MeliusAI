@@ -116,7 +116,7 @@ MAX_NOTEBOOK_UPLOAD_BYTES = 25 * 1024 * 1024
 AUDIT_FILE_CONTENT_CHAR_LIMIT = 18000
 AUDIT_BLUEPRINT_SOURCE_CHAR_LIMIT = 90000
 AUDIT_REDUCE_REPORT_CHAR_LIMIT = 28000
-AUDIT_MAX_CONCURRENCY = 3
+AUDIT_MAX_CONCURRENCY = 2
 AUDIT_MAX_CONCURRENT_REPOSITORIES = 2
 AUDIT_QUEUE_TIMEOUT_SECONDS = 5.0
 AUDIT_OVERLOAD_MESSAGE = (
@@ -127,6 +127,7 @@ AUDIT_THREAD_POOL = ThreadPoolExecutor(
     thread_name_prefix="melius-audit",
 )
 PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
+LLM_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENCY)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
 SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 30.0
 SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 45.0
@@ -3376,11 +3377,12 @@ async def orchestrate_audit(files_data: list, async_client):
             f"{notebook_blueprint_context}"
         )
 
-    system_blueprint_resp = await async_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": architect_prompt}],
-        temperature=0,
-    )
+    async with LLM_AUDIT_SEMAPHORE:
+        system_blueprint_resp = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": architect_prompt}],
+            temperature=0,
+        )
     system_blueprint = (
         system_blueprint_resp.choices[0].message.content or "No system blueprint was generated."
     ).strip()
@@ -3388,26 +3390,35 @@ async def orchestrate_audit(files_data: list, async_client):
     file_audits: Dict[str, Dict[str, Any]] = {}
 
     async def bound_audit(file: Dict[str, Any]):
-        if file.get("is_binary"):
-            return None
+        try:
+            if file.get("is_binary"):
+                return None
 
-        if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
-            return file["filename"], {
-                "evaluated_score": 100,
-                "description": "System Documentation.",
-                "pros": ["Documentation Anchor: README defines the system purpose."],
-                "cons": [],
-                "recommendations": [],
-            }
+            if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
+                return file["filename"], {
+                    "evaluated_score": 100,
+                    "description": "System Documentation.",
+                    "pros": ["Documentation Anchor: README defines the system purpose."],
+                    "cons": [],
+                    "recommendations": [],
+                }
 
-        audit_result = await perform_ai_file_audit(
-            filename=file["filename"],
-            content=file["content"],
-            detected_language=file["language"],
-            async_client=async_client,
-            system_blueprint=system_blueprint,
-        )
-        return file["filename"], audit_result
+            async with LLM_AUDIT_SEMAPHORE:
+                audit_result = await perform_ai_file_audit(
+                    filename=file["filename"],
+                    content=file["content"],
+                    detected_language=file["language"],
+                    async_client=async_client,
+                    system_blueprint=system_blueprint,
+                )
+            return file["filename"], audit_result
+        except Exception as audit_error:
+            logger.warning(
+                "project_audit.file_audit_failed file=%s error=%s",
+                file.get("filename", "Unknown file"),
+                audit_error,
+            )
+            return file["filename"], None, str(audit_error)
 
     auditable_files = [file for file in normalized_files if not file.get("is_binary")]
     results = await gather_in_bounded_batches(
@@ -3416,18 +3427,25 @@ async def orchestrate_audit(files_data: list, async_client):
         limit=AUDIT_MAX_CONCURRENCY,
         return_exceptions=True,
     )
-    phase_two_failures = []
+    phase_two_failures: list[str] = []
     for result in results:
         if isinstance(result, Exception):
             phase_two_failures.append(str(result))
             continue
         if result is None:
             continue
+        if len(result) == 3:
+            filename, _, failure_message = result
+            phase_two_failures.append(f"{filename}: {failure_message}")
+            continue
         filename, audit_result = result
         file_audits[filename] = audit_result
 
     if phase_two_failures:
-        raise RuntimeError(f"Phase 2 Inspector failed: {phase_two_failures}")
+        logger.warning("project_audit.partial_file_failures failures=%s", phase_two_failures)
+
+    if not file_audits:
+        raise RuntimeError("Every eligible file failed during the audit.")
 
     scored_audits = [
         audit.get("evaluated_score", 0)
@@ -3447,23 +3465,24 @@ async def orchestrate_audit(files_data: list, async_client):
         judge_prompt += " CRITICAL: Deduct system quality points in your analysis for the lack of a README.md."
 
     try:
-        judge_resp = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the Lead Tech Director. Return strict JSON with exactly these useful fields: "
-                        '{"evaluated_score": int, "description": "string", "pros": ["string"], '
-                        '"cons": ["string"], "recommendations": ["string"]}. '
-                        "NEVER guess a framework. Rely strictly on the README-anchored blueprint and file audits."
-                    ),
-                },
-                {"role": "user", "content": judge_prompt},
-            ],
-            temperature=0,
-        )
+        async with LLM_AUDIT_SEMAPHORE:
+            judge_resp = await async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are the Lead Tech Director. Return strict JSON with exactly these useful fields: "
+                            '{"evaluated_score": int, "description": "string", "pros": ["string"], '
+                            '"cons": ["string"], "recommendations": ["string"]}. '
+                            "NEVER guess a framework. Rely strictly on the README-anchored blueprint and file audits."
+                        ),
+                    },
+                    {"role": "user", "content": judge_prompt},
+                ],
+                temperature=0,
+            )
         folder_audit = normalize_folder_audit_report(
             clean_and_parse_json(judge_resp.choices[0].message.content),
             exact_average,
@@ -3480,6 +3499,7 @@ async def orchestrate_audit(files_data: list, async_client):
         "blueprint": system_blueprint,
         "folder_audit": folder_audit,
         "file_audits": file_audits,
+        "partial_failures": phase_two_failures,
     }
 
 
@@ -3664,22 +3684,23 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             )
         )
 
-    blueprint_resp = await async_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
-                    "Write a strict, 3-sentence blueprint explaining what this entire application is, "
-                    "what its tech stack is, and how the frontend and backend connect. "
-                    "If no README exists, use filenames, extensions, and extracted notebook cells only."
-                ),
-            },
-            {"role": "user", "content": blueprint_user_content},
-        ],
-        temperature=0,
-    )
+    async with LLM_AUDIT_SEMAPHORE:
+        blueprint_resp = await async_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
+                        "Write a strict, 3-sentence blueprint explaining what this entire application is, "
+                        "what its tech stack is, and how the frontend and backend connect. "
+                        "If no README exists, use filenames, extensions, and extracted notebook cells only."
+                    ),
+                },
+                {"role": "user", "content": blueprint_user_content},
+            ],
+            temperature=0,
+        )
     system_blueprint = (
         blueprint_resp.choices[0].message.content or "No system blueprint was generated."
     ).strip()
@@ -3687,26 +3708,36 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     # --- PHASE 2: AUDIT EVERY NON-BINARY FILE IN ISOLATION ---
     file_audits = {}
 
-    async def bound_audit(file_record: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    async def bound_audit(file_record: Dict[str, Any]):
         filename = file_record["filename"]
-        if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
-            return filename, {
-                "evaluated_score": 100,
-                "description": "System Documentation.",
-                "pros": [],
-                "cons": [],
-                "recommendations": [],
-            }
+        try:
+            if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
+                return filename, {
+                    "evaluated_score": 100,
+                    "description": "System Documentation.",
+                    "pros": [],
+                    "cons": [],
+                    "recommendations": [],
+                }
 
-        # Pass this file's complete raw content to the isolated audit function.
-        audit_result = await perform_ai_file_audit(
-            filename=filename,
-            content=file_record["content"],
-            detected_language=file_record["language"],
-            async_client=async_client,
-            system_blueprint=system_blueprint,
-        )
-        return filename, audit_result
+            # Pass this file's complete raw content to the isolated audit function.
+            async with LLM_AUDIT_SEMAPHORE:
+                audit_result = await perform_ai_file_audit(
+                    filename=filename,
+                    content=file_record["content"],
+                    detected_language=file_record["language"],
+                    async_client=async_client,
+                    system_blueprint=system_blueprint,
+                )
+            return filename, audit_result
+        except Exception as audit_error:
+            logger.warning(
+                "folder_workflow.file_audit_failed project_id=%s file=%s error=%s",
+                project_id,
+                filename,
+                audit_error,
+            )
+            return filename, None, str(audit_error)
 
     auditable_downloads = [file for file in downloaded_files if not file.get("is_binary")]
     audit_results = await gather_in_bounded_batches(
@@ -3715,22 +3746,25 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         limit=AUDIT_MAX_CONCURRENCY,
         return_exceptions=True,
     )
-    phase_two_failures = []
+    phase_two_failures: list[str] = []
     for audit_result in audit_results:
         if isinstance(audit_result, Exception):
             phase_two_failures.append(str(audit_result))
+            continue
+        if len(audit_result) == 3:
+            filename, _, failure_message = audit_result
+            phase_two_failures.append(f"{filename}: {failure_message}")
             continue
         filename, parsed_audit = audit_result
         file_audits[filename] = parsed_audit
 
     if phase_two_failures:
-        logger.error("folder_workflow.phase2_failed project_id=%s failures=%s", project_id, phase_two_failures)
+        logger.warning("folder_workflow.partial_file_failures project_id=%s failures=%s", project_id, phase_two_failures)
+
+    if not file_audits:
         raise HTTPException(
-            status_code=502,
-            detail={
-                "message": "One or more contextual file audits failed.",
-                "failures": phase_two_failures,
-            },
+            status_code=503,
+            detail="Every eligible file failed during the audit. Please retry shortly.",
         )
 
     # --- PHASE 3: THE SYSTEM JUDGE ---
@@ -3752,21 +3786,22 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         )
 
     try:
-        summary_resp = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"You are a Tech Lead. Here is the blueprint of the app: {system_blueprint}. "
-                        f"Here are the weaknesses found across all files: "
-                        f"{truncate_audit_text(json.dumps(list_of_all_cons, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}. "
-                        "Write a 3-sentence executive summary of the overall system health."
-                    ),
-                }
-            ],
-            temperature=0,
-        )
+        async with LLM_AUDIT_SEMAPHORE:
+            summary_resp = await async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"You are a Tech Lead. Here is the blueprint of the app: {system_blueprint}. "
+                            f"Here are the weaknesses found across all files: "
+                            f"{truncate_audit_text(json.dumps(list_of_all_cons, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}. "
+                            "Write a 3-sentence executive summary of the overall system health."
+                        ),
+                    }
+                ],
+                temperature=0,
+            )
         folder_summary = (
             summary_resp.choices[0].message.content or "Folder audit complete."
         ).strip()
@@ -3787,6 +3822,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         "blueprint": system_blueprint,
         "folder_audit": folder_audit,
         "file_audits": file_audits,
+        "partial_failures": phase_two_failures,
     }
 
     folder_summary = (
@@ -3848,24 +3884,45 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             .execute()
         )
 
-    async def persist_audit_record(file_record):
-        if file_record is None:
-            return await update_parent_project()
-        return await update_individual_file(file_record)
+    persistence_warnings: list[str] = []
+    try:
+        # The workspace row is the authoritative aggregate result. Save it first so
+        # transient per-file status failures cannot discard the completed audit.
+        await update_parent_project()
+    except Exception as parent_persist_error:
+        logger.warning(
+            "folder_workflow.parent_persist_deferred project_id=%s error=%s",
+            project_id,
+            parent_persist_error,
+        )
+        persistence_warnings.append(f"workspace score deferred: {parent_persist_error}")
 
-    database_update_items = [None, *downloaded_files]
-    await gather_in_bounded_batches(
-        database_update_items,
-        persist_audit_record,
+    file_update_results = await gather_in_bounded_batches(
+        downloaded_files,
+        update_individual_file,
         limit=AUDIT_MAX_CONCURRENCY,
+        return_exceptions=True,
     )
+    for file_update_result in file_update_results:
+        if isinstance(file_update_result, Exception):
+            persistence_warnings.append(str(file_update_result))
 
-    response_payload = {"status": "success", **orchestration_result}
+    if persistence_warnings:
+        logger.warning(
+            "folder_workflow.persistence_partial project_id=%s warnings=%s",
+            project_id,
+            persistence_warnings,
+        )
+
+    response_payload = {
+        "status": "success",
+        **orchestration_result,
+        "persistence_warnings": persistence_warnings,
+    }
     downloaded_files.clear()
     normalized_files.clear()
     responses.clear()
     audit_results.clear()
-    database_update_items.clear()
     del auditable_downloads
     gc.collect()
     return response_payload
@@ -3901,11 +3958,14 @@ async def run_folder_workflow_with_resource_limits(
         )
     except HTTPException:
         raise
-    except OSError:
+    except OSError as resource_error:
         logger.exception("folder_workflow.resource_exhausted project_id=%s", project_id)
         return JSONResponse(
-            status_code=500,
-            content={"error": AUDIT_OVERLOAD_MESSAGE},
+            status_code=503,
+            content={
+                "error": AUDIT_OVERLOAD_MESSAGE,
+                "detail": str(resource_error),
+            },
         )
     except Exception as error:
         logger.exception("folder_workflow.failed project_id=%s error=%s", project_id, error)
@@ -5839,11 +5899,24 @@ async def mark_project_file_audited(
         )
         fallback_payload = dict(update_payload)
         fallback_payload.pop("status", None)
-        update_response = await run_in_audit_thread(lambda: update_project_file(fallback_payload))
+        try:
+            update_response = await run_in_audit_thread(
+                lambda: update_project_file(fallback_payload)
+            )
+        except Exception as fallback_error:
+            logger.warning(
+                "project_audit.file_persist_deferred file=%s error=%s",
+                get_audit_file_name(file_record),
+                fallback_error,
+            )
+            return False
 
     updated_rows = getattr(update_response, "data", None)
     if isinstance(updated_rows, list) and not updated_rows:
-        raise RuntimeError(f"No Supabase project row was updated for audited file {file_id}.")
+        logger.warning("project_audit.file_persist_deferred file_id=%s", file_id)
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------
@@ -6058,30 +6131,18 @@ async def run_project_audit(
             limit=AUDIT_MAX_CONCURRENCY,
             return_exceptions=True,
         )
-        resource_error = next(
-            (
-                file_update_result
-                for file_update_result in file_update_results
-                if isinstance(file_update_result, OSError)
-            ),
-            None,
-        )
-        if resource_error is not None:
-            raise resource_error
-
         file_update_failures = [
             str(file_update_result)
             for file_update_result in file_update_results
             if isinstance(file_update_result, Exception)
         ]
-        if file_update_failures:
-            logger.error("project_audit.file_update_failed folder_id=%s failures=%s", folder_id, file_update_failures)
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "message": "One or more file-level audit results failed to save.",
-                    "failures": file_update_failures,
-                },
+        deferred_file_updates = sum(result is False for result in file_update_results)
+        if file_update_failures or deferred_file_updates:
+            logger.warning(
+                "project_audit.file_updates_partial folder_id=%s failures=%s deferred=%s",
+                folder_id,
+                file_update_failures,
+                deferred_file_updates,
             )
 
         folder_summary = (
@@ -6093,29 +6154,48 @@ async def run_project_audit(
         # Supabase uses evaluation_score while the agentic JSON contract uses evaluated_score.
         folder_audit_payload = {
             "evaluation_score": parsed_project_summary.get("evaluated_score"),
+            "score": parsed_project_summary.get("evaluated_score"),
+            "logic_score": parsed_project_summary.get("evaluated_score"),
+            "audit_summary": folder_summary,
             "executive_summary": folder_summary,
             "pros": parsed_project_summary.get("pros"),
             "cons": parsed_project_summary.get("cons"),
             "recommendations": parsed_project_summary.get("recommendations"),
+            "has_been_audited": True,
         }
 
-        await run_in_audit_thread(
-            lambda: supabase_client.table("project_folders")
-            .update(folder_audit_payload)
-            .eq("id", folder_id)
-            .eq("user_id", requested_user_id)
-            .execute()
-        )
+        try:
+            await run_in_audit_thread(
+                lambda: supabase_client.table("project_folders")
+                .update(folder_audit_payload)
+                .eq("id", folder_id)
+                .eq("user_id", requested_user_id)
+                .execute()
+            )
+        except Exception as folder_persist_error:
+            logger.warning(
+                "project_audit.folder_persist_deferred folder_id=%s error=%s",
+                folder_id,
+                folder_persist_error,
+            )
+
+        orchestration_result["persistence_warnings"] = {
+            "file_update_failures": file_update_failures,
+            "deferred_file_updates": deferred_file_updates,
+        }
 
         return orchestration_result
 
     except HTTPException:
         raise
-    except OSError:
+    except OSError as resource_error:
         logger.exception("project_audit.resource_exhausted folder_id=%s", folder_id)
         return JSONResponse(
-            status_code=500,
-            content={"error": AUDIT_OVERLOAD_MESSAGE},
+            status_code=503,
+            content={
+                "error": AUDIT_OVERLOAD_MESSAGE,
+                "detail": str(resource_error),
+            },
         )
     except Exception as error:
         logger.exception("project_audit.failed folder_id=%s error=%s", folder_id, error)
