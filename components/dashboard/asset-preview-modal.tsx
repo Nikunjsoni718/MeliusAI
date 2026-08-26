@@ -18,7 +18,6 @@ import {
   downloadFullAuditReport,
 } from '@/lib/download-audit-report';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
-import type { AuditSnapshotRow } from '@/types/supabase';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -75,7 +74,7 @@ const auditTextFileExtensions = new Set([
   'yml',
 ]);
 const previewProjectSelect =
-  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, ai_summary, audit_summary, pros, cons, recommendations, updated_at, github_synced_at';
+  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, score_delta, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, updated_at, github_synced_at';
 
 export type PreviewProject = {
   id?: string;
@@ -97,6 +96,8 @@ export type PreviewProject = {
   ai_summary?: string | null;
   audit_summary?: string | null;
   score?: number | null;
+  score_delta?: number | null;
+  delta_summary?: string | null;
   evaluation_score?: number | null;
   logic_score?: number | null;
   previous_score?: number | null;
@@ -110,7 +111,6 @@ export type PreviewProject = {
   auditReport?: unknown;
   updated_at?: string | null;
   github_synced_at?: string | null;
-  latest_audit_snapshot?: AuditSnapshotRow | null;
 };
 
 export type AuditPreviewAsset = PreviewProject & {
@@ -153,9 +153,8 @@ type VerifyAssetResponse = {
   executive_summary?: string;
   summary?: string;
   score?: number;
-  score_delta?: number;
-  delta_summary?: string;
-  latest_audit_snapshot?: AuditSnapshotRow;
+  score_delta?: number | null;
+  delta_summary?: string | null;
   previous_score?: number;
   last_improved_summary?: string;
   improvement_summary?: string;
@@ -314,9 +313,6 @@ export function AssetPreviewModal({
 }: AssetPreviewModalProps) {
   const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
-  const [latestSnapshot, setLatestSnapshot] = useState<AuditSnapshotRow | null>(
-    asset?.latest_audit_snapshot ?? null
-  );
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -362,7 +358,8 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  const scoreDelta = latestSnapshot?.score_delta ?? null;
+  const scoreDelta = liveProject?.score_delta ?? null;
+  const deltaSummary = liveProject?.delta_summary?.trim() || null;
   const pros = normalizedAudit.strengths;
   const cons = normalizedAudit.weaknesses;
   const recommendations = normalizedAudit.recommendations;
@@ -384,7 +381,6 @@ export function AssetPreviewModal({
 
   useEffect(() => {
     setLiveProject(asset ?? null);
-    setLatestSnapshot(asset?.latest_audit_snapshot ?? null);
   }, [asset]);
 
   useEffect(() => {
@@ -404,16 +400,11 @@ export function AssetPreviewModal({
     const projectId = asset.id;
 
     const refreshProject = async () => {
-      const [projectResult, snapshotResult] = await Promise.all([
-        supabase.from('projects').select(previewProjectSelect).eq('id', projectId).maybeSingle(),
-        supabase
-          .from('audit_snapshots')
-          .select('id, workspace_id, commit_sha, score, score_delta, delta_summary, created_at')
-          .eq('workspace_id', projectId)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
+      const projectResult = await supabase
+        .from('projects')
+        .select(previewProjectSelect)
+        .eq('id', projectId)
+        .maybeSingle();
 
       if (!isActive) {
         return;
@@ -429,11 +420,6 @@ export function AssetPreviewModal({
         setLiveProject((currentProject) => ({ ...currentProject, ...freshProject }));
         setPreviewCacheNonce(Date.now());
         onProjectUpdatedRef.current?.(freshProject.id ?? projectId, freshProject);
-      }
-      if (snapshotResult.error) {
-        console.warn('Unable to refresh the latest audit snapshot:', snapshotResult.error);
-      } else {
-        setLatestSnapshot((snapshotResult.data as AuditSnapshotRow | null) ?? null);
       }
     };
 
@@ -616,14 +602,21 @@ export function AssetPreviewModal({
           liveProject.last_improved_summary,
         previous_score:
           data.previous_score ?? data.project?.previous_score ?? liveProject.previous_score,
+        score_delta:
+          data.score_delta !== undefined
+            ? data.score_delta
+            : data.project?.score_delta !== undefined
+              ? data.project.score_delta
+              : liveProject.score_delta,
+        delta_summary:
+          data.delta_summary !== undefined
+            ? data.delta_summary
+            : data.project?.delta_summary !== undefined
+              ? data.project.delta_summary
+              : liveProject.delta_summary,
         description:
           (data.description ?? data.project?.description ?? executiveSummary) || liveProject.description,
       };
-
-      const responseSnapshot = data.latest_audit_snapshot ?? data.project?.latest_audit_snapshot;
-      if (responseSnapshot) {
-        setLatestSnapshot(responseSnapshot);
-      }
 
       setLiveProject((currentProject) => ({
         ...(currentProject ?? liveProject),
@@ -679,21 +672,6 @@ export function AssetPreviewModal({
               : 'aspect-video md:h-[45vh] rounded-t-xl border-b border-slate-800'
           } bg-black relative overflow-hidden transition-all duration-300`}
         >
-          {latestSnapshot ? (
-            <section className="rounded-xl border border-cyan-400/25 bg-gradient-to-r from-cyan-500/10 via-blue-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(34,211,238,0.08)]">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
-                  What Changed
-                </h3>
-                <code className="max-w-full break-all rounded-md border border-slate-700 bg-slate-950/80 px-2 py-1 text-[10px] text-slate-300">
-                  {latestSnapshot.commit_sha}
-                </code>
-              </div>
-              <p className="mt-3 text-sm leading-relaxed text-slate-200">
-                {latestSnapshot.delta_summary}
-              </p>
-            </section>
-          ) : null}
           {shouldRenderTextPreview ? (
             <div className="h-full w-full overflow-auto bg-[#050b17] text-left">
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-[#050b17]/95 px-4 py-2 text-xs text-slate-400 backdrop-blur">
@@ -766,6 +744,15 @@ export function AssetPreviewModal({
               {getMotivationalMessage(score)}
             </p>
           </div>
+
+          {scoreDelta !== null && deltaSummary ? (
+            <section className="rounded-xl border border-cyan-400/25 bg-gradient-to-r from-cyan-500/10 via-blue-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(34,211,238,0.08)]">
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
+                Recent Changes
+              </h3>
+              <p className="mt-3 text-sm leading-relaxed text-slate-200">{deltaSummary}</p>
+            </section>
+          ) : null}
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
@@ -860,7 +847,7 @@ export function AssetPreviewModal({
                         ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
                         : 'border-slate-700 bg-slate-800/70 text-slate-300'
                   }`}
-                  title="Change from the previous audit snapshot"
+                  title="Change from the previous audit"
                 >
                   {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
                 </div>

@@ -49,6 +49,8 @@ export type ProjectRow = {
   description?: string | null;
   user_description?: string | null;
   score?: number | null;
+  score_delta?: number | null;
+  delta_summary?: string | null;
   score_reasoning?: string | null;
   audit_summary?: string | null;
   pros?: string[] | null;
