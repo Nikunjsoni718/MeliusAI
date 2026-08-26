@@ -92,6 +92,16 @@ export type ProjectFolderRow = {
   updated_at?: string | null;
 };
 
+export type AuditSnapshotRow = {
+  id: string;
+  workspace_id: string;
+  commit_sha: string;
+  score: number;
+  score_delta: number;
+  delta_summary: string;
+  created_at: string;
+};
+
 export type PendingImportRow = {
   id: string;
   user_id: string;
@@ -148,6 +158,13 @@ export interface Database {
         Row: ProjectFolderRow;
         Insert: Partial<Omit<ProjectFolderRow, 'id'>> & Pick<ProjectFolderRow, 'name'>;
         Update: Partial<Omit<ProjectFolderRow, 'id' | 'created_at' | 'updated_at'>>;
+        Relationships: [];
+      };
+      audit_snapshots: {
+        Row: AuditSnapshotRow;
+        Insert: Partial<Omit<AuditSnapshotRow, 'id' | 'created_at'>> &
+          Pick<AuditSnapshotRow, 'workspace_id' | 'commit_sha' | 'score' | 'score_delta' | 'delta_summary'>;
+        Update: Partial<Omit<AuditSnapshotRow, 'id' | 'workspace_id' | 'created_at'>>;
         Relationships: [];
       };
       pending_imports: {

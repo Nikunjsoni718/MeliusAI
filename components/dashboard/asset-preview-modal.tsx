@@ -18,6 +18,7 @@ import {
   downloadFullAuditReport,
 } from '@/lib/download-audit-report';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+import type { AuditSnapshotRow } from '@/types/supabase';
 
 const officeViewerExtensions = new Set(['ppt', 'pptx', 'xls', 'xlsx', 'doc', 'docx']);
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
@@ -109,6 +110,7 @@ export type PreviewProject = {
   auditReport?: unknown;
   updated_at?: string | null;
   github_synced_at?: string | null;
+  latest_audit_snapshot?: AuditSnapshotRow | null;
 };
 
 export type AuditPreviewAsset = PreviewProject & {
@@ -151,6 +153,9 @@ type VerifyAssetResponse = {
   executive_summary?: string;
   summary?: string;
   score?: number;
+  score_delta?: number;
+  delta_summary?: string;
+  latest_audit_snapshot?: AuditSnapshotRow;
   previous_score?: number;
   last_improved_summary?: string;
   improvement_summary?: string;
@@ -309,6 +314,9 @@ export function AssetPreviewModal({
 }: AssetPreviewModalProps) {
   const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
+  const [latestSnapshot, setLatestSnapshot] = useState<AuditSnapshotRow | null>(
+    asset?.latest_audit_snapshot ?? null
+  );
   const [isVerifying, setIsVerifying] = useState(false);
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -354,12 +362,7 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  const lastImprovedSummary = liveProject?.last_improved_summary?.trim() || '';
-  const previousScore =
-    typeof liveProject?.previous_score === 'number' && Number.isFinite(liveProject.previous_score)
-      ? Math.round(liveProject.previous_score)
-      : null;
-  const scoreDelta = previousScore === null ? null : score - previousScore;
+  const scoreDelta = latestSnapshot?.score_delta ?? null;
   const pros = normalizedAudit.strengths;
   const cons = normalizedAudit.weaknesses;
   const recommendations = normalizedAudit.recommendations;
@@ -381,6 +384,7 @@ export function AssetPreviewModal({
 
   useEffect(() => {
     setLiveProject(asset ?? null);
+    setLatestSnapshot(asset?.latest_audit_snapshot ?? null);
   }, [asset]);
 
   useEffect(() => {
@@ -400,26 +404,36 @@ export function AssetPreviewModal({
     const projectId = asset.id;
 
     const refreshProject = async () => {
-      const { data, error } = await supabase
-        .from('projects')
-        .select(previewProjectSelect)
-        .eq('id', projectId)
-        .maybeSingle();
+      const [projectResult, snapshotResult] = await Promise.all([
+        supabase.from('projects').select(previewProjectSelect).eq('id', projectId).maybeSingle(),
+        supabase
+          .from('audit_snapshots')
+          .select('id, workspace_id, commit_sha, score, score_delta, delta_summary, created_at')
+          .eq('workspace_id', projectId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
       if (!isActive) {
         return;
       }
 
-      if (error) {
-        console.warn('Unable to refresh the asset preview from projects:', error);
+      if (projectResult.error) {
+        console.warn('Unable to refresh the asset preview from projects:', projectResult.error);
         return;
       }
 
-      if (data) {
-        const freshProject = data as PreviewProject;
+      if (projectResult.data) {
+        const freshProject = projectResult.data as PreviewProject;
         setLiveProject((currentProject) => ({ ...currentProject, ...freshProject }));
         setPreviewCacheNonce(Date.now());
         onProjectUpdatedRef.current?.(freshProject.id ?? projectId, freshProject);
+      }
+      if (snapshotResult.error) {
+        console.warn('Unable to refresh the latest audit snapshot:', snapshotResult.error);
+      } else {
+        setLatestSnapshot((snapshotResult.data as AuditSnapshotRow | null) ?? null);
       }
     };
 
@@ -606,6 +620,11 @@ export function AssetPreviewModal({
           (data.description ?? data.project?.description ?? executiveSummary) || liveProject.description,
       };
 
+      const responseSnapshot = data.latest_audit_snapshot ?? data.project?.latest_audit_snapshot;
+      if (responseSnapshot) {
+        setLatestSnapshot(responseSnapshot);
+      }
+
       setLiveProject((currentProject) => ({
         ...(currentProject ?? liveProject),
         ...projectPatch,
@@ -660,6 +679,21 @@ export function AssetPreviewModal({
               : 'aspect-video md:h-[45vh] rounded-t-xl border-b border-slate-800'
           } bg-black relative overflow-hidden transition-all duration-300`}
         >
+          {latestSnapshot ? (
+            <section className="rounded-xl border border-cyan-400/25 bg-gradient-to-r from-cyan-500/10 via-blue-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(34,211,238,0.08)]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
+                  What Changed
+                </h3>
+                <code className="max-w-full break-all rounded-md border border-slate-700 bg-slate-950/80 px-2 py-1 text-[10px] text-slate-300">
+                  {latestSnapshot.commit_sha}
+                </code>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-slate-200">
+                {latestSnapshot.delta_summary}
+              </p>
+            </section>
+          ) : null}
           {shouldRenderTextPreview ? (
             <div className="h-full w-full overflow-auto bg-[#050b17] text-left">
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-[#050b17]/95 px-4 py-2 text-xs text-slate-400 backdrop-blur">
@@ -732,20 +766,6 @@ export function AssetPreviewModal({
               {getMotivationalMessage(score)}
             </p>
           </div>
-
-          {lastImprovedSummary ? (
-            <section className="rounded-xl border border-emerald-400/25 bg-gradient-to-r from-emerald-500/10 via-cyan-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(16,185,129,0.08)]">
-              <div className="flex items-center gap-2">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-xs text-emerald-300">
-                  ↗
-                </span>
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300">
-                  Version Improvement
-                </h3>
-              </div>
-              <p className="mt-3 text-sm leading-relaxed text-slate-200">{lastImprovedSummary}</p>
-            </section>
-          ) : null}
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
@@ -840,10 +860,9 @@ export function AssetPreviewModal({
                         ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
                         : 'border-slate-700 bg-slate-800/70 text-slate-300'
                   }`}
-                  title={`Previous score: ${previousScore}/100`}
+                  title="Change from the previous audit snapshot"
                 >
-                  {scoreDelta > 0 ? '▲ +' : scoreDelta < 0 ? '▼ ' : '• '}
-                  {scoreDelta} Points
+                  {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
                 </div>
               ) : null}
             </div>
