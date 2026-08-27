@@ -122,6 +122,16 @@ AUDIT_QUEUE_TIMEOUT_SECONDS = 5.0
 AUDIT_OVERLOAD_MESSAGE = (
     "Server is currently under heavy load. Please try analyzing this repository again in a few seconds."
 )
+AUDIT_GRADING_RUBRIC = """GRADING RUBRIC:
+- 90% of the score comes from actual code quality, security controls (including RBAC and
+  parameterized queries where relevant), error handling, thread safety, algorithmic correctness,
+  and how files link together as a cohesive, modular system.
+- Reward clear boundaries, maintainable composition, safe data flow, testability, and
+  well-designed interfaces.
+- Documentation is worth at most 10%. Do not heavily penalize or cap a score for a missing
+  README.md; a well-engineered repository can score 95+ without documentation.
+- Calculate score_delta from meaningful changes in code quality. Reward real improvements to
+  logic, security, error handling, and concurrency even when the file structure is unchanged."""
 AUDIT_THREAD_POOL = ThreadPoolExecutor(
     max_workers=AUDIT_MAX_CONCURRENCY,
     thread_name_prefix="melius-audit",
@@ -3149,6 +3159,8 @@ async def perform_ai_file_audit(filename: str, content: str, detected_language: 
 
 {system_message}
 
+{AUDIT_GRADING_RUBRIC}
+
 FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
 Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
 MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
@@ -3364,16 +3376,15 @@ async def orchestrate_audit(
 
     if readme_content:
         architect_prompt = (
-            "You are a Systems Architect. The developer has provided a README.md. "
-            "Use this README as the absolute source of truth for the system's purpose. "
-            "Do not override the README's declared intent with guesses from filenames. "
-            "Use the directory tree only to understand structure around that declared purpose.\n\n"
+            "You are a Systems Architect. A README.md is available as context for the system's purpose. "
+            "Use it with the directory tree to understand the architecture; it is documentation context, "
+            "not a quality signal or score cap.\n\n"
             f"README:\n{truncate_audit_text(readme_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}\n\n"
             f"Directory Tree:\n{directory_tree}"
         )
     else:
         architect_prompt = (
-            "You are a Systems Architect. The developer FAILED to provide a README.md. "
+            "You are a Systems Architect. No README.md is available. "
             "Deduce the overarching purpose from the directory tree and any extracted notebook cells. "
             "Do not invent frameworks or product goals that are not implied by filenames and extensions.\n\n"
             f"Directory Tree:\n{directory_tree}"
@@ -3455,10 +3466,15 @@ async def orchestrate_audit(
     if not file_audits:
         raise RuntimeError("Every eligible file failed during the audit.")
 
+    # Documentation is a small signal, not a substitute for implementation quality.
     scored_audits = [
         audit.get("evaluated_score", 0)
-        for audit in file_audits.values()
-        if isinstance(audit, dict) and isinstance(audit.get("evaluated_score"), (int, float))
+        for filename, audit in file_audits.items()
+        if (
+            Path(filename.replace("\\", "/")).name.lower() != "readme.md"
+            and isinstance(audit, dict)
+            and isinstance(audit.get("evaluated_score"), (int, float))
+        )
     ]
     exact_average = int(round(sum(scored_audits) / len(scored_audits))) if scored_audits else 0
 
@@ -3469,9 +3485,6 @@ async def orchestrate_audit(
         f"The previous workspace score was {previous_score}. The current file-audit average is {exact_average}/100. "
         "Assess the full workspace and return the required final audit JSON."
     )
-    if not readme_content:
-        judge_prompt += " CRITICAL: Deduct system quality points in your analysis for the lack of a README.md."
-
     try:
         async with LLM_AUDIT_SEMAPHORE:
             judge_resp = await async_client.chat.completions.create(
@@ -3483,8 +3496,10 @@ async def orchestrate_audit(
                         "content": (
                             "You are the Lead Tech Director. Return only the strict JSON schema requested. "
                             "score_delta must equal score minus the previous workspace score, and delta_summary "
-                            "must be one concise sentence describing the change. NEVER guess a framework. "
-                            "Rely strictly on the README-anchored blueprint and file audits."
+                            "must be one concise sentence describing the change. NEVER guess a framework.\n\n"
+                            f"{AUDIT_GRADING_RUBRIC}\n\n"
+                            "Use the README only when it exists to clarify intent; prioritize the actual "
+                            "architecture, code, and file audits when assigning the score."
                         ),
                     },
                     {"role": "user", "content": judge_prompt},
@@ -5351,40 +5366,6 @@ def coerce_audit_score(value: Any, *, default: int = 0) -> int:
         return default
 
 
-def build_project_folder_audit_payload(
-    folder_audit: Dict[str, Any],
-    *,
-    previous_score: int,
-) -> Dict[str, Any]:
-    """Build the complete, schema-aligned project_folders update payload.
-
-    Keep this payload deliberately narrow: it is the only data written to
-    project_folders by the folder audit flow, so audit-only fields such as
-    logic_score and per-file sub-scores cannot reach Supabase.
-    """
-    evaluation_score = coerce_audit_score(
-        folder_audit.get("evaluated_score", folder_audit.get("score")),
-    )
-    delta_summary = sanitize_audit_summary(folder_audit.get("delta_summary"))
-    executive_summary = sanitize_audit_summary(
-        folder_audit.get("executive_summary") or folder_audit.get("description")
-    )
-
-    return {
-        "evaluation_score": evaluation_score,
-        "score_delta": evaluation_score - previous_score,
-        "delta_summary": delta_summary or "The workspace was re-audited from its latest code state.",
-        "executive_summary": executive_summary or "Folder audit complete.",
-        "pros": normalize_orchestrator_text_array(folder_audit.get("pros")),
-        "cons": normalize_orchestrator_text_array(folder_audit.get("cons")),
-        "recommendations": normalize_orchestrator_text_array(
-            folder_audit.get("recommendations")
-        ),
-        "has_been_audited": True,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
 def generate_context_aware_audit_system_prompt(
     *,
     previous_score: int | None = None,
@@ -6310,20 +6291,32 @@ async def run_project_audit(
             or "Folder audit complete."
         )
 
-        # Supabase uses evaluation_score while the agentic JSON contract uses score.
-        # This helper intentionally emits only known project_folders columns.
-        folder_audit_payload = build_project_folder_audit_payload(
-            {
-                **parsed_project_summary,
-                "executive_summary": folder_summary,
-            },
-            previous_score=previous_folder_score,
-        )
+        # Do not forward parsed/LLM data directly. project_folders accepts only
+        # this explicit schema-aligned payload.
+        llm_data = {
+            "score": parsed_project_summary.get("evaluated_score"),
+            "score_delta": parsed_project_summary.get("score_delta"),
+            "delta_summary": parsed_project_summary.get("delta_summary"),
+            "executive_summary": folder_summary,
+            "pros": parsed_project_summary.get("pros"),
+            "cons": parsed_project_summary.get("cons"),
+            "recommendations": parsed_project_summary.get("recommendations"),
+        }
+        db_payload = {
+            "evaluation_score": llm_data.get("score"),
+            "score_delta": llm_data.get("score_delta"),
+            "delta_summary": llm_data.get("delta_summary"),
+            "executive_summary": llm_data.get("executive_summary"),
+            "pros": llm_data.get("pros", []),
+            "cons": llm_data.get("cons", []),
+            "recommendations": llm_data.get("recommendations", []),
+            "has_been_audited": True,
+        }
 
         try:
             folder_update_response = await run_in_audit_thread(
                 lambda: supabase_client.table("project_folders")
-                .update(folder_audit_payload)
+                .update(db_payload)
                 .eq("id", folder_id)
                 .eq("user_id", requested_user_id)
                 .execute()
@@ -6332,22 +6325,23 @@ async def run_project_audit(
                 logger.error(
                     "project_audit.folder_persist_no_row folder_id=%s payload=%s",
                     folder_id,
-                    folder_audit_payload,
+                    db_payload,
                 )
         except Exception as folder_persist_error:
-            logger.exception(
+            logger.error(
                 "project_audit.folder_persist_failed folder_id=%s payload=%s error=%s",
                 folder_id,
-                folder_audit_payload,
+                db_payload,
                 folder_persist_error,
+                exc_info=True,
             )
 
         orchestration_result["persistence_warnings"] = {
             "file_update_failures": file_update_failures,
             "deferred_file_updates": deferred_file_updates,
         }
-        orchestration_result["score_delta"] = folder_audit_payload["score_delta"]
-        orchestration_result["delta_summary"] = folder_audit_payload["delta_summary"]
+        orchestration_result["score_delta"] = db_payload["score_delta"]
+        orchestration_result["delta_summary"] = db_payload["delta_summary"]
 
         return orchestration_result
 
@@ -8365,6 +8359,8 @@ async def verify_asset(
 Audit the supplied asset as part of its workspace. Determine the new score and calculate
 score_delta as new score minus PREVIOUS SCORE. delta_summary must be exactly one concise
 sentence that explains the concrete code change or current-code finding responsible for the delta.
+Reward real improvements to logic, security, error handling, and thread safety even when the
+file structure is unchanged.
 
 Asset name: {asset_name}
 Detected type: {asset_classification["detectedType"]}
@@ -8384,7 +8380,8 @@ SOURCE CONTENT:
                             "You are a strict technical audit evaluator. Return only the JSON object "
                             "required by the response schema: score, score_delta, delta_summary, "
                             "executive_summary, pros, cons, and recommendations. Do not include "
-                            "markdown, explanations outside JSON, or additional keys."
+                            "markdown, explanations outside JSON, or additional keys.\n\n"
+                            f"{AUDIT_GRADING_RUBRIC}"
                         ),
                     },
                     {"role": "user", "content": strict_audit_prompt},
@@ -8480,33 +8477,41 @@ SOURCE CONTENT:
                 project_payload = {**project, **update_payload}
 
             if folder_id:
-                folder_audit_payload = build_project_folder_audit_payload(
-                    {
-                        "score": calculated_score,
-                        "score_delta": score_delta,
-                        "delta_summary": delta_summary,
-                        "executive_summary": ai_summary,
-                        "pros": strengths,
-                        "cons": weaknesses,
-                        "recommendations": recommendations,
-                    },
-                    previous_score=folder_previous_score,
-                )
+                llm_data = {
+                    "score": calculated_score,
+                    "score_delta": score_delta,
+                    "delta_summary": delta_summary,
+                    "executive_summary": ai_summary,
+                    "pros": strengths,
+                    "cons": weaknesses,
+                    "recommendations": recommendations,
+                }
+                db_payload = {
+                    "evaluation_score": llm_data.get("score"),
+                    "score_delta": llm_data.get("score_delta"),
+                    "delta_summary": llm_data.get("delta_summary"),
+                    "executive_summary": llm_data.get("executive_summary"),
+                    "pros": llm_data.get("pros", []),
+                    "cons": llm_data.get("cons", []),
+                    "recommendations": llm_data.get("recommendations", []),
+                    "has_been_audited": True,
+                }
                 try:
                     await run_in_audit_thread(
                         lambda: supabase.table("project_folders")
-                        .update(folder_audit_payload)
+                        .update(db_payload)
                         .eq("id", folder_id)
                         .eq("user_id", project_user_id)
                         .execute()
                     )
                 except Exception as folder_persist_error:
-                    logger.exception(
+                    logger.error(
                         "verify_asset.folder_persist_failed project_id=%s folder_id=%s payload=%s error=%s",
                         project_id,
                         folder_id,
-                        folder_audit_payload,
+                        db_payload,
                         folder_persist_error,
+                        exc_info=True,
                     )
 
             commit_sha = str(project.get("github_commit_sha") or "manual-audit").strip()
