@@ -925,6 +925,8 @@ export function UniversalAssetGrid({
           activePreviewFolderItem.folder,
           activePreviewFolderItem.assets
         ),
+        score_delta: activePreviewFolderItem.folder.score_delta ?? null,
+        delta_summary: activePreviewFolderItem.folder.delta_summary ?? null,
         executive_summary:
           getFolderSummary(activePreviewFolderItem.folder) ||
           'This workspace does not have an aggregate folder audit yet.',

@@ -3294,7 +3294,13 @@ def normalize_folder_audit_report(raw_report: Dict[str, Any], fallback_score: in
     }
 
 
-async def orchestrate_audit(files_data: list, async_client):
+async def orchestrate_audit(
+    files_data: list[Dict[str, Any]],
+    async_client: AsyncOpenAI,
+    *,
+    previous_score: int = 0,
+    force_folder_result: bool = False,
+) -> Dict[str, Any]:
     """
     files_data should be a list of dicts:
     [{"filename": "...", "content": "...", "language": "...", "is_binary": bool}]
@@ -3326,8 +3332,10 @@ async def orchestrate_audit(files_data: list, async_client):
     if not normalized_files:
         raise ValueError("No files were provided for audit orchestration.")
 
-    # SCENARIO A: SINGLE FILE
-    if len(normalized_files) == 1:
+    # Preserve the legacy single-file response for callers that audit a standalone
+    # asset. Folder audits must still run the final strict folder judge, even when
+    # the folder currently contains just one eligible file.
+    if len(normalized_files) == 1 and not force_folder_result:
         file = normalized_files[0]
         return await perform_ai_file_audit(
             filename=file["filename"],
@@ -3458,8 +3466,8 @@ async def orchestrate_audit(files_data: list, async_client):
         f"Review this system based on the blueprint:\n{system_blueprint}\n\n"
         f"INDIVIDUAL FILE AUDITS:\n"
         f"{truncate_audit_text(json.dumps(file_audits, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}\n\n"
-        f"The calculated exact average is {exact_average}/100. "
-        "Generate the final system-wide report around that score."
+        f"The previous workspace score was {previous_score}. The current file-audit average is {exact_average}/100. "
+        "Assess the full workspace and return the required final audit JSON."
     )
     if not readme_content:
         judge_prompt += " CRITICAL: Deduct system quality points in your analysis for the lack of a README.md."
@@ -3468,34 +3476,39 @@ async def orchestrate_audit(files_data: list, async_client):
         async with LLM_AUDIT_SEMAPHORE:
             judge_resp = await async_client.chat.completions.create(
                 model="gpt-4o-mini",
-                response_format={"type": "json_object"},
+                response_format=FOLDER_AUDIT_RESPONSE_FORMAT,
                 messages=[
                     {
                         "role": "system",
                         "content": (
-                            "You are the Lead Tech Director. Return strict JSON with exactly these useful fields: "
-                            '{"evaluated_score": int, "description": "string", "pros": ["string"], '
-                            '"cons": ["string"], "recommendations": ["string"]}. '
-                            "NEVER guess a framework. Rely strictly on the README-anchored blueprint and file audits."
+                            "You are the Lead Tech Director. Return only the strict JSON schema requested. "
+                            "score_delta must equal score minus the previous workspace score, and delta_summary "
+                            "must be one concise sentence describing the change. NEVER guess a framework. "
+                            "Rely strictly on the README-anchored blueprint and file audits."
                         ),
                     },
                     {"role": "user", "content": judge_prompt},
                 ],
                 temperature=0,
             )
-        folder_audit = normalize_folder_audit_report(
-            clean_and_parse_json(judge_resp.choices[0].message.content),
-            exact_average,
+        folder_audit = parse_folder_audit_response(
+            judge_resp.choices[0].message.content,
+            previous_score,
         )
     except Exception as error:
         logger.error("orchestrate_audit.phase3_failed error=%s", error)
-        folder_audit = normalize_folder_audit_report({}, exact_average)
-
-    # The LLM may write narrative, but Python owns the math.
-    folder_audit["evaluated_score"] = exact_average
+        folder_audit = {
+            "evaluated_score": exact_average,
+            "score_delta": exact_average - previous_score,
+            "delta_summary": "The workspace was re-audited from its latest code state.",
+            "executive_summary": "Folder audit complete.",
+            "pros": [],
+            "cons": [],
+            "recommendations": [],
+        }
 
     return {
-        "folder_score": exact_average,
+        "folder_score": folder_audit["evaluated_score"],
         "blueprint": system_blueprint,
         "folder_audit": folder_audit,
         "file_audits": file_audits,
@@ -4699,6 +4712,20 @@ class AuditResponse(BaseModel):
         return normalized_data
 
 
+class FolderAuditResponse(BaseModel):
+    """Strict final workspace audit payload returned by the folder judge."""
+
+    score: int = Field(..., ge=0, le=100)
+    score_delta: int
+    delta_summary: str = Field(..., min_length=1)
+    executive_summary: str = Field(..., min_length=1)
+    pros: List[str]
+    cons: List[str]
+    recommendations: List[str]
+
+    model_config = {"extra": "forbid"}
+
+
 ALLOWED_DETECTED_TYPES = {
     "complete website/project",
     "single code file",
@@ -5253,6 +5280,109 @@ def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[st
 
 AUDIT_RESPONSE_FORMAT = build_audit_response_format(include_improvement_summary=False)
 RE_AUDIT_RESPONSE_FORMAT = build_audit_response_format(include_improvement_summary=True)
+
+FOLDER_AUDIT_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "melius_folder_audit",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                "score_delta": {"type": "integer"},
+                "delta_summary": {"type": "string", "minLength": 1},
+                "executive_summary": {"type": "string", "minLength": 1},
+                "pros": {"type": "array", "items": {"type": "string"}},
+                "cons": {"type": "array", "items": {"type": "string"}},
+                "recommendations": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "score",
+                "score_delta",
+                "delta_summary",
+                "executive_summary",
+                "pros",
+                "cons",
+                "recommendations",
+            ],
+        },
+    },
+}
+
+
+def parse_folder_audit_response(raw_content: str | None, previous_score: int) -> Dict[str, Any]:
+    """Validate the final folder-audit JSON and keep score math server-authoritative."""
+    if not raw_content or not raw_content.strip():
+        raise ValueError("Folder audit response was empty.")
+
+    try:
+        raw_payload = json.loads(raw_content)
+        response = FolderAuditResponse.model_validate(raw_payload)
+    except (json.JSONDecodeError, ValidationError) as error:
+        raise ValueError("Folder audit response did not match the required JSON schema.") from error
+
+    score = max(0, min(100, int(response.score)))
+    calculated_delta = score - previous_score
+    if response.score_delta != calculated_delta:
+        logger.warning(
+            "project_audit.score_delta_corrected llm_delta=%s calculated_delta=%s",
+            response.score_delta,
+            calculated_delta,
+        )
+
+    return {
+        "evaluated_score": score,
+        "score_delta": calculated_delta,
+        "delta_summary": sanitize_audit_summary(response.delta_summary),
+        "executive_summary": sanitize_audit_summary(response.executive_summary),
+        "pros": normalize_orchestrator_text_array(response.pros),
+        "cons": normalize_orchestrator_text_array(response.cons),
+        "recommendations": normalize_orchestrator_text_array(response.recommendations),
+    }
+
+
+def coerce_audit_score(value: Any, *, default: int = 0) -> int:
+    """Return an integer audit score constrained to the persisted 0-100 range."""
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return default
+
+
+def build_project_folder_audit_payload(
+    folder_audit: Dict[str, Any],
+    *,
+    previous_score: int,
+) -> Dict[str, Any]:
+    """Build the complete, schema-aligned project_folders update payload.
+
+    Keep this payload deliberately narrow: it is the only data written to
+    project_folders by the folder audit flow, so audit-only fields such as
+    logic_score and per-file sub-scores cannot reach Supabase.
+    """
+    evaluation_score = coerce_audit_score(
+        folder_audit.get("evaluated_score", folder_audit.get("score")),
+    )
+    delta_summary = sanitize_audit_summary(folder_audit.get("delta_summary"))
+    executive_summary = sanitize_audit_summary(
+        folder_audit.get("executive_summary") or folder_audit.get("description")
+    )
+
+    return {
+        "evaluation_score": evaluation_score,
+        "score_delta": evaluation_score - previous_score,
+        "delta_summary": delta_summary or "The workspace was re-audited from its latest code state.",
+        "executive_summary": executive_summary or "Folder audit complete.",
+        "pros": normalize_orchestrator_text_array(folder_audit.get("pros")),
+        "cons": normalize_orchestrator_text_array(folder_audit.get("cons")),
+        "recommendations": normalize_orchestrator_text_array(
+            folder_audit.get("recommendations")
+        ),
+        "has_been_audited": True,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def generate_context_aware_audit_system_prompt(
@@ -6034,6 +6164,7 @@ async def run_project_audit(
     files_to_update = []
     file_update_results = []
     orchestration_result = None
+    previous_folder_score = 0
 
     try:
         try:
@@ -6050,6 +6181,29 @@ async def run_project_audit(
             )
 
         supabase_client = get_request_supabase_client(request)
+
+        try:
+            folder_response = await run_in_audit_thread(
+                lambda: supabase_client.table("project_folders")
+                .select("id, evaluation_score")
+                .eq("id", folder_id)
+                .eq("user_id", requested_user_id)
+                .maybe_single()
+                .execute()
+            )
+            folder_row = (
+                folder_response.data if isinstance(folder_response.data, dict) else {}
+            )
+            previous_folder_score = coerce_audit_score(
+                folder_row.get("evaluation_score"),
+            )
+        except Exception as previous_score_error:
+            logger.exception(
+                "project_audit.previous_score_fetch_failed folder_id=%s error=%s",
+                folder_id,
+                previous_score_error,
+            )
+            previous_folder_score = 0
 
         db_response = await run_in_audit_thread(
             lambda: supabase_client.table("projects")
@@ -6098,7 +6252,12 @@ async def run_project_audit(
             for loaded_file in loaded_files
         ]
 
-        orchestration_result = await orchestrate_audit(files_data, async_client)
+        orchestration_result = await orchestrate_audit(
+            files_data,
+            async_client,
+            previous_score=previous_folder_score,
+            force_folder_result=True,
+        )
         if "folder_audit" in orchestration_result:
             parsed_project_summary = orchestration_result["folder_audit"]
             file_audits_by_name = orchestration_result.get("file_audits", {})
@@ -6151,31 +6310,35 @@ async def run_project_audit(
             or "Folder audit complete."
         )
 
-        # Supabase uses evaluation_score while the agentic JSON contract uses evaluated_score.
-        folder_audit_payload = {
-            "evaluation_score": parsed_project_summary.get("evaluated_score"),
-            "score_delta": parsed_project_summary.get("score_delta"),
-            "delta_summary": parsed_project_summary.get("delta_summary"),
-            "executive_summary": folder_summary,
-            "pros": parsed_project_summary.get("pros"),
-            "cons": parsed_project_summary.get("cons"),
-            "recommendations": parsed_project_summary.get("recommendations"),
-            "has_been_audited": True,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        # Supabase uses evaluation_score while the agentic JSON contract uses score.
+        # This helper intentionally emits only known project_folders columns.
+        folder_audit_payload = build_project_folder_audit_payload(
+            {
+                **parsed_project_summary,
+                "executive_summary": folder_summary,
+            },
+            previous_score=previous_folder_score,
+        )
 
         try:
-            await run_in_audit_thread(
+            folder_update_response = await run_in_audit_thread(
                 lambda: supabase_client.table("project_folders")
                 .update(folder_audit_payload)
                 .eq("id", folder_id)
                 .eq("user_id", requested_user_id)
                 .execute()
             )
+            if isinstance(folder_update_response.data, list) and not folder_update_response.data:
+                logger.error(
+                    "project_audit.folder_persist_no_row folder_id=%s payload=%s",
+                    folder_id,
+                    folder_audit_payload,
+                )
         except Exception as folder_persist_error:
-            logger.warning(
-                "project_audit.folder_persist_deferred folder_id=%s error=%s",
+            logger.exception(
+                "project_audit.folder_persist_failed folder_id=%s payload=%s error=%s",
                 folder_id,
+                folder_audit_payload,
                 folder_persist_error,
             )
 
@@ -6183,6 +6346,8 @@ async def run_project_audit(
             "file_update_failures": file_update_failures,
             "deferred_file_updates": deferred_file_updates,
         }
+        orchestration_result["score_delta"] = folder_audit_payload["score_delta"]
+        orchestration_result["delta_summary"] = folder_audit_payload["delta_summary"]
 
         return orchestration_result
 
@@ -7955,15 +8120,15 @@ async def verify_asset(
         content_loaded_from_project = False
         has_historical_audit = False
         old_score: int | None = None
-        old_strengths: List[str] | None = None
-        old_weaknesses: List[str] | None = None
-        old_recommendations: List[str] | None = None
         project: Dict[str, Any] | None = None
+        folder_id = ""
+        folder_previous_score = 0
+        folder_has_previous_audit = False
         supabase = None
 
         if project_id:
             supabase = get_request_supabase_client(request)
-            project_response = await asyncio.to_thread(
+            project_response = await run_in_audit_thread(
                 lambda: supabase.table("projects")
                 .select("*")
                 .eq("id", project_id)
@@ -7985,52 +8150,50 @@ async def verify_asset(
                     detail="You can only audit your own projects.",
                 )
 
-            raw_old_strengths = next(
-                (
-                    project.get(field_name)
-                    for field_name in ("strengths", "pros")
-                    if project.get(field_name) is not None
-                ),
-                None,
-            )
-            raw_old_weaknesses = next(
-                (
-                    project.get(field_name)
-                    for field_name in ("weaknesses", "cons")
-                    if project.get(field_name) is not None
-                ),
-                None,
-            )
-            raw_old_recommendations = next(
-                (
-                    project.get(field_name)
-                    for field_name in (
-                        "recommendations",
-                        "strategic_recommendations",
+            folder_id = str(project.get("folder_id") or "").strip()
+            if folder_id:
+                try:
+                    folder_response = await run_in_audit_thread(
+                        lambda: supabase.table("project_folders")
+                        .select("evaluation_score, has_been_audited")
+                        .eq("id", folder_id)
+                        .eq("user_id", project_user_id)
+                        .maybe_single()
+                        .execute()
                     )
-                    if project.get(field_name) is not None
-                ),
-                None,
-            )
-            normalized_old_strengths = normalize_audit_list(raw_old_strengths)
-            normalized_old_weaknesses = normalize_audit_list(raw_old_weaknesses)
-            normalized_old_recommendations = normalize_audit_list(
-                raw_old_recommendations
-            )
-            has_historical_audit = old_score is not None
+                    folder_row = (
+                        folder_response.data
+                        if isinstance(folder_response.data, dict)
+                        else {}
+                    )
+                    raw_folder_score = folder_row.get("evaluation_score")
+                    folder_previous_score = coerce_audit_score(raw_folder_score)
+                    folder_has_previous_audit = bool(folder_row) and (
+                        bool(folder_row.get("has_been_audited"))
+                        or raw_folder_score is not None
+                    )
+                except Exception as folder_score_error:
+                    # A folder-score lookup cannot prevent the asset audit from
+                    # completing; persist will log separately if it also fails.
+                    logger.exception(
+                        "verify_asset.folder_previous_score_fetch_failed project_id=%s folder_id=%s error=%s",
+                        project_id,
+                        folder_id,
+                        folder_score_error,
+                    )
+
+            if folder_id:
+                # Folder state is authoritative for an asset that belongs to a workspace.
+                old_score = folder_previous_score
+                has_historical_audit = folder_has_previous_audit
+            else:
+                has_historical_audit = old_score is not None
 
             if has_historical_audit:
-                try:
-                    old_score = max(0, min(100, int(round(float(old_score)))))
-                except (TypeError, ValueError) as score_error:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="The project's previous audit score is invalid.",
-                    ) from score_error
-
-                old_strengths = normalized_old_strengths
-                old_weaknesses = normalized_old_weaknesses
-                old_recommendations = normalized_old_recommendations
+                old_score = coerce_audit_score(old_score)
+            else:
+                # A missing score is a fresh zero-score baseline.
+                old_score = 0
 
             asset_name = get_audit_file_name(project)
             file_url = str(project.get("file_url") or "").strip()
@@ -8196,84 +8359,69 @@ async def verify_asset(
                 pass
 
         asset_classification = classify_uploaded_asset(asset_name, asset_text_content)
-        audit_system_prompt = generate_context_aware_audit_system_prompt(
-            previous_score=old_score if has_historical_audit else None,
-            previous_strengths=old_strengths if has_historical_audit else None,
-            previous_weaknesses=old_weaknesses if has_historical_audit else None,
-            previous_recommendations=(
-                old_recommendations if has_historical_audit else None
-            ),
+        previous_score = coerce_audit_score(old_score)
+        strict_audit_prompt = f"""PREVIOUS SCORE: {previous_score}/100
+
+Audit the supplied asset as part of its workspace. Determine the new score and calculate
+score_delta as new score minus PREVIOUS SCORE. delta_summary must be exactly one concise
+sentence that explains the concrete code change or current-code finding responsible for the delta.
+
+Asset name: {asset_name}
+Detected type: {asset_classification["detectedType"]}
+Language: {asset_classification["language"]}
+User context: {user_context_description or "No additional context supplied."}
+
+SOURCE CONTENT:
+{truncate_audit_text(asset_text_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"""
+
+        completion = await run_in_audit_thread(
+            lambda: sync_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strict technical audit evaluator. Return only the JSON object "
+                            "required by the response schema: score, score_delta, delta_summary, "
+                            "executive_summary, pros, cons, and recommendations. Do not include "
+                            "markdown, explanations outside JSON, or additional keys."
+                        ),
+                    },
+                    {"role": "user", "content": strict_audit_prompt},
+                ],
+                response_format=FOLDER_AUDIT_RESPONSE_FORMAT,
+                temperature=0,
+            )
         )
-        audit_prompt = generate_single_file_audit_prompt(
-            asset_name=asset_name,
-            asset_text_content=asset_text_content,
-            asset_classification=asset_classification,
-            user_context_description=user_context_description,
-            is_re_audit=has_historical_audit,
+        audit_result = parse_folder_audit_response(
+            completion.choices[0].message.content,
+            previous_score,
         )
 
-        completion = sync_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": audit_system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": audit_prompt,
-                },
-            ],
-            response_format=(
-                RE_AUDIT_RESPONSE_FORMAT
-                if has_historical_audit
-                else AUDIT_RESPONSE_FORMAT
-            ),
-            temperature=0.1,
-        )
-
-        audit_response = parse_audit_response(completion.choices[0].message.content, asset_classification)
-        calculated_score = audit_response.score
-        score_reasoning = audit_response.score_reasoning
-        generated_summary_from_llm = audit_response.last_improved_summary
-        if has_historical_audit and not generated_summary_from_llm:
-            raise HTTPException(
-                status_code=502,
-                detail="The AI re-audit response was missing last_improved_summary.",
-            )
-
-        score_delta = (
-            calculated_score - old_score
-            if has_historical_audit and old_score is not None
-            else None
-        )
-        llm_score_delta = audit_response.score_delta
-        if has_historical_audit and llm_score_delta != score_delta:
-            logger.warning(
-                "verify_asset.score_delta_corrected project_id=%s llm_delta=%s calculated_delta=%s",
-                project_id,
-                llm_score_delta,
-                score_delta,
-            )
-        delta_summary = sanitize_audit_summary(audit_response.delta_summary)
-        if has_historical_audit and not delta_summary:
-            raise HTTPException(
-                status_code=502,
-                detail="The AI re-audit response was missing delta_summary.",
-            )
-        if not has_historical_audit:
-            delta_summary = None
-        audit_payload = audit_response.model_dump(exclude_none=True)
-        ai_summary = audit_response.ai_summary
+        calculated_score = audit_result["evaluated_score"]
+        score_delta = audit_result["score_delta"]
+        delta_summary = audit_result["delta_summary"]
+        ai_summary = audit_result["executive_summary"]
+        strengths = audit_result["pros"]
+        weaknesses = audit_result["cons"]
+        recommendations = audit_result["recommendations"]
+        score_reasoning = "Score calculated from the strict audit response."
+        generated_summary_from_llm = delta_summary if has_historical_audit else None
+        audit_payload = {
+            "score": calculated_score,
+            "score_delta": score_delta,
+            "delta_summary": delta_summary,
+            "executive_summary": ai_summary,
+            "pros": strengths,
+            "cons": weaknesses,
+            "recommendations": recommendations,
+        }
         detected_type = asset_classification["detectedType"]
         language = asset_classification["language"]
         review_mode = asset_classification["reviewMode"]
         complexity_level = asset_classification["complexityLevel"]
         project_depth = asset_classification["projectDepth"]
         recruiter_readiness = asset_classification["recruiterReadiness"]
-        strengths = audit_response.strengths
-        weaknesses = audit_response.weaknesses
-        recommendations = audit_response.recommendations
         update_payload = {
             "score": calculated_score,
             "score_delta": score_delta,
@@ -8308,30 +8456,70 @@ async def verify_asset(
         project_payload = None
 
         if project_id and supabase is not None and project is not None:
-            update_response = await asyncio.to_thread(
-                lambda: supabase.table("projects")
-                .update(update_payload)
-                .eq("id", project_id)
-                .execute()
-            )
+            try:
+                update_response = await run_in_audit_thread(
+                    lambda: supabase.table("projects")
+                    .update(update_payload)
+                    .eq("id", project_id)
+                    .execute()
+                )
+            except Exception as project_persist_error:
+                logger.exception(
+                    "verify_asset.project_persist_failed project_id=%s error=%s",
+                    project_id,
+                    project_persist_error,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="The audit completed but its project record could not be saved.",
+                ) from project_persist_error
             updated_rows = update_response.data
             if isinstance(updated_rows, list) and updated_rows:
                 project_payload = dict(updated_rows[0])
             else:
                 project_payload = {**project, **update_payload}
 
+            if folder_id:
+                folder_audit_payload = build_project_folder_audit_payload(
+                    {
+                        "score": calculated_score,
+                        "score_delta": score_delta,
+                        "delta_summary": delta_summary,
+                        "executive_summary": ai_summary,
+                        "pros": strengths,
+                        "cons": weaknesses,
+                        "recommendations": recommendations,
+                    },
+                    previous_score=folder_previous_score,
+                )
+                try:
+                    await run_in_audit_thread(
+                        lambda: supabase.table("project_folders")
+                        .update(folder_audit_payload)
+                        .eq("id", folder_id)
+                        .eq("user_id", project_user_id)
+                        .execute()
+                    )
+                except Exception as folder_persist_error:
+                    logger.exception(
+                        "verify_asset.folder_persist_failed project_id=%s folder_id=%s payload=%s error=%s",
+                        project_id,
+                        folder_id,
+                        folder_audit_payload,
+                        folder_persist_error,
+                    )
+
             commit_sha = str(project.get("github_commit_sha") or "manual-audit").strip()
             try:
-                snapshot_response = await asyncio.to_thread(
+                snapshot_response = await run_in_audit_thread(
                     lambda: supabase.table("audit_snapshots")
                     .insert(
                         {
                             "workspace_id": project_id,
                             "commit_sha": commit_sha,
                             "score": calculated_score,
-                            "score_delta": score_delta if score_delta is not None else 0,
-                            "delta_summary": delta_summary
-                            or "Initial audit baseline created for this workspace.",
+                            "score_delta": score_delta,
+                            "delta_summary": delta_summary,
                         }
                     )
                     .execute()

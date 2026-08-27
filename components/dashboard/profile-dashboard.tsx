@@ -72,6 +72,8 @@ type ProjectItem = {
   summary?: string | null;
   user_description?: string | null;
   score?: number | null;
+  score_delta?: number | null;
+  delta_summary?: string | null;
   audit_summary?: string | null;
   pros?: string[] | null;
   cons?: string[] | null;
@@ -1204,6 +1206,8 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     summary: hydratedSummary ?? null,
     user_description: row.user_description ?? null,
     score: hydratedScore,
+    score_delta: row.score_delta ?? null,
+    delta_summary: row.delta_summary ?? null,
     audit_summary: hydratedAuditSummary,
     pros: Array.isArray(row.pros) ? row.pros : null,
     cons: Array.isArray(row.cons) ? row.cons : null,
@@ -1233,6 +1237,14 @@ function mergeVerifiedProject(
     evaluation_score: projectPatch.evaluation_score ?? projectPatch.score ?? currentProject.evaluation_score,
     logic_score: projectPatch.logic_score ?? projectPatch.score ?? currentProject.logic_score,
     score: projectPatch.score ?? projectPatch.logic_score ?? projectPatch.evaluation_score ?? currentProject.score,
+    score_delta:
+      projectPatch.score_delta !== undefined
+        ? projectPatch.score_delta
+        : currentProject.score_delta,
+    delta_summary:
+      projectPatch.delta_summary !== undefined
+        ? projectPatch.delta_summary
+        : currentProject.delta_summary,
     audit_summary: projectPatch.audit_summary ?? projectPatch.executive_summary ?? projectPatch.summary ?? currentProject.audit_summary,
     executive_summary: projectPatch.executive_summary ?? projectPatch.audit_summary ?? currentProject.executive_summary,
     summary: projectPatch.summary ?? projectPatch.audit_summary ?? currentProject.summary,
@@ -1260,6 +1272,8 @@ function toProjectRowAuditPatch(projectPatch: Partial<ProjectItem>): Partial<Pro
     previous_score: projectPatch.previous_score,
     pros: projectPatch.pros,
     recommendations: projectPatch.recommendations,
+    score_delta: projectPatch.score_delta,
+    delta_summary: projectPatch.delta_summary,
     score:
       projectPatch.score ??
       projectPatch.logic_score ??
@@ -5990,6 +6004,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         last_improved_summary?: string;
         improvement_summary?: string;
         previous_score?: number;
+        score_delta?: number | null;
+        delta_summary?: string | null;
         project?: ProjectItem;
         report?: {
           calculatedScore?: number;
@@ -6070,6 +6086,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           updatedProject?.last_improved_summary,
         previous_score:
           payload.previous_score ?? updatedProject?.previous_score ?? project.previous_score,
+        score_delta:
+          payload.score_delta !== undefined
+            ? payload.score_delta
+            : updatedProject?.score_delta,
+        delta_summary:
+          payload.delta_summary !== undefined
+            ? payload.delta_summary
+            : updatedProject?.delta_summary,
       };
       const verifiedProfileAssetPatch = toProjectRowAuditPatch(verifiedProjectPatch);
 
@@ -6387,13 +6411,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const data = (await response.json()) as {
         folder_audit?: {
           cons?: string[] | null;
+          delta_summary?: string | null;
           evaluated_score?: number | string | null;
           executive_summary?: string | null;
           description?: string | null;
           pros?: string[] | null;
           recommendations?: string[] | null;
+          score_delta?: number | null;
         };
         folder_score?: number | string | null;
+        score_delta?: number | null;
+        delta_summary?: string | null;
       };
       const folderScore = normalizeAuditScore(
         data.folder_score ?? data.folder_audit?.evaluated_score
@@ -6407,6 +6435,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             ? {
                 ...folder,
                 evaluation_score: folderScore,
+                score_delta: data.score_delta ?? data.folder_audit?.score_delta ?? null,
+                delta_summary: data.delta_summary ?? data.folder_audit?.delta_summary ?? null,
                 executive_summary: folderSummary,
                 pros: data.folder_audit?.pros ?? null,
                 cons: data.folder_audit?.cons ?? null,
