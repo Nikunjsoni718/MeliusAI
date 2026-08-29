@@ -140,11 +140,15 @@ PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
 LLM_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENCY)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
 SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 30.0
-SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 45.0
-SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS = 30.0
-SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS = 30.0
+# Public profile aggregation can issue several Supabase reads. Give those requests
+# enough time to survive transient Render/Supabase latency instead of surfacing a
+# premature ReadError to the caller.
+SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 60.0
+SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS = 60.0
+SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS = 60.0
 SPECTATE_PROFILE_HTTP_MAX_ATTEMPTS = 3
-SPECTATE_PROFILE_RETRY_DELAY_SECONDS = 1.0
+# The retry helper applies bounded exponential backoff: 2.5s, then 5s.
+SPECTATE_PROFILE_RETRY_DELAY_SECONDS = 2.5
 
 
 async def run_in_audit_thread(operation):
