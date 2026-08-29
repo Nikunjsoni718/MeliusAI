@@ -2249,8 +2249,8 @@ SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, email, bio, avatar_url, current_status, age, avg_project_score, skills"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
-    "id, user_id, name, file_type, created_at, score, has_been_audited, file_url, "
-    "logic_score, folder_id, status, title, file_size, description, user_description, "
+    "id, user_id, name, file_type, created_at, score, evaluation_score, score_delta, delta_summary, "
+    "has_been_audited, file_url, logic_score, folder_id, status, title, file_size, description, user_description, "
     "ai_summary, audit_summary, pros, cons, recommendations"
 )
 SPECTATE_PROJECT_FOLDER_SELECT = (
@@ -2259,7 +2259,7 @@ SPECTATE_PROJECT_FOLDER_SELECT = (
 )
 VAULT_PROJECT_CARD_SELECT = (
     "id, user_id, folder_id, name, title, file_type, file_url, file_size, "
-    "created_at, score, logic_score, status, has_been_audited"
+    "created_at, score, evaluation_score, score_delta, delta_summary, logic_score, status, has_been_audited"
 )
 VAULT_FOLDER_CARD_SELECT = "id, user_id, name, created_at"
 VAULT_PROFILE_SELECT = (
@@ -2422,7 +2422,7 @@ async def fetch_project_rows_for_profile(supabase: Any, profile_id: str) -> List
 
 
 def get_project_score(project: Dict[str, Any]) -> int | float | None:
-    for field_name in ("logic_score", "evaluation_score", "score"):
+    for field_name in ("evaluation_score", "score", "logic_score"):
         value = project.get(field_name)
         if isinstance(value, (int, float)):
             return value
@@ -3041,8 +3041,13 @@ EVALUATION_RESPONSE_FORMAT = {
                         "Mandatory for every language, including TypeScript, TSX, JavaScript, and JSX."
                     ),
                 },
-                "score": {"type": "number"},
-                "grade": {"type": "string", "enum": ["A", "B", "C", "D", "F"]},
+                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                "score_delta": {"type": "integer"},
+                "delta_summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "One sentence explaining the code changes or findings behind the score delta.",
+                },
                 "pros": {
                     "type": "array",
                     "items": {
@@ -3068,7 +3073,8 @@ EVALUATION_RESPONSE_FORMAT = {
             "required": [
                 "description",
                 "score",
-                "grade",
+                "score_delta",
+                "delta_summary",
                 "pros",
                 "cons",
                 "recommendations",
@@ -3076,6 +3082,20 @@ EVALUATION_RESPONSE_FORMAT = {
         },
     },
 }
+
+
+class FileAuditResponse(BaseModel):
+    """Strict AI contract for an individual project-file audit."""
+
+    description: str = Field(..., min_length=1)
+    score: int = Field(..., ge=0, le=100)
+    score_delta: int
+    delta_summary: str = Field(..., min_length=1)
+    pros: List[str]
+    cons: List[str]
+    recommendations: List[str]
+
+    model_config = {"extra": "forbid"}
 
 
 class EvaluationRequest(BaseModel):
@@ -3141,8 +3161,17 @@ class NativeCodeParser:
         return metadata
 
 
-async def perform_ai_file_audit(filename: str, content: str, detected_language: str, async_client, system_blueprint: str = None) -> dict:
+async def perform_ai_file_audit(
+    filename: str,
+    content: str,
+    detected_language: str,
+    async_client: Any,
+    system_blueprint: str | None = None,
+    previous_score: int = 0,
+) -> Dict[str, Any]:
     """Audit one file independently, using the blueprint only as descriptive context."""
+
+    previous_score = coerce_audit_score(previous_score)
 
     # RUN NATIVE PYTHON PARSING FIRST
     native_analysis = NativeCodeParser.parse(filename, content)
@@ -3174,6 +3203,8 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 - The score must reflect only this file's code quality, security, correctness, and role-specific behavior.
 - Do not transfer architectural strengths, features, or quality claims from the System Blueprint into this score.
 - Review every line of the raw code. Grade security, XSS, broken references, validation, and logic ruthlessly where applicable.
+- The previous file score was {previous_score}/100. Return `score`, `score_delta` (new score minus
+  previous score), and a one-sentence `delta_summary` tied to concrete code changes or findings.
 """
 
     user_content = (
@@ -3194,6 +3225,9 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
         )
 
     user_content += (
+        f"PREVIOUS FILE SCORE: {previous_score}/100\n"
+        "Return score, score_delta (new score minus the previous file score), and a one-sentence "
+        "delta_summary in the required JSON response.\n\n"
         "Mandatory output reminder: include a detailed JSON 'description'.\n\n"
         f"--- RAW CODE TO READ LINE-BY-LINE ---\n{content}\n"
         "-------------------------------------"
@@ -3212,25 +3246,21 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
 
         raw_content = completion.choices[0].message.content or "{}"
         parsed_content = clean_and_parse_json(raw_content)
+        response = FileAuditResponse.model_validate(parsed_content)
 
         def normalize_text_array(value):
             if not isinstance(value, list): return []
             return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
-        raw_score = parsed_content.get("score", parsed_content.get("evaluated_score", 0))
-        try:
-            final_score = max(0, min(100, int(round(float(raw_score)))))
-        except (TypeError, ValueError):
-            final_score = 0
+        final_score = coerce_audit_score(response.score)
 
         parsed_data = {
-            "description": str(
-                parsed_content.get("description") or "No description provided."
-            ).strip(),
-            "pros": normalize_text_array(parsed_content.get("pros")),
-            "cons": normalize_text_array(parsed_content.get("cons")),
-            "recommendations": normalize_text_array(parsed_content.get("recommendations")),
-            "evaluated_score": final_score
+            "description": response.description.strip(),
+            "pros": normalize_text_array(response.pros),
+            "cons": normalize_text_array(response.cons),
+            "recommendations": normalize_text_array(response.recommendations),
+            "evaluated_score": final_score,
+            "delta_summary": sanitize_audit_summary(response.delta_summary),
         }
 
         # PYTHON VETO: Absolute enforcement
@@ -3263,11 +3293,25 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
                 "Verify all <script> src attributes exactly match existing filenames."
             )
 
+        calculated_delta = parsed_data["evaluated_score"] - previous_score
+        if response.score_delta != calculated_delta:
+            logger.warning(
+                "project_audit.file_score_delta_corrected file=%s llm_delta=%s calculated_delta=%s",
+                filename,
+                response.score_delta,
+                calculated_delta,
+            )
+        parsed_data["score_delta"] = calculated_delta
+        if not parsed_data["delta_summary"]:
+            parsed_data["delta_summary"] = "The file was re-audited against its previous code-quality baseline."
+
         return parsed_data
     except Exception as e:
-        logger.error(f"AI Audit Failed for {filename}: {str(e)}")
+        logger.error("project_audit.file_audit_failed file=%s error=%s", filename, e, exc_info=True)
         return {
             "evaluated_score": 0,
+            "score_delta": -previous_score,
+            "delta_summary": "The file audit failed before a code-quality comparison could be completed.",
             "description": f"Audit execution failed: {str(e)}",
             "pros": [], "cons": ["Failed to process file."], "recommendations": []
         }
@@ -3358,6 +3402,7 @@ async def orchestrate_audit(
             content=file["content"],
             detected_language=file["language"],
             async_client=async_client,
+            previous_score=get_previous_file_score(file),
         )
 
     # SCENARIO B: FOLDER (MULTI-FILE)
@@ -3417,14 +3462,9 @@ async def orchestrate_audit(
             if file.get("is_binary"):
                 return None
 
+            previous_file_score = get_previous_file_score(file)
             if Path(file["filename"].replace("\\", "/")).name.lower() == "readme.md":
-                return file["filename"], {
-                    "evaluated_score": 100,
-                    "description": "System Documentation.",
-                    "pros": ["Documentation Anchor: README defines the system purpose."],
-                    "cons": [],
-                    "recommendations": [],
-                }
+                return file["filename"], build_documentation_file_audit(previous_file_score)
 
             async with LLM_AUDIT_SEMAPHORE:
                 audit_result = await perform_ai_file_audit(
@@ -3433,6 +3473,7 @@ async def orchestrate_audit(
                     detected_language=file["language"],
                     async_client=async_client,
                     system_blueprint=system_blueprint,
+                    previous_score=previous_file_score,
                 )
             return file["filename"], audit_result
         except Exception as audit_error:
@@ -3535,7 +3576,13 @@ async def orchestrate_audit(
     }
 
 
-async def evaluate_folder_workflow(payload, project_id: str, supabase_client, async_client):
+async def evaluate_folder_workflow(
+    payload: Any,
+    project_id: str,
+    supabase_client: Any,
+    async_client: Any,
+    current_user_id: str | None = None,
+) -> Any:
     import httpx
     import asyncio
     import json
@@ -3552,6 +3599,22 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         return getattr(file_payload, field_name, None)
 
     payload_files = payload.files or payload.folder_files or []
+    requested_file_ids = [
+        str(
+            get_file_value(file_payload, "fileId")
+            or get_file_value(file_payload, "file_id")
+            or get_file_value(file_payload, "projectId")
+            or get_file_value(file_payload, "project_id")
+            or get_file_value(file_payload, "id")
+            or ""
+        ).strip()
+        for file_payload in payload_files
+    ]
+    previous_files_by_id = await fetch_project_file_baselines(
+        supabase_client,
+        requested_file_ids,
+        current_user_id,
+    )
 
     # --- 1. CONCURRENT DOWNLOADS WITH AGGRESSIVE LOGGING ---
     import os
@@ -3583,7 +3646,16 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
             or ""
         ).strip()
         if file_url:
-            normalized_files.append({"filename": filename, "fileUrl": file_url, "file_id": file_id})
+            existing_file = previous_files_by_id.get(file_id, {})
+            normalized_files.append(
+                {
+                    "filename": filename,
+                    "fileUrl": file_url,
+                    "file_id": file_id,
+                    "user_id": current_user_id or "",
+                    "previous_score": get_previous_file_score(existing_file),
+                }
+            )
 
     async with httpx.AsyncClient(
         follow_redirects=True,
@@ -3675,6 +3747,8 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     "is_binary": is_binary,
                     "language": detected_language,
                     "file_id": file.get("file_id") or "",
+                    "user_id": file.get("user_id") or "",
+                    "previous_score": file.get("previous_score", 0),
                 }
             )
             await response.aclose()
@@ -3743,14 +3817,9 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     async def bound_audit(file_record: Dict[str, Any]):
         filename = file_record["filename"]
         try:
+            previous_file_score = get_previous_file_score(file_record)
             if Path(filename.replace("\\", "/")).name.lower() == "readme.md":
-                return filename, {
-                    "evaluated_score": 100,
-                    "description": "System Documentation.",
-                    "pros": [],
-                    "cons": [],
-                    "recommendations": [],
-                }
+                return filename, build_documentation_file_audit(previous_file_score)
 
             # Pass this file's complete raw content to the isolated audit function.
             async with LLM_AUDIT_SEMAPHORE:
@@ -3760,6 +3829,7 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
                     detected_language=file_record["language"],
                     async_client=async_client,
                     system_blueprint=system_blueprint,
+                    previous_score=previous_file_score,
                 )
             return filename, audit_result
         except Exception as audit_error:
@@ -3890,30 +3960,16 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         file_id = str(file_record.get("file_id") or "").strip()
         file_name = file_record.get("filename")
         if not file_id or file_name not in file_audits:
-            return None
+            return False
 
-        audit = file_audits[file_name]
-        score = audit.get("evaluated_score", 0)
-        summary = audit.get("description") or audit.get("executive_summary") or "File audit complete."
-        file_update_payload = {
-            "evaluation_score": score,
-            "score": score,
-            "logic_score": score,
-            "audit_summary": summary,
-            "ai_summary": summary,
-            "description": summary,
-            "pros": audit.get("pros") if isinstance(audit.get("pros"), list) else [],
-            "cons": audit.get("cons") if isinstance(audit.get("cons"), list) else [],
-            "recommendations": audit.get("recommendations") if isinstance(audit.get("recommendations"), list) else [],
-            "status": "Verified",
-            "has_been_audited": True,
-        }
-
-        return await run_in_audit_thread(
-            lambda: supabase_client.table("projects")
-            .update(file_update_payload)
-            .eq("id", file_id)
-            .execute()
+        return await mark_project_file_audited(
+            {
+                "id": file_id,
+                "user_id": file_record.get("user_id") or current_user_id or "",
+            },
+            file_audits[file_name],
+            supabase_client,
+            status="Verified",
         )
 
     persistence_warnings: list[str] = []
@@ -3934,7 +3990,11 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
     # submissions can exhaust Render's small process/thread allocation.
     for file_record in downloaded_files:
         try:
-            await update_individual_file(file_record)
+            persisted = await update_individual_file(file_record)
+            if persisted is False:
+                file_name = str(file_record.get("filename") or "Unknown file")
+                persistence_warnings.append(f"{file_name}: database update deferred")
+                continue
         except Exception as status_update_error:
             file_name = str(file_record.get("filename") or "Unknown file")
             logger.error(
@@ -3973,6 +4033,7 @@ async def run_folder_workflow_with_resource_limits(
     project_id: str,
     supabase_client,
     async_client,
+    current_user_id: str | None = None,
 ):
     audit_slot_acquired = False
 
@@ -3995,6 +4056,7 @@ async def run_folder_workflow_with_resource_limits(
             project_id,
             supabase_client,
             async_client,
+            current_user_id,
         )
     except HTTPException:
         raise
@@ -4043,6 +4105,7 @@ async def evaluate_folder_workflow_route(
         project_id,
         supabase_client,
         async_client,
+        current_user_id,
     )
 
 
@@ -4071,6 +4134,7 @@ async def evaluate_code(
             project_id,
             supabase_client,
             async_client,
+            current_user_id,
         )
     # -----------------------------------------------------------------
 
@@ -4087,6 +4151,13 @@ async def evaluate_code(
             status_code=400,
             detail="fileUrl is required.",
         )
+
+    supabase_client = get_request_supabase_client(request)
+    previous_file_record = await fetch_project_file_baseline(
+        supabase_client,
+        project_id,
+        current_user_id,
+    )
 
     logger.info(
         "code_evaluation.start user_id=%s project_id=%s filename=%s language=%s",
@@ -4179,6 +4250,7 @@ async def evaluate_code(
                     "content": code_content,
                     "language": detected_language,
                     "is_binary": False,
+                    "record": previous_file_record,
                 }
             ],
             async_client,
@@ -4193,29 +4265,31 @@ async def evaluate_code(
                 detail="AI evaluation response was missing the required code description.",
             )
 
-        score = parsed_audit_data["evaluated_score"]
-
-        update_payload = {
-            "audit_summary": description,
-            "ai_summary": description,
-            "description": description,
-            "pros": parsed_audit_data["pros"],
-            "cons": parsed_audit_data["cons"],
-            "recommendations": parsed_audit_data["recommendations"],
-            "evaluation_score": score,
-            "logic_score": score,
-            "has_been_audited": True,
-            "status": "Verified",
-        }
+        score = coerce_audit_score(parsed_audit_data["evaluated_score"])
+        update_payload = build_project_file_update_payload(
+            parsed_audit_data,
+            status="Verified",
+        )
 
         logger.info("code_evaluation.database.update.start project_id=%s filename=%s", project_id, filename)
-        supabase_client = get_request_supabase_client(request)
-        
         # Execute the mutation to persist the data
-        update_response = await asyncio.to_thread(
-            lambda: supabase_client.table("projects").update(update_payload).eq("id", project_id).execute()
+        update_response = await run_in_audit_thread(
+            lambda: supabase_client.table("projects")
+            .update(update_payload)
+            .eq("id", project_id)
+            .eq("user_id", current_user_id)
+            .execute()
         )
-        
+
+        response_error = getattr(update_response, "error", None)
+        if response_error:
+            logger.error(
+                "code_evaluation.database.update.response_error project_id=%s payload_keys=%s error=%s",
+                project_id,
+                sorted(update_payload),
+                response_error,
+            )
+            raise HTTPException(status_code=502, detail="The file audit could not be saved.")
 
         updated_project = update_response.data
         if not updated_project:
@@ -5378,6 +5452,92 @@ def coerce_audit_score(value: Any, *, default: int = 0) -> int:
         return default
 
 
+def get_previous_file_score(file_record: Dict[str, Any] | None) -> int:
+    """Read the current file score using the schema's preferred score fields."""
+    if not isinstance(file_record, dict):
+        return 0
+
+    for field_name in ("previous_score", "evaluation_score", "score", "logic_score"):
+        if file_record.get(field_name) is not None:
+            return coerce_audit_score(file_record.get(field_name))
+
+    nested_record = file_record.get("record")
+    if isinstance(nested_record, dict):
+        return get_previous_file_score(nested_record)
+
+    return 0
+
+
+async def fetch_project_file_baseline(
+    supabase_client: Any,
+    project_id: str,
+    user_id: str | None = None,
+) -> Dict[str, Any]:
+    """Fetch the existing score fields for one file before its AI evaluation."""
+    if not project_id:
+        return {}
+
+    try:
+        def query_project() -> Any:
+            query = (
+                supabase_client.table("projects")
+                .select("id, user_id, evaluation_score, score, logic_score")
+                .eq("id", project_id)
+            )
+            if user_id:
+                query = query.eq("user_id", user_id)
+            return query.maybe_single().execute()
+
+        response = await run_in_audit_thread(query_project)
+        return response.data if isinstance(getattr(response, "data", None), dict) else {}
+    except Exception as error:
+        logger.error(
+            "project_audit.file_previous_score_fetch_failed project_id=%s error=%s",
+            project_id,
+            error,
+            exc_info=True,
+        )
+        return {}
+
+
+async def fetch_project_file_baselines(
+    supabase_client: Any,
+    project_ids: List[str],
+    user_id: str | None = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Fetch file score baselines in one read for a folder-style request."""
+    unique_project_ids = sorted({project_id for project_id in project_ids if project_id})
+    if not unique_project_ids:
+        return {}
+
+    try:
+        def query_projects() -> Any:
+            query = (
+                supabase_client.table("projects")
+                .select("id, user_id, evaluation_score, score, logic_score")
+                .in_("id", unique_project_ids)
+            )
+            if user_id:
+                query = query.eq("user_id", user_id)
+            return query.execute()
+
+        response = await run_in_audit_thread(query_projects)
+        rows = getattr(response, "data", None)
+        return {
+            str(row.get("id")): row
+            for row in rows
+            if isinstance(row, dict) and row.get("id")
+        } if isinstance(rows, list) else {}
+    except Exception as error:
+        logger.error(
+            "project_audit.file_previous_scores_fetch_failed project_ids=%s error=%s",
+            unique_project_ids,
+            error,
+            exc_info=True,
+        )
+        return {}
+
+
 def generate_context_aware_audit_system_prompt(
     *,
     previous_score: int | None = None,
@@ -5910,7 +6070,11 @@ def decode_single_file_audit_content(raw_content: str) -> str:
     return stripped_content
 
 
-async def audit_standalone_file(asset_name: str, asset_text_content: str) -> Dict[str, Any]:
+async def audit_standalone_file(
+    asset_name: str,
+    asset_text_content: str,
+    previous_score: int = 0,
+) -> Dict[str, Any]:
     return await orchestrate_audit(
         [
             {
@@ -5918,6 +6082,7 @@ async def audit_standalone_file(asset_name: str, asset_text_content: str) -> Dic
                 "content": asset_text_content,
                 "language": detect_audit_language(asset_name),
                 "is_binary": False,
+                "previous_score": previous_score,
             }
         ],
         openai_client,
@@ -5929,35 +6094,50 @@ async def persist_single_file_audit(
     current_user_id: str,
     project_id: str,
     audit_report: Dict[str, Any],
-) -> None:
+) -> bool:
     if not project_id:
-        return
+        return False
 
-    score = audit_report.get("evaluated_score")
-    summary = audit_report.get("executive_summary") or audit_report.get("description")
-    update_payload = {
-        "score": score,
-        "evaluation_score": score,
-        "logic_score": score,
-        "audit_summary": summary,
-        "ai_summary": summary,
-        "description": summary,
-        "pros": audit_report.get("pros"),
-        "cons": audit_report.get("cons"),
-        "recommendations": audit_report.get("recommendations"),
-        "user_description": summary,
-        "has_been_audited": True,
-        "status": "Verified",
-    }
+    update_payload = build_project_file_update_payload(audit_report, status="Verified")
     supabase_client = get_request_supabase_client(request)
+    try:
+        response = await run_in_audit_thread(
+            lambda: supabase_client.table("projects")
+            .update(update_payload)
+            .eq("id", project_id)
+            .eq("user_id", current_user_id)
+            .execute()
+        )
+    except Exception as error:
+        logger.error(
+            "project_audit.single_file_persist_failed project_id=%s payload_keys=%s error=%s",
+            project_id,
+            sorted(update_payload),
+            error,
+            exc_info=True,
+        )
+        return False
 
-    await asyncio.to_thread(
-        lambda: supabase_client.table("projects")
-        .update(update_payload)
-        .eq("id", project_id)
-        .eq("user_id", current_user_id)
-        .execute()
-    )
+    response_error = getattr(response, "error", None)
+    if response_error:
+        logger.error(
+            "project_audit.single_file_persist_response_error project_id=%s payload_keys=%s error=%s",
+            project_id,
+            sorted(update_payload),
+            response_error,
+        )
+        return False
+
+    updated_rows = getattr(response, "data", None)
+    if isinstance(updated_rows, list) and not updated_rows:
+        logger.error(
+            "project_audit.single_file_persist_empty project_id=%s payload_keys=%s",
+            project_id,
+            sorted(update_payload),
+        )
+        return False
+
+    return True
 
 
 def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
@@ -5978,33 +6158,68 @@ def format_file_audit_for_storage(file_audit: Dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
+def build_documentation_file_audit(previous_score: int) -> Dict[str, Any]:
+    """Return a complete audit shape for the README documentation shortcut."""
+    score = 100
+    return {
+        "evaluated_score": score,
+        "score_delta": score - coerce_audit_score(previous_score),
+        "delta_summary": "The README documentation was evaluated as a complete project reference.",
+        "description": "System Documentation.",
+        "pros": ["Documentation Anchor: README defines the system purpose."],
+        "cons": [],
+        "recommendations": [],
+    }
+
+
+def build_project_file_update_payload(
+    file_audit: Dict[str, Any],
+    *,
+    status: str,
+) -> Dict[str, Any]:
+    """Build the only schema-approved payload for a project-file audit write."""
+    score = coerce_audit_score(file_audit.get("evaluated_score"))
+    summary = sanitize_audit_summary(
+        file_audit.get("executive_summary") or file_audit.get("description")
+    ) or "File audit complete."
+    try:
+        score_delta = int(file_audit.get("score_delta"))
+    except (TypeError, ValueError):
+        score_delta = 0
+    delta_summary = sanitize_audit_summary(file_audit.get("delta_summary")) or (
+        "The file was re-audited against its previous code-quality baseline."
+    )
+
+    return {
+        "evaluation_score": score,
+        "score": score,
+        "score_delta": score_delta,
+        "delta_summary": delta_summary,
+        "audit_summary": format_file_audit_for_storage(file_audit),
+        "ai_summary": summary,
+        "description": summary,
+        "pros": normalize_audit_list(file_audit.get("pros")),
+        "cons": normalize_audit_list(file_audit.get("cons")),
+        "recommendations": normalize_audit_list(file_audit.get("recommendations")),
+        "user_description": summary,
+        "has_been_audited": True,
+        "status": status,
+    }
+
+
 async def mark_project_file_audited(
     file_record: Dict[str, Any],
     file_audit: Dict[str, Any],
     supabase_client: Any,
-) -> None:
+    *,
+    status: str = "reviewed",
+) -> bool:
     file_id = str(file_record.get("id") or "").strip()
     if not file_id:
         raise ValueError("Cannot save file audit because the project file row is missing an id.")
 
     file_user_id = str(file_record.get("user_id") or "").strip()
-    score = file_audit.get("evaluated_score")
-    summary = file_audit.get("executive_summary") or file_audit.get("description")
-    audit_result = format_file_audit_for_storage(file_audit)
-    update_payload = {
-        "score": score,
-        "evaluation_score": score,
-        "logic_score": score,
-        "status": "reviewed",
-        "has_been_audited": True,
-        "audit_summary": audit_result,
-        "ai_summary": summary,
-        "description": summary,
-        "pros": file_audit.get("pros"),
-        "cons": file_audit.get("cons"),
-        "recommendations": file_audit.get("recommendations"),
-        "user_description": summary,
-    }
+    update_payload = build_project_file_update_payload(file_audit, status=status)
 
     def update_project_file(payload: Dict[str, Any]):
         query = supabase_client.table("projects").update(payload).eq("id", file_id)
@@ -6015,10 +6230,13 @@ async def mark_project_file_audited(
     try:
         update_response = await run_in_audit_thread(lambda: update_project_file(update_payload))
     except Exception as status_update_error:
-        logger.warning(
-            "project_audit.status_update_failed file=%s error=%s",
+        logger.error(
+            "project_audit.file_persist_failed file_id=%s file=%s payload_keys=%s error=%s",
+            file_id,
             get_audit_file_name(file_record),
+            sorted(update_payload),
             status_update_error,
+            exc_info=True,
         )
         fallback_payload = dict(update_payload)
         fallback_payload.pop("status", None)
@@ -6027,16 +6245,35 @@ async def mark_project_file_audited(
                 lambda: update_project_file(fallback_payload)
             )
         except Exception as fallback_error:
-            logger.warning(
-                "project_audit.file_persist_deferred file=%s error=%s",
+            logger.error(
+                "project_audit.file_persist_deferred file_id=%s file=%s payload_keys=%s error=%s",
+                file_id,
                 get_audit_file_name(file_record),
+                sorted(fallback_payload),
                 fallback_error,
+                exc_info=True,
             )
             return False
 
+    response_error = getattr(update_response, "error", None)
+    if response_error:
+        logger.error(
+            "project_audit.file_persist_response_error file_id=%s file=%s payload_keys=%s error=%s",
+            file_id,
+            get_audit_file_name(file_record),
+            sorted(update_payload),
+            response_error,
+        )
+        return False
+
     updated_rows = getattr(update_response, "data", None)
     if isinstance(updated_rows, list) and not updated_rows:
-        logger.warning("project_audit.file_persist_deferred file_id=%s", file_id)
+        logger.error(
+            "project_audit.file_persist_empty file_id=%s file=%s payload_keys=%s",
+            file_id,
+            get_audit_file_name(file_record),
+            sorted(update_payload),
+        )
         return False
 
     return True
@@ -6059,12 +6296,24 @@ async def audit_single_file(
     if file_content is None:
         file_content = await load_audit_file_content(file_record)
 
+    previous_file_record = file_record
+    file_id = str(file_record.get("id") or "").strip()
+    if file_id:
+        fetched_file_record = await fetch_project_file_baseline(
+            supabase_client,
+            file_id,
+            str(file_record.get("user_id") or "").strip() or None,
+        )
+        if fetched_file_record:
+            previous_file_record = {**file_record, **fetched_file_record}
+
     file_audit = await perform_ai_file_audit(
         filename=file_name,
         content=file_content,
         detected_language=detect_audit_language(file_name),
         async_client=openai_client,
         system_blueprint=system_blueprint,
+        previous_score=get_previous_file_score(previous_file_record),
     )
     file_audit["file_name"] = file_name
 
@@ -6103,6 +6352,16 @@ async def run_single_file_audit(
     if not asset_text_content:
         raise HTTPException(status_code=400, detail="Uploaded content cannot be empty.")
 
+    project_id = (payload.projectId or "").strip()
+    previous_file_record: Dict[str, Any] = {}
+    if project_id:
+        supabase_client = get_request_supabase_client(request)
+        previous_file_record = await fetch_project_file_baseline(
+            supabase_client,
+            project_id,
+            current_user_id,
+        )
+
     try:
         audit_report = await orchestrate_audit(
             [
@@ -6111,6 +6370,7 @@ async def run_single_file_audit(
                     "content": asset_text_content,
                     "language": detect_audit_language(asset_name),
                     "is_binary": False,
+                    "record": previous_file_record,
                 }
             ],
             async_client,
@@ -6121,7 +6381,6 @@ async def run_single_file_audit(
             detail="Single-file audit response was not valid JSON.",
         ) from parse_error
 
-    project_id = (payload.projectId or "").strip()
     if project_id:
         await persist_single_file_audit(request, current_user_id, project_id, audit_report)
 
@@ -8155,7 +8414,7 @@ async def verify_asset(
                 raise HTTPException(status_code=404, detail="Project not found.")
 
             project = existing_project_data
-            old_score = existing_project_data.get("score")
+            old_score = get_previous_file_score(existing_project_data)
 
             project_user_id = str(project.get("user_id") or "").strip()
             if str(current_user_id).strip() != project_user_id:
@@ -8439,36 +8698,18 @@ SOURCE CONTENT:
         complexity_level = asset_classification["complexityLevel"]
         project_depth = asset_classification["projectDepth"]
         recruiter_readiness = asset_classification["recruiterReadiness"]
-        update_payload = {
-            "score": calculated_score,
-            "score_delta": score_delta,
-            "delta_summary": delta_summary,
-            "evaluation_score": calculated_score,
-            "logic_score": calculated_score,
-            "audit_summary": ai_summary,
-            "ai_summary": ai_summary,
-            "description": ai_summary,
-            "pros": strengths,
-            "cons": weaknesses,
-            "recommendations": recommendations,
-            "user_description": ai_summary,
-            "has_been_audited": True,
-            "status": "Verified",
-        }
-        if project is not None and "score_reasoning" in project:
-            update_payload["score_reasoning"] = score_reasoning
-        if has_historical_audit:
-            comparison_update_payload = {
-                "previous_score": old_score,
-                "last_improved_summary": generated_summary_from_llm,
-            }
-            update_payload.update(comparison_update_payload)
-            logger.info(
-                "verify_asset.re_audit_persist project_id=%s previous_score=%s summary_present=%s",
-                project_id,
-                old_score,
-                bool(generated_summary_from_llm),
-            )
+        update_payload = build_project_file_update_payload(
+            {
+                "evaluated_score": calculated_score,
+                "score_delta": score_delta,
+                "delta_summary": delta_summary,
+                "description": ai_summary,
+                "pros": strengths,
+                "cons": weaknesses,
+                "recommendations": recommendations,
+            },
+            status="Verified",
+        )
 
         project_payload = None
 
@@ -8478,6 +8719,7 @@ SOURCE CONTENT:
                     lambda: supabase.table("projects")
                     .update(update_payload)
                     .eq("id", project_id)
+                    .eq("user_id", current_user_id)
                     .execute()
                 )
             except Exception as project_persist_error:
@@ -8490,6 +8732,18 @@ SOURCE CONTENT:
                     status_code=502,
                     detail="The audit completed but its project record could not be saved.",
                 ) from project_persist_error
+            response_error = getattr(update_response, "error", None)
+            if response_error:
+                logger.error(
+                    "verify_asset.project_persist_response_error project_id=%s payload_keys=%s error=%s",
+                    project_id,
+                    sorted(update_payload),
+                    response_error,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="The audit completed but its project record could not be saved.",
+                )
             updated_rows = update_response.data
             if isinstance(updated_rows, list) and updated_rows:
                 project_payload = dict(updated_rows[0])
