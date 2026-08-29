@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -170,6 +171,38 @@ type VerifyAssetResponse = {
   auditReport?: unknown;
 };
 
+type PendingAuditUpdate = {
+  projectId: string;
+  patch: Partial<PreviewProject>;
+  score: number | null;
+  scoreDelta: number | null;
+  deltaSummary: string | null;
+};
+
+function getAuditScore(project: PreviewProject) {
+  for (const value of [project.evaluation_score, project.score, project.logic_score]) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function getDeltaSummary(project: PreviewProject) {
+  return typeof project.delta_summary === 'string' && project.delta_summary.trim()
+    ? project.delta_summary.trim()
+    : null;
+}
+
+function confirmsPendingAuditUpdate(project: PreviewProject, pendingUpdate: PendingAuditUpdate) {
+  return (
+    getAuditScore(project) === pendingUpdate.score &&
+    (project.score_delta ?? null) === pendingUpdate.scoreDelta &&
+    getDeltaSummary(project) === pendingUpdate.deltaSummary
+  );
+}
+
 function getFileExtensionFromUrlOrName(previewUrl: string | null, fileName: string | null) {
   const fromName = fileName?.split('.').pop()?.trim().toLowerCase();
 
@@ -311,6 +344,7 @@ export function AssetPreviewModal({
   onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
+  const router = useRouter();
   const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -320,6 +354,8 @@ export function AssetPreviewModal({
   const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
   const onProjectUpdatedRef = useRef(onProjectUpdated);
+  const projectRefreshRevisionRef = useRef(0);
+  const pendingAuditUpdateRef = useRef<PendingAuditUpdate | null>(null);
   const supabase = useMemo(
     () => (hasSupabaseBrowserEnv() ? createSupabaseBrowserClient() : null),
     []
@@ -380,7 +416,25 @@ export function AssetPreviewModal({
   }, [onProjectUpdated]);
 
   useEffect(() => {
-    setLiveProject(asset ?? null);
+    const incomingProject = asset ?? null;
+    const pendingAuditUpdate = pendingAuditUpdateRef.current;
+
+    if (pendingAuditUpdate && pendingAuditUpdate.projectId !== incomingProject?.id) {
+      pendingAuditUpdateRef.current = null;
+    }
+
+    setLiveProject(() => {
+      const activePendingUpdate = pendingAuditUpdateRef.current;
+      if (
+        incomingProject &&
+        activePendingUpdate &&
+        activePendingUpdate.projectId === incomingProject.id
+      ) {
+        return { ...incomingProject, ...activePendingUpdate.patch };
+      }
+
+      return incomingProject;
+    });
   }, [asset]);
 
   useEffect(() => {
@@ -400,13 +454,14 @@ export function AssetPreviewModal({
     const projectId = asset.id;
 
     const refreshProject = async () => {
+      const refreshRevision = projectRefreshRevisionRef.current;
       const projectResult = await supabase
         .from('projects')
         .select(previewProjectSelect)
         .eq('id', projectId)
         .maybeSingle();
 
-      if (!isActive) {
+      if (!isActive || refreshRevision !== projectRefreshRevisionRef.current) {
         return;
       }
 
@@ -417,6 +472,13 @@ export function AssetPreviewModal({
 
       if (projectResult.data) {
         const freshProject = projectResult.data as PreviewProject;
+        const pendingAuditUpdate = pendingAuditUpdateRef.current;
+        if (pendingAuditUpdate?.projectId === projectId) {
+          if (!confirmsPendingAuditUpdate(freshProject, pendingAuditUpdate)) {
+            return;
+          }
+          pendingAuditUpdateRef.current = null;
+        }
         setLiveProject((currentProject) => ({ ...currentProject, ...freshProject }));
         setPreviewCacheNonce(Date.now());
         onProjectUpdatedRef.current?.(freshProject.id ?? projectId, freshProject);
@@ -617,12 +679,23 @@ export function AssetPreviewModal({
         description:
           (data.description ?? data.project?.description ?? executiveSummary) || liveProject.description,
       };
+      const updatedProject = { ...liveProject, ...projectPatch };
+      pendingAuditUpdateRef.current = {
+        projectId,
+        patch: projectPatch,
+        score: getAuditScore(updatedProject),
+        scoreDelta: updatedProject.score_delta ?? null,
+        deltaSummary: getDeltaSummary(updatedProject),
+      };
+      projectRefreshRevisionRef.current += 1;
 
       setLiveProject((currentProject) => ({
         ...(currentProject ?? liveProject),
         ...projectPatch,
       }));
       onProjectUpdated?.(projectId, projectPatch);
+      setPreviewCacheNonce(Date.now());
+      router.refresh();
     } catch (error) {
       console.error('Preview modal AI verification failed:', error);
       window.alert(error instanceof Error ? error.message : 'MeliusAI verification failed.');
