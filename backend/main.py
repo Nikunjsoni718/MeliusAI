@@ -3925,15 +3925,23 @@ async def evaluate_folder_workflow(payload, project_id: str, supabase_client, as
         )
         persistence_warnings.append(f"workspace score deferred: {parent_persist_error}")
 
-    file_update_results = await gather_in_bounded_batches(
-        downloaded_files,
-        update_individual_file,
-        limit=AUDIT_MAX_CONCURRENCY,
-        return_exceptions=True,
-    )
-    for file_update_result in file_update_results:
-        if isinstance(file_update_result, Exception):
-            persistence_warnings.append(str(file_update_result))
+    # Persist file-level status updates one at a time. This path runs in the
+    # same constrained executor as the final aggregate write, so concurrent
+    # submissions can exhaust Render's small process/thread allocation.
+    for file_record in downloaded_files:
+        try:
+            await update_individual_file(file_record)
+        except Exception as status_update_error:
+            file_name = str(file_record.get("filename") or "Unknown file")
+            logger.error(
+                "folder_workflow.status_update_failed project_id=%s file=%s error=%s",
+                project_id,
+                file_name,
+                status_update_error,
+                exc_info=True,
+            )
+            persistence_warnings.append(f"{file_name}: {status_update_error}")
+            continue
 
     if persistence_warnings:
         logger.warning(
@@ -6143,7 +6151,6 @@ async def run_project_audit(
     loaded_files = []
     files_data = []
     files_to_update = []
-    file_update_results = []
     orchestration_result = None
     previous_folder_score = 0
 
@@ -6265,18 +6272,28 @@ async def run_project_audit(
                 supabase_client,
             )
 
-        file_update_results = await gather_in_bounded_batches(
-            files_to_update,
-            update_loaded_file,
-            limit=AUDIT_MAX_CONCURRENCY,
-            return_exceptions=True,
-        )
-        file_update_failures = [
-            str(file_update_result)
-            for file_update_result in file_update_results
-            if isinstance(file_update_result, Exception)
-        ]
-        deferred_file_updates = sum(result is False for result in file_update_results)
+        # Individual project rows are non-critical after the aggregate audit has
+        # completed. Update them sequentially so container thread exhaustion
+        # cannot prevent the project_folders score from being persisted.
+        file_update_failures: list[str] = []
+        deferred_file_updates = 0
+        for loaded_file in files_to_update:
+            try:
+                persisted = await update_loaded_file(loaded_file)
+            except Exception as status_update_error:
+                file_name = loaded_file["file_name"]
+                logger.error(
+                    "project_audit.status_update_failed folder_id=%s file=%s error=%s",
+                    folder_id,
+                    file_name,
+                    status_update_error,
+                    exc_info=True,
+                )
+                file_update_failures.append(f"{file_name}: {status_update_error}")
+                continue
+
+            if persisted is False:
+                deferred_file_updates += 1
         if file_update_failures or deferred_file_updates:
             logger.warning(
                 "project_audit.file_updates_partial folder_id=%s failures=%s deferred=%s",
@@ -6371,7 +6388,6 @@ async def run_project_audit(
         loaded_files.clear()
         files_data.clear()
         files_to_update.clear()
-        file_update_results.clear()
         del db_response
         del orchestration_result
         gc.collect()
