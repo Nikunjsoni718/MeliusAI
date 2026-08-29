@@ -5887,7 +5887,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setActivePreviewProjectOverride((currentProject) =>
       currentProject?.id === projectId ? { ...currentProject, ...projectPatch } : currentProject
     );
-    router.refresh();
   }
 
   async function handleVerifyWithMeliusAI(
@@ -6146,10 +6145,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setVerifiedAssetId(project.id);
       advanceProductTour(9, 10, project.id);
-      if (targetUsername) {
-        setSpectatorRefreshToken((currentToken) => currentToken + 1);
-      }
-      router.refresh();
       verifiedAssetTimerRef.current = window.setTimeout(() => {
         setVerifiedAssetId(null);
         verifiedAssetTimerRef.current = null;
@@ -6451,10 +6446,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           : 'Folder audit completed successfully!'
       );
 
-      if (targetUsername) {
-        setSpectatorRefreshToken((currentToken) => currentToken + 1);
-      }
-      router.refresh();
     } catch (error) {
       console.error("Error verifying folder:", error);
       alert(error instanceof Error ? error.message : 'An error occurred during the AI audit.');
@@ -7430,7 +7421,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                 : project
                             )
                           );
-                          router.refresh();
                         }}
                       />
                     ) : null}

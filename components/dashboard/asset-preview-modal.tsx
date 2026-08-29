@@ -1,7 +1,6 @@
 'use client';
 
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
@@ -344,7 +343,6 @@ export function AssetPreviewModal({
   onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
-  const router = useRouter();
   const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -695,7 +693,6 @@ export function AssetPreviewModal({
       }));
       onProjectUpdated?.(projectId, projectPatch);
       setPreviewCacheNonce(Date.now());
-      router.refresh();
     } catch (error) {
       console.error('Preview modal AI verification failed:', error);
       window.alert(error instanceof Error ? error.message : 'MeliusAI verification failed.');
