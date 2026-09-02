@@ -28,6 +28,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from google import genai
+from google.genai import types
 from openai import AsyncOpenAI, OpenAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -96,7 +98,7 @@ async def enforce_cors_origin_whitelist(request: Request, call_next):
 
     return await call_next(request)
 
-# Initialize OpenAI Client (Guaranteed to read from root .env.local now)
+# Initialize provider clients (environment variables are loaded from root .env.local).
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
@@ -104,6 +106,8 @@ client = AsyncOpenAI()
 async_client = client
 openai_client = async_client
 sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+gemini_client = genai.Client()
+GEMINI_AUDIT_MODEL = "gemini-2.5-flash"
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
@@ -3018,72 +3022,6 @@ You must also include the following specific sections in your final output, anch
 3. Systemic Weaknesses
 4. Actionable Recommendations"""
 
-EVALUATION_ITEM_FORMAT_DESCRIPTION = (
-    "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` "
-    "arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. "
-    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' "
-    "MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
-)
-
-EVALUATION_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "melius_code_evaluation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": (
-                        "Detailed architectural and purpose description of the submitted code. "
-                        "Mandatory for every language, including TypeScript, TSX, JavaScript, and JSX."
-                    ),
-                },
-                "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "score_delta": {"type": "integer"},
-                "delta_summary": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "One sentence explaining the code changes or findings behind the score delta.",
-                },
-                "pros": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
-                    },
-                },
-                "cons": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
-                    },
-                },
-                "recommendations": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "description": EVALUATION_ITEM_FORMAT_DESCRIPTION,
-                    },
-                },
-            },
-            "required": [
-                "description",
-                "score",
-                "score_delta",
-                "delta_summary",
-                "pros",
-                "cons",
-                "recommendations",
-            ],
-        },
-    },
-}
-
-
 class FileAuditResponse(BaseModel):
     """Strict AI contract for an individual project-file audit."""
 
@@ -3094,6 +3032,18 @@ class FileAuditResponse(BaseModel):
     pros: List[str]
     cons: List[str]
     recommendations: List[str]
+
+    model_config = {"extra": "forbid"}
+
+
+class AnalyzeCodeResponse(BaseModel):
+    """Structured response returned by the standalone code-analysis endpoint."""
+
+    executive_summary: str = Field(..., min_length=1)
+    goods_and_strengths: List[str]
+    bads_and_flaws: List[str]
+    strategic_recommendations: List[str]
+    overall_score: int = Field(..., ge=0, le=100)
 
     model_config = {"extra": "forbid"}
 
@@ -3165,7 +3115,6 @@ async def perform_ai_file_audit(
     filename: str,
     content: str,
     detected_language: str,
-    async_client: Any,
     system_blueprint: str | None = None,
     previous_score: int = 0,
 ) -> Dict[str, Any]:
@@ -3234,19 +3183,14 @@ MANDATORY SCORING & LANGUAGE ISOLATION RULE:
     )
 
     try:
-        completion = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": strict_system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            response_format=EVALUATION_RESPONSE_FORMAT,
+        response = await generate_gemini_structured_audit(
+            FileAuditResponse,
+            strict_system_prompt,
+            user_content,
             temperature=0,
         )
-
-        raw_content = completion.choices[0].message.content or "{}"
-        parsed_content = clean_and_parse_json(raw_content)
-        response = FileAuditResponse.model_validate(parsed_content)
+        if not isinstance(response, FileAuditResponse):
+            response = FileAuditResponse.model_validate(response.model_dump())
 
         def normalize_text_array(value):
             if not isinstance(value, list): return []
@@ -3356,7 +3300,6 @@ def normalize_folder_audit_report(raw_report: Dict[str, Any], fallback_score: in
 
 async def orchestrate_audit(
     files_data: list[Dict[str, Any]],
-    async_client: AsyncOpenAI,
     *,
     previous_score: int = 0,
     force_folder_result: bool = False,
@@ -3401,7 +3344,6 @@ async def orchestrate_audit(
             filename=file["filename"],
             content=file["content"],
             detected_language=file["language"],
-            async_client=async_client,
             previous_score=get_previous_file_score(file),
         )
 
@@ -3446,14 +3388,10 @@ async def orchestrate_audit(
         )
 
     async with LLM_AUDIT_SEMAPHORE:
-        system_blueprint_resp = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": architect_prompt}],
+        system_blueprint = await generate_gemini_audit_text(
+            architect_prompt,
             temperature=0,
         )
-    system_blueprint = (
-        system_blueprint_resp.choices[0].message.content or "No system blueprint was generated."
-    ).strip()
 
     file_audits: Dict[str, Dict[str, Any]] = {}
 
@@ -3471,7 +3409,6 @@ async def orchestrate_audit(
                     filename=file["filename"],
                     content=file["content"],
                     detected_language=file["language"],
-                    async_client=async_client,
                     system_blueprint=system_blueprint,
                     previous_score=previous_file_score,
                 )
@@ -3532,27 +3469,21 @@ async def orchestrate_audit(
     )
     try:
         async with LLM_AUDIT_SEMAPHORE:
-            judge_resp = await async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                response_format=FOLDER_AUDIT_RESPONSE_FORMAT,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are the Lead Tech Director. Return only the strict JSON schema requested. "
-                            "score_delta must equal score minus the previous workspace score, and delta_summary "
-                            "must be one concise sentence describing the change. NEVER guess a framework.\n\n"
-                            f"{AUDIT_GRADING_RUBRIC}\n\n"
-                            "Use the README only when it exists to clarify intent; prioritize the actual "
-                            "architecture, code, and file audits when assigning the score."
-                        ),
-                    },
-                    {"role": "user", "content": judge_prompt},
-                ],
+            judge_response = await generate_gemini_structured_audit(
+                FolderAuditResponse,
+                (
+                    "You are the Lead Tech Director. Return only the strict JSON schema requested. "
+                    "score_delta must equal score minus the previous workspace score, and delta_summary "
+                    "must be one concise sentence describing the change. NEVER guess a framework.\n\n"
+                    f"{AUDIT_GRADING_RUBRIC}\n\n"
+                    "Use the README only when it exists to clarify intent; prioritize the actual "
+                    "architecture, code, and file audits when assigning the score."
+                ),
+                judge_prompt,
                 temperature=0,
             )
         folder_audit = parse_folder_audit_response(
-            judge_resp.choices[0].message.content,
+            judge_response.model_dump_json(),
             previous_score,
         )
     except Exception as error:
@@ -3580,7 +3511,6 @@ async def evaluate_folder_workflow(
     payload: Any,
     project_id: str,
     supabase_client: Any,
-    async_client: Any,
     current_user_id: str | None = None,
 ) -> Any:
     import httpx
@@ -3791,25 +3721,16 @@ async def evaluate_folder_workflow(
         )
 
     async with LLM_AUDIT_SEMAPHORE:
-        blueprint_resp = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
-                        "Write a strict, 3-sentence blueprint explaining what this entire application is, "
-                        "what its tech stack is, and how the frontend and backend connect. "
-                        "If no README exists, use filenames, extensions, and extracted notebook cells only."
-                    ),
-                },
-                {"role": "user", "content": blueprint_user_content},
-            ],
+        system_blueprint = await generate_gemini_audit_text(
+            (
+                "You are a Senior Architect. Analyze this Directory Tree and README (if provided). "
+                "Write a strict, 3-sentence blueprint explaining what this entire application is, "
+                "what its tech stack is, and how the frontend and backend connect. "
+                "If no README exists, use filenames, extensions, and extracted notebook cells only."
+            ),
+            blueprint_user_content,
             temperature=0,
         )
-    system_blueprint = (
-        blueprint_resp.choices[0].message.content or "No system blueprint was generated."
-    ).strip()
 
     # --- PHASE 2: AUDIT EVERY NON-BINARY FILE IN ISOLATION ---
     file_audits = {}
@@ -3827,7 +3748,6 @@ async def evaluate_folder_workflow(
                     filename=filename,
                     content=file_record["content"],
                     detected_language=file_record["language"],
-                    async_client=async_client,
                     system_blueprint=system_blueprint,
                     previous_score=previous_file_score,
                 )
@@ -3889,24 +3809,15 @@ async def evaluate_folder_workflow(
 
     try:
         async with LLM_AUDIT_SEMAPHORE:
-            summary_resp = await async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            f"You are a Tech Lead. Here is the blueprint of the app: {system_blueprint}. "
-                            f"Here are the weaknesses found across all files: "
-                            f"{truncate_audit_text(json.dumps(list_of_all_cons, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}. "
-                            "Write a 3-sentence executive summary of the overall system health."
-                        ),
-                    }
-                ],
+            folder_summary = await generate_gemini_audit_text(
+                (
+                    f"You are a Tech Lead. Here is the blueprint of the app: {system_blueprint}. "
+                    f"Here are the weaknesses found across all files: "
+                    f"{truncate_audit_text(json.dumps(list_of_all_cons, ensure_ascii=False), AUDIT_REDUCE_REPORT_CHAR_LIMIT)}. "
+                    "Write a 3-sentence executive summary of the overall system health."
+                ),
                 temperature=0,
             )
-        folder_summary = (
-            summary_resp.choices[0].message.content or "Folder audit complete."
-        ).strip()
     except Exception as error:
         logger.error("folder_workflow.phase3_summary_failed project_id=%s error=%s", project_id, error)
         folder_summary = "Folder audit complete."
@@ -4032,7 +3943,6 @@ async def run_folder_workflow_with_resource_limits(
     payload,
     project_id: str,
     supabase_client,
-    async_client,
     current_user_id: str | None = None,
 ):
     audit_slot_acquired = False
@@ -4055,7 +3965,6 @@ async def run_folder_workflow_with_resource_limits(
             payload,
             project_id,
             supabase_client,
-            async_client,
             current_user_id,
         )
     except HTTPException:
@@ -4104,7 +4013,6 @@ async def evaluate_folder_workflow_route(
         payload,
         project_id,
         supabase_client,
-        async_client,
         current_user_id,
     )
 
@@ -4133,7 +4041,6 @@ async def evaluate_code(
             payload,
             project_id,
             supabase_client,
-            async_client,
             current_user_id,
         )
     # -----------------------------------------------------------------
@@ -4242,7 +4149,7 @@ async def evaluate_code(
             len(code_content),
         )
 
-        logger.info("code_evaluation.openai.start filename=%s", filename)
+        logger.info("code_evaluation.gemini.start filename=%s", filename)
         parsed_audit_data = await orchestrate_audit(
             [
                 {
@@ -4253,9 +4160,8 @@ async def evaluate_code(
                     "record": previous_file_record,
                 }
             ],
-            async_client,
         )
-        logger.info("code_evaluation.openai.complete filename=%s", filename)
+        logger.info("code_evaluation.gemini.complete filename=%s", filename)
 
         description = parsed_audit_data["description"]
         if not isinstance(description, str) or not description.strip():
@@ -4338,7 +4244,7 @@ async def evaluate_code(
             detail="Unable to download file from fileUrl.",
         ) from download_error
     except json.JSONDecodeError as parse_error:
-        logger.exception("code_evaluation.openai.malformed_json filename=%s", filename)
+        logger.exception("code_evaluation.gemini.malformed_json filename=%s", filename)
         raise HTTPException(
             status_code=502,
             detail="The evaluation model returned malformed JSON.",
@@ -4418,25 +4324,17 @@ OUTPUT FORMAT (Strict JSON matching the dashboard UI):
 }}
 """
 
-        completion = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        f"File Name: {filename}\n"
-                        f"Language: {detected_language}\n\n"
-                        f"Raw Content:\n{code_content}"
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
+        analysis_response = await generate_gemini_structured_audit(
+            AnalyzeCodeResponse,
+            system_prompt,
+            (
+                f"File Name: {filename}\n"
+                f"Language: {detected_language}\n\n"
+                f"Raw Content:\n{code_content}"
+            ),
             temperature=0.1,
         )
-
-        raw_content = completion.choices[0].message.content or "{}"
-        return json.loads(raw_content)
+        return analysis_response.model_dump()
     except HTTPException:
         raise
     except json.JSONDecodeError as parse_error:
@@ -4825,6 +4723,65 @@ class FolderAuditResponse(BaseModel):
     recommendations: List[str]
 
     model_config = {"extra": "forbid"}
+
+
+def build_gemini_audit_prompt(system_prompt: str, user_prompt: str | None = None) -> str:
+    """Keep the existing audit instructions intact in Gemini's single contents payload."""
+    prompt = f"SYSTEM INSTRUCTIONS:\n{system_prompt.strip()}"
+    if user_prompt and user_prompt.strip():
+        prompt += f"\n\nUSER INPUT:\n{user_prompt.strip()}"
+    return prompt
+
+
+async def generate_gemini_audit_text(
+    system_prompt: str,
+    user_prompt: str | None = None,
+    *,
+    temperature: float = 0,
+) -> str:
+    response = await gemini_client.aio.models.generate_content(
+        model=GEMINI_AUDIT_MODEL,
+        contents=build_gemini_audit_prompt(system_prompt, user_prompt),
+        config=types.GenerateContentConfig(temperature=temperature),
+    )
+    response_text = str(getattr(response, "text", "") or "").strip()
+    if not response_text:
+        raise ValueError("Gemini returned an empty audit response.")
+    return response_text
+
+
+async def generate_gemini_structured_audit(
+    response_schema: type[BaseModel],
+    system_prompt: str,
+    user_prompt: str | None = None,
+    *,
+    temperature: float = 0,
+) -> BaseModel:
+    response = await gemini_client.aio.models.generate_content(
+        model=GEMINI_AUDIT_MODEL,
+        contents=build_gemini_audit_prompt(system_prompt, user_prompt),
+        config=types.GenerateContentConfig(
+            temperature=temperature,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+        ),
+    )
+
+    parsed_response = getattr(response, "parsed", None)
+    if isinstance(parsed_response, response_schema):
+        return parsed_response
+    if isinstance(parsed_response, BaseModel):
+        return response_schema.model_validate(parsed_response.model_dump())
+    if isinstance(parsed_response, dict):
+        return response_schema.model_validate(parsed_response)
+    if isinstance(parsed_response, str) and parsed_response.strip():
+        return response_schema.model_validate(clean_and_parse_json(parsed_response))
+
+    response_text = str(getattr(response, "text", "") or "").strip()
+    if response_text:
+        return response_schema.model_validate(clean_and_parse_json(response_text))
+
+    raise ValueError("Gemini returned an empty structured audit response.")
 
 
 ALLOWED_DETECTED_TYPES = {
@@ -5306,111 +5263,6 @@ EXECUTIVE SUMMARY (REQUIRED): Apply this rule to the `ai_summary` field, which i
 FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
 Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
 MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."""
-
-
-def build_audit_response_format(*, include_improvement_summary: bool) -> Dict[str, Any]:
-    properties: Dict[str, Any] = {
-        "ai_summary": {"type": "string"},
-        "score": {"type": "integer", "minimum": 0, "maximum": 100},
-        "score_reasoning": {
-            "type": "string",
-            "minLength": 1,
-            "description": AUDIT_SCORE_REASONING_FIELD_DESCRIPTION,
-        },
-        "pros": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
-        },
-        "cons": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
-        },
-        "recommendations": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {"type": "string", "description": AUDIT_LIST_FIELD_DESCRIPTION},
-        },
-    }
-    required = [
-        "ai_summary",
-        "score",
-        "score_reasoning",
-        "pros",
-        "cons",
-        "recommendations",
-    ]
-
-    if include_improvement_summary:
-        properties["last_improved_summary"] = {
-            "type": "string",
-            "minLength": 1,
-            "description": (
-                "A 2-3 sentence comparison describing fixes, unresolved issues, "
-                "and regressions since the previous audit."
-            ),
-        }
-        required.append("last_improved_summary")
-        properties["score_delta"] = {"type": "integer"}
-        properties["delta_summary"] = {
-            "type": "string",
-            "minLength": 1,
-            "description": "One sentence explaining exactly which code changes caused the score delta.",
-        }
-        required.extend(["score_delta", "delta_summary"])
-
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": (
-                "melius_single_file_re_audit"
-                if include_improvement_summary
-                else "melius_single_file_audit"
-            ),
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
-
-
-AUDIT_RESPONSE_FORMAT = build_audit_response_format(include_improvement_summary=False)
-RE_AUDIT_RESPONSE_FORMAT = build_audit_response_format(include_improvement_summary=True)
-
-FOLDER_AUDIT_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "melius_folder_audit",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "score_delta": {"type": "integer"},
-                "delta_summary": {"type": "string", "minLength": 1},
-                "executive_summary": {"type": "string", "minLength": 1},
-                "pros": {"type": "array", "items": {"type": "string"}},
-                "cons": {"type": "array", "items": {"type": "string"}},
-                "recommendations": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": [
-                "score",
-                "score_delta",
-                "delta_summary",
-                "executive_summary",
-                "pros",
-                "cons",
-                "recommendations",
-            ],
-        },
-    },
-}
 
 
 def parse_folder_audit_response(raw_content: str | None, previous_score: int) -> Dict[str, Any]:
@@ -6085,7 +5937,6 @@ async def audit_standalone_file(
                 "previous_score": previous_score,
             }
         ],
-        openai_client,
     )
 
 
@@ -6311,7 +6162,6 @@ async def audit_single_file(
         filename=file_name,
         content=file_content,
         detected_language=detect_audit_language(file_name),
-        async_client=openai_client,
         system_blueprint=system_blueprint,
         previous_score=get_previous_file_score(previous_file_record),
     )
@@ -6373,7 +6223,6 @@ async def run_single_file_audit(
                     "record": previous_file_record,
                 }
             ],
-            async_client,
         )
     except (ValueError, json.JSONDecodeError) as parse_error:
         raise HTTPException(
@@ -6505,7 +6354,6 @@ async def run_project_audit(
 
         orchestration_result = await orchestrate_audit(
             files_data,
-            async_client,
             previous_score=previous_folder_score,
             force_folder_result=True,
         )
@@ -8649,28 +8497,21 @@ User context: {user_context_description or "No additional context supplied."}
 SOURCE CONTENT:
 {truncate_audit_text(asset_text_content, AUDIT_FILE_CONTENT_CHAR_LIMIT)}"""
 
-        completion = await run_in_audit_thread(
-            lambda: sync_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict technical audit evaluator. Return only the JSON object "
-                            "required by the response schema: score, score_delta, delta_summary, "
-                            "executive_summary, pros, cons, and recommendations. Do not include "
-                            "markdown, explanations outside JSON, or additional keys.\n\n"
-                            f"{AUDIT_GRADING_RUBRIC}"
-                        ),
-                    },
-                    {"role": "user", "content": strict_audit_prompt},
-                ],
-                response_format=FOLDER_AUDIT_RESPONSE_FORMAT,
+        async with LLM_AUDIT_SEMAPHORE:
+            audit_response = await generate_gemini_structured_audit(
+                FolderAuditResponse,
+                (
+                    "You are a strict technical audit evaluator. Return only the JSON object "
+                    "required by the response schema: score, score_delta, delta_summary, "
+                    "executive_summary, pros, cons, and recommendations. Do not include "
+                    "markdown, explanations outside JSON, or additional keys.\n\n"
+                    f"{AUDIT_GRADING_RUBRIC}"
+                ),
+                strict_audit_prompt,
                 temperature=0,
             )
-        )
         audit_result = parse_folder_audit_response(
-            completion.choices[0].message.content,
+            audit_response.model_dump_json(),
             previous_score,
         )
 
