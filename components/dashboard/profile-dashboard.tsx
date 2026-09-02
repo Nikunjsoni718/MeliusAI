@@ -4858,7 +4858,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       headers.Authorization = `Bearer ${providerToken}`;
     }
 
-    const response = await fetch(url.toString(), { headers });
+    const response = await fetch(url.toString(), { cache: 'no-store', headers });
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null) as { message?: string } | null;
       const requestError = new Error(
@@ -4898,56 +4898,40 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('No linked GitHub identity was found. Reconnect GitHub and try again.');
       }
 
-      let providerToken =
+      const providerToken =
         currentSessionData.session?.provider_token ?? session?.provider_token ?? null;
-      const githubUsername = freshGitHubProfile.github_username;
-
-      const fetchRepositoryPages = async (token: string | null) => {
-        const repositories: GitHubRepository[] = [];
-
-        for (let page = 1; page <= 100; page += 1) {
-          const repositoriesUrl = new URL(
-            `/users/${encodeURIComponent(githubUsername)}/repos`,
-            GITHUB_API_BASE_URL
-          );
-          repositoriesUrl.searchParams.set('type', 'owner');
-          repositoriesUrl.searchParams.set('sort', 'updated');
-          repositoriesUrl.searchParams.set('direction', 'desc');
-          repositoriesUrl.searchParams.set('per_page', '100');
-          repositoriesUrl.searchParams.set('page', String(page));
-          const pageItems = await fetchGitHubApi<GitHubRepository[]>(
-            repositoriesUrl,
-            token
-          );
-          repositories.push(...pageItems.filter((repository) => !repository.private));
-
-          if (pageItems.length < 100) {
-            break;
-          }
-        }
-
-        return repositories;
-      };
-
-      let repositories: GitHubRepository[];
-      try {
-        repositories = await fetchRepositoryPages(providerToken);
-      } catch (repositoryError) {
-        const status = (repositoryError as Error & { status?: number }).status;
-        if (!providerToken || status !== 401) {
-          throw repositoryError;
-        }
-
-        providerToken = null;
-        repositories = await fetchRepositoryPages(null);
+      if (!providerToken) {
+        throw new Error('Your GitHub connection has expired. Reconnect GitHub and try again.');
       }
 
-      setGithubProviderToken(providerToken);
-      setGithubRepositories(repositories);
+      // Reset data derived from the previous list before the live sync completes,
+      // so a deleted repository cannot remain selectable in the importer.
       setGithubRepositoryTrees({});
       setExpandedGithubRepositories({});
       setExpandedGithubFolders({});
       setSelectedGithubFiles({});
+      setGithubRepositories([]);
+
+      const repositoryResponse = await fetch('/api/github/repositories', {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: {
+          'X-GitHub-Provider-Token': providerToken,
+        },
+      });
+      const repositoryPayload = (await repositoryResponse.json().catch(() => null)) as {
+        error?: string;
+        repositories?: GitHubRepository[];
+      } | null;
+
+      if (!repositoryResponse.ok || !Array.isArray(repositoryPayload?.repositories)) {
+        throw new Error(
+          repositoryPayload?.error || 'Unable to load live GitHub repositories. Reconnect GitHub and try again.'
+        );
+      }
+
+      setGithubProviderToken(providerToken);
+      setGithubRepositories(repositoryPayload.repositories);
     } catch (error) {
       console.error('GitHub repository list error:', error);
       setGithubRepositories([]);
@@ -4987,19 +4971,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         GITHUB_API_BASE_URL
       );
       treeUrl.searchParams.set('recursive', '1');
-      let treeData: { tree?: GitHubTreeEntry[]; truncated?: boolean };
-
-      try {
-        treeData = await fetchGitHubApi(treeUrl, githubProviderToken);
-      } catch (treeError) {
-        const status = (treeError as Error & { status?: number }).status;
-        if (!githubProviderToken || status !== 401) {
-          throw treeError;
-        }
-
-        setGithubProviderToken(null);
-        treeData = await fetchGitHubApi(treeUrl, null);
+      if (!githubProviderToken) {
+        throw new Error('Your GitHub connection has expired. Reconnect GitHub and try again.');
       }
+
+      const treeData = await fetchGitHubApi<{ tree?: GitHubTreeEntry[]; truncated?: boolean }>(
+        treeUrl,
+        githubProviderToken
+      );
 
       const entries = (treeData.tree ?? []).filter((entry) => {
         if (entry.type !== 'blob') {
