@@ -107,7 +107,7 @@ async_client = client
 openai_client = async_client
 sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 gemini_client = genai.Client()
-GEMINI_AUDIT_MODEL = "gemini-2.5-flash"
+GEMINI_AUDIT_MODEL = "gemini-3.6-flash"
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
