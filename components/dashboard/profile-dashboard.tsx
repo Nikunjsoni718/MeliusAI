@@ -5847,25 +5847,89 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }
 
   function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
-    setProjects((currentProjects) =>
-      currentProjects.map((project) => (project.id === projectId ? { ...project, ...projectPatch } : project))
+    applyVerifiedProjectState(
+      projectId,
+      projectPatch,
+      projectPatch.ai_summary ?? projectPatch.audit_summary ?? projectPatch.executive_summary ?? ''
     );
+  }
+
+  function applyVerifiedProjectState(
+    projectId: string,
+    projectPatch: Partial<ProjectItem>,
+    fallbackReportText: string,
+    options: { sourceProject?: ProjectItem; userDescription?: string } = {}
+  ) {
     const profileAssetPatch = toProjectRowAuditPatch(projectPatch);
+    const mergeProject = (currentProject: ProjectItem) =>
+      mergeVerifiedProject(currentProject, projectPatch, fallbackReportText);
+
+    setProjects((currentProjects) => {
+      const existingProject = currentProjects.find((project) => project.id === projectId);
+      if (existingProject) {
+        return currentProjects.map((project) =>
+          project.id === projectId ? mergeProject(project) : project
+        );
+      }
+
+      return options.sourceProject
+        ? [mergeProject(options.sourceProject), ...currentProjects]
+        : currentProjects;
+    });
+
     setProfileAssets((currentAssets) =>
-      currentAssets.map((asset) =>
-        asset.id === projectId ? { ...asset, ...profileAssetPatch } : asset
-      )
+      currentAssets.some((asset) => asset.id === projectId)
+        ? currentAssets.map((asset) =>
+            asset.id === projectId ? { ...asset, ...profileAssetPatch } : asset
+          )
+        : options.sourceProject
+          ? [
+              {
+                id: options.sourceProject.id,
+                created_at: options.sourceProject.created_at ?? new Date().toISOString(),
+                user_id: options.sourceProject.user_id ?? undefined,
+                is_public: options.sourceProject.is_public ?? true,
+                name: options.sourceProject.title,
+                title: options.sourceProject.title,
+                folder_id: options.sourceProject.folder_id ?? null,
+                file_name: options.sourceProject.file_name ?? options.sourceProject.title,
+                file_type: options.sourceProject.file_type,
+                file_url: options.sourceProject.file_url ?? options.sourceProject.preview_url ?? null,
+                ...profileAssetPatch,
+              },
+              ...currentAssets,
+            ]
+          : currentAssets
     );
 
-    if ('user_description' in projectPatch) {
+    setProjectFolders((currentFolders) =>
+      currentFolders.map((folder) => {
+        const folderWithProjects = folder as ProjectFolderWithNestedProjects;
+        const patchNestedProjects = (rows: ProjectRow[] | null | undefined) =>
+          rows?.map((row) =>
+            row.id === projectId ? { ...row, ...profileAssetPatch } : row
+          ) ?? rows;
+
+        return {
+          ...folder,
+          nested_projects: patchNestedProjects(folderWithProjects.nested_projects),
+          assets: patchNestedProjects(folderWithProjects.assets),
+          files: patchNestedProjects(folderWithProjects.files),
+          folderFiles: patchNestedProjects(folderWithProjects.folderFiles),
+          folder_files: patchNestedProjects(folderWithProjects.folder_files),
+        };
+      })
+    );
+
+    if (options.userDescription !== undefined || 'user_description' in projectPatch) {
       setProjectDescriptions((currentDescriptions) => ({
         ...currentDescriptions,
-        [projectId]: projectPatch.user_description ?? '',
+        [projectId]: options.userDescription ?? projectPatch.user_description ?? '',
       }));
     }
 
     setActivePreviewProjectOverride((currentProject) =>
-      currentProject?.id === projectId ? { ...currentProject, ...projectPatch } : currentProject
+      currentProject?.id === projectId ? mergeProject(currentProject) : currentProject
     );
   }
 
@@ -6074,55 +6138,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             ? payload.delta_summary
             : updatedProject?.delta_summary,
       };
-      const verifiedProfileAssetPatch = toProjectRowAuditPatch(verifiedProjectPatch);
-
-      setProjects((currentProjects) => {
-        const projectExists = currentProjects.some((currentProject) => currentProject.id === project.id);
-
-        return projectExists
-          ? currentProjects.map((currentProject) =>
-              currentProject.id === project.id
-                ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
-                : currentProject
-            )
-          : [mergeVerifiedProject(project, verifiedProjectPatch, accumulatedReportText), ...currentProjects];
+      applyVerifiedProjectState(project.id, verifiedProjectPatch, accumulatedReportText, {
+        sourceProject: project,
+        userDescription: userContextDescription,
       });
-      setProfileAssets((currentAssets) => {
-        const assetExists = currentAssets.some((asset) => asset.id === project.id);
-        if (assetExists) {
-          return currentAssets.map((asset) =>
-            asset.id === project.id
-              ? { ...asset, ...verifiedProfileAssetPatch }
-              : asset
-          );
-        }
-
-        return [
-          {
-            id: project.id,
-            created_at: project.created_at ?? new Date().toISOString(),
-            user_id: project.user_id ?? undefined,
-            is_public: project.is_public ?? true,
-            name: project.title,
-            title: project.title,
-            folder_id: project.folder_id ?? null,
-            file_name: project.file_name ?? project.title,
-            file_type: project.file_type,
-            file_url: project.file_url ?? project.preview_url ?? null,
-            ...verifiedProfileAssetPatch,
-          },
-          ...currentAssets,
-        ];
-      });
-      setProjectDescriptions((currentDescriptions) => ({
-        ...currentDescriptions,
-        [project.id]: userContextDescription,
-      }));
-      setActivePreviewProjectOverride((currentProject) =>
-        currentProject?.id === project.id
-          ? mergeVerifiedProject(currentProject, verifiedProjectPatch, accumulatedReportText)
-          : currentProject
-      );
       setVerifiedAssetId(project.id);
       advanceProductTour(9, 10, project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
@@ -6408,22 +6427,46 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       const folderSummary =
         data.folder_audit?.executive_summary ?? data.folder_audit?.description ?? null;
+      const folderScoreDelta = data.score_delta ?? data.folder_audit?.score_delta ?? null;
+      const folderDeltaSummary = data.delta_summary ?? data.folder_audit?.delta_summary ?? null;
 
       setProjectFolders((currentFolders) =>
-        currentFolders.map((folder) =>
-          folder.id === folderId
-            ? {
-                ...folder,
-                evaluation_score: folderScore,
-                score_delta: data.score_delta ?? data.folder_audit?.score_delta ?? null,
-                delta_summary: data.delta_summary ?? data.folder_audit?.delta_summary ?? null,
-                executive_summary: folderSummary,
-                pros: data.folder_audit?.pros ?? null,
-                cons: data.folder_audit?.cons ?? null,
-                recommendations: data.folder_audit?.recommendations ?? null,
-              }
-            : folder
-        )
+        currentFolders.map((folder) => {
+          if (folder.id !== folderId) {
+            return folder;
+          }
+
+          const currentFolder = folder as FolderAuditItem;
+          const resolvedSummary = folderSummary?.trim() || null;
+          return {
+            ...folder,
+            ...(folderScore !== null
+              ? {
+                  evaluated_score: folderScore,
+                  melius_score: folderScore,
+                  score: folderScore,
+                  evaluation_score: folderScore,
+                  logic_score: folderScore,
+                }
+              : {}),
+            score_delta: folderScoreDelta,
+            delta_summary: folderDeltaSummary,
+            has_been_audited: true,
+            ...(resolvedSummary
+              ? {
+                  executive_summary: resolvedSummary,
+                  audit_summary: resolvedSummary,
+                  ai_summary: resolvedSummary,
+                  summary: resolvedSummary,
+                  description: resolvedSummary,
+                }
+              : {}),
+            pros: data.folder_audit?.pros ?? currentFolder.pros ?? null,
+            cons: data.folder_audit?.cons ?? currentFolder.cons ?? null,
+            recommendations:
+              data.folder_audit?.recommendations ?? currentFolder.recommendations ?? null,
+          };
+        })
       );
       alert(
         folderScore !== null
@@ -7378,35 +7421,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           handleReUpload(event, mapProjectRowToProjectItem(project))
                         }
                         onDelete={(projectId) => void handleDeleteProject(projectId)}
-                        onProjectUpdated={(projectId, projectPatch) => {
-                          setProfileAssets((currentAssets) =>
-                            currentAssets.map((asset) =>
-                              asset.id === projectId
-                                ? {
-                                    ...asset,
-                                    ...projectPatch,
-                                  }
-                                : asset
-                            )
-                          );
-                          setProjects((currentProjects) =>
-                            currentProjects.map((project) =>
-                              project.id === projectId
-                                ? mergeVerifiedProject(
-                                    project,
-                                    mapProjectRowToProjectItem({
-                                      ...project,
-                                      ...projectPatch,
-                                      id: project.id,
-                                      created_at: project.created_at ?? '',
-                                      name: projectPatch.name ?? project.title,
-                                    } as ProjectRow),
-                                    projectPatch.ai_summary ?? projectPatch.audit_summary ?? project.ai_summary ?? ''
-                                  )
-                                : project
-                            )
-                          );
-                        }}
+                        onProjectUpdated={(projectId, projectPatch) =>
+                          handlePreviewProjectUpdated(
+                            projectId,
+                            projectPatch as Partial<ProjectItem>
+                          )
+                        }
                       />
                     ) : null}
 
