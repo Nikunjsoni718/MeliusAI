@@ -515,6 +515,7 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/profile/sync-embedding`
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
+const FOLDER_BASELINE_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project/baseline`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
@@ -6364,7 +6365,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error('User session missing.');
       }
 
-      const response = await fetch(FOLDER_AUDIT_ENDPOINT, {
+      const auditRequest: RequestInit = {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -6375,7 +6376,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           folder_id: folderId,
           user_id: userId,
         }),
-      });
+      };
+      let response = await fetch(FOLDER_AUDIT_ENDPOINT, auditRequest);
+
+      if (response.status === 409) {
+        response = await fetch(FOLDER_BASELINE_AUDIT_ENDPOINT, auditRequest);
+      }
 
       if (!response.ok) {
         const errorPayload = (await response.json().catch(() => null)) as { detail?: string } | null;
