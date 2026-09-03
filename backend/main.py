@@ -108,7 +108,7 @@ async_client = client
 openai_client = async_client
 sync_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 gemini_client = genai.Client()
-GEMINI_AUDIT_MODEL = "gemini-3.6-flash"
+GEMINI_AUDIT_MODEL = "gemini-3.1-flash-lite"
 logger = logging.getLogger("meliusai.backend")
 logger.setLevel(logging.INFO)
 supabase_backend_client = None
@@ -5038,7 +5038,7 @@ Return the required JSON schema exactly. Include file_impacts for every changed 
 
     incremental_client = genai.Client(api_key=api_key.strip())
     response = incremental_client.models.generate_content(
-        model="gemini-3.1-flash-lite",
+        model=GEMINI_AUDIT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
