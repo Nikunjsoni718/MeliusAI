@@ -599,6 +599,8 @@ class GitHubWebhookSyncResult:
     skipped_files: int = 0
     failed_files: int = 0
     errors: list[str] = field(default_factory=list)
+    changed_files: dict[str, str] = field(default_factory=dict, repr=False)
+    previous_blueprint: str | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -612,6 +614,8 @@ class GitHubWebhookSyncResult:
             "skipped_files": self.skipped_files,
             "failed_files": self.failed_files,
             "errors": self.errors,
+            "incremental_changed_file_count": len(self.changed_files),
+            "has_previous_blueprint": bool(self.previous_blueprint),
         }
 
 
@@ -1158,6 +1162,19 @@ def _workspace_context_key(row: dict[str, Any]) -> tuple[str, str | None] | None
 def _workspace_user_id(row: dict[str, Any]) -> str | None:
     workspace_user_id = str(row.get("user_id") or "").strip()
     return workspace_user_id or None
+
+
+def _get_previous_blueprint_from_repository_rows(rows: list[dict[str, Any]]) -> str | None:
+    """Use the latest stored audit summaries as webhook incremental-audit context."""
+    summaries: list[str] = []
+    seen_summaries: set[str] = set()
+    for row in rows:
+        summary = str(row.get("audit_summary") or "").strip()
+        if summary and summary not in seen_summaries:
+            summaries.append(summary)
+            seen_summaries.add(summary)
+
+    return "\n\n".join(summaries) or None
 
 
 def _build_workspace_contexts(
@@ -1716,6 +1733,10 @@ async def process_github_push_event(
         repository_rows = [created_project]
         result.created_records += 1
 
+    result.previous_blueprint = _get_previous_blueprint_from_repository_rows(
+        repository_rows,
+    )
+
     rows_by_path: dict[str, list[dict[str, Any]]] = {}
     for row in repository_rows:
         row_path = normalize_github_file_path(row.get("github_file_path"))
@@ -1750,7 +1771,7 @@ async def process_github_push_event(
     )
     semaphore = asyncio.Semaphore(min(concurrency, 10))
 
-    async def sync_path(file_path: str) -> tuple[int, int, str | None]:
+    async def sync_path(file_path: str) -> tuple[int, int, str | None, str | None]:
         existing_rows = rows_by_path.get(file_path, [])
         try:
             async with semaphore:
@@ -1760,6 +1781,16 @@ async def process_github_push_event(
                     commit_sha=commit_sha,
                     file_path=file_path,
                     access_token=access_token,
+                )
+
+            try:
+                source_content = content.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                source_content = None
+                logger.info(
+                    "github_webhook.incremental_audit_non_text_skipped repository=%s file=%s",
+                    repository,
+                    file_path,
                 )
 
             updated_records = 0
@@ -1805,8 +1836,8 @@ async def process_github_push_event(
                     )
 
             if updated_records == 0 and created_records == 0:
-                return 0, 0, f"{file_path}: no writable workspace mapping found"
-            return updated_records, created_records, None
+                return 0, 0, f"{file_path}: no writable workspace mapping found", None
+            return updated_records, created_records, None, source_content
         except Exception as sync_error:
             error_message = f"{file_path}: {sync_error}"
             if existing_rows:
@@ -1819,7 +1850,7 @@ async def process_github_push_event(
                     )
                 except Exception:
                     pass
-            return 0, 0, error_message
+            return 0, 0, error_message, None
 
     try:
         sync_outcomes = await asyncio.gather(
@@ -1829,12 +1860,19 @@ async def process_github_push_event(
         if owns_http_client:
             await active_http_client.aclose()
 
-    for updated_records, created_records, error_message in sync_outcomes:
+    for file_path, (
+        updated_records,
+        created_records,
+        error_message,
+        source_content,
+    ) in zip(trackable_paths, sync_outcomes):
         result.updated_records += updated_records
         result.created_records += created_records
         if error_message:
             result.failed_files += 1
             result.errors.append(error_message)
+        elif source_content is not None:
+            result.changed_files[file_path] = source_content
 
     deleted_workspace_user_ids: set[str] = set()
     for removed_path in removed_paths:
@@ -1874,6 +1912,14 @@ async def process_github_push_event(
     return result
 
 
+def _get_incremental_audit_api_key() -> str | None:
+    for variable_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        value = os.getenv(variable_name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
 async def process_github_push_in_background(
     payload: Dict[str, Any],
     delivery_id: str | None,
@@ -1889,6 +1935,44 @@ async def process_github_push_in_background(
             payload,
             supabase_client=service_client,
         )
+        updated_records = result.changed_files
+        previous_blueprint = result.previous_blueprint
+        api_key = _get_incremental_audit_api_key()
+
+        if updated_records and previous_blueprint and api_key:
+            try:
+                incremental_report = await run_in_audit_thread(
+                    lambda: run_incremental_audit(
+                        updated_records,
+                        previous_blueprint,
+                        api_key,
+                    )
+                )
+                logger.info(
+                    "github_webhook.incremental_audit_complete delivery_id=%s repository=%s "
+                    "changed_files=%s candidate_score_delta=%s new_score=%s",
+                    delivery_id or "unknown",
+                    result.repository,
+                    len(updated_records),
+                    incremental_report.candidate_score_delta,
+                    incremental_report.new_score,
+                )
+            except Exception:
+                logger.exception(
+                    "github_webhook.incremental_audit_failed delivery_id=%s repository=%s",
+                    delivery_id or "unknown",
+                    result.repository,
+                )
+        else:
+            logger.info(
+                "github_webhook.incremental_audit_skipped delivery_id=%s repository=%s "
+                "changed_files=%s has_previous_blueprint=%s has_api_key=%s",
+                delivery_id or "unknown",
+                result.repository,
+                len(updated_records),
+                bool(previous_blueprint),
+                bool(api_key),
+            )
         logger.info(
             "github_webhook.processed delivery_id=%s result=%s",
             delivery_id or "unknown",
@@ -3034,8 +3118,6 @@ class FileAuditResponse(BaseModel):
     cons: List[str]
     recommendations: List[str]
 
-    model_config = {"extra": "forbid"}
-
 
 class AnalyzeCodeResponse(BaseModel):
     """Structured response returned by the standalone code-analysis endpoint."""
@@ -3045,8 +3127,6 @@ class AnalyzeCodeResponse(BaseModel):
     bads_and_flaws: List[str]
     strategic_recommendations: List[str]
     overall_score: int = Field(..., ge=0, le=100)
-
-    model_config = {"extra": "forbid"}
 
 
 class EvaluationRequest(BaseModel):
@@ -4723,8 +4803,6 @@ class FolderAuditResponse(BaseModel):
     cons: List[str]
     recommendations: List[str]
 
-    model_config = {"extra": "forbid"}
-
 
 class FileImpactVerdict(str, Enum):
     """Allowed outcome labels for a changed file in an incremental audit."""
@@ -4742,8 +4820,6 @@ class FileImpact(BaseModel):
     verdict: FileImpactVerdict
     summary: str = Field(..., min_length=1)
 
-    model_config = {"extra": "forbid"}
-
 
 class IncrementalAuditReport(BaseModel):
     """Strict Gemini response contract for a stateless incremental audit."""
@@ -4754,8 +4830,6 @@ class IncrementalAuditReport(BaseModel):
     new_vulnerabilities: List[str]
     resolved_issues: List[str]
     updated_architecture_summary: str = Field(..., min_length=1)
-
-    model_config = {"extra": "forbid"}
 
 
 def build_gemini_audit_prompt(system_prompt: str, user_prompt: str | None = None) -> str:
