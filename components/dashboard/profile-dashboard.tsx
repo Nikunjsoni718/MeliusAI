@@ -90,6 +90,20 @@ type ProjectItem = {
   is_local?: boolean;
 };
 
+type NewlyAddedProject =
+  | {
+      kind: 'folder';
+      id: string;
+      name: string;
+      folder: ProjectFolderWithNestedProjects;
+    }
+  | {
+      kind: 'asset';
+      id: string;
+      name: string;
+      project: ProjectItem;
+    };
+
 type WorkAssetGridItem =
   | { type: 'folder'; folder: ProjectFolderRow }
   | { type: 'project'; project: ProjectItem };
@@ -2641,6 +2655,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
+  const [newlyAddedProject, setNewlyAddedProject] = useState<NewlyAddedProject | null>(null);
+  const [newlyAddedProjectQueue, setNewlyAddedProjectQueue] = useState<NewlyAddedProject[]>([]);
+  const [newlyAddedProjectDeleteError, setNewlyAddedProjectDeleteError] = useState<string | null>(null);
+  const [isDeletingNewlyAddedProject, setIsDeletingNewlyAddedProject] = useState(false);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editFolderName, setEditFolderName] = useState("");
@@ -5327,6 +5345,24 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
+  function showNewlyAddedProjects(nextProjects: NewlyAddedProject[]) {
+    const [firstProject, ...queuedProjects] = nextProjects;
+    if (!firstProject) {
+      return;
+    }
+
+    setNewlyAddedProjectDeleteError(null);
+    setNewlyAddedProject(firstProject);
+    setNewlyAddedProjectQueue(queuedProjects);
+  }
+
+  function continueNewlyAddedProjectModal() {
+    const [nextProject, ...remainingProjects] = newlyAddedProjectQueue;
+    setNewlyAddedProjectDeleteError(null);
+    setNewlyAddedProject(nextProject ?? null);
+    setNewlyAddedProjectQueue(remainingProjects);
+  }
+
   async function handleConfirmUpload() {
     if (isUploading) {
       return;
@@ -5514,11 +5550,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       if (savedProjects[0]?.id) {
         advanceProductTour(8, 9, savedProjects[0].id);
       }
-
-      if (targetUsername) {
-        setSpectatorRefreshToken((currentToken) => currentToken + 1);
-      }
-      router.refresh();
+      showNewlyAddedProjects(
+        savedFolders.map((folder) => ({
+          kind: 'folder' as const,
+          id: folder.id,
+          name: folder.name,
+          folder,
+        }))
+      );
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);
@@ -5605,7 +5644,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }));
       setProjectDescription('');
       advanceProductTour(8, 9, projectWithExtractedCode.id);
-      router.refresh();
+      showNewlyAddedProjects([
+        {
+          kind: 'asset',
+          id: projectWithExtractedCode.id,
+          name: projectWithExtractedCode.title,
+          project: projectWithExtractedCode,
+        },
+      ]);
 
       uploadClearRef.current = window.setTimeout(() => {
         setUploadState(null);
@@ -6264,12 +6310,54 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  async function handleDeleteProject(projectId: string) {
-    if (!isOwner) {
-      return;
+  async function deleteProjectRecord(projectId: string) {
+    if (!supabase) {
+      throw new Error('Project storage is not available right now.');
     }
 
-    if (deletingProjectId) {
+    const userId = await getConfirmedUserId();
+    if (!userId) {
+      throw new Error('Your session has expired. Please sign in again.');
+    }
+
+    const { data: deletedProjects, error: deleteError } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId)
+      .eq('user_id', userId)
+      .select('id');
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    if (!deletedProjects || deletedProjects.length === 0) {
+      throw new Error('Project not found or unauthorized.');
+    }
+
+    setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
+    setProfileAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== projectId));
+    setProjectDescriptions((currentDescriptions) => {
+      const nextDescriptions = { ...currentDescriptions };
+      delete nextDescriptions[projectId];
+      return nextDescriptions;
+    });
+    if (descriptionSaveTimersRef.current[projectId]) {
+      window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
+      delete descriptionSaveTimersRef.current[projectId];
+    }
+    setActivePreviewProjectOverride((currentProject) =>
+      currentProject?.id === projectId ? null : currentProject
+    );
+    setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
+    if (activePreviewProjectId === projectId) {
+      setActivePreviewName(null);
+      setActivePreviewUrl(null);
+    }
+  }
+
+  async function handleDeleteProject(projectId: string) {
+    if (!isOwner || deletingProjectId) {
       return;
     }
 
@@ -6285,49 +6373,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setProjectVerifyError(null);
 
     try {
-      if (!supabase) {
-        throw new Error('Project storage is not available right now.');
-      }
-
-      const userId = await getConfirmedUserId();
-      if (!userId) {
-        throw new Error('Your session has expired. Please sign in again.');
-      }
-
-      const { data: deletedProjects, error: deleteError } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', projectId)
-        .eq('user_id', userId)
-        .select('id');
-
-      if (deleteError) {
-        throw deleteError;
-      }
-
-      if (!deletedProjects || deletedProjects.length === 0) {
-        throw new Error('Project not found or unauthorized.');
-      }
-
-      setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
-      setProfileAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== projectId));
-      setProjectDescriptions((currentDescriptions) => {
-        const nextDescriptions = { ...currentDescriptions };
-        delete nextDescriptions[projectId];
-        return nextDescriptions;
-      });
-      if (descriptionSaveTimersRef.current[projectId]) {
-        window.clearTimeout(descriptionSaveTimersRef.current[projectId]);
-        delete descriptionSaveTimersRef.current[projectId];
-      }
-      setActivePreviewProjectOverride((currentProject) =>
-        currentProject?.id === projectId ? null : currentProject
-      );
-      setActivePreviewProjectId((currentPreviewId) => (currentPreviewId === projectId ? null : currentPreviewId));
-      if (activePreviewProjectId === projectId) {
-        setActivePreviewName(null);
-        setActivePreviewUrl(null);
-      }
+      await deleteProjectRecord(projectId);
     } catch (error) {
       console.error('Failed to delete project asset', error);
       showProjectVerifyError(error instanceof Error ? error.message : 'We could not delete this asset.');
@@ -6616,6 +6662,48 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   };
 
+  async function deleteProjectFolderRecord(folderId: string) {
+    if (!supabase) {
+      throw new Error('Vault sync is not ready.');
+    }
+
+    const userId = await getConfirmedUserId();
+    if (!userId) {
+      throw new Error('Your session has expired. Please sign in again.');
+    }
+
+    const { error: filesError } = await supabase
+      .from('projects')
+      .delete()
+      .eq('folder_id', folderId)
+      .eq('user_id', userId);
+
+    if (filesError) {
+      throw filesError;
+    }
+
+    const { error: folderError } = await supabase
+      .from('project_folders')
+      .delete()
+      .eq('id', folderId)
+      .eq('user_id', userId);
+
+    if (folderError) {
+      throw folderError;
+    }
+
+    setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));
+    setProjects((prev) => prev.filter((project) => project.folder_id !== folderId));
+    setProfileAssets((prev) => prev.filter((project) => project.folder_id !== folderId));
+    if (editingFolderId === folderId) {
+      setEditingFolderId(null);
+      setEditFolderName('');
+    }
+    if (activeFolderId === folderId) {
+      setActiveFolderId(null);
+    }
+  }
+
   const handleDeleteFolder = async (folderId: string) => {
     if (!isOwner) {
       return;
@@ -6625,48 +6713,38 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    if (!supabase) {
-      alert('Failed to delete folder: Vault sync is not ready.');
-      return;
-    }
-
     try {
-      const { error: filesError } = await supabase
-        .from('projects')
-        .delete()
-        .eq('folder_id', folderId);
-
-      if (filesError) {
-        throw filesError;
-      }
-
-      const { error: folderError } = await supabase
-        .from('project_folders')
-        .delete()
-        .eq('id', folderId);
-
-      if (folderError) {
-        throw folderError;
-      }
-
-      setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));
-      setProjects((prev) => prev.filter((project) => project.folder_id !== folderId));
-      setProfileAssets((prev) => prev.filter((project) => project.folder_id !== folderId));
-      if (editingFolderId === folderId) {
-        setEditingFolderId(null);
-        setEditFolderName('');
-      }
-      if (activeFolderId === folderId) {
-        setActiveFolderId(null);
-      }
-      if (targetUsername) {
-        setSpectatorRefreshToken((currentToken) => currentToken + 1);
-      }
+      await deleteProjectFolderRecord(folderId);
     } catch (error: any) {
       console.error("Delete Error:", error);
       alert(`Failed to delete folder: ${error.message}`);
     }
   };
+
+  async function handleDeleteNewlyAddedProject() {
+    if (!newlyAddedProject || isDeletingNewlyAddedProject) {
+      return;
+    }
+
+    setIsDeletingNewlyAddedProject(true);
+    setNewlyAddedProjectDeleteError(null);
+
+    try {
+      if (newlyAddedProject.kind === 'folder') {
+        await deleteProjectFolderRecord(newlyAddedProject.id);
+      } else {
+        await deleteProjectRecord(newlyAddedProject.id);
+      }
+      continueNewlyAddedProjectModal();
+    } catch (error) {
+      console.error('Failed to delete newly added project', error);
+      setNewlyAddedProjectDeleteError(
+        error instanceof Error ? error.message : 'We could not delete this project. Please try again.'
+      );
+    } finally {
+      setIsDeletingNewlyAddedProject(false);
+    }
+  }
 
   // Group files by their immediate parent directory path
   const groupedFiles = stagedFiles.reduce((acc, file) => {
@@ -6829,6 +6907,50 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             isNewUser={isNewUser}
             userId={user?.id ?? null}
           />
+          {newlyAddedProject ? (
+            <div
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="newly-added-project-title"
+            >
+              <div className="w-full max-w-md rounded-2xl border border-cyan-400/20 bg-[#0b1120] p-6 shadow-2xl shadow-black/50 sm:p-8">
+                <div className="text-center">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
+                    Project added
+                  </p>
+                  <h2 id="newly-added-project-title" className="mt-3 text-xl font-semibold text-white">
+                    Your new project {newlyAddedProject.name} have been added
+                  </h2>
+                </div>
+
+                {newlyAddedProjectDeleteError ? (
+                  <p className="mt-5 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-200" role="alert">
+                    {newlyAddedProjectDeleteError}
+                  </p>
+                ) : null}
+
+                <div className="relative mt-8 flex min-h-10 items-center justify-center">
+                  <Button
+                    type="button"
+                    disabled={isDeletingNewlyAddedProject}
+                    onClick={() => void handleDeleteNewlyAddedProject()}
+                    className="absolute left-0 bg-rose-600 text-white hover:bg-rose-500 disabled:bg-rose-900"
+                  >
+                    {isDeletingNewlyAddedProject ? 'Deleting…' : 'Delete the project'}
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={isDeletingNewlyAddedProject}
+                    onClick={continueNewlyAddedProjectModal}
+                    className="bg-blue-600 text-white hover:bg-blue-500"
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {isSidebarOpen ? (
             <button
               type="button"

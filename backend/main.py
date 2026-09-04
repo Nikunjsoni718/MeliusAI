@@ -1190,52 +1190,35 @@ async def _find_github_payload_user_id(
     return None
 
 
-async def _create_repository_project_mapping(
+@dataclass(frozen=True)
+class GitHubWorkspaceContext:
+    user_id: str
+    is_public: bool
+
+
+async def _resolve_repository_workspace_context(
     supabase_client: Any,
     *,
-    table_name: str,
     payload: dict[str, Any],
     repository: str,
-    repository_url: str,
-) -> dict[str, Any] | None:
+) -> GitHubWorkspaceContext | None:
     user_id = await _find_github_payload_user_id(supabase_client, payload)
     if not user_id:
         return None
 
-    repository_name = repository.split("/", 1)[-1]
-    insert_payload = {
-        "user_id": user_id,
-        "name": repository_name,
-        "title": repository,
-        "file_url": repository_url,
-        "file_type": "github",
-        "github_repository": repository_url,
-        "is_public": not bool(
+    logger.info(
+        "github_webhook.workspace_resolved repository=%s user_id=%s",
+        repository,
+        user_id,
+    )
+    return GitHubWorkspaceContext(
+        user_id=user_id,
+        is_public=not bool(
             payload.get("repository", {}).get("private")
             if isinstance(payload.get("repository"), dict)
             else False
         ),
-        "status": "draft",
-    }
-    response = await _run_supabase(
-        lambda: supabase_client.table(table_name).insert(insert_payload).execute()
     )
-    created_rows = _response_rows(response)
-    if not created_rows:
-        raise RuntimeError("GitHub repository project insert returned no record.")
-
-    created_project = created_rows[0]
-    project_id = str(created_project.get("id") or "").strip()
-    if not project_id:
-        raise RuntimeError("GitHub repository project insert returned no project ID.")
-
-    logger.info(
-        "github_webhook.project_created repository=%s project_id=%s user_id=%s",
-        repository,
-        project_id,
-        user_id,
-    )
-    return created_project
 
 
 def _extract_storage_path_from_public_url(
@@ -1313,12 +1296,15 @@ def _workspace_user_id(row: dict[str, Any]) -> str | None:
 
 def _build_workspace_contexts(
     repository_rows: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    contexts: dict[str, dict[str, Any]] = {}
+) -> dict[str, GitHubWorkspaceContext]:
+    contexts: dict[str, GitHubWorkspaceContext] = {}
     for row in repository_rows:
         workspace_user_id = _workspace_user_id(row)
         if workspace_user_id is not None and workspace_user_id not in contexts:
-            contexts[workspace_user_id] = row
+            contexts[workspace_user_id] = GitHubWorkspaceContext(
+                user_id=workspace_user_id,
+                is_public=bool(row.get("is_public", True)),
+            )
     return contexts
 
 
@@ -1660,8 +1646,8 @@ async def _create_workspace_asset(
     *,
     table_name: str,
     bucket_name: str,
-    template_row: dict[str, Any],
-    folder_id: str | None,
+    workspace_context: GitHubWorkspaceContext,
+    folder_id: str,
     repository: str,
     file_path: str,
     ref: str,
@@ -1669,12 +1655,8 @@ async def _create_workspace_asset(
     content: bytes,
     content_type: str,
 ) -> int:
-    context_key = _workspace_context_key(template_row)
-    if context_key is None:
-        return 0
-
-    workspace_user_id, current_folder_id = context_key
-    target_folder_id = folder_id or current_folder_id
+    workspace_user_id = workspace_context.user_id
+    target_folder_id = folder_id
     storage_path = _build_github_storage_path(
         workspace_user_id=workspace_user_id,
         folder_id=target_folder_id,
@@ -1701,7 +1683,7 @@ async def _create_workspace_asset(
         "folder_id": target_folder_id,
         "name": file_name,
         "title": file_name,
-        "is_public": bool(template_row.get("is_public", True)),
+        "is_public": workspace_context.is_public,
         **_synced_asset_payload(
             repository=repository,
             file_path=file_path,
@@ -1850,22 +1832,20 @@ async def process_github_push_event(
         repository=repository,
         repository_url=repository_url,
     )
-    if not repository_rows:
-        created_project = await _create_repository_project_mapping(
+    workspace_contexts = _build_workspace_contexts(repository_rows)
+    if not workspace_contexts:
+        workspace_context = await _resolve_repository_workspace_context(
             supabase_client,
-            table_name=table_name,
             payload=payload,
             repository=repository,
-            repository_url=repository_url,
         )
-        if created_project is None:
+        if workspace_context is None:
             result.skipped_files = len(trackable_paths) + len(removed_paths)
             result.errors.append(
                 "No MeliusAI user matches the GitHub repository owner or sender."
             )
             return result
-        repository_rows = [created_project]
-        result.created_records += 1
+        workspace_contexts = {workspace_context.user_id: workspace_context}
 
     rows_by_path: dict[str, list[dict[str, Any]]] = {}
     for row in repository_rows:
@@ -1873,7 +1853,6 @@ async def process_github_push_event(
         if row_path:
             rows_by_path.setdefault(row_path, []).append(row)
 
-    workspace_contexts = _build_workspace_contexts(repository_rows)
     workspace_folder_maps: dict[str, dict[str, str]] = {}
     if trackable_paths:
         folder_map_results = await asyncio.gather(
@@ -1937,7 +1916,7 @@ async def process_github_push_event(
                         content_type=content_type,
                     )
             else:
-                for workspace_user_id, template_row in workspace_contexts.items():
+                for workspace_user_id, workspace_context in workspace_contexts.items():
                     folder_id = workspace_folder_maps.get(workspace_user_id, {}).get(file_path)
                     if not folder_id:
                         continue
@@ -1945,7 +1924,7 @@ async def process_github_push_event(
                         supabase_client,
                         table_name=table_name,
                         bucket_name=bucket_name,
-                        template_row=template_row,
+                        workspace_context=workspace_context,
                         folder_id=folder_id,
                         repository=repository,
                         file_path=file_path,
