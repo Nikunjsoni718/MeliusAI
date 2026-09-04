@@ -185,7 +185,16 @@ export async function GET(request: NextRequest) {
     }
 
     const repositories = await fetchLiveGitHubRepositories(providerToken);
-    const removed = await removeMissingPendingImports(user.id, repositories);
+    let removed = 0;
+
+    try {
+      removed = await removeMissingPendingImports(user.id, repositories);
+    } catch (error) {
+      // Repository discovery is still valid when stale pending-import cleanup
+      // is unavailable. Preserve the live GitHub result and retry cleanup on a
+      // later refresh instead of blocking the importer with a gateway error.
+      console.error('Repo sync failed:', error);
+    }
 
     return NextResponse.json(
       { repositories, sync: { removed } },
