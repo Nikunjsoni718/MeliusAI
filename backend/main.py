@@ -527,6 +527,7 @@ def get_supabase_spectate_client():
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2026-03-10"
+GITHUB_PROVIDER_TOKEN_HEADER = "x-github-provider-token"
 GITHUB_STORAGE_BUCKET = "vault"
 GITHUB_WORKSPACE_ASSETS_TABLE = "projects"
 MAX_GITHUB_FILE_BYTES = 5 * 1024 * 1024
@@ -829,6 +830,14 @@ def _get_github_access_token() -> str | None:
         if value and value.strip():
             return value.strip()
     return None
+
+
+def get_request_github_access_token(request: Request) -> str | None:
+    """Prefer the authenticated caller's transient GitHub credential over server fallbacks."""
+    provider_token = request.headers.get(GITHUB_PROVIDER_TOKEN_HEADER)
+    if provider_token and provider_token.strip():
+        return provider_token.strip()
+    return _get_github_access_token()
 
 
 async def download_github_raw_file(
@@ -6488,6 +6497,39 @@ def get_folder_github_context(project_rows: List[Dict[str, Any]]) -> tuple[str, 
     return next(iter(repositories)), next(iter(refs))
 
 
+def get_latest_persisted_folder_commit_sha(
+    project_rows: List[Dict[str, Any]],
+) -> str | None:
+    """Return the newest valid webhook-synced SHA represented by stored assets."""
+    candidates: list[tuple[datetime, int, str]] = []
+    fallback_timestamp = datetime.min.replace(tzinfo=timezone.utc)
+
+    for row_index, project_row in enumerate(project_rows):
+        try:
+            commit_sha = _validate_github_commit_sha(
+                project_row.get("github_commit_sha"),
+                label="Stored GitHub commit SHA",
+            )
+        except GitHubCompareError:
+            continue
+
+        synced_at = str(project_row.get("github_synced_at") or "").strip()
+        try:
+            sync_timestamp = datetime.fromisoformat(synced_at.replace("Z", "+00:00"))
+            if sync_timestamp.tzinfo is None:
+                sync_timestamp = sync_timestamp.replace(tzinfo=timezone.utc)
+            else:
+                sync_timestamp = sync_timestamp.astimezone(timezone.utc)
+        except ValueError:
+            sync_timestamp = fallback_timestamp
+
+        candidates.append((sync_timestamp, row_index, commit_sha))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
+
+
 async def fetch_latest_folder_audit_baseline(
     supabase_client: Any,
     project_rows: List[Dict[str, Any]],
@@ -6710,6 +6752,8 @@ async def run_project_baseline_audit(
     files_to_update = []
     orchestration_result = None
     previous_folder_score = 0
+    github_files: list[Dict[str, Any]] = []
+    baseline_commit_sha: str | None = None
 
     try:
         try:
@@ -6755,12 +6799,59 @@ async def run_project_baseline_audit(
             .select("*")
             .eq("folder_id", folder_id)
             .eq("user_id", requested_user_id)
+            .neq("status", "archived")
             .execute()
         )
         files = db_response.data if isinstance(db_response.data, list) else []
 
         if not files:
             raise HTTPException(status_code=404, detail="No files found in this folder.")
+
+        github_files = [
+            file_record
+            for file_record in files
+            if str(file_record.get("github_repository") or "").strip()
+        ]
+        if github_files:
+            try:
+                repository, ref = get_folder_github_context(github_files)
+            except ValueError as context_error:
+                raise HTTPException(status_code=422, detail=str(context_error)) from context_error
+
+            baseline_commit_sha = get_latest_persisted_folder_commit_sha(github_files)
+            if baseline_commit_sha is None:
+                github_token = get_request_github_access_token(request)
+                if not github_token:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "This GitHub folder has no synced commit SHA. Reconnect GitHub "
+                            "and try the baseline audit again."
+                        ),
+                    )
+                try:
+                    async with httpx.AsyncClient(
+                        follow_redirects=True,
+                        timeout=httpx.Timeout(30.0, connect=10.0),
+                    ) as github_client:
+                        baseline_commit_sha = await fetch_github_branch_head_commit(
+                            github_client,
+                            repository=repository,
+                            ref=ref,
+                            access_token=github_token,
+                        )
+                except GitHubCompareError as github_error:
+                    raise HTTPException(status_code=422, detail=str(github_error)) from github_error
+                except httpx.HTTPError as github_error:
+                    logger.exception(
+                        "project_audit.baseline_head_fetch_failed folder_id=%s repository=%s",
+                        folder_id,
+                        repository,
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail="GitHub could not provide a commit for this baseline audit.",
+                    ) from github_error
 
         async with httpx.AsyncClient(
             follow_redirects=True,
@@ -6910,38 +7001,19 @@ async def run_project_baseline_audit(
             )
 
         snapshot_failures: list[str] = []
-        github_files = [
-            file_record
-            for file_record in files
-            if str(file_record.get("github_repository") or "").strip()
-        ]
-        if github_files:
+        if github_files and baseline_commit_sha:
             try:
-                repository, ref = get_folder_github_context(github_files)
-                api_token = _get_github_access_token()
-                if not api_token:
-                    raise RuntimeError("GitHub access token is required to record an audit baseline.")
-                async with httpx.AsyncClient(
-                    follow_redirects=True,
-                    timeout=httpx.Timeout(30.0, connect=10.0),
-                ) as github_client:
-                    head_sha = await fetch_github_branch_head_commit(
-                        github_client,
-                        repository=repository,
-                        ref=ref,
-                        access_token=api_token,
-                    )
                 snapshot_failures = await persist_folder_audit_snapshots(
                     supabase_client,
                     github_files,
-                    commit_sha=head_sha,
+                    commit_sha=baseline_commit_sha,
                     score=coerce_audit_score(db_payload["evaluation_score"]),
                     score_delta=int(db_payload["score_delta"] or 0),
                     delta_summary=str(db_payload["delta_summary"] or "Folder baseline audit completed."),
                 )
             except Exception as snapshot_error:
                 logger.warning(
-                    "project_audit.baseline_snapshot_deferred folder_id=%s error=%s",
+                    "project_audit.baseline_snapshot_persist_failed folder_id=%s error=%s",
                     folder_id,
                     snapshot_error,
                 )
@@ -7072,7 +7144,7 @@ async def run_project_incremental_audit(
                 ),
             )
 
-        github_token = _get_github_access_token()
+        github_token = get_request_github_access_token(request)
         if not github_token:
             raise HTTPException(
                 status_code=503,

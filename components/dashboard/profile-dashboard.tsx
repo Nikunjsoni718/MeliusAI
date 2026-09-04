@@ -6378,19 +6378,29 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setAuditingFolders((prev) => ({ ...prev, [folderId]: true }));
 
       const userId = user?.id ?? (await getConfirmedUserId());
-      const accessToken = session?.access_token ?? (await getCurrentAccessToken());
+      const currentSessionResponse = supabase ? await supabase.auth.getSession() : null;
+      const currentSession = currentSessionResponse?.data.session ?? null;
+      const accessToken =
+        currentSession?.access_token ?? session?.access_token ?? (await getCurrentAccessToken());
+      const githubProviderToken =
+        currentSession?.provider_token ?? session?.provider_token ?? null;
 
       if (!userId || !accessToken) {
         throw new Error('User session missing.');
       }
 
+      const auditHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      };
+      if (githubProviderToken) {
+        auditHeaders['X-GitHub-Provider-Token'] = githubProviderToken;
+      }
+
       const auditRequest: RequestInit = {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auditHeaders,
         body: JSON.stringify({
           folder_id: folderId,
           user_id: userId,
