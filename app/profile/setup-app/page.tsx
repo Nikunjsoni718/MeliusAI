@@ -73,8 +73,15 @@ export default function GitHubAppSetupPage() {
 
         const linkedUser = authResult.data.session?.user;
         const providers = linkedUser?.app_metadata?.providers || [];
+        const hasGitHubIdentity = linkedUser?.identities?.some(
+          (identity) => identity.provider === 'github'
+        );
         const hasGitHubProvider =
-          Array.isArray(providers) && providers.includes('github');
+          hasGitHubIdentity ||
+          (Array.isArray(providers) &&
+            providers.some(
+              (provider) => typeof provider === 'string' && provider.toLowerCase() === 'github'
+            ));
 
         if (!linkedUser || !hasGitHubProvider) {
           throw new Error('GitHub OAuth completed without a linked GitHub provider.');

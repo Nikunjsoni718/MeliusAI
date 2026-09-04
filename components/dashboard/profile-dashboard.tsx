@@ -2533,7 +2533,17 @@ function getGitHubOAuthIdentity(authUser: User | null | undefined) {
 }
 
 function hasGitHubOAuthIdentity(authUser: User | null | undefined) {
-  return Boolean(getGitHubOAuthIdentity(authUser));
+  if (getGitHubOAuthIdentity(authUser)) {
+    return true;
+  }
+
+  const providers = authUser?.app_metadata?.providers;
+  return (
+    Array.isArray(providers) &&
+    providers.some(
+      (provider) => typeof provider === 'string' && provider.toLowerCase() === 'github'
+    )
+  );
 }
 
 function getMetadataText(
@@ -2601,9 +2611,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isGitHubSuccessModalOpen, setIsGitHubSuccessModalOpen] = useState(false);
   const githubAppRedirectRef = useRef(false);
   const currentUser = user;
-  const isGithubConnected = Boolean(profile?.github_username);
+  const activeAuthUser = session?.user ?? user;
+  const hasActiveGitHubIdentity = hasGitHubOAuthIdentity(activeAuthUser);
+  const isGithubConnected = hasActiveGitHubIdentity;
   const hasGithub =
-    isLinked || resolveHasGithubLink(profile, user ?? session?.user);
+    isLinked || resolveHasGithubLink(profile, activeAuthUser);
   const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -2893,11 +2905,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       hasGithubState: isLinked,
       isGitHubSuccessModalOpen,
       profileGithubUsername: profile?.github_username ?? null,
-      hasGitHubIdentity: hasGitHubOAuthIdentity(user ?? session?.user),
+      hasGitHubIdentity: hasActiveGitHubIdentity,
       profile,
       session,
     });
-  }, [hasGithub, isGitHubSuccessModalOpen, isLinked, profile, session, user]);
+  }, [hasActiveGitHubIdentity, hasGithub, isGitHubSuccessModalOpen, isLinked, profile, session]);
 
   useEffect(() => {
     if (sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) !== 'true') {
@@ -2916,9 +2928,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         authUser = activeSession?.user ?? authUser;
       }
 
-      const hasGithub = resolveHasGithubLink(profile, authUser);
+      const hasGitHubIdentity = hasGitHubOAuthIdentity(authUser);
 
-      if (!isActive || !hasGithub) {
+      if (!isActive || !hasGitHubIdentity) {
         return;
       }
 
@@ -2947,7 +2959,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     try {
       const redirectTo = `${window.location.origin}/profile/setup-app`;
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
           scopes: 'repo',
@@ -3171,12 +3183,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [isGithubConnected, isGitHubProfileChecked]);
 
   useEffect(() => {
-    if (!hasGithub || !isGithubModalOpen) {
+    if (!hasActiveGitHubIdentity || !isGithubModalOpen) {
       return;
     }
 
     void loadGitHubRepositoriesRef.current?.();
-  }, [hasGithub, isGithubModalOpen]);
+  }, [hasActiveGitHubIdentity, isGithubModalOpen]);
 
   useEffect(() => {
     if (!activePreviewProjectId) {
@@ -7020,7 +7032,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   <div className="flex w-full items-start justify-start lg:w-auto lg:justify-end">
                     {isOwner && (
                       <div className="flex flex-wrap items-start justify-end gap-2">
-                        {hasGithub && isGitHubSuccessModalOpen ? (
+                        {hasActiveGitHubIdentity && isGitHubSuccessModalOpen ? (
                             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
                               <div className="relative w-full max-w-md p-8 bg-[#0b1120] border border-gray-800/80 rounded-2xl shadow-2xl transition-all duration-300">
 
@@ -7057,7 +7069,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               </div>
                             </div>
                         ) : null}
-                        {hasGithub ? (
+                        {hasActiveGitHubIdentity ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -7659,14 +7671,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <p className="tagline">Where is your code located?</p>
 
                     <div className="ingestion-grid">
-                      {hasGithub && onboardingCompletionReady && !isNewUser ? (
+                      {onboardingCompletionReady && !isNewUser ? (
                         <button
                           className="ingestion-btn"
                           id="btn-github"
                           type="button"
                           onClick={() => {
                             setIsIngestionModalOpen(false);
-                            setIsGithubModalOpen(true);
+                            if (hasActiveGitHubIdentity) {
+                              setIsGithubModalOpen(true);
+                              return;
+                            }
+                            void handleLinkGithub();
                           }}
                         >
                           <div className="icon-circle">
@@ -7674,7 +7690,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z"></path>
                             </svg>
                           </div>
-                          <span className="btn-label">GitHub Account</span>
+                          <span className="btn-label">
+                            {hasActiveGitHubIdentity ? 'GitHub Account' : 'Link GitHub'}
+                          </span>
                         </button>
                       ) : null}
 
@@ -7726,7 +7744,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             />
           </main>
 
-          {hasGithub && isGithubModalOpen && (
+          {hasActiveGitHubIdentity && isGithubModalOpen && (
             <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-cyan-400/50 bg-[#0b1120] shadow-2xl shadow-black/60">
                 <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">
