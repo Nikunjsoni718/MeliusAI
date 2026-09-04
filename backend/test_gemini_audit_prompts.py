@@ -31,21 +31,22 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 - **Incremental Delta:** The previous audit score was {previous_score}/100. Calculate `score_delta` (new score minus previous score) based purely on concrete code improvements or regressions.
 
 ### 5. Output Formatting (Strict JSON)
-Return a valid JSON object exactly matching this schema. For arrays, you MUST use the exact format: "Catchy Hook: Short explanation". Maximum 15-20 words per item. NO ESSAYS.
+Return a valid JSON object exactly matching this schema. For arrays, you MUST use the exact format: "Catchy Hook: Short fragment".
+CRITICAL LIMIT: The explanation fragment MUST be 10 words or less. DO NOT write full sentences. Use punchy, actionable fragments. NO ESSAYS.
 
 {
   "score": <integer 0-100>,
   "score_delta": <integer>,
-  "delta_summary": "<One concise sentence explaining exactly what changed structurally or securely since the last audit>",
+  "delta_summary": "<One concise sentence explaining exactly what changed since the last audit>",
   "summary": "<2-3 sentence executive assessment of overall architecture, design, and health in a conversational Tech Lead tone>",
   "strengths": [
-    "<Catchy Hook>: <Short explanation anchored to a file, max 15 words>"
+    "<Catchy Hook>: <Short fragment anchored to a file, max 10 words.>"
   ],
   "weaknesses": [
-    "<Catchy Hook>: <Short explanation of systemic/security flaw anchored to a file, max 15 words>"
+    "<Catchy Hook>: <Short vulnerability fragment anchored to a file, max 10 words.>"
   ],
   "recommendations": [
-    "<Catchy Hook>: <Actionable instruction with exact inline code/architecture advice, max 20 words>"
+    "<Catchy Hook>: <Exact inline code or architecture fix, max 10 words.>"
   ]
 }"""
 
@@ -135,6 +136,8 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(prompt.startswith(UNIVERSAL_PROJECT_AUDITOR_PROMPT))
                 self.assertIn("System Design & Architecture (30%)", prompt)
                 self.assertIn("No Automatic Failures", prompt)
+                self.assertIn("CRITICAL LIMIT: The explanation fragment MUST be 10 words or less.", prompt)
+                self.assertIn("Catchy Hook: Short fragment", prompt)
                 self.assertIn("SCHEMA BINDING", prompt)
                 for key in keys:
                     self.assertIn(f"`{key}`", prompt)

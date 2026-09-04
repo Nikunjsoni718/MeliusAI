@@ -164,21 +164,22 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 - **Incremental Delta:** The previous audit score was {previous_score}/100. Calculate `score_delta` (new score minus previous score) based purely on concrete code improvements or regressions.
 
 ### 5. Output Formatting (Strict JSON)
-Return a valid JSON object exactly matching this schema. For arrays, you MUST use the exact format: "Catchy Hook: Short explanation". Maximum 15-20 words per item. NO ESSAYS.
+Return a valid JSON object exactly matching this schema. For arrays, you MUST use the exact format: "Catchy Hook: Short fragment".
+CRITICAL LIMIT: The explanation fragment MUST be 10 words or less. DO NOT write full sentences. Use punchy, actionable fragments. NO ESSAYS.
 
 {
   "score": <integer 0-100>,
   "score_delta": <integer>,
-  "delta_summary": "<One concise sentence explaining exactly what changed structurally or securely since the last audit>",
+  "delta_summary": "<One concise sentence explaining exactly what changed since the last audit>",
   "summary": "<2-3 sentence executive assessment of overall architecture, design, and health in a conversational Tech Lead tone>",
   "strengths": [
-    "<Catchy Hook>: <Short explanation anchored to a file, max 15 words>"
+    "<Catchy Hook>: <Short fragment anchored to a file, max 10 words.>"
   ],
   "weaknesses": [
-    "<Catchy Hook>: <Short explanation of systemic/security flaw anchored to a file, max 15 words>"
+    "<Catchy Hook>: <Short vulnerability fragment anchored to a file, max 10 words.>"
   ],
   "recommendations": [
-    "<Catchy Hook>: <Actionable instruction with exact inline code/architecture advice, max 20 words>"
+    "<Catchy Hook>: <Exact inline code or architecture fix, max 10 words.>"
   ]
 }"""
 
@@ -186,18 +187,20 @@ AUDIT_PROMPT_SCHEMA_BINDINGS = {
     "file": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown. Map the
 five report sections to these exact keys: `description` (AI Executive Summary), `score`,
 `pros` (Strengths), `cons` (Weaknesses), and `recommendations`. Also include `score_delta`
-and a one-sentence `delta_summary`. Each list must contain 3-4 concise `Hook: explanation`
-items, and `score_delta` must equal `score` minus the supplied previous score.""",
+and a one-sentence `delta_summary`. Each list must contain 3-4 concise `Hook: short fragment`
+items; every fragment after its hook must contain ten words or fewer. `score_delta` must equal
+`score` minus the supplied previous score.""",
     "workspace": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown. Map the
 five report sections to these exact keys: `executive_summary` (AI Executive Summary), `score`,
 `pros` (Strengths), `cons` (Weaknesses), and `recommendations`. Also include `score_delta`
-and a one-sentence `delta_summary`. Each list must contain 3-4 concise `Hook: explanation`
-items, and `score_delta` must equal `score` minus the supplied previous score.""",
+and a one-sentence `delta_summary`. Each list must contain 3-4 concise `Hook: short fragment`
+items; every fragment after its hook must contain ten words or fewer. `score_delta` must equal
+`score` minus the supplied previous score.""",
     "standalone": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
 exactly `executive_summary`, `goods_and_strengths`, `bads_and_flaws`,
 `strategic_recommendations`, and `overall_score`. The list keys represent Strengths,
 Weaknesses, and Actionable Recommendations respectively; each list must contain 3-4 concise
-`Hook: explanation` items.""",
+`Hook: short fragment` items, with every fragment after its hook limited to ten words.""",
     "incremental": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
 exactly `candidate_score_delta`, `new_score`, `file_impacts`, `new_vulnerabilities`,
 `resolved_issues`, and `updated_architecture_summary`. Keep every finding tied to the supplied
@@ -205,7 +208,8 @@ diff and use `updated_architecture_summary` as the AI Executive Summary.""",
     "dashboard": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
 exactly `ai_summary`, `score`, `score_reasoning`, `strengths`, `weaknesses`, and
 `recommendations`. These keys correspond to the AI Executive Summary, Score, Strengths,
-Weaknesses, and Actionable Recommendations sections.""",
+Weaknesses, and Actionable Recommendations sections. Each list must contain concise `Hook:
+short fragment` items, with every fragment after its hook limited to ten words.""",
 }
 
 
