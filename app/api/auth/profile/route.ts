@@ -156,6 +156,20 @@ async function readProfile(userId: string) {
   return (profile as ProfileRecord | null) ?? null;
 }
 
+function hasGitHubOAuthIdentity(user: User) {
+  if (user.identities?.some((identity) => identity.provider === 'github')) {
+    return true;
+  }
+
+  const providers = user.app_metadata?.providers;
+  return (
+    Array.isArray(providers) &&
+    providers.some(
+      (provider) => typeof provider === 'string' && provider.toLowerCase() === 'github'
+    )
+  );
+}
+
 function toViewerProfile(user: User, profile: ProfileRecord) {
   const role = normalizeRole(user.user_metadata?.role);
   const githubUsername = profile.github_username ?? null;
@@ -178,7 +192,9 @@ function toViewerProfile(user: User, profile: ProfileRecord) {
     company_name: null,
     github_username: githubUsername,
     avatar_url: profile.avatar_url ?? getMetadataText(user, 'avatar_url'),
-    is_github_linked: Boolean(githubUsername),
+    // Username is display/synchronization data only. A linked Auth identity
+    // is the authoritative connection signal for every client view.
+    is_github_linked: hasGitHubOAuthIdentity(user),
   };
 }
 

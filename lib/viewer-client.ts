@@ -41,6 +41,20 @@ type ProfileResponse = {
 } & Partial<ViewerProfile>;
 
 const VIEWER_SESSION_CHECK_TIMEOUT_MS = 3500;
+const GITHUB_CONNECTION_UI_STORAGE_KEYS = [
+  'github_app_prompted',
+  'github_success_dismissed',
+] as const;
+const GITHUB_CONNECTION_INTENT_STORAGE_KEY = 'intent_to_link_github';
+
+function clearGitHubConnectionUiState() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  GITHUB_CONNECTION_UI_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+  window.sessionStorage.removeItem(GITHUB_CONNECTION_INTENT_STORAGE_KEY);
+}
 
 function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerProfile | null {
   const candidate = body?.data ?? body?.user ?? body;
@@ -332,6 +346,17 @@ export function useViewerProfile() {
 
       setSession(nextSession ?? null);
       setUser(nextSession?.user ?? null);
+
+      if (event === 'SIGNED_OUT' || !nextSession?.user) {
+        // Clear the in-memory profile plus GitHub-specific UI flags before the
+        // scheduled read runs. This prevents a prior account's username or
+        // repository state from painting after sign-out.
+        clearPersistedAuthState();
+        clearGitHubConnectionUiState();
+        setPersistedRole(null);
+        setProfile(null);
+        setError(null);
+      }
 
       if (event === 'SIGNED_IN') {
         setLoading(true);
