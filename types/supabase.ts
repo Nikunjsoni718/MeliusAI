@@ -107,6 +107,54 @@ export type AuditSnapshotRow = {
   created_at: string;
 };
 
+export type RepositoryFileDiff = {
+  filename: string;
+  insertions: number;
+  deletions: number;
+  patch: string | null;
+  status: string;
+  previous_filename?: string;
+  patch_source?: 'github' | 'reconstructed';
+  old_sha?: string | null;
+  new_sha?: string | null;
+  old_mode?: string | null;
+  new_mode?: string | null;
+  non_text_reason?: 'binary' | 'submodule';
+  is_symlink?: boolean;
+};
+
+export type WorkspaceRepositoryStateRow = {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  repository: string;
+  branch: string;
+  last_verified_commit_sha: string;
+  baseline_version: number;
+  previous_verified_report: Json | null;
+  initialized_at: string;
+  verified_at: string | null;
+  updated_at: string;
+};
+
+export type WorkspaceDiffRow = {
+  id: string;
+  repository_state_id: string;
+  baseline_version: number;
+  base_sha: string;
+  head_sha: string;
+  audit_kind: 'baseline' | 'incremental';
+  total_insertions: number;
+  total_deletions: number;
+  files: RepositoryFileDiff[];
+  status: 'pending' | 'verified' | 'failed';
+  audit_report: Json | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  verified_at: string | null;
+};
+
 export type PendingImportRow = {
   id: string;
   user_id: string;
@@ -147,6 +195,18 @@ export type UserApplicationRow = {
 export interface Database {
   public: {
     Tables: {
+      workspace_repository_states: {
+        Row: WorkspaceRepositoryStateRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      workspace_diffs: {
+        Row: WorkspaceDiffRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       profiles: {
         Row: ProfileRow;
         Insert: Partial<Omit<ProfileRow, 'id'>> & Pick<ProfileRow, 'id'>;

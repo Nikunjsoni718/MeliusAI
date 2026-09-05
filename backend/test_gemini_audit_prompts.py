@@ -258,7 +258,8 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(parsed=incremental_payload, text="")
 
         fake_incremental_client = SimpleNamespace(
-            models=SimpleNamespace(generate_content=generate_incremental_content)
+            models=SimpleNamespace(generate_content=generate_incremental_content),
+            close=lambda: None,
         )
         with patch.object(main.genai, "Client", return_value=fake_incremental_client):
             incremental = main.run_incremental_audit(
@@ -274,6 +275,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertIn("SCHEMA BINDING", captured_incremental_request["contents"])
+        self.assertIn("+ unsafe authorization change", captured_incremental_request["contents"])
+        self.assertIn('"score": 76', captured_incremental_request["contents"])
+        self.assertNotIn("{diff_payload}", captured_incremental_request["contents"])
+        self.assertNotIn("{previous_report_payload}", captured_incremental_request["contents"])
 
     @staticmethod
     def _mock_generate_content(payload):

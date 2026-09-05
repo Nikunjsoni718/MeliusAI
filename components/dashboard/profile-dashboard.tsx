@@ -144,6 +144,7 @@ type StagedFile = {
   contentType?: string;
   githubRepository?: string;
   githubRef?: string;
+  githubCommitSha?: string;
   selected: boolean;
 };
 
@@ -175,6 +176,7 @@ type GitHubRepositoryTreeState = {
   loading: boolean;
   error: string | null;
   truncated: boolean;
+  commitSha?: string;
 };
 
 type GitHubTreeNode = {
@@ -5087,14 +5089,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         .split('/')
         .map((pathPart) => encodeURIComponent(pathPart))
         .join('/');
-      const treeUrl = new URL(
-        `/repos/${encodedRepositoryName}/git/trees/${encodeURIComponent(repository.default_branch)}`,
-        GITHUB_API_BASE_URL
-      );
-      treeUrl.searchParams.set('recursive', '1');
       if (!githubProviderToken) {
         throw new Error('Your GitHub connection has expired. Reconnect GitHub and try again.');
       }
+      const commit = await fetchGitHubApi<{ sha: string; commit: { tree: { sha: string } } }>(
+        new URL(`/repos/${encodedRepositoryName}/commits/${encodeURIComponent(repository.default_branch)}`, GITHUB_API_BASE_URL),
+        githubProviderToken
+      );
+      if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(commit.sha)) {
+        throw new Error('GitHub did not return a valid repository commit.');
+      }
+      const treeUrl = new URL(
+        `/repos/${encodedRepositoryName}/git/trees/${encodeURIComponent(commit.commit.tree.sha)}`,
+        GITHUB_API_BASE_URL
+      );
+      treeUrl.searchParams.set('recursive', '1');
 
       const treeData = await fetchGitHubApi<{ tree?: GitHubTreeEntry[]; truncated?: boolean }>(
         treeUrl,
@@ -5117,6 +5126,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           loading: false,
           error: null,
           truncated: Boolean(treeData.truncated),
+          commitSha: commit.sha,
         },
       }));
 
@@ -5265,6 +5275,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   : undefined,
               githubRepository: repository.full_name.toLowerCase(),
               githubRef: repository.default_branch,
+              githubCommitSha: githubRepositoryTrees[repository.full_name]?.commitSha,
               selected: true,
             } satisfies StagedFile;
           })
@@ -5478,6 +5489,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   github_repository: file.githubRepository ?? null,
                   github_file_path: isGithubAsset ? file.path : null,
                   github_ref: file.githubRef ?? null,
+                  github_commit_sha: file.githubCommitSha ?? null,
                   github_sync_status: isGithubAsset ? 'synced' : 'untracked',
                   github_synced_at: isGithubAsset ? new Date().toISOString() : null,
                 })
@@ -5494,7 +5506,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             result.data ? [result.data as ProjectRow] : []
           );
 
+          let trackingError: string | null = null;
+          if (githubRepository) {
+            try {
+              const { data: authData } = await supabase.auth.getSession();
+              const importSession = authData.session;
+              const commitSha = files[0]?.githubCommitSha;
+              if (!importSession?.access_token || !commitSha || files.some((file) => file.githubCommitSha !== commitSha)) {
+                throw new Error('Verify to establish the repository baseline.');
+              }
+              // Initialization validates saved import records using the Supabase session.
+              const initialized = await fetch(
+                `${PROFILE_SPECTATOR_BASE_URL}/api/github/workspaces/${encodeURIComponent(folderData.id)}/initialize`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${importSession.access_token}` },
+                  body: JSON.stringify({ repository: githubRepository, branch: files[0].githubRef, commit_sha: commitSha }),
+                }
+              );
+              if (!initialized.ok) {
+                const failure = await initialized.json().catch(() => null) as { detail?: string } | null;
+                throw new Error(failure?.detail ?? 'Repository tracking could not be initialized. Retry Verify.');
+              }
+            } catch (error) {
+              trackingError = error instanceof Error ? error.message : 'Repository tracking could not be initialized.';
+            }
+          }
+
           return {
+            trackingError,
             folder: {
               ...(folderData as ProjectFolderRow),
               nested_projects: projectRows,
@@ -5508,6 +5548,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
 
       const savedProjectRows = savedGroups.flatMap((group) => group.projectRows);
+      const trackingErrors = savedGroups.flatMap((group) => group.trackingError ? [group.trackingError] : []);
+      if (trackingErrors.length > 0) {
+        alert(`Files were imported. Repository baseline setup needs attention: ${trackingErrors.join(' ')}`);
+      }
       const savedProjects = savedProjectRows.map((row) => mapProjectRowToProjectItem(row));
       const savedFolders = savedGroups.map((group) => group.folder);
       const importedGithubRepositories = Array.from(
@@ -6567,7 +6611,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       let response = await fetch(FOLDER_AUDIT_ENDPOINT, auditRequest);
 
       if (response.status === 409) {
-        response = await fetch(FOLDER_BASELINE_AUDIT_ENDPOINT, auditRequest);
+        const conflict = await response.clone().json().catch(() => null) as { code?: string } | null;
+        if (conflict?.code === 'BASELINE_REQUIRED' || conflict?.code === 'GEMINI_CONTEXT_OVERFLOW') {
+          response = await fetch(FOLDER_BASELINE_AUDIT_ENDPOINT, auditRequest);
+        }
       }
 
       if (!response.ok) {
