@@ -9,9 +9,14 @@ from backend.github_diff_service import CumulativeDiff, DiffServiceError
 
 BASE, HEAD, NEXT = "a" * 40, "b" * 40, "c" * 40
 REPORT = {"score": 76, "score_delta": 0, "delta_summary": "Previous audit.", "executive_summary": "Previous architecture.",
-          "pros": [], "cons": [], "recommendations": []}
+          "pros": ["Existing strength: Input validation is consistent."],
+          "cons": ["Existing weakness: Cache invalidation is incomplete."],
+          "recommendations": ["Existing recommendation: Add cache invalidation tests."]}
 MODEL_REPORT = {"candidate_score_delta": 4, "new_score": 80, "file_impacts": [], "new_vulnerabilities": [],
-                "resolved_issues": [], "updated_architecture_summary": "Improved architecture."}
+                "resolved_issues": [], "updated_architecture_summary": "Improved architecture.",
+                "pros": ["Existing strength: Input validation is consistent.", "New strength: Cache invalidation is added."],
+                "cons": ["Existing weakness: Cache invalidation is incomplete."],
+                "recommendations": ["Existing recommendation: Add cache invalidation tests.", "New recommendation: Monitor invalidation failures."]}
 
 
 class GeminiDeltaTests(unittest.TestCase):
@@ -36,6 +41,17 @@ class GeminiDeltaTests(unittest.TestCase):
         self.assertIn(main.json.dumps(REPORT, ensure_ascii=False, sort_keys=True), prompt)
         self.assertNotIn("{diff_payload}", prompt)
         self.assertEqual(client.models.count_tokens.call_args.kwargs["contents"], prompt)
+
+    def test_merged_model_lists_are_preserved_in_folder_audit(self):
+        result = main.build_incremental_folder_audit_result(
+            main.IncrementalAuditReport.model_validate(MODEL_REPORT)
+        )
+        self.assertEqual(result["folder_audit"]["pros"], MODEL_REPORT["pros"])
+        self.assertEqual(result["folder_audit"]["cons"], MODEL_REPORT["cons"])
+        self.assertEqual(
+            result["folder_audit"]["recommendations"],
+            MODEL_REPORT["recommendations"],
+        )
 
     def test_only_physical_token_overflow_requires_baseline(self):
         client = self.client(count=1048577)

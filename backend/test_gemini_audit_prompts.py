@@ -121,6 +121,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 "new_vulnerabilities",
                 "resolved_issues",
                 "updated_architecture_summary",
+                "pros",
+                "cons",
+                "recommendations",
             ),
             "dashboard": ("ai_summary", "score", "score_reasoning", "strengths", "weaknesses", "recommendations"),
         }
@@ -250,6 +253,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "new_vulnerabilities": ["Authorization regression in the mutation path."],
             "resolved_issues": [],
             "updated_architecture_summary": "The change introduces an authorization regression.",
+            "pros": ["Existing strength: Input validation remains intact."],
+            "cons": ["Authorization regression in the mutation path."],
+            "recommendations": ["Restore authorization checks before mutation."],
         }
         captured_incremental_request = {}
 
@@ -264,7 +270,12 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(main.genai, "Client", return_value=fake_incremental_client):
             incremental = main.run_incremental_audit(
                 {"backend/main.py": "+ unsafe authorization change"},
-                {"score": 76, "recommendations": []},
+                {
+                    "score": 76,
+                    "pros": ["Existing strength: Input validation remains intact."],
+                    "cons": ["Existing weakness: Cache invalidation is incomplete."],
+                    "recommendations": ["Existing recommendation: Add cache invalidation tests."],
+                },
                 "test-api-key",
             )
 
@@ -277,6 +288,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SCHEMA BINDING", captured_incremental_request["contents"])
         self.assertIn("+ unsafe authorization change", captured_incremental_request["contents"])
         self.assertIn('"score": 76', captured_incremental_request["contents"])
+        self.assertIn("Your task is to UPDATE", captured_incremental_request["contents"])
+        self.assertIn("Preserve every existing `pros`, `cons`, and `recommendations` item", captured_incremental_request["contents"])
+        self.assertIn("Append any new strengths, weaknesses, and recommendations", captured_incremental_request["contents"])
+        self.assertIn("Existing strength: Input validation remains intact.", captured_incremental_request["contents"])
         self.assertNotIn("{diff_payload}", captured_incremental_request["contents"])
         self.assertNotIn("{previous_report_payload}", captured_incremental_request["contents"])
 
