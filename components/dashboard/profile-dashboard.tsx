@@ -3067,6 +3067,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }, [clearGitHubImportState, supabase]);
 
+  const handleReconnectGithub = useCallback(async () => {
+    if (!supabase) {
+      showBioToast('GitHub reconnection is unavailable because authentication is not configured.');
+      return;
+    }
+
+    // Re-authenticate an existing GitHub identity instead of trying to link it
+    // again. Re-linking an identity that already belongs to this user makes
+    // Supabase reject the OAuth callback with identity_already_exists.
+    clearGitHubImportState();
+    setIsGitHubConnectionExpired(false);
+    setIsLinkingGitHub(true);
+
+    try {
+      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          scopes: 'repo read:user user:email',
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data.url) {
+        throw new Error('GitHub OAuth did not return an authorization URL.');
+      }
+
+      window.location.assign(data.url);
+    } catch (error) {
+      setIsLinkingGitHub(false);
+      setIsGitHubConnectionExpired(true);
+      console.error('GitHub reconnection error:', error);
+      showBioToast(
+        error instanceof Error
+          ? `GitHub reconnection could not start: ${error.message}`
+          : 'GitHub reconnection could not start. Please try again.'
+      );
+    }
+  }, [clearGitHubImportState, showBioToast, supabase]);
+
   const handleUnlinkGitHub = useCallback(async () => {
     if (!supabase || !user?.id || isUnlinkingGitHub) {
       return;
@@ -7367,7 +7412,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         ) : (
                           <button
                             type="button"
-                            onClick={handleLinkGithub}
+                            onClick={hasActiveGitHubIdentity ? handleReconnectGithub : handleLinkGithub}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-600 rounded-lg hover:bg-gray-800 transition-colors"
                           >
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -7963,7 +8008,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                               setIsGithubModalOpen(true);
                               return;
                             }
-                            void handleLinkGithub();
+                            void (hasActiveGitHubIdentity ? handleReconnectGithub : handleLinkGithub)();
                           }}
                         >
                           <div className="icon-circle">
