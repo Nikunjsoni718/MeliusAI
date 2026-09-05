@@ -1185,7 +1185,6 @@ function extractVaultStoragePath(value: string | null | undefined) {
 function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
   const rowWithAuditAliases = row as ProjectRow & {
     executive_summary?: string | null;
-    summary?: string | null;
   };
   const fileName = row.file_name ?? row.name ?? row.title ?? 'Project';
   const fileUrl = row.file_url ?? null;
@@ -1195,10 +1194,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
   const hydratedAuditSummary = row.audit_summary?.trim() || row.ai_summary?.trim() || null;
   const hydratedAiSummary = row.ai_summary?.trim() || row.audit_summary?.trim() || null;
   const hydratedSummary =
-    rowWithAuditAliases.summary?.trim() ||
-    rowWithAuditAliases.executive_summary?.trim() ||
-    hydratedAuditSummary ||
-    hydratedAiSummary;
+    rowWithAuditAliases.executive_summary?.trim() || hydratedAuditSummary || hydratedAiSummary;
 
   return {
     id: row.id,
@@ -1295,7 +1291,6 @@ function toProjectRowAuditPatch(projectPatch: Partial<ProjectItem>): Partial<Pro
       projectPatch.score ??
       projectPatch.logic_score ??
       projectPatch.evaluation_score,
-    summary: projectPatch.summary ?? projectPatch.executive_summary,
     user_description: projectPatch.user_description,
   };
 }

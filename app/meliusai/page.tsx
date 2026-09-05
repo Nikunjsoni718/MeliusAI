@@ -127,7 +127,7 @@ function getProjectTechStack(project: ProjectAttachment | null) {
 function getProjectDescription(project: ProjectAttachment | null) {
   return (
     project?.description?.trim() ||
-    project?.summary?.trim() ||
+    project?.audit_summary?.trim() ||
     project?.ai_summary?.trim() ||
     'No description found.'
   );

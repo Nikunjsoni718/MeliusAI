@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
               profession: body.profession,
               target_company: assessment.targetCompany,
               auto_apply_enabled: body.autoApplyEnabled ?? false,
-              summary: assessment.summary,
+              ai_summary: assessment.summary,
               stack: [body.profession, assessment.sourceKind, assessment.targetRole],
               status: 'submitted',
             })

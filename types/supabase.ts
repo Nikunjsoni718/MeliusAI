@@ -73,7 +73,6 @@ export type ProjectRow = {
   profession?: string | null;
   target_company?: string | null;
   auto_apply_enabled?: boolean | null;
-  summary?: string | null;
   stack?: Json[] | null;
   status?: ProjectStatus | null;
   created_at: string;

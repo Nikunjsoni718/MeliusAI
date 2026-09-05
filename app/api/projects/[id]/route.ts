@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectRow, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, user_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, user_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, ai_summary, stack, status, created_at, updated_at';
 const vaultBucketName = 'vault';
 
 type DeletableProjectRow = ProjectRow & {
@@ -147,7 +147,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
       profession: string;
       target_company: string | null;
       auto_apply_enabled: boolean;
-      summary: string | null;
+      ai_summary: string | null;
       stack: string[];
       status: ProjectStatus;
     }>;
@@ -167,7 +167,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
         profession: body.profession,
         target_company: body.target_company,
         auto_apply_enabled: body.auto_apply_enabled,
-        summary: body.summary,
+        ai_summary: body.ai_summary,
         stack: body.stack,
         status: body.status,
       })

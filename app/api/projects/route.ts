@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { PortfolioSourceKind, ProjectStatus } from '@/types/supabase';
 
 const projectSelect =
-  'id, user_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, summary, stack, status, created_at, updated_at';
+  'id, user_id, is_public, title, description, file_url, folder_id, file_type, profession, target_company, auto_apply_enabled, ai_summary, stack, status, created_at, updated_at';
 const projectCardSelect =
   'id, user_id, is_public, folder_id, name, title, file_name, file_url, file_type, file_size, score, evaluation_score, logic_score, has_been_audited, previous_score, status, created_at, updated_at';
 
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
       profession?: string;
       target_company?: string | null;
       auto_apply_enabled?: boolean;
-      summary?: string | null;
+      ai_summary?: string | null;
       stack?: string[];
       status?: ProjectStatus;
     };
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
         profession: body.profession ?? 'Developer',
         target_company: body.target_company ?? null,
         auto_apply_enabled: body.auto_apply_enabled ?? false,
-        summary: body.summary ?? null,
+        ai_summary: body.ai_summary ?? null,
         stack: body.stack ?? [],
         status: body.status ?? 'draft',
       })

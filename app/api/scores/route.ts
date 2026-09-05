@@ -165,7 +165,6 @@ export async function POST(request: NextRequest) {
       audit_summary: analysis.audit.summary,
       has_been_audited: true,
       ai_summary: JSON.stringify(analysis.audit),
-      summary: analysis.audit.summary,
       file_url: fileUrl ?? `meliusai://dynamic-ingestion/${traceId}`,
       file_type: 'website',
       stack: Array.isArray(body?.stack) ? body.stack : Array.isArray(metadata.stack) ? metadata.stack : [],

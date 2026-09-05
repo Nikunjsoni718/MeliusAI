@@ -195,8 +195,8 @@ export function TalentDashboard() {
       try {
         const { data, error } = await supabase
           .from('projects')
-            .select(
-            'id, user_id, file_url, file_type, profession, target_company, auto_apply_enabled, summary, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
+          .select(
+            'id, user_id, file_url, file_type, profession, target_company, auto_apply_enabled, description, score, evaluation_score, logic_score, ai_summary, audit_summary, pros, cons, recommendations, created_at'
           )
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
@@ -216,7 +216,6 @@ export function TalentDashboard() {
               Boolean(
                 project.ai_summary?.trim() ||
                   project.audit_summary?.trim() ||
-                  project.summary?.trim() ||
                   project.logic_score ||
                   project.evaluation_score ||
                   project.score
@@ -233,7 +232,6 @@ export function TalentDashboard() {
         const savedSummary =
           savedAudit.ai_summary?.trim() ||
           savedAudit.audit_summary?.trim() ||
-          savedAudit.summary?.trim() ||
           savedAudit.description?.trim() ||
           'Your saved MeliusAI audit is ready.';
         const savedProfession = savedAudit.profession?.trim() || 'Developer';
