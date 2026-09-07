@@ -56,6 +56,7 @@ export type ProjectRow = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_findings?: Json | null;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
   logic_score?: number | null;
@@ -91,6 +92,7 @@ export type ProjectFolderRow = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_findings?: Json | null;
   has_been_audited?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;

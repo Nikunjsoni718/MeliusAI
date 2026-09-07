@@ -78,6 +78,7 @@ type ProjectItem = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_findings?: unknown;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
   logic_score?: number | null;
@@ -122,6 +123,7 @@ type FolderAuditItem = ProjectFolderRow & {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_findings?: unknown;
   has_been_audited?: boolean | null;
 };
 
@@ -543,7 +545,7 @@ const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
   'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
 const PROJECT_DASHBOARD_COLUMNS =
-  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, status, title, file_size, folder_id';
+  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id';
 const DASHBOARD_PROJECT_LIMIT = 80;
 async function syncProfileVectorEmbedding(payload: Record<string, unknown>, accessToken?: string | null) {
   if (!PROFILE_EMBEDDING_SYNC_ENDPOINT) {
@@ -1225,6 +1227,7 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     pros: Array.isArray(row.pros) ? row.pros : null,
     cons: Array.isArray(row.cons) ? row.cons : null,
     recommendations: Array.isArray(row.recommendations) ? row.recommendations : null,
+    audit_findings: row.audit_findings ?? null,
     evaluation_score: typeof row.evaluation_score === 'number' ? row.evaluation_score : hydratedScore,
     has_been_audited:
       row.has_been_audited ?? Boolean(hydratedScore !== null || hydratedAuditSummary || hydratedAiSummary),
@@ -1266,6 +1269,7 @@ function mergeVerifiedProject(
     pros: projectPatch.pros ?? currentProject.pros,
     cons: projectPatch.cons ?? currentProject.cons,
     recommendations: projectPatch.recommendations ?? currentProject.recommendations,
+    audit_findings: projectPatch.audit_findings ?? currentProject.audit_findings,
   };
 }
 
@@ -1285,6 +1289,7 @@ function toProjectRowAuditPatch(projectPatch: Partial<ProjectItem>): Partial<Pro
     previous_score: projectPatch.previous_score,
     pros: projectPatch.pros,
     recommendations: projectPatch.recommendations,
+    audit_findings: projectPatch.audit_findings as ProjectRow['audit_findings'],
     score_delta: projectPatch.score_delta,
     delta_summary: projectPatch.delta_summary,
     score:
@@ -6280,6 +6285,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         pros?: string[];
         cons?: string[];
         recommendations?: string[];
+        finding_impacts?: unknown;
         last_improved_summary?: string;
         improvement_summary?: string;
         previous_score?: number;
@@ -6297,6 +6303,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           pros?: string[];
           cons?: string[];
           recommendations?: string[];
+          finding_impacts?: unknown;
           strategicRecommendations?: string[];
           last_improved_summary?: string;
         };
@@ -6358,6 +6365,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         pros: prosList.length > 0 ? prosList : updatedProject?.pros,
         cons: consList.length > 0 ? consList : updatedProject?.cons,
         recommendations: recommendationList.length > 0 ? recommendationList : updatedProject?.recommendations,
+        audit_findings:
+          payload.finding_impacts ??
+          payload.report?.finding_impacts ??
+          updatedProject?.audit_findings ??
+          project.audit_findings,
         last_improved_summary:
           payload.last_improved_summary ??
           payload.improvement_summary ??
@@ -6679,6 +6691,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           description?: string | null;
           pros?: string[] | null;
           recommendations?: string[] | null;
+          finding_impacts?: unknown;
           score_delta?: number | null;
         };
         folder_score?: number | string | null;
@@ -6728,6 +6741,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             cons: data.folder_audit?.cons ?? currentFolder.cons ?? null,
             recommendations:
               data.folder_audit?.recommendations ?? currentFolder.recommendations ?? null,
+            audit_findings:
+              (data.folder_audit?.finding_impacts ?? currentFolder.audit_findings ?? null) as ProjectFolderRow['audit_findings'],
           };
         })
       );

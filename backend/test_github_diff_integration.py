@@ -8,15 +8,35 @@ from backend import main
 from backend.github_diff_service import CumulativeDiff, DiffServiceError
 
 BASE, HEAD, NEXT = "a" * 40, "b" * 40, "c" * 40
-REPORT = {"score": 76, "score_delta": 0, "delta_summary": "Previous audit.", "executive_summary": "Previous architecture.",
-          "pros": ["Existing strength: Input validation is consistent."],
-          "cons": ["Existing weakness: Cache invalidation is incomplete."],
-          "recommendations": ["Existing recommendation: Add cache invalidation tests."]}
-MODEL_REPORT = {"candidate_score_delta": 4, "new_score": 80, "file_impacts": [], "new_vulnerabilities": [],
-                "resolved_issues": [], "updated_architecture_summary": "Improved architecture.",
-                "pros": ["Existing strength: Input validation is consistent.", "New strength: Cache invalidation is added."],
-                "cons": ["Existing weakness: Cache invalidation is incomplete."],
-                "recommendations": ["Existing recommendation: Add cache invalidation tests.", "New recommendation: Monitor invalidation failures."]}
+REPORT = {
+    "score": 52,
+    "score_delta": 0,
+    "delta_summary": "Previous audit.",
+    "executive_summary": "Previous architecture.",
+    "pros": ["Existing Strength: Input validation is consistent."],
+    "cons": ["Existing Weakness: Cache invalidation is incomplete."],
+    "recommendations": ["Existing Recommendation: Add cache invalidation tests."],
+    "finding_impacts": {
+        "pros": [{"text": "Existing Strength: Input validation is consistent.", "impactScore": 10}],
+        "cons": [{"text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
+        "recommendations": [{"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8}],
+    },
+}
+MODEL_REPORT = {
+    "file_impacts": [],
+    "new_vulnerabilities": [],
+    "resolved_issues": [],
+    "updated_architecture_summary": "Improved architecture.",
+    "pros": [
+        {"text": "Existing Strength: Input validation is consistent.", "impactScore": 10},
+        {"text": "New Strength: Cache invalidation is added.", "impactScore": 6},
+    ],
+    "cons": [{"text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
+    "recommendations": [
+        {"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8},
+        {"text": "New Recommendation: Monitor invalidation failures.", "impactScore": 5},
+    ],
+}
 
 
 class GeminiDeltaTests(unittest.TestCase):
@@ -44,14 +64,24 @@ class GeminiDeltaTests(unittest.TestCase):
 
     def test_merged_model_lists_are_preserved_in_folder_audit(self):
         result = main.build_incremental_folder_audit_result(
-            main.IncrementalAuditReport.model_validate(MODEL_REPORT)
+            main.IncrementalAuditReport.model_validate(MODEL_REPORT),
+            REPORT["score"],
         )
-        self.assertEqual(result["folder_audit"]["pros"], MODEL_REPORT["pros"])
-        self.assertEqual(result["folder_audit"]["cons"], MODEL_REPORT["cons"])
+        self.assertEqual(result["folder_score"], 58)
+        self.assertEqual(result["score_delta"], 6)
+        self.assertEqual(
+            result["folder_audit"]["pros"],
+            [item["text"] for item in MODEL_REPORT["pros"]],
+        )
+        self.assertEqual(
+            result["folder_audit"]["cons"],
+            [item["text"] for item in MODEL_REPORT["cons"]],
+        )
         self.assertEqual(
             result["folder_audit"]["recommendations"],
-            MODEL_REPORT["recommendations"],
+            [item["text"] for item in MODEL_REPORT["recommendations"]],
         )
+        self.assertEqual(result["folder_audit"]["finding_impacts"]["pros"], MODEL_REPORT["pros"])
 
     def test_only_physical_token_overflow_requires_baseline(self):
         client = self.client(count=1048577)
@@ -123,7 +153,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_delta_saved_before_ai_and_pinned_head_finalized(self):
         files = [{"filename": "new.py", "insertions": 1, "deletions": 0, "patch": "+new", "status": "added"}]
         result, save, finalize, _, ai = await self.exercise(files=files)
-        self.assertEqual(result["folder_score"], 80)
+        self.assertEqual(result["folder_score"], 58)
         self.assertEqual(ai.call_args.args[0]["files"], files)
         self.assertEqual(ai.call_args.args[1], REPORT)
         self.assertEqual(save.call_args.args[2], HEAD)

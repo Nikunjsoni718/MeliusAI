@@ -4,6 +4,18 @@ export type NormalizedAuditReport = {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  findings: NormalizedAuditFindings;
+};
+
+export type AuditFinding = {
+  text: string;
+  impactScore?: number;
+};
+
+export type NormalizedAuditFindings = {
+  strengths: AuditFinding[];
+  weaknesses: AuditFinding[];
+  recommendations: AuditFinding[];
 };
 
 type AuditSection = 'summary' | 'strengths' | 'weaknesses' | 'recommendations' | 'score';
@@ -212,6 +224,45 @@ export function normalizeAuditList(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function normalizeAuditFinding(value: unknown): AuditFinding | null {
+  if (typeof value === 'string' && value.trim()) {
+    return { text: value.trim() };
+  }
+
+  const record = asRecord(value);
+  if (!record || typeof record.text !== 'string' || !record.text.trim()) {
+    return null;
+  }
+
+  const rawImpactScore = record.impactScore;
+  const impactScore =
+    typeof rawImpactScore === 'number' && Number.isInteger(rawImpactScore) && rawImpactScore !== 0
+      ? rawImpactScore
+      : undefined;
+
+  return {
+    text: record.text.trim(),
+    ...(impactScore !== undefined ? { impactScore } : {}),
+  };
+}
+
+export function normalizeAuditFindings(value: unknown): AuditFinding[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  return value.flatMap((item) => {
+    const finding = normalizeAuditFinding(item);
+    if (!finding || seen.has(finding.text)) {
+      return [];
+    }
+
+    seen.add(finding.text);
+    return [finding];
+  });
+}
+
 function findFirstString(sources: Record<string, unknown>[], keys: readonly string[]) {
   for (const key of keys) {
     for (const source of sources) {
@@ -307,6 +358,39 @@ function getItems(
   return [];
 }
 
+function getFindingItems(
+  sources: Record<string, unknown>[],
+  keys: readonly string[],
+  fallbackItems: string[]
+): AuditFinding[] {
+  const detailContainerKeys = ['audit_findings', 'auditFindings', 'finding_impacts', 'findingImpacts'];
+
+  for (const source of sources) {
+    for (const containerKey of detailContainerKeys) {
+      const details = asRecord(source[containerKey]) ?? parseJsonRecord(source[containerKey]);
+      if (!details) {
+        continue;
+      }
+
+      for (const key of keys) {
+        const findings = normalizeAuditFindings(details[key]);
+        if (findings.length > 0) {
+          return findings;
+        }
+      }
+    }
+
+    for (const key of keys) {
+      const findings = normalizeAuditFindings(source[key]);
+      if (findings.length > 0 && findings.some((finding) => finding.impactScore !== undefined)) {
+        return findings;
+      }
+    }
+  }
+
+  return fallbackItems.map((text) => ({ text }));
+}
+
 function getSummary(sources: Record<string, unknown>[], reportTexts: string[]) {
   for (const reportText of reportTexts) {
     const sectionSummary = extractMarkdownSection(reportText, 'summary');
@@ -352,19 +436,39 @@ export function normalizeAuditReport(value: unknown): NormalizedAuditReport {
     reportTexts
   );
 
+  const strengths = getItems(
+    sources,
+    ['strengths', 'pros', 'systemic_strengths', 'systemicStrengths'],
+    'strengths',
+    reportTexts
+  );
+  const normalizedRecommendations =
+    recommendations.length > 0 || !reportTexts.some((text) => /growth areas/i.test(text))
+      ? recommendations
+      : weaknesses;
+
   return {
     score: getScore(sources, reportTexts),
     summary: getSummary(sources, reportTexts),
-    strengths: getItems(
-      sources,
-      ['strengths', 'pros', 'systemic_strengths', 'systemicStrengths'],
-      'strengths',
-      reportTexts
-    ),
+    strengths,
     weaknesses,
-    recommendations:
-      recommendations.length > 0 || !reportTexts.some((text) => /growth areas/i.test(text))
-        ? recommendations
-        : weaknesses,
+    recommendations: normalizedRecommendations,
+    findings: {
+      strengths: getFindingItems(
+        sources,
+        ['strengths', 'pros', 'systemic_strengths', 'systemicStrengths'],
+        strengths
+      ),
+      weaknesses: getFindingItems(
+        sources,
+        ['weaknesses', 'cons', 'systemic_weaknesses', 'systemicWeaknesses', 'structural_vulnerabilities'],
+        weaknesses
+      ),
+      recommendations: getFindingItems(
+        sources,
+        ['recommendations', 'strategicRecommendations', 'strategic_recommendations', 'actionable_recommendations'],
+        normalizedRecommendations
+      ),
+    },
   };
 }

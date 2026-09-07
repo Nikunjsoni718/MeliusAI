@@ -97,11 +97,9 @@ else:
 class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
     def test_shared_persona_and_schema_bindings_cover_every_audit_contract(self):
         expected_keys = {
-            "file": ("description", "score", "score_delta", "delta_summary", "pros", "cons", "recommendations"),
+            "file": ("description", "delta_summary", "pros", "cons", "recommendations"),
             "workspace": (
                 "executive_summary",
-                "score",
-                "score_delta",
                 "delta_summary",
                 "pros",
                 "cons",
@@ -115,8 +113,6 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 "overall_score",
             ),
             "incremental": (
-                "candidate_score_delta",
-                "new_score",
                 "file_impacts",
                 "new_vulnerabilities",
                 "resolved_issues",
@@ -125,21 +121,20 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 "cons",
                 "recommendations",
             ),
-            "dashboard": ("ai_summary", "score", "score_reasoning", "strengths", "weaknesses", "recommendations"),
+            "dashboard": ("ai_summary", "strengths", "weaknesses", "recommendations"),
         }
 
-        self.assertEqual(
-            main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT,
-            UNIVERSAL_PROJECT_AUDITOR_PROMPT,
-        )
+        self.assertIn("System Design & Architecture (30%)", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("Do not calculate an overall score or score delta.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("impactScore", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
 
         for contract, keys in expected_keys.items():
             with self.subTest(contract=contract):
                 prompt = main.build_meliusai_security_audit_prompt(contract)
-                self.assertTrue(prompt.startswith(UNIVERSAL_PROJECT_AUDITOR_PROMPT))
+                self.assertTrue(prompt.startswith(main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT))
                 self.assertIn("System Design & Architecture (30%)", prompt)
                 self.assertIn("No Automatic Failures", prompt)
-                self.assertIn("CRITICAL LIMIT: The explanation fragment MUST be 10 words or less.", prompt)
+                self.assertIn("fragment after its hook is ten words or", prompt)
                 self.assertIn("Catchy Hook: Short fragment", prompt)
                 self.assertIn("SCHEMA BINDING", prompt)
                 for key in keys:
@@ -148,12 +143,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
     async def test_file_audit_keeps_balanced_score_for_native_security_findings(self):
         balanced_response = main.FileAuditResponse(
             description="The component has clean boundaries with one exposed credential to remediate.",
-            score=91,
-            score_delta=16,
             delta_summary="The architecture and state boundaries improved despite the remaining credential exposure.",
-            pros=["Clear Boundary: API access is isolated behind a typed service."],
-            cons=["Secret Exposure: backend/client.ts contains a hardcoded credential."],
-            recommendations=["Move Secret: Read the credential from a server-side environment variable."],
+            pros=[{"text": "Clear Boundary: Typed API service isolates access.", "impactScore": 15}],
+            cons=[{"text": "Secret Exposure: client contains a hardcoded credential.", "impactScore": -17}],
+            recommendations=[{"text": "Move Secret: Read credentials from server-side environment.", "impactScore": 12}],
         )
         native_analysis = {
             "imports_or_dependencies": [],
@@ -177,12 +170,29 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 previous_score=75,
             )
 
-        self.assertEqual(result["evaluated_score"], 91)
-        self.assertEqual(result["score_delta"], 16)
-        self.assertEqual(result["cons"], balanced_response.cons)
+        self.assertEqual(result["evaluated_score"], 48)
+        self.assertEqual(result["score_delta"], -27)
+        self.assertEqual(result["cons"], ["Secret Exposure: client contains a hardcoded credential."])
+        self.assertEqual(result["finding_impacts"]["pros"][0]["impactScore"], 15)
         rendered_prompt = generate_audit.await_args.args[1]
-        self.assertIn("The previous audit score was 75/100.", rendered_prompt)
-        self.assertNotIn("{previous_score}", rendered_prompt)
+        self.assertIn("The previous file score was 75/100.", rendered_prompt)
+        self.assertIn("The backend calculates the next score and", rendered_prompt)
+        self.assertNotIn("Return score, score_delta", rendered_prompt)
+
+    def test_backend_rejects_invalid_signed_finding_impacts(self):
+        with self.assertRaises(ValueError):
+            main.build_finding_impacts(
+                [{"text": "Invalid Strength: Negative impact belongs in weaknesses.", "impactScore": -1}],
+                [],
+                [],
+            )
+
+        with self.assertRaises(ValueError):
+            main.build_finding_impacts(
+                [{"text": "Oversized Strength: Impact exceeds the supported range.", "impactScore": 21}],
+                [],
+                [],
+            )
 
     async def test_mocked_gemini_responses_validate_existing_structured_contracts(self):
         payloads = (
@@ -190,25 +200,21 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 main.FileAuditResponse,
                 {
                     "description": "The file has a clear boundary but needs stronger input validation.",
-                    "score": 78,
-                    "score_delta": 4,
                     "delta_summary": "Input validation improved without changing the overall architecture.",
-                    "pros": ["Clear Boundary: Parsing is isolated from persistence."],
-                    "cons": ["Validation Gap: External input remains insufficiently constrained."],
-                    "recommendations": ["Validate Inputs: Reject malformed values before processing."],
+                    "pros": [{"text": "Clear Boundary: Parsing is isolated from persistence.", "impactScore": 11}],
+                    "cons": [{"text": "Validation Gap: External input remains insufficiently constrained.", "impactScore": -9}],
+                    "recommendations": [{"text": "Validate Inputs: Reject malformed values before processing.", "impactScore": 8}],
                 },
                 "file",
             ),
             (
                 main.FolderAuditResponse,
                 {
-                    "score": 81,
-                    "score_delta": 6,
                     "delta_summary": "The workspace now separates API ownership checks from presentation logic.",
                     "executive_summary": "The workspace is close to production-ready with targeted security work remaining.",
-                    "pros": ["Clean Boundaries: API and UI responsibilities are separated."],
-                    "cons": ["Rate Limit Gap: Public mutation routes lack request throttling."],
-                    "recommendations": ["Add Limits: Apply route-level request quotas before deployment."],
+                    "pros": [{"text": "Clean Boundaries: API and UI responsibilities are separated.", "impactScore": 13}],
+                    "cons": [{"text": "Rate Limit Gap: Public mutations lack throttling.", "impactScore": -10}],
+                    "recommendations": [{"text": "Add Limits: Apply route-level quotas before deployment.", "impactScore": 9}],
                 },
                 "workspace",
             ),
@@ -241,8 +247,6 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.model_dump(), payload)
 
         incremental_payload = {
-            "candidate_score_delta": -3,
-            "new_score": 73,
             "file_impacts": [
                 {
                     "file_path": "backend/main.py",
@@ -253,9 +257,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "new_vulnerabilities": ["Authorization regression in the mutation path."],
             "resolved_issues": [],
             "updated_architecture_summary": "The change introduces an authorization regression.",
-            "pros": ["Existing strength: Input validation remains intact."],
-            "cons": ["Authorization regression in the mutation path."],
-            "recommendations": ["Restore authorization checks before mutation."],
+            "pros": [{"text": "Existing Strength: Input validation remains intact.", "impactScore": 10}],
+            "cons": [{"text": "Authorization Regression: Mutation path lacks an authorization check.", "impactScore": -14}],
+            "recommendations": [{"text": "Restore Authorization: Check ownership before mutation.", "impactScore": 14}],
         }
         captured_incremental_request = {}
 
@@ -272,9 +276,14 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 {"backend/main.py": "+ unsafe authorization change"},
                 {
                     "score": 76,
-                    "pros": ["Existing strength: Input validation remains intact."],
-                    "cons": ["Existing weakness: Cache invalidation is incomplete."],
-                    "recommendations": ["Existing recommendation: Add cache invalidation tests."],
+                    "pros": ["Existing Strength: Input validation remains intact."],
+                    "cons": ["Existing Weakness: Cache invalidation is incomplete."],
+                    "recommendations": ["Existing Recommendation: Add cache invalidation tests."],
+                    "finding_impacts": {
+                        "pros": [{"text": "Existing Strength: Input validation remains intact.", "impactScore": 10}],
+                        "cons": [{"text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
+                        "recommendations": [{"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8}],
+                    },
                 },
                 "test-api-key",
             )
@@ -282,7 +291,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(incremental.model_dump(), incremental_payload)
         self.assertTrue(
             captured_incremental_request["contents"].startswith(
-                UNIVERSAL_PROJECT_AUDITOR_PROMPT
+                main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT
             )
         )
         self.assertIn("SCHEMA BINDING", captured_incremental_request["contents"])
@@ -299,9 +308,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(prompt.index("2. EVALUATE THE DELTA"), prompt.index("3. REMOVE/MODIFY"))
         self.assertLess(prompt.index("3. REMOVE/MODIFY"), prompt.index("4. APPEND"))
         self.assertLess(prompt.index("4. APPEND"), prompt.index("5. HOLISTIC SUMMARY"))
-        self.assertIn("Do not drop historical items because they are absent from the narrow diff.", prompt)
+        self.assertIn("Do not drop historical items", prompt)
+        self.assertIn("because they are absent from the narrow diff.", prompt)
         self.assertIn("must evaluate the ENTIRE repository's", prompt)
-        self.assertIn("Existing strength: Input validation remains intact.", captured_incremental_request["contents"])
+        self.assertIn("Existing Strength: Input validation remains intact.", captured_incremental_request["contents"])
         self.assertNotIn("{diff_payload}", captured_incremental_request["contents"])
         self.assertNotIn("{previous_report_payload}", captured_incremental_request["contents"])
 

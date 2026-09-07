@@ -5,10 +5,11 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Square } from 'lucide-react';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
-import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
+import { normalizeAuditReport, type AuditFinding } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -74,7 +75,7 @@ const auditTextFileExtensions = new Set([
   'yml',
 ]);
 const previewProjectSelect =
-  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, score_delta, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, updated_at, github_synced_at';
+  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, score_delta, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
 
 export type PreviewProject = {
   id?: string;
@@ -105,6 +106,7 @@ export type PreviewProject = {
   pros?: string[] | null;
   cons?: string[] | null;
   recommendations?: string[] | null;
+  audit_findings?: unknown;
   audit_data?: unknown;
   auditData?: unknown;
   audit_report?: unknown;
@@ -142,6 +144,7 @@ type VerifyAssetResponse = {
     strengths?: string[];
     weaknesses?: string[];
     recommendations?: string[];
+    finding_impacts?: unknown;
     strategicRecommendations?: string[];
     last_improved_summary?: string;
   };
@@ -164,6 +167,7 @@ type VerifyAssetResponse = {
   pros?: string[];
   cons?: string[];
   recommendations?: string[];
+  finding_impacts?: unknown;
   audit_data?: unknown;
   auditData?: unknown;
   audit_report?: unknown;
@@ -307,24 +311,50 @@ function MetricList({
   items,
 }: {
   title: string;
-  tone: 'emerald' | 'rose' | 'cyan';
-  items: string[];
+  tone: 'emerald' | 'rose' | 'sky';
+  items: AuditFinding[];
 }) {
   const toneClasses = {
-    emerald: 'border-emerald-500/15 bg-emerald-500/[0.04] text-emerald-300',
-    rose: 'border-rose-500/15 bg-rose-500/[0.04] text-rose-300',
-    cyan: 'border-cyan-500/15 bg-cyan-500/[0.04] text-cyan-300',
+    emerald: {
+      heading: 'text-emerald-400',
+      marker: 'bg-emerald-400',
+      badge: 'bg-emerald-500/10 text-emerald-400',
+    },
+    rose: {
+      heading: 'text-rose-400',
+      marker: 'bg-rose-400',
+      badge: 'bg-rose-500/10 text-rose-400',
+    },
+    sky: {
+      heading: 'text-sky-400',
+      marker: 'text-sky-400',
+      badge: 'bg-sky-500/10 text-sky-400',
+    },
+  };
+  const isActionable = tone === 'sky';
+  const formatImpactScore = (impactScore: number) => {
+    const signedScore = `${impactScore > 0 ? '+' : ''}${impactScore}`;
+    return isActionable ? `${signedScore} pts` : signedScore;
   };
 
   return (
-    <div className={`rounded-xl border p-4 ${toneClasses[tone]}`}>
-      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em]">{title}</h4>
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+      <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses[tone].heading}`}>{title}</h4>
       <ul className="mt-3 space-y-2">
         {items.length > 0 ? (
           items.map((item, index) => (
-            <li key={`${title}-${item}-${index}`} className="flex gap-2 text-xs leading-relaxed text-slate-300">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-              <span>{item}</span>
+            <li key={`${title}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-300">
+              {isActionable ? (
+                <Square aria-hidden="true" className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${toneClasses[tone].marker}`} strokeWidth={1.75} />
+              ) : (
+                <span aria-hidden="true" className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${toneClasses[tone].marker}`} />
+              )}
+              <span className="min-w-0 flex-1">{item.text}</span>
+              {typeof item.impactScore === 'number' ? (
+                <span className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-xs font-semibold ${toneClasses[tone].badge}`}>
+                  {formatImpactScore(item.impactScore)}
+                </span>
+              ) : null}
             </li>
           ))
         ) : (
@@ -394,9 +424,9 @@ export function AssetPreviewModal({
   const score = normalizedAudit.score ?? 0;
   const scoreDelta = liveProject?.score_delta ?? null;
   const deltaSummary = liveProject?.delta_summary?.trim() || null;
-  const pros = normalizedAudit.strengths;
-  const cons = normalizedAudit.weaknesses;
-  const recommendations = normalizedAudit.recommendations;
+  const pros = normalizedAudit.findings.strengths;
+  const cons = normalizedAudit.findings.weaknesses;
+  const recommendations = normalizedAudit.findings.recommendations;
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const verificationInProgress = isVerifying || isReAuditing;
   const executiveSummaryMarkdown =
@@ -654,6 +684,11 @@ export function AssetPreviewModal({
         pros: strengthsList,
         cons: weaknessesList,
         recommendations: recommendationList,
+        audit_findings:
+          data.finding_impacts ??
+          data.report?.finding_impacts ??
+          data.project?.audit_findings ??
+          liveProject.audit_findings,
         last_improved_summary:
           data.last_improved_summary ??
           data.improvement_summary ??
@@ -925,9 +960,9 @@ export function AssetPreviewModal({
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
-              <MetricList title="Strengths" tone="emerald" items={pros} />
-              <MetricList title="Weaknesses" tone="rose" items={cons} />
-              <MetricList title="Recommendations" tone="cyan" items={recommendations} />
+              <MetricList title="Highlights" tone="emerald" items={pros} />
+              <MetricList title="Areas for Improvement" tone="rose" items={cons} />
+              <MetricList title="Actionable Steps" tone="sky" items={recommendations} />
             </div>
           </div>
         </div>

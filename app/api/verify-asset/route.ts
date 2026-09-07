@@ -1,96 +1,13 @@
 import { NextResponse } from 'next/server';
 import JSZip from 'jszip';
 
+import { verifyMeliusAsset } from '@/lib/mentor';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const OPENAI_VERIFY_MODEL = process.env.OPENAI_VERIFY_ASSET_MODEL?.trim() || 'gpt-4o';
-const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_TEXT_CHARS_FOR_AUDIT = 32000;
-
-const VERIFY_ASSET_SYSTEM_PROMPT = `SYSTEM ROLE: You are an elite Y Combinator CTO, Senior Staff Engineer, and Technical Mentor. Your job is to audit user-uploaded code and return a highly intelligent, contextual, and deeply analytical JSON report.
-
-RULE 1: CONTEXTUAL, FAIR GRADING
-Grade the file strictly on its intended scope. Do not punish an HTML file for lacking CSS. Grade it purely on HTML semantics, DOM structure, and accessibility. 
-
-RULE 2: HYPER-SPECIFICITY (THE ELITE BRAIN)
-You are strictly forbidden from using generic phrases like "Good structure" or "Needs better accessibility." You MUST act like a senior engineer reviewing a PR. 
-- You must reference EXACT concepts, tags, or patterns you see in the code.
-- Instead of "Good HTML", write: "Excellent use of semantic <header> and <section> tags which creates a highly readable DOM tree."
-- Instead of "Needs accessibility", write: "Missing \`aria-label\` attributes on the navigation links and lacks a \`main\` landmark."
-
-RULE 3: THE EXECUTIVE SUMMARY
-Write a supportive, highly detailed 4-5 sentence technical analysis. Start with **[Recruiter-Ready]** or **[Practice & Growth]**. Explain exactly why it received its score by referencing the specific architecture and logic of the uploaded file. 
-
-RULE 4: STRICT JSON OUTPUT & LENGTH ENFORCEMENT
-Return ONLY a raw JSON object. Use these exact keys.
-
-FORMATTING RULE (ABSOLUTE COMPULSION): For the \`pros\`, \`cons\`, and \`recommendations\` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
-Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
-MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
-The strengths and weaknesses keys are aliases for pros and cons, so the same absolute rule applies.
-{
-  "ai_summary": "Your elite 4-5 sentence paragraph.",
-  "score": <Number out of 100>,
-  "strengths": [
-    "Strong Semantics: Landmark elements create a clear document hierarchy.",
-    "Clean Boundaries: Validation isolates unsafe input before processing."
-  ],
-  "weaknesses": [
-    "XSS Vulnerability: Using innerHTML allows malicious script injection.",
-    "Missing Guard: Parsed values lack boundary validation."
-  ],
-  "recommendations": [
-    "Sanitize Output: Replace direct HTML injection with safe text rendering.",
-    "Validate Inputs: Reject malformed values before processing."
-  ]
-}`;
-
-const VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION =
-  "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.";
-
-const VERIFY_ASSET_RESPONSE_FORMAT = {
-  type: 'json_schema',
-  json_schema: {
-    name: 'melius_verify_asset_audit',
-    strict: true,
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        ai_summary: { type: 'string' },
-        score: { type: 'integer', minimum: 0, maximum: 100 },
-        strengths: {
-          type: 'array',
-          maxItems: 5,
-          items: {
-            type: 'string',
-            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
-          },
-        },
-        weaknesses: {
-          type: 'array',
-          maxItems: 5,
-          items: {
-            type: 'string',
-            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
-          },
-        },
-        recommendations: {
-          type: 'array',
-          maxItems: 5,
-          items: {
-            type: 'string',
-            description: VERIFY_ASSET_ITEM_FORMAT_DESCRIPTION,
-          },
-        },
-      },
-      required: ['ai_summary', 'score', 'strengths', 'weaknesses', 'recommendations'],
-    },
-  },
-} as const;
 
 type VerifyAssetPayload = {
   fileUrl?: unknown;
@@ -107,9 +24,16 @@ type VerifyAssetPayload = {
 type AuditPayload = {
   ai_summary: string;
   score: number;
+  score_delta: number;
+  delta_summary: string;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  finding_impacts: {
+    pros: Array<{ text: string; impactScore: number }>;
+    cons: Array<{ text: string; impactScore: number }>;
+    recommendations: Array<{ text: string; impactScore: number }>;
+  };
 };
 
 type ParsedDataUrl = {
@@ -117,52 +41,6 @@ type ParsedDataUrl = {
   mediaType: string;
 };
 
-type ScoreBand = {
-  label: 'CATEGORY A' | 'CATEGORY B' | 'CATEGORY C' | 'CATEGORY D' | 'CATEGORY E';
-  maxScore: 20 | 30 | 55 | 75 | 100;
-  reason: string;
-};
-
-type OpenAIChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-    };
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-
-const configFilenames = new Set([
-  '.env',
-  '.env.example',
-  '.env.local',
-  '.eslintrc',
-  '.gitignore',
-  '.prettierrc',
-  'components.json',
-  'dockerfile',
-  'eslint.config.js',
-  'eslint.config.mjs',
-  'next.config.js',
-  'next.config.mjs',
-  'next.config.ts',
-  'package-lock.json',
-  'package.json',
-  'pnpm-lock.yaml',
-  'postcss.config.js',
-  'postcss.config.mjs',
-  'requirements.txt',
-  'tailwind.config.js',
-  'tailwind.config.ts',
-  'tsconfig.json',
-  'vite.config.js',
-  'vite.config.ts',
-  'yarn.lock',
-]);
-
-const configExtensions = new Set(['.config', '.ini', '.lock', '.toml', '.yaml', '.yml']);
 const notesExtensions = new Set(['.md', '.mdx', '.rst', '.txt']);
 const frontendExtensions = new Set(['.css', '.html', '.htm', '.js', '.jsx', '.scss', '.svelte', '.ts', '.tsx', '.vue']);
 const backendExtensions = new Set([
@@ -485,107 +363,6 @@ function getSignalText(content: string) {
   return parsedDataUrl ? '' : content;
 }
 
-function countMatches(value: string, pattern: RegExp) {
-  return value.match(pattern)?.length ?? 0;
-}
-
-function isExtremelySimpleScript(content: string) {
-  const nonEmptyLineCount = content.split(/\r?\n/).filter((line) => line.trim()).length;
-  const hasStructure = /\b(function|class|def|try|catch|except|validate|schema|interface|type)\b/i.test(content);
-
-  return nonEmptyLineCount <= 15 && !hasStructure;
-}
-
-function looksLikeBasicHtml(content: string) {
-  const htmlTagCount = countMatches(content.toLowerCase(), /<([a-z][a-z0-9-]*)\b/g);
-  const hasAppSignals = /<script\b|useState\s*\(|fetch\s*\(|<nav\b|<main\b|<section\b|<article\b|@media\b/i.test(content);
-
-  return /<!doctype\s+html|<html[\s>]|<form\b/i.test(content) && !hasAppSignals && htmlTagCount < 25;
-}
-
-function hasBeginnerSignals(content: string) {
-  return /\b(tutorial|practice|exercise|hello world|calculator|todo app|follow along|lesson|beginner|learning)\b/i.test(content);
-}
-
-function hasIntermediateSignals(content: string) {
-  return /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b|NextResponse|useState\s*\(|useEffect\s*\(|fetch\s*\(|createSupabase|class\s+\w+|async\s+function|SELECT\s+.+\s+FROM|INSERT\s+INTO/i.test(
-    content
-  );
-}
-
-function productionSignalCount(content: string) {
-  const signals = [
-    /auth|getUser|Authorization|JWT|session/i,
-    /zod|schema|validate|sanitize|parse|safeParse/i,
-    /try\s*{|catch\s*\(|throw new|raise\s+|except\s+/i,
-    /rateLimit|csrf|xss|sql injection|escape|permission|RLS|policy/i,
-    /cache|memo|index|pagination|batch|stream|timeout|AbortController|Promise\.all/i,
-    /test\(|describe\(|expect\(|pytest|unittest|assert\s+/i,
-    /transaction|rollback|idempotent|retry|queue/i,
-  ];
-
-  return signals.filter((pattern) => pattern.test(content)).length;
-}
-
-function inferScoreBand(assetName: string, content: string): ScoreBand {
-  const normalizedName = assetName.toLowerCase().split(/[\\/]/).pop() || assetName.toLowerCase();
-  const extension = getExtension(assetName);
-  const signalText = getSignalText(content);
-  const nonEmptyLineCount = signalText.split(/\r?\n/).filter((line) => line.trim()).length;
-  const isDataUrlOnly = Boolean(parseDataUrl(content)) && !signalText.trim();
-
-  if (
-    configFilenames.has(normalizedName) ||
-    configExtensions.has(extension) ||
-    looksLikeBasicHtml(signalText) ||
-    isExtremelySimpleScript(signalText)
-  ) {
-    return {
-      label: 'CATEGORY A',
-      maxScore: 20,
-      reason: 'trivial, boilerplate, basic HTML, config/package, or extremely simple script',
-    };
-  }
-
-  if (isReadme(assetName) || notesExtensions.has(extension) || isDataUrlOnly || (!codeExtensions.has(extension) && extension)) {
-    return {
-      label: 'CATEGORY B',
-      maxScore: 30,
-      reason: 'notes, theory, documentation, non-code, or low implementation evidence',
-    };
-  }
-
-  if (signalText.length > 4000 && nonEmptyLineCount >= 100 && productionSignalCount(signalText) >= 5) {
-    return {
-      label: 'CATEGORY E',
-      maxScore: 100,
-      reason: 'substantial implementation with production-grade signals',
-    };
-  }
-
-  if (hasIntermediateSignals(signalText) || nonEmptyLineCount >= 50 || productionSignalCount(signalText) >= 3) {
-    return {
-      label: 'CATEGORY D',
-      maxScore: 75,
-      reason: 'intermediate component, API route, stateful UI, or moderate algorithm/module',
-    };
-  }
-
-  if (hasBeginnerSignals(signalText) || codeExtensions.has(extension)) {
-    return {
-      label: 'CATEGORY C',
-      maxScore: 55,
-      reason: 'beginner/practice code or single-file basic logic',
-    };
-  }
-
-  return {
-    label: 'CATEGORY B',
-    maxScore: 30,
-    reason: 'insufficient evidence of implementation depth',
-  };
-}
-
 function getContextLens(assetName: string) {
   const extension = getExtension(assetName);
 
@@ -618,151 +395,6 @@ function truncateForAudit(content: string) {
   };
 }
 
-function buildUserPrompt({
-  assetName,
-  content,
-  scoreBand,
-  userContextDescription,
-}: {
-  assetName: string;
-  content: string;
-  scoreBand: ScoreBand;
-  userContextDescription: string;
-}) {
-  const signalText = getSignalText(content);
-  const { text: auditText, truncated } = truncateForAudit(signalText);
-
-  return [
-    'Uploaded Artifact Metadata:',
-    `- Asset name: ${assetName}`,
-    `- Context lens: ${getContextLens(assetName)}`,
-    `- Server-side scope hint: ${scoreBand.label}`,
-    `- Server-side scope reason: ${scoreBand.reason}`,
-    `- Content truncated: ${truncated ? 'yes' : 'no'}`,
-    `- User-provided project context: ${userContextDescription || 'No user-written project description was supplied.'}`,
-    '',
-    'Use the scope hint only as context. Grade the artifact by its intended scope, not by file size or line count.',
-    'Return only the raw JSON object with ai_summary, score, strengths, weaknesses, and recommendations.',
-    'FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: \'Catchy Hook: Short explanation\'.',
-    "Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'",
-    'MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.',
-    'The strengths and weaknesses keys are aliases for pros and cons, so the same absolute rule applies.',
-    '',
-    auditText
-      ? `Uploaded Content To Audit:\n<<<ASSET_CONTENT_START\n${auditText}\nASSET_CONTENT_END>>>`
-      : 'Uploaded Content To Audit:\nNo readable implementation content was extractable. Treat this as low evidence of programming skill.',
-  ].join('\n');
-}
-
-function extractJsonObject(rawText: string) {
-  const trimmedText = rawText
-    .trim()
-    .replace(/^```(?:json)?/i, '')
-    .replace(/```$/i, '')
-    .trim();
-
-  try {
-    return JSON.parse(trimmedText) as Record<string, unknown>;
-  } catch {
-    const firstBrace = trimmedText.indexOf('{');
-    const lastBrace = trimmedText.lastIndexOf('}');
-
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return JSON.parse(trimmedText.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
-    }
-
-    throw new Error('AI audit response was not valid JSON.');
-  }
-}
-
-function normalizeStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => String(item).trim())
-    .filter(Boolean)
-    .slice(0, 5);
-}
-
-function normalizeAiSummary(summary: unknown) {
-  const rawSummary = String(summary || '').trim();
-  const withoutMarkdownHeader = rawSummary.replace(/^\s*#{1,6}\s*.*$/gm, '').trim();
-
-  if (!withoutMarkdownHeader) {
-    throw new Error('AI audit response was missing ai_summary.');
-  }
-
-  return withoutMarkdownHeader;
-}
-
-function normalizeAuditPayload(parsed: Record<string, unknown>): AuditPayload {
-  const rawScore = Number(parsed.score);
-  const finiteScore = Number.isFinite(rawScore) ? rawScore : 0;
-  const score = Math.max(0, Math.min(100, Math.round(finiteScore)));
-
-  return {
-    ai_summary: normalizeAiSummary(parsed.ai_summary ?? parsed.user_description ?? parsed.executiveSummary),
-    score,
-    strengths: normalizeStringArray(parsed.strengths ?? parsed.pros),
-    weaknesses: normalizeStringArray(parsed.weaknesses ?? parsed.cons),
-    recommendations: normalizeStringArray(parsed.recommendations),
-  };
-}
-
-async function runOpenAIAudit({
-  assetName,
-  content,
-  scoreBand,
-  userContextDescription,
-}: {
-  assetName: string;
-  content: string;
-  scoreBand: ScoreBand;
-  userContextDescription: string;
-}) {
-  const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_VERIFY_MODEL,
-      messages: [
-        { role: 'system', content: VERIFY_ASSET_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: buildUserPrompt({
-            assetName,
-            content,
-            scoreBand,
-            userContextDescription,
-          }),
-        },
-      ],
-      response_format: VERIFY_ASSET_RESPONSE_FORMAT,
-      max_tokens: 2200,
-      temperature: 0.05,
-    }),
-  });
-
-  const responseJson = (await response.json().catch(() => ({}))) as OpenAIChatCompletionResponse;
-
-  if (!response.ok) {
-    throw new Error(responseJson.error?.message || 'OpenAI asset audit request failed.');
-  }
-
-  const rawContent = responseJson.choices?.[0]?.message?.content;
-
-  if (!rawContent) {
-    throw new Error('AI audit response was empty.');
-  }
-
-  return normalizeAuditPayload(extractJsonObject(rawContent));
-}
-
 async function persistAuditResult({
   audit,
   projectId,
@@ -780,12 +412,15 @@ async function persistAuditResult({
       score: audit.score,
       evaluation_score: audit.score,
       logic_score: audit.score,
+      score_delta: audit.score_delta,
+      delta_summary: audit.delta_summary,
       audit_summary: audit.ai_summary,
       ai_summary: audit.ai_summary,
       description: audit.ai_summary,
       pros: audit.strengths,
       cons: audit.weaknesses,
       recommendations: audit.recommendations,
+      audit_findings: audit.finding_impacts,
       user_description: audit.ai_summary,
       has_been_audited: true,
     })
@@ -799,9 +434,9 @@ async function persistAuditResult({
 
 export async function POST(request: Request) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY is not configured.' },
+        { error: 'GEMINI_API_KEY is not configured.' },
         { status: 500 }
       );
     }
@@ -860,13 +495,44 @@ export async function POST(request: Request) {
       );
     }
 
-    const scoreBand = inferScoreBand(assetName, contentForVerification);
-    const audit = await runOpenAIAudit({
+    const { data: existingProject, error: existingProjectError } = await supabase
+      .from('projects')
+      .select('score, evaluation_score, logic_score')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (existingProjectError) {
+      throw existingProjectError;
+    }
+    if (!existingProject) {
+      return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+    }
+
+    const { text: auditContent } = truncateForAudit(getSignalText(contentForVerification));
+    const result = await verifyMeliusAsset({
       assetName,
-      content: contentForVerification,
-      scoreBand,
+      content: auditContent,
+      scopeHint: getContextLens(assetName),
       userContextDescription,
+      previousScore:
+        typeof existingProject.score === 'number'
+          ? existingProject.score
+          : typeof existingProject.evaluation_score === 'number'
+            ? existingProject.evaluation_score
+            : typeof existingProject.logic_score === 'number'
+              ? existingProject.logic_score
+              : null,
     });
+    const audit: AuditPayload = {
+      ai_summary: result.aiSummary,
+      score: result.score,
+      score_delta: result.scoreDelta,
+      delta_summary: result.deltaSummary,
+      strengths: result.strengths,
+      weaknesses: result.weaknesses,
+      recommendations: result.recommendations,
+      finding_impacts: result.findingImpacts,
+    };
 
     await persistAuditResult({
       audit,
