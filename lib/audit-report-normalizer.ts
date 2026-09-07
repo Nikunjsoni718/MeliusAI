@@ -234,7 +234,7 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     return null;
   }
 
-  const rawImpactScore = record.impactScore;
+  const rawImpactScore = record.impactScore ?? record.impact_score;
   const impactScore =
     typeof rawImpactScore === 'number' && Number.isInteger(rawImpactScore) && rawImpactScore !== 0
       ? rawImpactScore

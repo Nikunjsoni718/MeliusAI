@@ -127,6 +127,31 @@ type FolderAuditItem = ProjectFolderRow & {
   has_been_audited?: boolean | null;
 };
 
+type AuditProjection = {
+  id?: string;
+  evaluated_score?: number | string | null;
+  melius_score?: number | string | null;
+  score?: number | string | null;
+  evaluation_score?: number | string | null;
+  logic_score?: number | string | null;
+  score_delta?: number | string | null;
+  delta_summary?: string | null;
+  executive_summary?: string | null;
+  audit_summary?: string | null;
+  ai_summary?: string | null;
+  summary?: string | null;
+  description?: string | null;
+  pros?: string[] | null;
+  cons?: string[] | null;
+  recommendations?: string[] | null;
+  audit_findings?: unknown;
+};
+
+type PendingAuditProjection = {
+  patch: Partial<AuditProjection>;
+  fingerprint: string;
+};
+
 type AuditModalAsset = ProjectItem | FolderAuditItem;
 
 type AuditScoreItem = {
@@ -692,6 +717,90 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function canonicalizeAuditValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeAuditValue);
+  }
+
+  const record = asRecord(value);
+  if (record) {
+    return Object.keys(record)
+      .sort()
+      .reduce<Record<string, unknown>>((normalized, key) => {
+        normalized[key] = canonicalizeAuditValue(record[key]);
+        return normalized;
+      }, {});
+  }
+
+  return value === null || ['boolean', 'number', 'string'].includes(typeof value) ? value : null;
+}
+
+function getAuditProjectionScore(value: AuditProjection) {
+  for (const score of [
+    value.evaluated_score,
+    value.melius_score,
+    value.evaluation_score,
+    value.logic_score,
+    value.score,
+  ]) {
+    const normalized = normalizeAuditScore(score);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function getAuditProjectionSummary(value: AuditProjection) {
+  return [
+    value.executive_summary,
+    value.audit_summary,
+    value.ai_summary,
+    value.summary,
+    value.description,
+  ].find((summary): summary is string => typeof summary === 'string' && Boolean(summary.trim()))?.trim() ?? '';
+}
+
+function getAuditMutationFingerprint(value: AuditProjection) {
+  const scoreDelta =
+    typeof value.score_delta === 'number' && Number.isFinite(value.score_delta)
+      ? value.score_delta
+      : typeof value.score_delta === 'string' && value.score_delta.trim() && Number.isFinite(Number(value.score_delta))
+        ? Number(value.score_delta)
+        : null;
+
+  return JSON.stringify({
+    score: getAuditProjectionScore(value),
+    score_delta: scoreDelta,
+    delta_summary: typeof value.delta_summary === 'string' ? value.delta_summary.trim() : '',
+    summary: getAuditProjectionSummary(value),
+    pros: normalizeProfileList(value.pros),
+    cons: normalizeProfileList(value.cons),
+    recommendations: normalizeProfileList(value.recommendations),
+    audit_findings: canonicalizeAuditValue(value.audit_findings),
+  });
+}
+
+function applyPendingAuditOverlays<T extends AuditProjection & { id: string }>(
+  rows: T[],
+  pendingUpdates: Map<string, PendingAuditProjection>
+) {
+  return rows.map((row) => {
+    const pendingUpdate = pendingUpdates.get(row.id);
+    if (!pendingUpdate) {
+      return row;
+    }
+
+    if (getAuditMutationFingerprint(row) === pendingUpdate.fingerprint) {
+      pendingUpdates.delete(row.id);
+      return row;
+    }
+
+    return { ...row, ...pendingUpdate.patch } as T;
+  });
 }
 
 function firstArray<T>(values: unknown[]): T[] {
@@ -2657,6 +2766,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
+  const pendingProjectAuditUpdatesRef = useRef<Map<string, PendingAuditProjection>>(new Map());
+  const pendingFolderAuditUpdatesRef = useRef<Map<string, PendingAuditProjection>>(new Map());
   const [newlyAddedProject, setNewlyAddedProject] = useState<NewlyAddedProject | null>(null);
   const [newlyAddedProjectQueue, setNewlyAddedProjectQueue] = useState<NewlyAddedProject[]>([]);
   const [newlyAddedProjectDeleteError, setNewlyAddedProjectDeleteError] = useState<string | null>(null);
@@ -3365,6 +3476,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   useEffect(() => {
     if (!targetUsername) {
       requestedSpectatorTargetRef.current = null;
+      pendingProjectAuditUpdatesRef.current.clear();
+      pendingFolderAuditUpdatesRef.current.clear();
       setSpectatorProfilePayload(null);
       setSpectatorProfileError(null);
       setSpectatorProfileLoading(false);
@@ -3375,6 +3488,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     requestedSpectatorTargetRef.current = targetUsername;
 
     if (isNewTarget) {
+      pendingProjectAuditUpdatesRef.current.clear();
+      pendingFolderAuditUpdatesRef.current.clear();
       setSpectatorProfilePayload(null);
       setSpectatorProfileError(null);
       setSpectatorProfileLoading(true);
@@ -4076,12 +4191,35 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       // model needed by the rest of this dashboard.
       const payloadProjects =
         extractSpectatorProjects(spectatorProfilePayload);
-      const loadedAssets = Array.isArray(payloadProjects) ? payloadProjects : [];
-      const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
-      const loadedProjectFolders = stitchSpectatorProjectFolders(
-        extractSpectatorProjectFolders(spectatorProfilePayload),
-        extractSpectatorFolderFiles(spectatorProfilePayload)
+      const loadedAssets = applyPendingAuditOverlays(
+        Array.isArray(payloadProjects) ? payloadProjects : [],
+        pendingProjectAuditUpdatesRef.current
       );
+      const loadedProjects = loadedAssets.map(mapProjectRowToProjectItem);
+      const loadedFolderFiles = applyPendingAuditOverlays(
+        extractSpectatorFolderFiles(spectatorProfilePayload),
+        pendingProjectAuditUpdatesRef.current
+      );
+      const hydratedProjectFolders = applyPendingAuditOverlays(
+        stitchSpectatorProjectFolders(
+          extractSpectatorProjectFolders(spectatorProfilePayload),
+          loadedFolderFiles
+        ),
+        pendingFolderAuditUpdatesRef.current
+      );
+      const loadedProjectFolders = hydratedProjectFolders.map((folder) => {
+        const nestedProjects = applyPendingAuditOverlays(
+          getFolderNestedProjects(folder),
+          pendingProjectAuditUpdatesRef.current
+        );
+
+        return {
+          ...folder,
+          nested_projects: nestedProjects,
+          assets: nestedProjects,
+          files: nestedProjects,
+        };
+      });
       const payloadRatings = Array.isArray(spectatorProfilePayload.ratings)
         ? spectatorProfilePayload.ratings
         : [];
@@ -6087,6 +6225,33 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }, 3600);
   }
 
+  function requestAuditProfileRevalidation() {
+    if (targetUsername) {
+      setSpectatorRefreshToken((currentToken) => currentToken + 1);
+    }
+  }
+
+  function recordProjectAuditMutation(projectId: string, projectPatch: Partial<ProjectItem>) {
+    const persistedPatch = toProjectRowAuditPatch(projectPatch) as Partial<AuditProjection>;
+    pendingProjectAuditUpdatesRef.current.set(projectId, {
+      patch: persistedPatch,
+      fingerprint: getAuditMutationFingerprint(persistedPatch),
+    });
+  }
+
+  function recordFolderAuditMutation(folderId: string, folderPatch: Partial<ProjectFolderRow>) {
+    const persistedPatch = folderPatch as Partial<AuditProjection>;
+    pendingFolderAuditUpdatesRef.current.set(folderId, {
+      patch: persistedPatch,
+      fingerprint: getAuditMutationFingerprint(persistedPatch),
+    });
+  }
+
+  function handlePreviewProjectAuditCommitted(projectId: string, projectPatch: Partial<ProjectItem>) {
+    recordProjectAuditMutation(projectId, projectPatch);
+    requestAuditProfileRevalidation();
+  }
+
   function handlePreviewProjectUpdated(projectId: string, projectPatch: Partial<ProjectItem>) {
     applyVerifiedProjectState(
       projectId,
@@ -6390,6 +6555,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         sourceProject: project,
         userDescription: userContextDescription,
       });
+      recordProjectAuditMutation(project.id, verifiedProjectPatch);
+      requestAuditProfileRevalidation();
       setVerifiedAssetId(project.id);
       advanceProductTour(9, 10, project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
@@ -6705,47 +6872,31 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         data.folder_audit?.executive_summary ?? data.folder_audit?.description ?? null;
       const folderScoreDelta = data.score_delta ?? data.folder_audit?.score_delta ?? null;
       const folderDeltaSummary = data.delta_summary ?? data.folder_audit?.delta_summary ?? null;
+      const resolvedSummary = folderSummary?.trim() || null;
+      const folderPatch: Partial<ProjectFolderRow> = {
+        ...(folderScore !== null
+          ? {
+              evaluation_score: folderScore,
+              score: folderScore,
+            }
+          : {}),
+        score_delta: folderScoreDelta,
+        delta_summary: folderDeltaSummary,
+        has_been_audited: true,
+        ...(resolvedSummary ? { executive_summary: resolvedSummary } : {}),
+        pros: data.folder_audit?.pros ?? null,
+        cons: data.folder_audit?.cons ?? null,
+        recommendations: data.folder_audit?.recommendations ?? null,
+        audit_findings: (data.folder_audit?.finding_impacts ?? null) as ProjectFolderRow['audit_findings'],
+      };
 
+      recordFolderAuditMutation(folderId, folderPatch);
       setProjectFolders((currentFolders) =>
-        currentFolders.map((folder) => {
-          if (folder.id !== folderId) {
-            return folder;
-          }
-
-          const currentFolder = folder as FolderAuditItem;
-          const resolvedSummary = folderSummary?.trim() || null;
-          return {
-            ...folder,
-            ...(folderScore !== null
-              ? {
-                  evaluated_score: folderScore,
-                  melius_score: folderScore,
-                  score: folderScore,
-                  evaluation_score: folderScore,
-                  logic_score: folderScore,
-                }
-              : {}),
-            score_delta: folderScoreDelta,
-            delta_summary: folderDeltaSummary,
-            has_been_audited: true,
-            ...(resolvedSummary
-              ? {
-                  executive_summary: resolvedSummary,
-                  audit_summary: resolvedSummary,
-                  ai_summary: resolvedSummary,
-                  summary: resolvedSummary,
-                  description: resolvedSummary,
-                }
-              : {}),
-            pros: data.folder_audit?.pros ?? currentFolder.pros ?? null,
-            cons: data.folder_audit?.cons ?? currentFolder.cons ?? null,
-            recommendations:
-              data.folder_audit?.recommendations ?? currentFolder.recommendations ?? null,
-            audit_findings:
-              (data.folder_audit?.finding_impacts ?? currentFolder.audit_findings ?? null) as ProjectFolderRow['audit_findings'],
-          };
-        })
+        currentFolders.map((folder) =>
+          folder.id === folderId ? { ...folder, ...folderPatch } : folder
+        )
       );
+      requestAuditProfileRevalidation();
       alert(
         folderScore !== null
           ? `Folder audit completed successfully with a score of ${folderScore}/100.`
@@ -7785,6 +7936,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                             projectPatch as Partial<ProjectItem>
                           )
                         }
+                        onProjectAuditCommitted={(projectId, projectPatch) =>
+                          handlePreviewProjectAuditCommitted(
+                            projectId,
+                            projectPatch as Partial<ProjectItem>
+                          )
+                        }
                       />
                     ) : null}
 
@@ -8075,6 +8232,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   : null
               }
               onProjectUpdated={handlePreviewProjectUpdated}
+              onAuditCommitted={handlePreviewProjectAuditCommitted}
               onClose={() => {
                 setActivePreviewProjectId(null);
                 setActivePreviewProjectOverride(null);

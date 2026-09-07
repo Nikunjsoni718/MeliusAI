@@ -125,6 +125,7 @@ type AssetPreviewModalProps = {
   canVerify?: boolean;
   isReAuditing?: boolean;
   onReAudit?: () => void;
+  onAuditCommitted?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onClose: () => void;
 };
@@ -368,6 +369,7 @@ export function AssetPreviewModal({
   canVerify = true,
   isReAuditing = false,
   onReAudit,
+  onAuditCommitted,
   onProjectUpdated,
   onClose,
 }: AssetPreviewModalProps) {
@@ -725,6 +727,7 @@ export function AssetPreviewModal({
         ...projectPatch,
       }));
       onProjectUpdated?.(projectId, projectPatch);
+      onAuditCommitted?.(projectId, projectPatch);
       setPreviewCacheNonce(Date.now());
     } catch (error) {
       console.error('Preview modal AI verification failed:', error);

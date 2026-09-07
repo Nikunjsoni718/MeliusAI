@@ -44,6 +44,7 @@ type UniversalAssetGridProps = {
   onFolderOpen?: (folder: ProjectFolderRow) => void;
   onFolderRename?: (folderId: string) => void | Promise<void>;
   onVerifyFolder?: (folderId: string) => void;
+  onProjectAuditCommitted?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
@@ -800,6 +801,7 @@ export function UniversalAssetGrid({
   onFolderOpen,
   onFolderRename,
   onVerifyFolder,
+  onProjectAuditCommitted,
   onProjectUpdated,
   onReupload,
   onToggleVisibility,
@@ -934,6 +936,7 @@ export function UniversalAssetGrid({
         pros: getStringList(activePreviewFolderItem.folder.pros),
         cons: getStringList(activePreviewFolderItem.folder.cons),
         recommendations: getStringList(activePreviewFolderItem.folder.recommendations),
+        audit_findings: activePreviewFolderItem.folder.audit_findings ?? null,
         previewUrl: null,
       }
     : activePreviewFile
@@ -1144,6 +1147,9 @@ export function UniversalAssetGrid({
         }
         onProjectUpdated={(projectId, projectPatch) =>
           handleProjectUpdated(projectId, projectPatch as Partial<ProjectRow>)
+        }
+        onAuditCommitted={(projectId, projectPatch) =>
+          onProjectAuditCommitted?.(projectId, projectPatch as Partial<ProjectRow>)
         }
         onClose={() => setActivePreviewTarget(null)}
       />
