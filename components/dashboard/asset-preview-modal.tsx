@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Square } from 'lucide-react';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
@@ -316,16 +315,19 @@ function MetricList({
 }) {
   const toneClasses = {
     emerald: {
+      card: 'border-emerald-500/30 bg-[#0B1120]/60 shadow-[0_0_15px_rgba(16,185,129,0.08)] backdrop-blur-sm',
       heading: 'text-emerald-400',
-      marker: 'bg-emerald-400',
+      marker: 'text-emerald-400',
       badge: 'bg-emerald-500/10 text-emerald-400',
     },
     rose: {
+      card: 'border-rose-500/30 bg-[#0B1120]/60 shadow-[0_0_15px_rgba(244,63,94,0.08)] backdrop-blur-sm',
       heading: 'text-rose-400',
-      marker: 'bg-rose-400',
+      marker: 'text-rose-400',
       badge: 'bg-rose-500/10 text-rose-400',
     },
     sky: {
+      card: 'border-sky-500/30 bg-[#0B1120]/60 shadow-[0_0_15px_rgba(14,165,233,0.08)] backdrop-blur-sm',
       heading: 'text-sky-400',
       marker: 'text-sky-400',
       badge: 'bg-sky-500/10 text-sky-400',
@@ -338,17 +340,13 @@ function MetricList({
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+    <div className={`rounded-xl border p-4 ${toneClasses[tone].card}`}>
       <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses[tone].heading}`}>{title}</h4>
       <ul className="mt-3 space-y-2">
         {items.length > 0 ? (
           items.map((item, index) => (
             <li key={`${title}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-300">
-              {isActionable ? (
-                <Square aria-hidden="true" className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${toneClasses[tone].marker}`} strokeWidth={1.75} />
-              ) : (
-                <span aria-hidden="true" className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${toneClasses[tone].marker}`} />
-              )}
+              <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses[tone].marker}`}>•</span>
               <span className="min-w-0 flex-1">{item.text}</span>
               {typeof item.impactScore === 'number' ? (
                 <span className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-xs font-semibold ${toneClasses[tone].badge}`}>
@@ -860,7 +858,7 @@ export function AssetPreviewModal({
           ) : null}
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">Audit Summary</p>
             <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{executiveSummaryMarkdown}</ReactMarkdown>
             </div>
