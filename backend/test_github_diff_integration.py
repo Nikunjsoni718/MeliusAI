@@ -152,12 +152,16 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_delta_saved_before_ai_and_pinned_head_finalized(self):
         files = [{"filename": "new.py", "insertions": 1, "deletions": 0, "patch": "+new", "status": "added"}]
-        result, save, finalize, _, ai = await self.exercise(files=files)
+        with self.assertLogs(main.logger, level="INFO") as logs:
+            result, save, finalize, _, ai = await self.exercise(files=files)
         self.assertEqual(result["folder_score"], 58)
         self.assertEqual(ai.call_args.args[0]["files"], files)
         self.assertEqual(ai.call_args.args[1], REPORT)
         self.assertEqual(save.call_args.args[2], HEAD)
         self.assertEqual(finalize.call_args.args[1]["baseline_version"], 7)
+        output = "\n".join(logs.output)
+        self.assertIn("GEMINI RESPONSE: Extracted highlights: 2, Improvements: 1", output)
+        self.assertIn("DATABASE UPDATE: Successfully saved score 58 for workspace. workspace_id=folder", output)
 
     async def test_failed_ai_preserves_saved_delta_without_finalizing(self):
         result, save, finalize, failed, _ = await self.exercise(files=[{"filename": "x"}], provider_error=DiffServiceError("GEMINI_RATE_LIMITED", "Retry", 429))

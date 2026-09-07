@@ -618,7 +618,6 @@ GITHUB_PROVIDER_TOKEN_HEADER = "x-github-provider-token"
 GITHUB_STORAGE_BUCKET = "vault"
 GITHUB_WORKSPACE_ASSETS_TABLE = "projects"
 MAX_GITHUB_FILE_BYTES = 5 * 1024 * 1024
-MAX_GITHUB_SYNC_CONCURRENCY = 4
 
 TRACKABLE_GITHUB_ASSET_EXTENSIONS = {
     ".c",
@@ -1816,6 +1815,7 @@ async def process_github_push_event(
     """Synchronize GitHub push changes into MeliusAI workspace asset records."""
     repository = get_github_repository_full_name(payload)
     commit_sha = get_github_after_sha(payload)
+    logger.info("WEBHOOK RECEIVED: Processing commit %s", commit_sha)
     ref = str(payload.get("ref") or "").strip()
     changes = extract_github_push_changes(payload)
     trackable_paths = sorted(
@@ -1883,23 +1883,17 @@ async def process_github_push_event(
         follow_redirects=True,
         timeout=httpx.Timeout(30.0),
     )
-    concurrency = _get_positive_int_env(
-        "GITHUB_WEBHOOK_SYNC_CONCURRENCY",
-        MAX_GITHUB_SYNC_CONCURRENCY,
-    )
-    semaphore = asyncio.Semaphore(min(concurrency, 10))
 
     async def sync_path(file_path: str) -> tuple[int, int, str | None]:
         existing_rows = rows_by_path.get(file_path, [])
         try:
-            async with semaphore:
-                content, content_type = await download_github_raw_file(
-                    active_http_client,
-                    repository=repository,
-                    commit_sha=commit_sha,
-                    file_path=file_path,
-                    access_token=access_token,
-                )
+            content, content_type = await download_github_raw_file(
+                active_http_client,
+                repository=repository,
+                commit_sha=commit_sha,
+                file_path=file_path,
+                access_token=access_token,
+            )
 
             updated_records = 0
             created_records = 0
@@ -1961,9 +1955,18 @@ async def process_github_push_event(
             return 0, 0, error_message
 
     try:
-        sync_outcomes = await asyncio.gather(
-            *(sync_path(file_path) for file_path in trackable_paths)
-        )
+        sync_outcomes = []
+        total_paths = len(trackable_paths)
+        for index, file_path in enumerate(trackable_paths, start=1):
+            logger.info(
+                "SEQUENTIAL PROCESSING: Auditing file %s (%s of %s)",
+                file_path,
+                index,
+                total_paths,
+            )
+            sync_outcomes.append(await sync_path(file_path))
+            if index < total_paths:
+                await asyncio.sleep(1)
     finally:
         if owns_http_client:
             await active_http_client.aclose()
@@ -6828,6 +6831,11 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
                 raise github_diffs.DiffServiceError("GEMINI_AUTH_FAILED", "Gemini audit credentials are not configured.", 503)
             async with LLM_AUDIT_SEMAPHORE:
                 incremental_report = await run_in_audit_thread(lambda: run_incremental_audit(saved_delta, previous, api_key))
+            logger.info(
+                "GEMINI RESPONSE: Extracted highlights: %s, Improvements: %s",
+                len(incremental_report.pros),
+                len(incremental_report.cons),
+            )
             result = build_incremental_folder_audit_result(incremental_report, previous["score"])
         if baseline or not no_changes:
             audit = result["folder_audit"]
@@ -6838,6 +6846,11 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
                       "pros": audit.get("pros") or [], "cons": audit.get("cons") or [], "recommendations": audit.get("recommendations") or [],
                       "finding_impacts": audit.get("finding_impacts") or {"pros": [], "cons": [], "recommendations": []}}
         committed = await github_diffs.finalize_verified_audit(service, state, diff_record["id"], report)
+        logger.info(
+            "DATABASE UPDATE: Successfully saved score %s for workspace. workspace_id=%s",
+            committed["score"],
+            folder_id,
+        )
         response = _repository_audit_response(committed, incremental=not baseline, no_changes=no_changes, diff_id=diff_record["id"])
         # These projections are optional and never determine the next baseline.
         try:
