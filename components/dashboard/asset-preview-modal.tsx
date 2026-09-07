@@ -858,7 +858,7 @@ export function AssetPreviewModal({
           ) : null}
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">AI Executive Summary</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">Audit Summary</p>
             <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{executiveSummaryMarkdown}</ReactMarkdown>
             </div>
@@ -958,9 +958,9 @@ export function AssetPreviewModal({
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
-              <MetricList title="Strengths" tone="emerald" items={pros} />
-              <MetricList title="Weaknesses" tone="rose" items={cons} />
-              <MetricList title="Recommendations" tone="sky" items={recommendations} />
+              <MetricList title="Highlights" tone="emerald" items={pros} />
+              <MetricList title="Areas for Improvement" tone="rose" items={cons} />
+              <MetricList title="Actionable Steps" tone="sky" items={recommendations} />
             </div>
           </div>
         </div>
