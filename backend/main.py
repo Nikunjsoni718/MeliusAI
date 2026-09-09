@@ -133,6 +133,7 @@ AUDIT_OVERLOAD_MESSAGE = (
     "Server is currently under heavy load. Please try analyzing this repository again in a few seconds."
 )
 AUDIT_SCORE_BASELINE = 50
+AUDIT_SCORE_FLOOR = 15
 AUDIT_FINDING_MAX_ABS_IMPACT = 20
 
 AUDIT_GRADING_RUBRIC = """GRADING RUBRIC:
@@ -162,13 +163,17 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 - **Explicit Anchoring:** Anchor every strength and weakness to a specific file path and function/component (e.g., "In `services/user.ts:fetchUser`...").
 - **Systemic Focus:** Ignore trivial variable naming, basic formatting, or missing READMEs. Focus on the engineering skeleton.
 
-### 4. Finding impacts
-- Do not calculate an overall score or score delta. The backend performs all score arithmetic.
+### 4. Finding impacts and score safety
+- Except when the route schema explicitly requires `overall_score`, do not calculate an overall
+  score or score delta. The backend performs all other score arithmetic.
 - Each finding must be `{ "text": "Hook: short fragment", "impactScore": <integer> }`.
 - `pros` are positive strengths from +1 to +20. `cons` are negative weaknesses from -1 to -20.
   `recommendations` are positive potential gains from +1 to +20 and do not affect the current score.
 - **No Automatic Failures:** A hardcoded secret may receive a heavy negative impact, but must not
   erase independent architectural strengths.
+- **Hard Score Floor:** Never output a single-digit score. For any parseable, functioning codebase,
+  15/100 is the absolute minimum score. Even with multiple critical vulnerabilities, severe risks,
+  or heavy deductions, calibrate the deductions so the final score remains at least 15.
 
 ### 5. Output Formatting (Strict JSON)
 Return a valid JSON object exactly matching the route schema. Every `text` value must use
@@ -186,7 +191,8 @@ AUDIT_PROMPT_SCHEMA_BINDINGS = {
 exactly `executive_summary`, `goods_and_strengths`, `bads_and_flaws`,
 `strategic_recommendations`, and `overall_score`. The list keys represent Strengths,
 Weaknesses, and Actionable Recommendations respectively; each list must contain 3-4 concise
-`Hook: short fragment` items, with every fragment after its hook limited to ten words.""",
+`Hook: short fragment` items, with every fragment after its hook limited to ten words.
+`overall_score` must be an integer from 15 to 100.""",
     "incremental": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
  exactly `file_impacts`, `new_vulnerabilities`, `resolved_issues`, `updated_architecture_summary`,
  `pros`, `cons`, and `recommendations`.
@@ -3395,7 +3401,7 @@ def calculate_audit_score(finding_impacts: Dict[str, List[Dict[str, Any]]]) -> i
     score = AUDIT_SCORE_BASELINE
     for section in ("pros", "cons"):
         score += sum(int(finding.get("impactScore") or 0) for finding in finding_impacts.get(section, []))
-    return max(0, min(100, score))
+    return max(AUDIT_SCORE_FLOOR, min(100, score))
 
 
 def has_structured_finding_impacts(report: Any) -> bool:
@@ -4471,7 +4477,9 @@ async def analyze_code(
             ),
             temperature=0.1,
         )
-        return analysis_response.model_dump()
+        analysis_payload = analysis_response.model_dump()
+        analysis_payload["overall_score"] = coerce_audit_score(analysis_payload["overall_score"])
+        return analysis_payload
     except HTTPException:
         raise
     except json.JSONDecodeError as parse_error:
@@ -4732,13 +4740,15 @@ async def review_portfolio_asset(
 # =====================================================================
 
 
-AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 0 to 100 based on code quality, architecture, security, and maintainability.
+AUDIT_SCORE_FIELD_DESCRIPTION = """An integer from 15 to 100 based on code quality, architecture, security, and maintainability.
+Never output a single-digit score. For any parseable, functioning codebase, 15 is the absolute
+score floor; calibrate even severe security deductions so the final score remains at least 15.
 95-100: Masterful. Highly optimized, secure, flawless edge-case handling, scalable architecture.
 85-94: Production-Ready. Clean, follows best practices, but may have minor inefficiencies.
 70-84: Standard/Functional. Good logic and works well, but may lack advanced error handling, have repetitive code, or need better state management.
 50-69: Prototype Quality. Core logic works, but suffers from hardcoded values, messy execution, or performance bottlenecks.
 30-49: Needs Major Rework. Barely functional, severe security flaws, or spaghetti code.
-0-29: Broken. Syntax errors, non-functional, or completely unreadable."""
+15-29: Functioning but requires fundamental remediation before production use."""
 
 AUDIT_LIST_FIELD_DESCRIPTION = "FORMATTING RULE (ABSOLUTE COMPULSION): For the `pros`, `cons`, and `recommendations` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'. Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.' MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS."
 
@@ -5626,11 +5636,13 @@ def parse_folder_audit_response(raw_content: str | None, previous_score: int) ->
 
 
 def coerce_audit_score(value: Any, *, default: int = 0) -> int:
-    """Return an integer audit score constrained to the persisted 0-100 range."""
+    """Return a parseable audit score constrained to the persisted 15-100 range."""
     try:
-        return max(0, min(100, int(round(float(value)))))
+        parsed_score = int(round(float(value)))
     except (TypeError, ValueError):
         return default
+    score = max(AUDIT_SCORE_FLOOR, min(100, parsed_score))
+    return score
 
 
 def get_previous_file_score(file_record: Dict[str, Any] | None) -> int:
@@ -5965,7 +5977,7 @@ def parse_audit_response(raw_content: str | None, asset_classification: Dict[str
         )
 
     audit_response.score_reasoning = score_reasoning
-    audit_response.score = max(0, min(100, int(round(float(audit_response.score)))))
+    audit_response.score = coerce_audit_score(audit_response.score)
     audit_response.strengths = normalize_audit_list(audit_response.strengths)
     audit_response.weaknesses = normalize_audit_list(audit_response.weaknesses)
     audit_response.recommendations = normalize_audit_list(audit_response.recommendations)
@@ -6202,7 +6214,7 @@ def normalize_agentic_audit_report(parsed_report: Dict[str, Any], fallback_summa
     except (TypeError, ValueError):
         raise ValueError("Audit response was missing a valid score.")
 
-    evaluated_score = max(0, min(100, evaluated_score))
+    evaluated_score = coerce_audit_score(evaluated_score)
     executive_summary = (
         sanitize_audit_summary(
             get_first_present_value(

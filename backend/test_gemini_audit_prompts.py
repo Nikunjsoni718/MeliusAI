@@ -25,9 +25,10 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 - **Systemic Focus:** Ignore trivial variable naming, basic formatting, or missing READMEs. Focus on the engineering skeleton.
 
 ### 4. Scoring Rubric
-- Base your score (0-100) on a balanced evaluation of the Four Pillars.
-- **No Automatic Failures:** A brilliantly architected system that contains a hardcoded secret should take a heavy security penalty (e.g., -15 to -20 points), but it should NOT automatically drop to a 0-24 score if the architecture and code quality are otherwise flawless.
-- **Scoring Ranges:** 90-100 (Enterprise Ready), 75-89 (Solid Foundation), 50-74 (Needs Structural Refactoring), 25-49 (Critical Systemic Flaws), 0-24 (Fundamental Engineering Failure).
+- Base your score (15-100) on a balanced evaluation of the Four Pillars.
+- **No Automatic Failures:** A brilliantly architected system that contains a hardcoded secret should take a heavy security penalty (e.g., -15 to -20 points), but it should not erase independent architectural strengths.
+- **Hard Score Floor:** Never output a single-digit score. For any parseable, functioning codebase, 15/100 is the absolute minimum score. Even with multiple critical vulnerabilities, severe risks, or heavy deductions, calibrate the deductions so the final score remains at least 15.
+- **Scoring Ranges:** 90-100 (Enterprise Ready), 75-89 (Solid Foundation), 50-74 (Needs Structural Refactoring), 25-49 (Critical Systemic Flaws), 15-24 (Fundamental Remediation Required).
 - **Incremental Delta:** The previous audit score was {previous_score}/100. Calculate `score_delta` (new score minus previous score) based purely on concrete code improvements or regressions.
 
 ### 5. Output Formatting (Strict JSON)
@@ -35,7 +36,7 @@ Return a valid JSON object exactly matching this schema. For arrays, you MUST us
 CRITICAL LIMIT: The explanation fragment MUST be 10 words or less. DO NOT write full sentences. Use punchy, actionable fragments. NO ESSAYS.
 
 {
-  "score": <integer 0-100>,
+  "score": <integer 15-100>,
   "score_delta": <integer>,
   "delta_summary": "<One concise sentence explaining exactly what changed since the last audit>",
   "summary": "<2-3 sentence executive assessment of overall architecture, design, and health in a conversational Tech Lead tone>",
@@ -125,7 +126,8 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertIn("System Design & Architecture (30%)", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("Do not calculate an overall score or score delta.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("Never output a single-digit score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("15/100 is the absolute minimum score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("impactScore", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
 
         for contract, keys in expected_keys.items():
@@ -139,6 +141,30 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("SCHEMA BINDING", prompt)
                 for key in keys:
                     self.assertIn(f"`{key}`", prompt)
+
+    def test_score_floor_clamps_parseable_model_and_calculated_scores(self):
+        self.assertEqual(main.coerce_audit_score(0), 15)
+        self.assertEqual(main.coerce_audit_score("9"), 15)
+        self.assertEqual(main.coerce_audit_score(101), 100)
+        self.assertEqual(main.coerce_audit_score(None), 0)
+        self.assertEqual(
+            main.calculate_audit_score(
+                {
+                    "pros": [],
+                    "cons": [
+                        {"text": "Critical One: First severe weakness.", "impactScore": -20},
+                        {"text": "Critical Two: Second severe weakness.", "impactScore": -20},
+                        {"text": "Critical Three: Third severe weakness.", "impactScore": -20},
+                    ],
+                }
+            ),
+            15,
+        )
+        normalized = main.normalize_agentic_audit_report(
+            {"score": 7, "executive_summary": "The code parses but needs fundamental remediation."},
+            "Fallback summary.",
+        )
+        self.assertEqual(normalized["evaluated_score"], 15)
 
     async def test_file_audit_keeps_balanced_score_for_native_security_findings(self):
         balanced_response = main.FileAuditResponse(
