@@ -6747,8 +6747,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }
 
   const handleRenameFolder = async (folderId: string) => {
-    const nextFolderName = editFolderName.trim();
-
+    const nextFolderName = editFolderName.trim()
+    
     if (!nextFolderName) {
       setEditingFolderId(null);
       return;
