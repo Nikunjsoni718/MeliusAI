@@ -10,6 +10,7 @@ export type NormalizedAuditReport = {
 export type AuditFinding = {
   text: string;
   impactScore?: number;
+  deductionId?: string;
 };
 
 export type NormalizedAuditFindings = {
@@ -239,10 +240,15 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     typeof rawImpactScore === 'number' && Number.isInteger(rawImpactScore) && rawImpactScore !== 0
       ? rawImpactScore
       : undefined;
+  const rawDeductionId = record.deductionId ?? record.deduction_id;
+  const deductionId = typeof rawDeductionId === 'string' && rawDeductionId.trim()
+    ? rawDeductionId.trim()
+    : undefined;
 
   return {
     text: record.text.trim(),
     ...(impactScore !== undefined ? { impactScore } : {}),
+    ...(deductionId !== undefined ? { deductionId } : {}),
   };
 }
 
@@ -382,7 +388,7 @@ function getFindingItems(
 
     for (const key of keys) {
       const findings = normalizeAuditFindings(source[key]);
-      if (findings.length > 0 && findings.some((finding) => finding.impactScore !== undefined)) {
+      if (findings.length > 0) {
         return findings;
       }
     }

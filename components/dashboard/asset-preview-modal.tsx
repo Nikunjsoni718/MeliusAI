@@ -309,10 +309,12 @@ function MetricList({
   title,
   tone,
   items,
+  deductions = [],
 }: {
   title: string;
   tone: 'emerald' | 'rose' | 'sky';
   items: AuditFinding[];
+  deductions?: AuditFinding[];
 }) {
   const toneClasses = {
     emerald: {
@@ -334,10 +336,23 @@ function MetricList({
       badge: 'bg-sky-500/10 text-sky-400',
     },
   };
-  const isActionable = tone === 'sky';
-  const formatImpactScore = (impactScore: number) => {
-    const signedScore = `${impactScore > 0 ? '+' : ''}${impactScore}`;
-    return isActionable ? `${signedScore} pts` : signedScore;
+  const recoveryByDeductionId = new Map(
+    deductions
+      .filter(
+        (finding): finding is AuditFinding & { deductionId: string; impactScore: number } =>
+          typeof finding.deductionId === 'string' && typeof finding.impactScore === 'number' && finding.impactScore < 0
+      )
+      .map((finding) => [finding.deductionId, Math.abs(finding.impactScore)])
+  );
+  const getBadgeLabel = (item: AuditFinding) => {
+    if (tone === 'rose' && typeof item.impactScore === 'number' && item.impactScore < 0) {
+      return `${item.impactScore} pts`;
+    }
+    if (tone === 'sky' && item.deductionId) {
+      const recoveryPoints = recoveryByDeductionId.get(item.deductionId);
+      return recoveryPoints ? `Recover +${recoveryPoints} pts` : null;
+    }
+    return null;
   };
 
   return (
@@ -347,11 +362,13 @@ function MetricList({
         {items.length > 0 ? (
           items.map((item, index) => (
             <li key={`${title}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-300">
-              <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses[tone].marker}`}>•</span>
+              <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses[tone].marker}`}>
+                {tone === 'emerald' ? '✓' : '•'}
+              </span>
               <span className="min-w-0 flex-1">{item.text}</span>
-              {typeof item.impactScore === 'number' ? (
+              {getBadgeLabel(item) ? (
                 <span className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-xs font-semibold ${toneClasses[tone].badge}`}>
-                  {formatImpactScore(item.impactScore)}
+                  {getBadgeLabel(item)}
                 </span>
               ) : null}
             </li>
@@ -963,7 +980,7 @@ export function AssetPreviewModal({
             <div className="grid gap-3 md:grid-cols-3">
               <MetricList title="Highlights" tone="emerald" items={pros} />
               <MetricList title="Areas for Improvement" tone="rose" items={cons} />
-              <MetricList title="Actionable Steps" tone="sky" items={recommendations} />
+              <MetricList title="Actionable Steps" tone="sky" items={recommendations} deductions={cons} />
             </div>
           </div>
         </div>

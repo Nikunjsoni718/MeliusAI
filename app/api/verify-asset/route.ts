@@ -30,9 +30,9 @@ type AuditPayload = {
   weaknesses: string[];
   recommendations: string[];
   finding_impacts: {
-    pros: Array<{ text: string; impactScore: number }>;
-    cons: Array<{ text: string; impactScore: number }>;
-    recommendations: Array<{ text: string; impactScore: number }>;
+    pros: Array<{ text: string }>;
+    cons: Array<{ deductionId: string; text: string; impactScore: number }>;
+    recommendations: Array<{ deductionId: string; text: string }>;
   };
 };
 

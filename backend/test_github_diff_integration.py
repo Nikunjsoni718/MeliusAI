@@ -28,13 +28,12 @@ MODEL_REPORT = {
     "resolved_issues": [],
     "updated_architecture_summary": "Improved architecture.",
     "pros": [
-        {"text": "Existing Strength: Input validation is consistent.", "impactScore": 10},
-        {"text": "New Strength: Cache invalidation is added.", "impactScore": 6},
+        {"text": "Existing Strength: Input validation is consistent."},
+        {"text": "New Strength: Cache invalidation is added."},
     ],
-    "cons": [{"text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
+    "cons": [{"deductionId": "D1", "text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
     "recommendations": [
-        {"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8},
-        {"text": "New Recommendation: Monitor invalidation failures.", "impactScore": 5},
+        {"deductionId": "D1", "text": "Existing Recommendation: Add cache invalidation tests."},
     ],
 }
 
@@ -67,8 +66,8 @@ class GeminiDeltaTests(unittest.TestCase):
             main.IncrementalAuditReport.model_validate(MODEL_REPORT),
             REPORT["score"],
         )
-        self.assertEqual(result["folder_score"], 58)
-        self.assertEqual(result["score_delta"], 6)
+        self.assertEqual(result["folder_score"], 92)
+        self.assertEqual(result["score_delta"], 40)
         self.assertEqual(
             result["folder_audit"]["pros"],
             [item["text"] for item in MODEL_REPORT["pros"]],
@@ -154,14 +153,14 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         files = [{"filename": "new.py", "insertions": 1, "deletions": 0, "patch": "+new", "status": "added"}]
         with self.assertLogs(main.logger, level="INFO") as logs:
             result, save, finalize, _, ai = await self.exercise(files=files)
-        self.assertEqual(result["folder_score"], 58)
+        self.assertEqual(result["folder_score"], 92)
         self.assertEqual(ai.call_args.args[0]["files"], files)
         self.assertEqual(ai.call_args.args[1], REPORT)
         self.assertEqual(save.call_args.args[2], HEAD)
         self.assertEqual(finalize.call_args.args[1]["baseline_version"], 7)
         output = "\n".join(logs.output)
         self.assertIn("GEMINI RESPONSE: Extracted highlights: 2, Improvements: 1", output)
-        self.assertIn("DATABASE UPDATE: Successfully saved score 58 for workspace. workspace_id=folder", output)
+        self.assertIn("DATABASE UPDATE: Successfully saved score 92 for workspace. workspace_id=folder", output)
 
     async def test_failed_ai_preserves_saved_delta_without_finalizing(self):
         result, save, finalize, failed, _ = await self.exercise(files=[{"filename": "x"}], provider_error=DiffServiceError("GEMINI_RATE_LIMITED", "Retry", 429))

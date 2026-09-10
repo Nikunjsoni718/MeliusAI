@@ -15,3 +15,17 @@ test('normalizes finding impact scores from camel-case and snake-case JSONB payl
     { text: 'No score is present for this historical finding.' },
   ]);
 });
+
+test('preserves qualitative highlights and deduction links for recovery UI', () => {
+  expect(
+    normalizeAuditFindings([
+      { text: 'Secure Session: Cookie flags are configured.' },
+      { text: 'Input Gap: Request body is unvalidated.', deduction_id: 'D1', impact_score: -5 },
+      { text: 'Validate Input: Parse the request body.', deductionId: 'D1' },
+    ])
+  ).toEqual([
+    { text: 'Secure Session: Cookie flags are configured.' },
+    { text: 'Input Gap: Request body is unvalidated.', deductionId: 'D1', impactScore: -5 },
+    { text: 'Validate Input: Parse the request body.', deductionId: 'D1' },
+  ]);
+});

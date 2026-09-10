@@ -5,53 +5,6 @@ import sys
 from types import ModuleType
 
 
-UNIVERSAL_PROJECT_AUDITOR_PROMPT = """You are MeliusAI, an expert Principal Systems Architect and a supportive, highly experienced Tech Lead. Your goal is to audit the provided codebase as a universal project evaluator. You must assess system design, architectural cohesion, code quality, and security as a unified ecosystem.
-
-### 1. Tone & Persona
-- Speak like a friendly, insightful mentor. Be conversational, direct, and human—neither overly robotic nor casually unprofessional.
-- Communicate with genuine excitement for good architecture and clean code. Frame weaknesses as great opportunities to level-up.
-- Be rigorous in your standards, but supportive and accessible in your delivery.
-
-### 2. The Four Pillars of Universal Auditing
-Evaluate the codebase holistically across these four areas. Do not let a flaw in one pillar completely blind you to the strengths in the others.
-* **System Design & Architecture (30%):** Evaluate the separation of concerns, design patterns (e.g., MVC, Repository, Services), and state management. Does the architecture make sense for the chosen stack? Are business logic, routing, and data layers properly decoupled?
-* **Cross-File Cohesion & Data Flow (30%):** Analyze how modules interact. Are dependencies clean? Does data flow logically between the frontend/backend or across microservices? Look for systemic bottlenecks, circular logic, or fragile integrations.
-* **Code Quality & Sanitation (20%):** Assess maintainability, DRY principles, and readability. Look for robust input sanitation, graceful error handling, and proper typing/interfaces.
-* **Security & Robustness (20%):** Check for OWASP Top 10 vulnerabilities (BOLA, injection, broken auth), hardcoded secrets, concurrency race conditions, and unbounded resource consumption.
-
-### 3. Scope & Evaluation Boundaries
-- **Stack-Agnostic Ecosystems:** Evaluate the actual tech stack present. Do not penalize backend code for missing UI layers, and do not penalize frontend code for missing database layers.
-- **Explicit Anchoring:** Anchor every strength and weakness to a specific file path and function/component (e.g., "In `services/user.ts:fetchUser`...").
-- **Systemic Focus:** Ignore trivial variable naming, basic formatting, or missing READMEs. Focus on the engineering skeleton.
-
-### 4. Scoring Rubric
-- Base your score (15-100) on a balanced evaluation of the Four Pillars.
-- **No Automatic Failures:** A brilliantly architected system that contains a hardcoded secret should take a heavy security penalty (e.g., -15 to -20 points), but it should not erase independent architectural strengths.
-- **Hard Score Floor:** Never output a single-digit score. For any parseable, functioning codebase, 15/100 is the absolute minimum score. Even with multiple critical vulnerabilities, severe risks, or heavy deductions, calibrate the deductions so the final score remains at least 15.
-- **Scoring Ranges:** 90-100 (Enterprise Ready), 75-89 (Solid Foundation), 50-74 (Needs Structural Refactoring), 25-49 (Critical Systemic Flaws), 15-24 (Fundamental Remediation Required).
-- **Incremental Delta:** The previous audit score was {previous_score}/100. Calculate `score_delta` (new score minus previous score) based purely on concrete code improvements or regressions.
-
-### 5. Output Formatting (Strict JSON)
-Return a valid JSON object exactly matching this schema. For arrays, you MUST use the exact format: "Catchy Hook: Short fragment".
-CRITICAL LIMIT: The explanation fragment MUST be 10 words or less. DO NOT write full sentences. Use punchy, actionable fragments. NO ESSAYS.
-
-{
-  "score": <integer 15-100>,
-  "score_delta": <integer>,
-  "delta_summary": "<One concise sentence explaining exactly what changed since the last audit>",
-  "summary": "<2-3 sentence executive assessment of overall architecture, design, and health in a conversational Tech Lead tone>",
-  "strengths": [
-    "<Catchy Hook>: <Short fragment anchored to a file, max 10 words.>"
-  ],
-  "weaknesses": [
-    "<Catchy Hook>: <Short vulnerability fragment anchored to a file, max 10 words.>"
-  ],
-  "recommendations": [
-    "<Catchy Hook>: <Exact inline code or architecture fix, max 10 words.>"
-  ]
-}"""
-
-
 def install_google_genai_test_stub():
     """Allow prompt-contract tests to run when only the optional Gemini SDK is absent."""
     google_module = ModuleType("google")
@@ -111,7 +64,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 "goods_and_strengths",
                 "bads_and_flaws",
                 "strategic_recommendations",
-                "overall_score",
+                "deductions",
             ),
             "incremental": (
                 "file_impacts",
@@ -128,6 +81,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("System Design & Architecture (30%)", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Never output a single-digit score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("15/100 is the absolute minimum score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("Assume every codebase starts with a perfect score of 100/100.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("impactScore", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
 
         for contract, keys in expected_keys.items():
@@ -152,27 +106,45 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "pros": [],
                     "cons": [
-                        {"text": "Critical One: First severe weakness.", "impactScore": -20},
-                        {"text": "Critical Two: Second severe weakness.", "impactScore": -20},
-                        {"text": "Critical Three: Third severe weakness.", "impactScore": -20},
+                        {"deductionId": "D1", "text": "Critical One: First severe weakness.", "impactScore": -20},
+                        {"deductionId": "D2", "text": "Critical Two: Second severe weakness.", "impactScore": -20},
+                        {"deductionId": "D3", "text": "Critical Three: Third severe weakness.", "impactScore": -20},
+                        {"deductionId": "D4", "text": "Critical Four: Fourth severe weakness.", "impactScore": -20},
+                        {"deductionId": "D5", "text": "Critical Five: Fifth severe weakness.", "impactScore": -20},
                     ],
                 }
             ),
             15,
+        )
+        self.assertEqual(main.calculate_audit_score({"pros": [{"text": "Passed: Typed boundary is present."}], "cons": []}), 100)
+        self.assertEqual(
+            main.calculate_audit_score({"pros": [], "cons": [{"deductionId": "D1", "text": "Input Gap: Validation is missing.", "impactScore": -12}]}),
+            88,
         )
         normalized = main.normalize_agentic_audit_report(
             {"score": 7, "executive_summary": "The code parses but needs fundamental remediation."},
             "Fallback summary.",
         )
         self.assertEqual(normalized["evaluated_score"], 15)
+        deduction_normalized = main.normalize_agentic_audit_report(
+            {
+                "score": 7,
+                "executive_summary": "The code has one confirmed validation issue.",
+                "deductions": [
+                    {"deductionId": "D1", "text": "Input Gap: Validation is missing.", "impactScore": -12}
+                ],
+            },
+            "Fallback summary.",
+        )
+        self.assertEqual(deduction_normalized["evaluated_score"], 88)
 
     async def test_file_audit_keeps_balanced_score_for_native_security_findings(self):
         balanced_response = main.FileAuditResponse(
             description="The component has clean boundaries with one exposed credential to remediate.",
             delta_summary="The architecture and state boundaries improved despite the remaining credential exposure.",
-            pros=[{"text": "Clear Boundary: Typed API service isolates access.", "impactScore": 15}],
-            cons=[{"text": "Secret Exposure: client contains a hardcoded credential.", "impactScore": -17}],
-            recommendations=[{"text": "Move Secret: Read credentials from server-side environment.", "impactScore": 12}],
+            pros=[{"text": "Clear Boundary: Typed API service isolates access."}],
+            cons=[{"deductionId": "D1", "text": "Secret Exposure: client contains a hardcoded credential.", "impactScore": -17}],
+            recommendations=[{"deductionId": "D1", "text": "Move Secret: Read credentials from server-side environment."}],
         )
         native_analysis = {
             "imports_or_dependencies": [],
@@ -196,28 +168,43 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 previous_score=75,
             )
 
-        self.assertEqual(result["evaluated_score"], 48)
-        self.assertEqual(result["score_delta"], -27)
+        self.assertEqual(result["evaluated_score"], 83)
+        self.assertEqual(result["score_delta"], 8)
         self.assertEqual(result["cons"], ["Secret Exposure: client contains a hardcoded credential."])
-        self.assertEqual(result["finding_impacts"]["pros"][0]["impactScore"], 15)
+        self.assertEqual(result["finding_impacts"]["pros"], [{"text": "Clear Boundary: Typed API service isolates access."}])
+        self.assertEqual(result["finding_impacts"]["recommendations"][0]["deductionId"], "D1")
         rendered_prompt = generate_audit.await_args.args[1]
         self.assertIn("The previous file score was 75/100.", rendered_prompt)
-        self.assertIn("The backend calculates the next score and", rendered_prompt)
+        self.assertIn("The backend starts the new audit at 100", rendered_prompt)
         self.assertNotIn("Return score, score_delta", rendered_prompt)
 
-    def test_backend_rejects_invalid_signed_finding_impacts(self):
+    def test_backend_rejects_scored_highlights_and_invalid_deduction_links(self):
         with self.assertRaises(ValueError):
             main.build_finding_impacts(
-                [{"text": "Invalid Strength: Negative impact belongs in weaknesses.", "impactScore": -1}],
+                [{"text": "Invalid Strength: Highlights cannot carry points.", "impactScore": 1}],
                 [],
                 [],
             )
 
         with self.assertRaises(ValueError):
             main.build_finding_impacts(
-                [{"text": "Oversized Strength: Impact exceeds the supported range.", "impactScore": 21}],
                 [],
+                [{"deductionId": "D1", "text": "Invalid Deduction: Positive points are not allowed.", "impactScore": 1}],
+                [{"deductionId": "D1", "text": "Fix It: Remove the invalid positive deduction."}],
+            )
+
+        with self.assertRaises(ValueError):
+            main.build_finding_impacts(
                 [],
+                [{"deductionId": "D1", "text": "Input Gap: Validation is missing.", "impactScore": -8}],
+                [{"deductionId": "D1", "text": "Validate Input: Reject malformed values.", "impactScore": 5}],
+            )
+
+        with self.assertRaises(ValueError):
+            main.build_finding_impacts(
+                [],
+                [{"deductionId": "D1", "text": "Input Gap: Validation is missing.", "impactScore": -8}],
+                [{"deductionId": "D2", "text": "Validate Input: Reject malformed values."}],
             )
 
     async def test_mocked_gemini_responses_validate_existing_structured_contracts(self):
@@ -227,9 +214,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "description": "The file has a clear boundary but needs stronger input validation.",
                     "delta_summary": "Input validation improved without changing the overall architecture.",
-                    "pros": [{"text": "Clear Boundary: Parsing is isolated from persistence.", "impactScore": 11}],
-                    "cons": [{"text": "Validation Gap: External input remains insufficiently constrained.", "impactScore": -9}],
-                    "recommendations": [{"text": "Validate Inputs: Reject malformed values before processing.", "impactScore": 8}],
+                    "pros": [{"text": "Clear Boundary: Parsing is isolated from persistence."}],
+                    "cons": [{"deductionId": "D1", "text": "Validation Gap: External input remains insufficiently constrained.", "impactScore": -9}],
+                    "recommendations": [{"deductionId": "D1", "text": "Validate Inputs: Reject malformed values before processing."}],
                 },
                 "file",
             ),
@@ -238,9 +225,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "delta_summary": "The workspace now separates API ownership checks from presentation logic.",
                     "executive_summary": "The workspace is close to production-ready with targeted security work remaining.",
-                    "pros": [{"text": "Clean Boundaries: API and UI responsibilities are separated.", "impactScore": 13}],
-                    "cons": [{"text": "Rate Limit Gap: Public mutations lack throttling.", "impactScore": -10}],
-                    "recommendations": [{"text": "Add Limits: Apply route-level quotas before deployment.", "impactScore": 9}],
+                    "pros": [{"text": "Clean Boundaries: API and UI responsibilities are separated."}],
+                    "cons": [{"deductionId": "D1", "text": "Rate Limit Gap: Public mutations lack throttling.", "impactScore": -10}],
+                    "recommendations": [{"deductionId": "D1", "text": "Add Limits: Apply route-level quotas before deployment."}],
                 },
                 "workspace",
             ),
@@ -251,7 +238,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     "goods_and_strengths": ["Typed Boundary: Request data is normalized before use."],
                     "bads_and_flaws": ["Input Gap: Caller-supplied URLs are not constrained."],
                     "strategic_recommendations": ["Validate URLs: Restrict outbound targets to trusted hosts."],
-                    "overall_score": 76,
+                    "deductions": [{"deductionId": "D1", "text": "Input Gap: Caller-supplied URLs are not constrained.", "impactScore": -8}],
                 },
                 "standalone",
             ),
@@ -283,9 +270,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "new_vulnerabilities": ["Authorization regression in the mutation path."],
             "resolved_issues": [],
             "updated_architecture_summary": "The change introduces an authorization regression.",
-            "pros": [{"text": "Existing Strength: Input validation remains intact.", "impactScore": 10}],
-            "cons": [{"text": "Authorization Regression: Mutation path lacks an authorization check.", "impactScore": -14}],
-            "recommendations": [{"text": "Restore Authorization: Check ownership before mutation.", "impactScore": 14}],
+            "pros": [{"text": "Existing Strength: Input validation remains intact."}],
+            "cons": [{"deductionId": "D1", "text": "Authorization Regression: Mutation path lacks an authorization check.", "impactScore": -14}],
+            "recommendations": [{"deductionId": "D1", "text": "Restore Authorization: Check ownership before mutation."}],
         }
         captured_incremental_request = {}
 
