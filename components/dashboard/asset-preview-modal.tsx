@@ -350,7 +350,7 @@ function MetricList({
     }
     if (tone === 'sky' && item.deductionId) {
       const recoveryPoints = recoveryByDeductionId.get(item.deductionId);
-      return recoveryPoints ? `Recover +${recoveryPoints} pts` : null;
+      return recoveryPoints ? `+${recoveryPoints} pts` : null;
     }
     return null;
   };
