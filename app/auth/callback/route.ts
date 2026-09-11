@@ -2,6 +2,7 @@ import type { User } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import { after, NextRequest, NextResponse } from 'next/server';
 
+import { upsertGitHubConnection } from '@/lib/github-connection';
 import { createSupabaseServerClient, hasSupabaseServerEnv } from '@/lib/supabase/server';
 import { appendUsernameSuffix, generateUsername, normalizeUsername } from '@/lib/username';
 
@@ -174,7 +175,6 @@ async function triggerProfileEmbeddingSync({
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const oauthIntent = requestUrl.searchParams.get('intent');
 
   if (!hasSupabaseServerEnv()) {
     return NextResponse.redirect(new URL('/auth/login', requestUrl));
@@ -281,6 +281,14 @@ export async function GET(request: NextRequest) {
     }
 
     const githubIdentity = getGitHubIdentityDetails(user);
+    const providerToken = authData.session?.provider_token?.trim();
+    if (githubIdentity.userId && providerToken) {
+      await withOAuthCallbackTimeout(
+        upsertGitHubConnection(user.id, providerToken),
+        'GitHub connection storage'
+      );
+    }
+
     if (githubIdentity.userId) {
       const { error: githubIdentitySyncError } = await withOAuthCallbackTimeout(
         supabaseAdmin
@@ -336,9 +344,6 @@ export async function GET(request: NextRequest) {
     );
 
     redirectUrl = new URL(`/profile/${encodeURIComponent(finalUsername)}`, requestUrl);
-    if (oauthIntent === 'github_link') {
-      redirectUrl.searchParams.set('github_linked', '1');
-    }
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const message =

@@ -560,11 +560,8 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const FOLDER_BASELINE_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project/baseline`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
-const GITHUB_API_BASE_URL = 'https://api.github.com';
-const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
-const GITHUB_LINK_INTENT_KEY = 'intent_to_link_github';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
@@ -2746,19 +2743,17 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isUnlinkingGitHub, setIsUnlinkingGitHub] = useState(false);
   const [isLinkingGitHub, setIsLinkingGitHub] = useState(false);
   const [isGitHubConnectionExpired, setIsGitHubConnectionExpired] = useState(false);
+  const [hasPersistedGitHubConnection, setHasPersistedGitHubConnection] = useState(false);
+  const [isGitHubConnectionHydrated, setIsGitHubConnectionHydrated] = useState(false);
   const [, setGithubUnlinkError] = useState<string | null>(null);
   const [isGitHubSuccessModalOpen, setIsGitHubSuccessModalOpen] = useState(false);
   const githubAppRedirectRef = useRef(false);
   const currentUser = user;
   const activeAuthUser = session?.user ?? user;
-  const activeGitHubProviderToken =
-    typeof session?.provider_token === 'string' && session.provider_token.trim()
-      ? session.provider_token.trim()
-      : null;
   const hasActiveGitHubIdentity = hasGitHubOAuthIdentity(activeAuthUser);
   const isGithubConnected = Boolean(
-    hasActiveGitHubIdentity &&
-      activeGitHubProviderToken &&
+    isGitHubConnectionHydrated &&
+      hasPersistedGitHubConnection &&
       !isGitHubConnectionExpired &&
       !isLinkingGitHub
   );
@@ -2786,7 +2781,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [isPreparingGithubImport, setIsPreparingGithubImport] = useState(false);
   const [githubRepositories, setGithubRepositories] = useState<GitHubRepository[]>([]);
   const [githubRepositoriesError, setGithubRepositoriesError] = useState<string | null>(null);
-  const [githubProviderToken, setGithubProviderToken] = useState<string | null>(null);
   const [githubRepositoryTrees, setGithubRepositoryTrees] = useState<
     Record<string, GitHubRepositoryTreeState>
   >({});
@@ -2868,9 +2862,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const bioSavedTimerRef = useRef<number | null>(null);
   const bioToastTimerRef = useRef<number | null>(null);
   const bioDraftRef = useRef<string | null>(null);
-  const refreshedGitHubLinkUserRef = useRef<string | null>(null);
   const githubProfileRequestIdRef = useRef(0);
-  const githubProviderTokenRef = useRef<string | null>(null);
   const autoOpenedGitHubImportUserRef = useRef<string | null>(null);
   const loadGitHubRepositoriesRef = useRef<(() => Promise<void>) | null>(null);
   const lastSavedBioRef = useRef('');
@@ -2890,7 +2882,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setIsPreparingGithubImport(false);
     setGithubRepositories([]);
     setGithubRepositoriesError(null);
-    setGithubProviderToken(null);
     setGithubRepositoryTrees({});
     setExpandedGithubRepositories({});
     setExpandedGithubFolders({});
@@ -2899,6 +2890,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const markGitHubConnectionExpired = useCallback(
     (message = 'Your GitHub connection has expired. Reconnect GitHub and try again.') => {
       clearGitHubImportState();
+      setHasPersistedGitHubConnection(false);
       setIsGitHubConnectionExpired(true);
       setGithubRepositoriesError(message);
     },
@@ -3004,26 +2996,51 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return freshProfile;
   }, [activeAuthUser, setProfile, supabase, syncGitHubUsernameToProfile, user]);
 
-  const redirectToGitHubAppInstall = useCallback(() => {
-    if (githubAppRedirectRef.current) {
-      return;
-    }
+  useEffect(() => {
+    const controller = new AbortController();
+    let isActive = true;
 
-    githubAppRedirectRef.current = true;
-    sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
-    localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
+    const loadPersistedGitHubConnection = async () => {
+      try {
+        const response = await fetch('/api/github/connection', {
+          cache: 'no-store',
+          credentials: 'include',
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          connected?: unknown;
+        } | null;
 
-    const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
-    const installationUsername = normalizeDisplayUsername(
-      profile?.username ?? getProfileUsernameFromPathname(pathname)
-    );
+        if (!isActive) {
+          return;
+        }
 
-    if (installationUsername) {
-      installationUrl.searchParams.set('state', installationUsername);
-    }
+        const connected = response.ok && payload?.connected === true;
+        setHasPersistedGitHubConnection(connected);
+        setIsGitHubConnectionExpired(false);
+        if (connected) {
+          setIsLinkingGitHub(false);
+        }
+      } catch (error) {
+        if (!isActive || (error instanceof DOMException && error.name === 'AbortError')) {
+          return;
+        }
+        console.warn('Unable to hydrate GitHub connection status:', error);
+        setHasPersistedGitHubConnection(false);
+      } finally {
+        if (isActive) {
+          setIsGitHubConnectionHydrated(true);
+        }
+      }
+    };
 
-    window.location.assign(installationUrl.toString());
-  }, [pathname, profile?.username]);
+    void loadPersistedGitHubConnection();
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     let isActive = true;
@@ -3043,32 +3060,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       const authUser = activeSession?.user ?? activeAuthUser;
-      const providerToken =
-        typeof activeSession?.provider_token === 'string' && activeSession.provider_token.trim()
-          ? activeSession.provider_token.trim()
-          : null;
       const hasGitHubIdentity = hasGitHubOAuthIdentity(authUser);
-      const hasFreshProviderToken = Boolean(providerToken);
-
-      if (providerToken && providerToken !== githubProviderTokenRef.current) {
-        setIsGitHubConnectionExpired(false);
-        setIsLinkingGitHub(false);
-      }
-      githubProviderTokenRef.current = providerToken;
 
       if (!hasGitHubIdentity) {
-        clearGitHubImportState();
-        setIsGitHubConnectionExpired(false);
         localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
         localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
-        sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
         githubAppRedirectRef.current = false;
         setIsGitHubSuccessModalOpen(false);
-        return;
-      }
-
-      if (!hasFreshProviderToken) {
-        markGitHubConnectionExpired();
         return;
       }
 
@@ -3088,47 +3086,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     };
   }, [
     activeAuthUser,
-    clearGitHubImportState,
-    markGitHubConnectionExpired,
     session,
     supabase,
   ]);
-
-  useEffect(() => {
-    if (sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) !== 'true') {
-      return;
-    }
-
-    let isActive = true;
-
-    const redirectAfterGitHubLinkIntent = async () => {
-      let activeSession = session;
-
-      if (supabase) {
-        const {
-          data: { session: refreshedSession },
-        } = await supabase.auth.getSession();
-        activeSession = refreshedSession ?? activeSession;
-      }
-
-      const authUser = activeSession?.user ?? activeAuthUser;
-      const hasGitHubIdentity = hasGitHubOAuthIdentity(authUser);
-      const hasProviderToken =
-        typeof activeSession?.provider_token === 'string' && activeSession.provider_token.trim();
-
-      if (!isActive || !hasGitHubIdentity || !hasProviderToken) {
-        return;
-      }
-
-      redirectToGitHubAppInstall();
-    };
-
-    void redirectAfterGitHubLinkIntent();
-
-    return () => {
-      isActive = false;
-    };
-  }, [activeAuthUser, redirectToGitHubAppInstall, session, supabase]);
 
   const handleDismissGitHubSuccess = useCallback(() => {
     localStorage.setItem(GITHUB_SUCCESS_DISMISSED_KEY, 'true');
@@ -3142,11 +3102,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     // Do not let stale repository data or a prior 401/403 influence the OAuth
-    // callback render. The live session is the only connection source of truth.
+    // callback render. The persisted server connection determines future status.
     clearGitHubImportState();
     setIsGitHubConnectionExpired(false);
     setIsLinkingGitHub(true);
-    sessionStorage.setItem(GITHUB_LINK_INTENT_KEY, 'true');
 
     try {
       const redirectTo = `${window.location.origin}/profile/setup-app`;
@@ -3166,12 +3125,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       if (data.url) {
         window.location.assign(data.url);
       } else {
-        sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
         setIsLinkingGitHub(false);
         setIsGitHubConnectionExpired(true);
       }
     } catch (error) {
-      sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
       setIsLinkingGitHub(false);
       setIsGitHubConnectionExpired(true);
       console.error('GitHub Auth Error:', error);
@@ -3232,6 +3189,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setGithubUnlinkError(null);
 
     try {
+      const connectionResponse = await fetch('/api/github/connection', {
+        method: 'DELETE',
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      if (!connectionResponse.ok) {
+        throw new Error('Unable to remove the saved GitHub connection.');
+      }
+
       const {
         data: { user: activeUser },
         error: activeUserError,
@@ -3267,14 +3233,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setIsGitHubProfileChecked(true);
       clearGitHubImportState();
+      setHasPersistedGitHubConnection(false);
+      setIsGitHubConnectionHydrated(true);
       setIsGitHubConnectionExpired(false);
       setIsLinkingGitHub(false);
       setIsGitHubSuccessModalOpen(false);
       localStorage.removeItem(GITHUB_APP_PROMPTED_KEY);
       localStorage.removeItem(GITHUB_SUCCESS_DISMISSED_KEY);
-      sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
       githubAppRedirectRef.current = false;
-      githubProviderTokenRef.current = null;
       await supabase.auth.refreshSession();
     } catch (error) {
       console.error('Unable to unlink GitHub:', error);
@@ -3325,102 +3291,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       void supabase.removeChannel(githubProfileChannel);
     };
   }, [refreshGitHubProfile, supabase, user?.id]);
-
-  useEffect(() => {
-    if (!supabase || !user?.id) {
-      return;
-    }
-
-    const callbackUrl = new URL(window.location.href);
-    if (
-      callbackUrl.searchParams.get('github_linked') !== '1' ||
-      refreshedGitHubLinkUserRef.current === user.id
-    ) {
-      return;
-    }
-
-    refreshedGitHubLinkUserRef.current = user.id;
-
-    let isActive = true;
-    let installationUsername: string | null = null;
-
-    const refreshLinkedGitHubSession = async () => {
-      try {
-        const { data, error } = await supabase.auth.refreshSession();
-
-        if (error) {
-          throw error;
-        }
-
-        if (!isActive) {
-          return;
-        }
-
-        const refreshedUser = data.session?.user ?? null;
-        const hasRefreshedGitHubIdentity =
-          refreshedUser?.id === user.id && hasGitHubOAuthIdentity(refreshedUser);
-        const refreshedProviderToken = data.session?.provider_token?.trim() ?? null;
-        if (!hasRefreshedGitHubIdentity || !refreshedProviderToken) {
-          throw new Error('GitHub did not return a usable connection token. Reconnect GitHub and try again.');
-        }
-
-        githubProviderTokenRef.current = refreshedProviderToken;
-        setIsGitHubConnectionExpired(false);
-        await refreshGitHubProfile(refreshedUser);
-
-        const refreshedMetadataUsername =
-          typeof refreshedUser?.user_metadata?.username === 'string'
-            ? refreshedUser.user_metadata.username
-            : null;
-        installationUsername = normalizeDisplayUsername(
-          refreshedMetadataUsername ??
-            profile?.username ??
-            getProfileUsernameFromPathname(pathname)
-        );
-        if (!installationUsername) {
-          throw new Error('Unable to resolve the profile username for GitHub App installation.');
-        }
-
-      } catch (error) {
-        setIsLinkingGitHub(false);
-        setIsGitHubConnectionExpired(true);
-        console.error('Unable to refresh the session after linking GitHub:', error);
-      } finally {
-        if (!isActive) {
-          return;
-        }
-
-        const nextUrl = new URL(window.location.href);
-        nextUrl.searchParams.delete('github_linked');
-        window.history.replaceState(
-          window.history.state,
-          '',
-          `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
-        );
-
-        if (
-          installationUsername &&
-          sessionStorage.getItem(GITHUB_LINK_INTENT_KEY) === 'true'
-        ) {
-          sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
-          localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
-          githubAppRedirectRef.current = true;
-          const installationUrl = new URL(GITHUB_APP_INSTALLATION_URL);
-          installationUrl.searchParams.set('state', installationUsername);
-          window.location.assign(installationUrl.toString());
-          return;
-        }
-
-        router.refresh();
-      }
-    };
-
-    void refreshLinkedGitHubSession();
-
-    return () => {
-      isActive = false;
-    };
-  }, [pathname, profile?.username, refreshGitHubProfile, router, supabase, user?.id]);
 
   useEffect(() => {
     if (!isGitHubProfileChecked || isGithubConnected) {
@@ -5136,38 +5006,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     link.click();
   }
 
-  async function fetchGitHubApi<T>(url: URL, providerToken: string | null): Promise<T> {
-    if (!providerToken) {
-      const requestError = new Error(
-        'Your GitHub connection has expired. Reconnect GitHub and try again.'
-      ) as GitHubRequestError;
-      markGitHubConnectionExpired(requestError.message);
-      throw requestError;
-    }
-
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2026-03-10',
-    };
-
-    headers.Authorization = `Bearer ${providerToken}`;
-
-    const response = await fetch(url.toString(), { cache: 'no-store', headers });
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => null) as { message?: string } | null;
-      const requestError = new Error(
-        errorBody?.message || `GitHub request failed with status ${response.status}.`
-      ) as GitHubRequestError;
-      requestError.status = response.status;
-      if (isGitHubConnectionError(requestError)) {
-        markGitHubConnectionExpired();
-      }
-      throw requestError;
-    }
-
-    return response.json() as Promise<T>;
-  }
-
   async function loadGitHubRepositories() {
     if (!supabase) {
       setGithubRepositoriesError('GitHub import is unavailable until your session is ready.');
@@ -5177,28 +5015,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     try {
       setIsFetchingGithub(true);
       setGithubRepositoriesError(null);
-
-      const { data: currentSessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) {
-        throw sessionError;
-      }
-
-      const activeUser = currentSessionData.session?.user ?? null;
-      const hasCurrentGitHubIdentity = hasGitHubOAuthIdentity(activeUser);
-
-      if (!activeUser || activeUser.id !== user?.id || !hasCurrentGitHubIdentity) {
-        throw new Error('No linked GitHub identity was found. Reconnect GitHub and try again.');
-      }
-
-      const providerToken =
-        currentSessionData.session?.provider_token ?? session?.provider_token ?? null;
-      if (!providerToken) {
-        throw new Error('Your GitHub connection has expired. Reconnect GitHub and try again.');
-      }
-
-      // This keeps profile display metadata in sync, but it never decides
-      // whether the active GitHub OAuth connection is usable.
-      void refreshGitHubProfile(activeUser);
 
       // Reset data derived from the previous list before the live sync completes,
       // so a deleted repository cannot remain selectable in the importer.
@@ -5211,9 +5027,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const repositoryResponse = await fetch('/api/github/repositories', {
         cache: 'no-store',
         credentials: 'include',
-        headers: {
-          'X-GitHub-Provider-Token': providerToken,
-        },
       });
       const repositoryPayload = (await repositoryResponse.json().catch(() => null)) as {
         error?: string;
@@ -5228,7 +5041,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw requestError;
       }
 
-      setGithubProviderToken(providerToken);
       setGithubRepositories(repositoryPayload.repositories);
     } catch (error) {
       console.error('GitHub repository list error:', error);
@@ -5268,30 +5080,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }));
 
     try {
-      const encodedRepositoryName = repository.full_name
-        .split('/')
-        .map((pathPart) => encodeURIComponent(pathPart))
-        .join('/');
-      if (!githubProviderToken) {
-        throw new Error('Your GitHub connection has expired. Reconnect GitHub and try again.');
+      const treeUrl = new URL('/api/github/repository-tree', window.location.origin);
+      treeUrl.searchParams.set('repository', repository.full_name);
+      treeUrl.searchParams.set('ref', repository.default_branch);
+      const treeResponse = await fetch(treeUrl, { cache: 'no-store', credentials: 'include' });
+      const treeData = (await treeResponse.json().catch(() => null)) as {
+        error?: string;
+        commitSha?: string;
+        tree?: GitHubTreeEntry[];
+        truncated?: boolean;
+      } | null;
+      if (!treeResponse.ok || !treeData) {
+        const requestError = new Error(
+          treeData?.error || 'Unable to load repository files.'
+        ) as GitHubRequestError;
+        requestError.status = treeResponse.status;
+        throw requestError;
       }
-      const commit = await fetchGitHubApi<{ sha: string; commit: { tree: { sha: string } } }>(
-        new URL(`/repos/${encodedRepositoryName}/commits/${encodeURIComponent(repository.default_branch)}`, GITHUB_API_BASE_URL),
-        githubProviderToken
-      );
-      if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(commit.sha)) {
-        throw new Error('GitHub did not return a valid repository commit.');
-      }
-      const treeUrl = new URL(
-        `/repos/${encodedRepositoryName}/git/trees/${encodeURIComponent(commit.commit.tree.sha)}`,
-        GITHUB_API_BASE_URL
-      );
-      treeUrl.searchParams.set('recursive', '1');
-
-      const treeData = await fetchGitHubApi<{ tree?: GitHubTreeEntry[]; truncated?: boolean }>(
-        treeUrl,
-        githubProviderToken
-      );
 
       const entries = (treeData.tree ?? []).filter((entry) => {
         if (entry.type !== 'blob') {
@@ -5309,7 +5114,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           loading: false,
           error: null,
           truncated: Boolean(treeData.truncated),
-          commitSha: commit.sha,
+          commitSha: treeData.commitSha,
         },
       }));
 
@@ -5421,18 +5226,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const batch = selectedItems.slice(index, index + 6);
         const batchFiles = await Promise.all(
           batch.map(async ({ repository, entry }) => {
-            const encodedRepositoryName = repository.full_name
-              .split('/')
-              .map((pathPart) => encodeURIComponent(pathPart))
-              .join('/');
-            const blobUrl = new URL(
-              `/repos/${encodedRepositoryName}/git/blobs/${encodeURIComponent(entry.sha)}`,
-              GITHUB_API_BASE_URL
-            );
-            const blobData = await fetchGitHubApi<{ content: string; encoding: string }>(
-              blobUrl,
-              githubProviderToken
-            );
+            const blobUrl = new URL('/api/github/repository-blob', window.location.origin);
+            blobUrl.searchParams.set('repository', repository.full_name);
+            blobUrl.searchParams.set('sha', entry.sha);
+            const blobResponse = await fetch(blobUrl, {
+              cache: 'no-store',
+              credentials: 'include',
+            });
+            const blobData = (await blobResponse.json().catch(() => null)) as {
+              content?: string;
+              encoding?: string;
+              error?: string;
+            } | null;
+            if (!blobResponse.ok || !blobData?.content || !blobData.encoding) {
+              const requestError = new Error(
+                blobData?.error || `Unable to load ${entry.path}.`
+              ) as GitHubRequestError;
+              requestError.status = blobResponse.status;
+              throw requestError;
+            }
 
             if (blobData.encoding !== 'base64') {
               throw new Error(`GitHub returned an unsupported encoding for ${entry.path}.`);
@@ -6803,8 +6615,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const currentSession = currentSessionResponse?.data.session ?? null;
       const accessToken =
         currentSession?.access_token ?? session?.access_token ?? (await getCurrentAccessToken());
-      const githubProviderToken =
-        currentSession?.provider_token ?? session?.provider_token ?? null;
 
       if (!userId || !accessToken) {
         throw new Error('User session missing.');
@@ -6814,9 +6624,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       };
-      if (githubProviderToken) {
-        auditHeaders['X-GitHub-Provider-Token'] = githubProviderToken;
-      }
 
       const auditRequest: RequestInit = {
         method: 'POST',

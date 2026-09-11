@@ -1,4 +1,5 @@
 """Audit contract tests use real validation and mocked provider/storage boundaries."""
+import base64
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -22,6 +23,53 @@ REPORT = {
         "recommendations": [{"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8}],
     },
 }
+
+
+class GitHubConnectionTokenTests(unittest.IsolatedAsyncioTestCase):
+    def test_decrypts_the_node_aes_gcm_ciphertext_contract(self):
+        user_id = "d0d2aaf1-4878-4c3f-85cc-4bb1d9027db2"
+        plaintext = b"github-oauth-token"
+        key = bytes(range(32))
+        iv = bytes(range(12))
+        aad = f"{main.GITHUB_CONNECTION_CIPHER_AAD_PREFIX}{user_id}".encode("utf-8")
+        encrypted = main.AESGCM(key).encrypt(iv, plaintext, aad)
+        ciphertext = ".".join(
+            (
+                "v1",
+                base64.urlsafe_b64encode(iv).decode("ascii").rstrip("="),
+                base64.urlsafe_b64encode(encrypted[-16:]).decode("ascii").rstrip("="),
+                base64.urlsafe_b64encode(encrypted[:-16]).decode("ascii").rstrip("="),
+            )
+        )
+
+        with patch.dict(main.os.environ, {main.GITHUB_CONNECTION_ENCRYPTION_KEY_ENV: key.hex()}):
+            self.assertEqual(main.decrypt_github_connection_token(user_id, ciphertext), plaintext.decode("utf-8"))
+
+    async def test_authenticated_request_uses_persisted_token_not_browser_header(self):
+        request = SimpleNamespace(
+            state=SimpleNamespace(user_id="owner"),
+            headers={"x-github-provider-token": "browser-token"},
+        )
+        with patch.object(
+            main,
+            "get_persisted_github_connection_token",
+            new=AsyncMock(return_value="stored-token"),
+        ) as get_stored_token:
+            token = await main.get_request_github_access_token(request)
+
+        self.assertEqual(token, "stored-token")
+        get_stored_token.assert_awaited_once_with("owner")
+
+    async def test_missing_connection_returns_none_without_crashing(self):
+        service_client = Mock()
+        query = service_client.table.return_value
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.limit.return_value = query
+        query.execute.return_value = SimpleNamespace(data=[])
+
+        with patch.object(main, "get_supabase_service_client", return_value=service_client):
+            self.assertIsNone(await main.get_persisted_github_connection_token("owner"))
 MODEL_REPORT = {
     "file_impacts": [],
     "new_vulnerabilities": [],
@@ -127,7 +175,9 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(main, "LLM_AUDIT_SEMAPHORE", main.asyncio.Semaphore(2)))
             stack.enter_context(patch.object(main, "get_request_supabase_client", return_value=client))
             stack.enter_context(patch.object(main, "_tracking_service_client", return_value=client))
-            stack.enter_context(patch.object(main, "get_request_github_access_token", return_value="fixture"))
+            stack.enter_context(
+                patch.object(main, "get_request_github_access_token", new=AsyncMock(return_value="fixture"))
+            )
             stack.enter_context(patch.object(main, "_get_gemini_audit_api_key", return_value="fixture"))
             stack.enter_context(patch.object(main.github_diffs, "get_repository_state", new=AsyncMock(return_value=state)))
             stack.enter_context(patch.object(main.github_diffs.GitHubReader, "commit", new=AsyncMock(return_value={"sha": HEAD})))

@@ -1,6 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import {
+  deleteGitHubConnection,
+  getGitHubConnectionToken,
+  GitHubConnectionStorageError,
+} from '@/lib/github-connection';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -8,7 +13,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const GITHUB_API_BASE_URL = 'https://api.github.com';
-const GITHUB_PROVIDER_TOKEN_HEADER = 'x-github-provider-token';
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_REPOSITORY_PAGES = 100;
 const NO_STORE_HEADERS = {
@@ -167,7 +171,7 @@ async function removeMissingPendingImports(userId: string, repositories: GitHubR
   return stalePendingImportIds.length;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const supabase = await createSupabaseServerClient();
     const {
@@ -179,12 +183,21 @@ export async function GET(request: NextRequest) {
       return jsonError('Unauthorized', 401);
     }
 
-    const providerToken = request.headers.get(GITHUB_PROVIDER_TOKEN_HEADER)?.trim();
+    const providerToken = await getGitHubConnectionToken(user.id);
     if (!providerToken) {
-      return jsonError('GitHub connection token is missing. Reconnect GitHub and try again.', 400);
+      return jsonError('Your GitHub connection has expired. Reconnect GitHub and try again.', 401);
     }
 
-    const repositories = await fetchLiveGitHubRepositories(providerToken);
+    let repositories: GitHubRepository[];
+    try {
+      repositories = await fetchLiveGitHubRepositories(providerToken);
+    } catch (error) {
+      if (error instanceof RouteError && error.status === 403) {
+        await deleteGitHubConnection(user.id);
+        return jsonError(error.message, 401);
+      }
+      throw error;
+    }
     let removed = 0;
 
     try {
@@ -203,6 +216,11 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     if (error instanceof RouteError) {
       return jsonError(error.message, error.status);
+    }
+
+    if (error instanceof GitHubConnectionStorageError) {
+      console.error('Unable to resolve GitHub connection:', error);
+      return jsonError('GitHub connection storage is unavailable.', 502);
     }
 
     console.error('Unable to synchronize GitHub repositories:', error);

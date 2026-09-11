@@ -11,7 +11,6 @@ import {
 
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
-const GITHUB_LINK_INTENT_KEY = 'intent_to_link_github';
 
 function getMetadataText(
   metadata: Record<string, unknown> | null | undefined,
@@ -104,12 +103,30 @@ export default function GitHubAppSetupPage() {
           throw profileUpdateError;
         }
 
+        const providerToken = authResult.data.session?.provider_token?.trim();
+        if (!providerToken) {
+          throw new Error('GitHub OAuth completed without an access token. Please reconnect GitHub.');
+        }
+
+        const connectionResponse = await fetch('/api/github/connection', {
+          method: 'POST',
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerToken }),
+        });
+        if (!connectionResponse.ok) {
+          const payload = (await connectionResponse.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(payload?.error ?? 'Unable to save the GitHub connection.');
+        }
+
         if (!isActive) {
           return;
         }
 
         window.history.replaceState({}, document.title, '/profile/setup-app');
-        sessionStorage.removeItem(GITHUB_LINK_INTENT_KEY);
         localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
         window.location.href = GITHUB_APP_INSTALLATION_URL;
       } catch (error) {

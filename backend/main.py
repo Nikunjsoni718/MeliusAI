@@ -25,6 +25,7 @@ from uuid import UUID
 import httpx
 import pypdf
 from pptx import Presentation
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -630,10 +631,12 @@ def get_supabase_spectate_client():
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 GITHUB_API_VERSION = "2026-03-10"
-GITHUB_PROVIDER_TOKEN_HEADER = "x-github-provider-token"
 GITHUB_STORAGE_BUCKET = "vault"
 GITHUB_WORKSPACE_ASSETS_TABLE = "projects"
 MAX_GITHUB_FILE_BYTES = 5 * 1024 * 1024
+GITHUB_CONNECTION_ENCRYPTION_KEY_ENV = "GITHUB_CONNECTION_ENCRYPTION_KEY"
+GITHUB_CONNECTION_CIPHER_VERSION = "v1"
+GITHUB_CONNECTION_CIPHER_AAD_PREFIX = "meliusai:github-connection:"
 
 TRACKABLE_GITHUB_ASSET_EXTENSIONS = {
     ".c",
@@ -934,11 +937,99 @@ def _get_github_access_token() -> str | None:
     return None
 
 
-def get_request_github_access_token(request: Request) -> str | None:
-    """Prefer the authenticated caller's transient GitHub credential over server fallbacks."""
-    provider_token = request.headers.get(GITHUB_PROVIDER_TOKEN_HEADER)
-    if provider_token and provider_token.strip():
-        return provider_token.strip()
+def _decode_github_connection_key() -> bytes:
+    configured_key = os.getenv(GITHUB_CONNECTION_ENCRYPTION_KEY_ENV)
+    if not configured_key or not configured_key.strip():
+        raise RuntimeError(f"{GITHUB_CONNECTION_ENCRYPTION_KEY_ENV} is not configured.")
+
+    normalized_key = configured_key.strip()
+    try:
+        key = (
+            bytes.fromhex(normalized_key)
+            if re.fullmatch(r"[0-9a-fA-F]{64}", normalized_key)
+            else base64.b64decode(normalized_key, validate=True)
+        )
+    except (ValueError, base64.binascii.Error) as error:
+        raise RuntimeError(
+            f"{GITHUB_CONNECTION_ENCRYPTION_KEY_ENV} must be a base64-encoded or hexadecimal 32-byte key."
+        ) from error
+
+    if len(key) != 32:
+        raise RuntimeError(
+            f"{GITHUB_CONNECTION_ENCRYPTION_KEY_ENV} must be a base64-encoded or hexadecimal 32-byte key."
+        )
+
+    return key
+
+
+def _decode_github_connection_segment(value: str) -> bytes:
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, base64.binascii.Error) as error:
+        raise RuntimeError("Stored GitHub connection ciphertext is invalid.") from error
+
+
+def decrypt_github_connection_token(user_id: str, ciphertext: str) -> str:
+    segments = ciphertext.split(".")
+    if len(segments) != 4 or segments[0] != GITHUB_CONNECTION_CIPHER_VERSION:
+        raise RuntimeError("Stored GitHub connection ciphertext is invalid.")
+
+    _, encoded_iv, encoded_tag, encoded_ciphertext = segments
+    try:
+        iv = _decode_github_connection_segment(encoded_iv)
+        tag = _decode_github_connection_segment(encoded_tag)
+        encrypted_token = _decode_github_connection_segment(encoded_ciphertext)
+        token = AESGCM(_decode_github_connection_key()).decrypt(
+            iv,
+            encrypted_token + tag,
+            f"{GITHUB_CONNECTION_CIPHER_AAD_PREFIX}{user_id}".encode("utf-8"),
+        ).decode("utf-8")
+    except (RuntimeError, ValueError, UnicodeDecodeError) as error:
+        if isinstance(error, RuntimeError):
+            raise
+        raise RuntimeError("Stored GitHub connection could not be decrypted.") from error
+
+    if not token.strip():
+        raise RuntimeError("Stored GitHub connection token is empty.")
+
+    return token.strip()
+
+
+async def get_persisted_github_connection_token(user_id: str) -> str | None:
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise RuntimeError("Supabase service credentials are required to read GitHub connections.")
+
+    try:
+        response = await asyncio.to_thread(
+            lambda: service_client.table("github_connections")
+            .select("token_ciphertext")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as error:
+        raise RuntimeError("Unable to read the GitHub connection.") from error
+
+    rows = getattr(response, "data", None)
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    ciphertext = rows[0].get("token_ciphertext") if isinstance(rows[0], dict) else None
+    if not isinstance(ciphertext, str) or not ciphertext.strip():
+        raise RuntimeError("Stored GitHub connection ciphertext is invalid.")
+
+    return decrypt_github_connection_token(user_id, ciphertext)
+
+
+async def get_request_github_access_token(request: Request) -> str | None:
+    """Resolve an authenticated user's encrypted GitHub token, never a browser header."""
+    user_id = getattr(request.state, "user_id", None)
+    if isinstance(user_id, str) and user_id.strip():
+        return await get_persisted_github_connection_token(user_id.strip())
+
+    # Webhook and server-only jobs have no browser user context and continue to
+    # use their separately configured automation credential.
     return _get_github_access_token()
 
 
@@ -6922,7 +7013,7 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
                 repository, branch = get_folder_github_context(projects)
             except ValueError as error:
                 raise github_diffs.DiffServiceError("REPOSITORY_BINDING_CONFLICT", str(error)) from error
-        token = get_request_github_access_token(request)
+        token = await get_request_github_access_token(request)
         if not token:
             raise github_diffs.DiffServiceError("GITHUB_AUTH_REQUIRED", "Reconnect GitHub to compare this repository.", 401)
         async with httpx.AsyncClient() as http_client:

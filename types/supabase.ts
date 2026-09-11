@@ -175,6 +175,13 @@ export type PendingImportRow = {
   updated_at: string;
 };
 
+export type GitHubConnectionRow = {
+  user_id: string;
+  token_ciphertext: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type JobRow = {
   id: string;
   company_name: string;
@@ -240,6 +247,13 @@ export interface Database {
         Update: Partial<
           Omit<PendingImportRow, 'id' | 'user_id' | 'provider' | 'provider_repository_id' | 'created_at' | 'updated_at'>
         >;
+        Relationships: [];
+      };
+      github_connections: {
+        Row: GitHubConnectionRow;
+        Insert: Pick<GitHubConnectionRow, 'user_id' | 'token_ciphertext'> &
+          Partial<Pick<GitHubConnectionRow, 'created_at' | 'updated_at'>>;
+        Update: Partial<Pick<GitHubConnectionRow, 'token_ciphertext' | 'updated_at'>>;
         Relationships: [];
       };
       jobs: {
