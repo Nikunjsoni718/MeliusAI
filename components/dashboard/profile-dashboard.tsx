@@ -5341,23 +5341,108 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
   }
 
-  function showNewlyAddedProjects(nextProjects: NewlyAddedProject[]) {
-    const [firstProject, ...queuedProjects] = nextProjects;
-    if (!firstProject) {
+  const showNewlyAddedProjects = useCallback((nextProjects: NewlyAddedProject[]) => {
+    const unseenProjects = nextProjects.filter((project) => {
+      if (announcedNewProjectIdsRef.current.has(project.id)) {
+        return false;
+      }
+
+      announcedNewProjectIdsRef.current.add(project.id);
+      return true;
+    });
+    if (unseenProjects.length === 0) {
       return;
     }
 
     setNewlyAddedProjectDeleteError(null);
+    if (activeNewlyAddedProjectRef.current) {
+      setNewlyAddedProjectQueue((currentQueue) => [
+        ...currentQueue,
+        ...unseenProjects,
+      ]);
+      return;
+    }
+
+    const [firstProject, ...queuedProjects] = unseenProjects;
+    activeNewlyAddedProjectRef.current = firstProject;
     setNewlyAddedProject(firstProject);
     setNewlyAddedProjectQueue(queuedProjects);
-  }
+  }, []);
 
   function continueNewlyAddedProjectModal() {
     const [nextProject, ...remainingProjects] = newlyAddedProjectQueue;
     setNewlyAddedProjectDeleteError(null);
+    activeNewlyAddedProjectRef.current = nextProject ?? null;
     setNewlyAddedProject(nextProject ?? null);
     setNewlyAddedProjectQueue(remainingProjects);
   }
+
+  useEffect(() => {
+    if (!isOwner || !supabase || !user?.id || !targetUsername) {
+      return;
+    }
+
+    const workspaceInsertChannel = supabase
+      .channel(`github-workspace-inserts-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'project_folders',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const insertedFolder = payload.new as ProjectFolderRow;
+          const folderName =
+            typeof insertedFolder.name === 'string' ? insertedFolder.name.trim() : '';
+          const source =
+            typeof insertedFolder.source === 'string'
+              ? insertedFolder.source.toLowerCase()
+              : null;
+
+          // GitHub sync creates a repository root plus optional nested source
+          // folders. Only the root represents a newly delivered workspace.
+          if (
+            !insertedFolder.id ||
+            insertedFolder.user_id !== user.id ||
+            !folderName ||
+            source !== 'github' ||
+            insertedFolder.parent_id
+          ) {
+            return;
+          }
+
+          const workspace: ProjectFolderWithNestedProjects = {
+            ...insertedFolder,
+            name: folderName,
+            nested_projects: [],
+            assets: [],
+            files: [],
+            file_count: 0,
+          };
+
+          setProjectFolders((currentFolders) => [
+            workspace,
+            ...currentFolders.filter((folder) => folder.id !== workspace.id),
+          ]);
+          setSpectatorRefreshToken((currentToken) => currentToken + 1);
+          showNewlyAddedProjects([
+            {
+              kind: 'folder',
+              id: workspace.id,
+              name: workspace.name,
+              folder: workspace,
+            },
+          ]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(workspaceInsertChannel);
+    };
+  }, [isOwner, showNewlyAddedProjects, supabase, targetUsername, user?.id]);
 
   async function handleConfirmUpload(
     filesToUpload: StagedFile[],
