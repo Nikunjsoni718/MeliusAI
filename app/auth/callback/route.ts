@@ -220,6 +220,15 @@ export async function GET(request: NextRequest) {
       throw new Error('OAuth callback did not return an authenticated user.');
     }
 
+    const isGitHubOAuthCallback = hasGitHubOAuthIdentity(user);
+    const providerToken = authData.session?.provider_token?.trim() || null;
+    if (isGitHubOAuthCallback) {
+      console.log('GitHub OAuth provider token received.', {
+        userId: user.id,
+        received: Boolean(providerToken),
+      });
+    }
+
     const gitHandle =
       getMetadataText(user, 'user_name') ?? getMetadataText(user, 'preferred_username');
     const fullName = getFullName(user);
@@ -295,8 +304,7 @@ export async function GET(request: NextRequest) {
     }
 
     const githubIdentity = getGitHubIdentityDetails(user);
-    const providerToken = authData.session?.provider_token?.trim();
-    if (hasGitHubOAuthIdentity(user)) {
+    if (isGitHubOAuthCallback) {
       if (!providerToken) {
         console.error('GitHub OAuth callback completed without a provider token.', {
           userId: user.id,

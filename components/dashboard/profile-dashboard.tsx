@@ -3160,6 +3160,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           scopes: 'repo read:user user:email',
           redirectTo,
           skipBrowserRedirect: true,
+          queryParams: { prompt: 'consent' },
         },
       });
 
