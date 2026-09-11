@@ -84,6 +84,8 @@ export type ProjectFolderRow = {
   id: string;
   user_id?: string | null;
   name: string;
+  source?: string | null;
+  parent_id?: string | null;
   score?: number | null;
   evaluation_score?: number | null;
   score_delta?: number | null;
