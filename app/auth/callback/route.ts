@@ -124,6 +124,24 @@ function hasGitHubOAuthIdentity(user: User) {
   );
 }
 
+function getSafeNextPath(value: string | null) {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) {
+    return null;
+  }
+
+  try {
+    const baseUrl = 'https://meliusai.internal';
+    const nextUrl = new URL(value, baseUrl);
+    if (nextUrl.origin !== baseUrl) {
+      return null;
+    }
+
+    return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 async function triggerProfileEmbeddingSync({
   accessToken,
   avatarUrl,
@@ -189,13 +207,16 @@ async function triggerProfileEmbeddingSync({
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
+  const nextPath = getSafeNextPath(requestUrl.searchParams.get('next')) ?? '/profile';
 
   if (!hasSupabaseServerEnv()) {
-    return NextResponse.redirect(new URL('/auth/login', requestUrl));
+    console.error('OAuth callback cannot exchange the code because Supabase is not configured.');
+    return NextResponse.redirect(new URL(nextPath, requestUrl));
   }
 
   if (!code) {
-    const missingCodeUrl = new URL('/auth/login', requestUrl);
+    console.error('OAuth callback did not receive an authorization code.');
+    const missingCodeUrl = new URL(nextPath, requestUrl);
     missingCodeUrl.searchParams.set('error', 'missing_oauth_code');
     return NextResponse.redirect(missingCodeUrl);
   }
@@ -381,7 +402,8 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    redirectUrl = new URL(`/profile/${encodeURIComponent(finalUsername)}`, requestUrl);
+    console.log('OAuth callback completed.', { userId: user.id, nextPath });
+    redirectUrl = new URL(nextPath, requestUrl);
   } catch (error) {
     console.error('OAuth callback failed:', error);
     const message =
@@ -391,7 +413,7 @@ export async function GET(request: NextRequest) {
           ? String((error as { message?: unknown }).message)
           : 'oauth_callback_failed';
 
-    redirectUrl = new URL('/auth/login', requestUrl);
+    redirectUrl = new URL(nextPath, requestUrl);
     redirectUrl.searchParams.set('error', message);
   }
 

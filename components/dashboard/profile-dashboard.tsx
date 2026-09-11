@@ -3153,7 +3153,9 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setIsLinkingGitHub(true);
 
     try {
-      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        window.location.pathname
+      )}`;
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
