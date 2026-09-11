@@ -3557,22 +3557,44 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       }
 
       const localFolderProjects = allProjects.filter((project) => project.folder_id === activeFolderId);
-      if (localFolderProjects.length > 0) {
-        return localFolderProjects;
-      }
-
-      return activeFolder
+      const nestedFolderProjects = activeFolder
         ? getFolderNestedProjects(activeFolder as ProjectFolderWithNestedProjects).map(mapProjectRowToProjectItem)
         : [];
+      const projectsById = new Map(nestedFolderProjects.map((project) => [project.id, project]));
+
+      // Prefer the locally hydrated project row when the same file is present in
+      // both collections, while retaining folder-only files from the profile payload.
+      localFolderProjects.forEach((project) => projectsById.set(project.id, project));
+
+      return Array.from(projectsById.values());
     },
     [activeFolder, activeFolderId, allProjects]
   );
   const activeFolderProfileAssets = useMemo(
-    () =>
-      activeFolderId
-        ? sortedProfileAssets.filter((project) => project.folder_id === activeFolderId)
-        : [],
-    [activeFolderId, sortedProfileAssets]
+    () => {
+      if (!activeFolderId) {
+        return [];
+      }
+
+      const nestedFolderAssets = activeFolder
+        ? getFolderNestedProjects(activeFolder as ProjectFolderWithNestedProjects)
+        : [];
+      const profileFolderAssets = sortedProfileAssets.filter(
+        (project) => project.folder_id === activeFolderId
+      );
+      const assetsById = new Map(nestedFolderAssets.map((project) => [project.id, project]));
+
+      // The profile asset list carries the freshest persisted row when it overlaps
+      // with the nested folder payload.
+      profileFolderAssets.forEach((project) => assetsById.set(project.id, project));
+
+      return Array.from(assetsById.values()).sort((left, right) => {
+        const rightDate = right.created_at ? new Date(right.created_at).getTime() : 0;
+        const leftDate = left.created_at ? new Date(left.created_at).getTime() : 0;
+        return rightDate - leftDate;
+      });
+    },
+    [activeFolder, activeFolderId, sortedProfileAssets]
   );
   const rootWorkItems = useMemo<WorkAssetGridItem[]>(
     () =>
@@ -4934,8 +4956,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const previewFileName = getProjectDownloadHref(asset)
         ? asset.title
         : `${asset.title || 'Audit Report'}.txt`;
+      const isTopLevelProject = allProjects.some((project) => project.id === asset.id);
 
-      setActivePreviewProjectOverride(null);
+      // Workspace-only files can be supplied by folder.nested_projects without
+      // appearing in allProjects. Keep the clicked file as the modal source so
+      // its code URL and audit fields remain available to the shared preview.
+      setActivePreviewProjectOverride(isTopLevelProject ? null : asset);
       setActivePreviewProjectId(asset.id);
       setActivePreviewName(previewFileName);
       setActivePreviewUrl(previewUrl);
