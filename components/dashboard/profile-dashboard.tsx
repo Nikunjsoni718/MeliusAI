@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -6944,13 +6944,16 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               aria-modal="true"
               aria-labelledby="newly-added-project-title"
             >
-              <div className="w-full max-w-md rounded-2xl border border-cyan-400/20 bg-[#0b1120] p-6 shadow-2xl shadow-black/50 sm:p-8">
+              <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 p-8 shadow-[0_0_40px_rgba(0,180,255,0.1)]">
                 <div className="text-center">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
-                    Project added
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-400/10 text-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.18)]">
+                    <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
+                  </div>
+                  <p className="mb-3 mt-5 text-xs font-semibold uppercase tracking-widest text-cyan-400">
+                    PROJECT ADDED
                   </p>
-                  <h2 id="newly-added-project-title" className="mt-3 text-xl font-semibold text-white">
-                    Your new project {newlyAddedProject.name} have been added
+                  <h2 id="newly-added-project-title" className="text-lg font-medium leading-relaxed text-white">
+                    Your new project {newlyAddedProject.name} has been successfully added.
                   </h2>
                 </div>
 
@@ -6960,12 +6963,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   </p>
                 ) : null}
 
-                <div className="relative mt-8 flex min-h-10 items-center justify-center">
+                <div className="mt-8 flex flex-col-reverse justify-center gap-4 sm:flex-row">
                   <Button
                     type="button"
                     disabled={isDeletingNewlyAddedProject}
                     onClick={() => void handleDeleteNewlyAddedProject()}
-                    className="absolute left-0 bg-rose-600 text-white hover:bg-rose-500 disabled:bg-rose-900"
+                    className="border border-gray-700 bg-transparent px-6 py-2 text-gray-400 transition-all hover:border-red-900 hover:bg-red-950/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isDeletingNewlyAddedProject ? 'Deleting…' : 'Delete the project'}
                   </Button>
@@ -6973,7 +6976,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     type="button"
                     disabled={isDeletingNewlyAddedProject}
                     onClick={continueNewlyAddedProjectModal}
-                    className="bg-blue-600 text-white hover:bg-blue-500"
+                    className="rounded-md bg-blue-600 px-6 py-2 text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Continue
                   </Button>
