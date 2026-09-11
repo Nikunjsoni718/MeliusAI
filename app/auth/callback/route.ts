@@ -110,6 +110,20 @@ function getGitHubIdentityDetails(user: User) {
   };
 }
 
+function hasGitHubOAuthIdentity(user: User) {
+  if (user.identities?.some((identity) => identity.provider === 'github')) {
+    return true;
+  }
+
+  const providers = user.app_metadata?.providers;
+  return (
+    Array.isArray(providers) &&
+    providers.some(
+      (provider) => typeof provider === 'string' && provider.toLowerCase() === 'github'
+    )
+  );
+}
+
 async function triggerProfileEmbeddingSync({
   accessToken,
   avatarUrl,
@@ -282,11 +296,27 @@ export async function GET(request: NextRequest) {
 
     const githubIdentity = getGitHubIdentityDetails(user);
     const providerToken = authData.session?.provider_token?.trim();
-    if (githubIdentity.userId && providerToken) {
-      await withOAuthCallbackTimeout(
-        upsertGitHubConnection(user.id, providerToken),
-        'GitHub connection storage'
-      );
+    if (hasGitHubOAuthIdentity(user)) {
+      if (!providerToken) {
+        console.error('GitHub OAuth callback completed without a provider token.', {
+          userId: user.id,
+        });
+        throw new Error('GitHub OAuth did not return an access token. Please reconnect GitHub.');
+      }
+
+      try {
+        await withOAuthCallbackTimeout(
+          upsertGitHubConnection(user.id, providerToken),
+          'GitHub connection storage'
+        );
+        console.info('GitHub OAuth connection saved.', { userId: user.id });
+      } catch (error) {
+        console.error('GitHub OAuth connection could not be saved.', {
+          userId: user.id,
+          error,
+        });
+        throw error;
+      }
     }
 
     if (githubIdentity.userId) {
