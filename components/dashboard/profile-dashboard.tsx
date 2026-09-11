@@ -2997,7 +2997,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, [activeAuthUser, setProfile, supabase, syncGitHubUsernameToProfile, user]);
 
   useEffect(() => {
-    const controller = new AbortController();
     let isActive = true;
 
     const loadPersistedGitHubConnection = async () => {
@@ -3005,7 +3004,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         const response = await fetch('/api/github/connection', {
           cache: 'no-store',
           credentials: 'include',
-          signal: controller.signal,
         });
         const payload = (await response.json().catch(() => null)) as {
           connected?: unknown;
@@ -3022,7 +3020,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           setIsLinkingGitHub(false);
         }
       } catch (error) {
-        if (!isActive || (error instanceof DOMException && error.name === 'AbortError')) {
+        // React Strict Mode and OAuth navigation can tear down a render while
+        // this no-store request is still in flight. Let it finish rather than
+        // canceling the shared connection-status request; ignore any abort
+        // reported by the browser without changing the connected state.
+        if (
+          !isActive ||
+          (error instanceof DOMException && error.name === 'AbortError')
+        ) {
           return;
         }
         console.warn('Unable to hydrate GitHub connection status:', error);
@@ -3038,7 +3043,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       isActive = false;
-      controller.abort();
     };
   }, [user?.id]);
 
