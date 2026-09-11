@@ -172,7 +172,6 @@ type StagedFile = {
   githubRepository?: string;
   githubRef?: string;
   githubCommitSha?: string;
-  selected: boolean;
 };
 
 type GitHubRepository = {
@@ -338,20 +337,6 @@ function getGitHubDescendantFilePaths(node: GitHubTreeNode): string[] {
   }
 
   return node.children.flatMap(getGitHubDescendantFilePaths);
-}
-
-function getStagedFileKey(file: StagedFile) {
-  return `${file.githubRepository ?? 'local'}:${file.path}`;
-}
-
-function getStagedFileGroupKey(file: StagedFile, fallbackFolderName: string) {
-  const directory = file.path.substring(0, file.path.lastIndexOf('/'));
-
-  if (file.githubRepository) {
-    return directory ? `${file.githubRepository}/${directory}` : file.githubRepository;
-  }
-
-  return directory || fallbackFolderName;
 }
 
 function normalizeAuditScore(rawScore: number | string | null | undefined) {
@@ -2773,9 +2758,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
-  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
-  const [stagingFolderName, setStagingFolderName] = useState<string>('');
-  const [isStagingModalOpen, setIsStagingModalOpen] = useState(false);
   const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
   const [isFetchingGithub, setIsFetchingGithub] = useState(false);
   const [isPreparingGithubImport, setIsPreparingGithubImport] = useState(false);
@@ -5279,7 +5261,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               githubRepository: repository.full_name.toLowerCase(),
               githubRef: repository.default_branch,
               githubCommitSha: githubRepositoryTrees[repository.full_name]?.commitSha,
-              selected: true,
             } satisfies StagedFile;
           })
         );
@@ -5297,10 +5278,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             )
           : null;
 
-      setStagedFiles(parsedFiles);
-      setStagingFolderName(onlyRepository?.name ?? 'GitHub repositories');
-      setIsGithubModalOpen(false);
-      setIsStagingModalOpen(true);
+      const importSucceeded = await handleConfirmUpload(
+        parsedFiles,
+        onlyRepository?.name ?? 'GitHub repositories'
+      );
+      if (importSucceeded) {
+        setIsGithubModalOpen(false);
+      }
     } catch (error) {
       console.error('GitHub file staging error:', error);
       alert(
@@ -5323,8 +5307,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
     const firstFilePath = getRelativePath(files[0]);
     const folderName = firstFilePath.split('/')[0] || 'New Project Folder';
-    setStagingFolderName(folderName);
-
     const parsedFiles: StagedFile[] = [];
     const ignoreList = ['node_modules', '.git', '.next', 'venv', 'dist', 'build'];
 
@@ -5343,13 +5325,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           content,
           sourceFile: file,
           contentType: file.type || undefined,
-          selected: true,
         });
       }
 
-      setStagedFiles(parsedFiles);
       setIsIngestionModalOpen(false);
-      setIsStagingModalOpen(true);
+      await handleConfirmUpload(parsedFiles, folderName);
     } catch (error) {
       alert(`Staging Failed: ${error instanceof Error ? error.message : 'Unable to read selected folder files.'}`);
     } finally {
@@ -5377,24 +5357,25 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     setNewlyAddedProjectQueue(remainingProjects);
   }
 
-  async function handleConfirmUpload() {
+  async function handleConfirmUpload(
+    filesToUpload: StagedFile[],
+    fallbackFolderName: string
+  ): Promise<boolean> {
     if (isUploading) {
-      return;
+      return false;
     }
 
     if (!user || !user.id) {
       alert('User session missing.');
-      return;
+      return false;
     }
 
     if (!supabase) {
       alert('Upload Failed: Vault sync is not ready.');
-      return;
+      return false;
     }
 
-    const safeFilesToUpload = stagedFiles.filter((file) => {
-      if (!file.selected) return false;
-
+    const safeFilesToUpload = filesToUpload.filter((file) => {
       const fileName = file.name.split('/').pop()?.toLowerCase() || "";
 
       const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) => fileName.endsWith(extension));
@@ -5405,7 +5386,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     if (safeFilesToUpload.length === 0) {
       alert("No valid code files selected to upload.");
-      return;
+      return false;
     }
 
     try {
@@ -5426,7 +5407,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           const folderName =
             matchingRepository?.name ??
             githubRepository?.split('/').pop() ??
-            stagingFolderName;
+            fallbackFolderName;
           const { data: folderData, error: folderError } = await supabase
             .from('project_folders')
             .insert({
@@ -5568,8 +5549,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         setHasImportedGitHubRepository(true);
       }
 
-      setIsStagingModalOpen(false);
-      setStagedFiles([]);
       setSelectedGithubFiles({});
       setExpandedGithubFolders({});
 
@@ -5592,7 +5571,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         ),
       ]);
       setActiveFolderId(savedFolders[0]?.id ?? null);
-      setStagingFolderName('');
       setProjectDescription('');
       if (savedProjects[0]?.id) {
         advanceProductTour(8, 9, savedProjects[0].id);
@@ -5605,10 +5583,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           folder,
         }))
       );
+      return true;
     } catch (error: any) {
       console.error("Upload Error:", error);
       alert(`Upload failed: ${error.message}`);
       resumeProductTour(8);
+      return false;
     } finally {
       setIsUploading(false);
     }
@@ -6813,24 +6793,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setIsDeletingNewlyAddedProject(false);
     }
   }
-
-  // Group files by their immediate parent directory path
-  const groupedFiles = stagedFiles.reduce((acc, file) => {
-    const groupKey = getStagedFileGroupKey(file, stagingFolderName);
-    if (!acc[groupKey]) acc[groupKey] = [];
-    acc[groupKey].push(file);
-    return acc;
-  }, {} as Record<string, typeof stagedFiles>);
-
-  const toggleFolderSelection = (groupKey: string, isSelected: boolean) => {
-    setStagedFiles((prev) =>
-      prev.map((file) =>
-        getStagedFileGroupKey(file, stagingFolderName) === groupKey
-          ? { ...file, selected: isSelected }
-          : file
-      )
-    );
-  };
 
   const selectedGitHubFileCount = Object.values(selectedGithubFiles).reduce(
     (total, paths) => total + paths.length,
@@ -8253,6 +8215,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                       setIsGithubModalOpen(false);
                       resumeProductTour(8);
                     }}
+                    disabled={isPreparingGithubImport || isUploading}
                     className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-400 hover:text-white"
                     type="button"
                   >
@@ -8263,14 +8226,15 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     disabled={
                       selectedGitHubFileCount === 0 ||
                       isFetchingGithub ||
-                      isPreparingGithubImport
+                      isPreparingGithubImport ||
+                      isUploading
                     }
                     className="rounded-lg bg-cyan-400 px-5 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                     type="button"
                   >
                     {isPreparingGithubImport
-                      ? 'Downloading selected files…'
-                      : `Review ${selectedGitHubFileCount} selected file${
+                      ? 'Importing selected files…'
+                      : `Import ${selectedGitHubFileCount} selected file${
                           selectedGitHubFileCount === 1 ? '' : 's'
                         }`}
                   </button>
@@ -8279,108 +8243,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
           )}
 
-          {isStagingModalOpen && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ background: '#0b1120', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', border: '1px solid #00d2ff' }}>
-                <h2 style={{ color: '#fff', marginTop: 0 }}>Review Files ({stagedFiles.filter((file) => file.selected).length} selected)</h2>
-                <p style={{ color: '#8892b0' }}>Uncheck files you don&apos;t want to audit.</p>
-
-                <div className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-slate-700/80 bg-slate-950/70 px-4 py-3">
-                  <div>
-                    <p className="m-0 text-sm font-semibold text-slate-100">Make scorecard public</p>
-                    <p className="mb-0 mt-1 text-xs text-slate-500">Show these uploaded assets on your public profile.</p>
-                  </div>
-                  <Switch
-                    id="staging-scorecard-public-toggle"
-                    checked={isScorecardPublic}
-                    onCheckedChange={setIsScorecardPublic}
-                    aria-label="Make uploaded scorecards public"
-                  />
-                </div>
-
-                <div style={{ flexGrow: 1, overflowY: 'auto', margin: '20px 0', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '15px 0' }}>
-                  {Object.entries(groupedFiles).map(([dirPath, filesInDir]) => {
-                    const allSelected = filesInDir.every((file) => file.selected);
-                    const someSelected = filesInDir.some((file) => file.selected);
-
-                    return (
-                      <details key={dirPath} open style={{ marginBottom: '15px', paddingLeft: '5px' }}>
-                        <summary
-                          style={{
-                            cursor: 'pointer',
-                            color: '#e2e8f0',
-                            fontWeight: '500',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '12px',
-                            listStyle: 'none',
-                            padding: '8px 0',
-                            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            ref={(el) => {
-                              if (el) el.indeterminate = someSelected && !allSelected;
-                            }}
-                            onChange={(event) => toggleFolderSelection(dirPath, event.target.checked)}
-                            onClick={(event) => event.stopPropagation()}
-                            style={{ accentColor: '#00d2ff', width: '16px', height: '16px', cursor: 'pointer' }}
-                          />
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8892b0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                          </svg>
-                          <span style={{ flexGrow: 1, letterSpacing: '0.3px' }}>{dirPath}</span>
-                          <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 'normal', background: 'rgba(255, 255, 255, 0.05)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                            {filesInDir.length} files
-                          </span>
-                        </summary>
-
-                        <div style={{ paddingLeft: '32px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {filesInDir.map((file) => (
-                            <label key={getStagedFileKey(file)} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: '#94a3b8', padding: '4px 0' }}>
-                              <input
-                                type="checkbox"
-                                checked={file.selected}
-                                onChange={() => {
-                                  setStagedFiles((prev) =>
-                                    prev.map((previousFile) =>
-                                      getStagedFileKey(previousFile) === getStagedFileKey(file)
-                                        ? { ...previousFile, selected: !previousFile.selected }
-                                        : previousFile
-                                    )
-                                  );
-                                }}
-                                style={{ accentColor: '#00d2ff', width: '14px', height: '14px', cursor: 'pointer' }}
-                              />
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
-                                <polyline points="13 2 13 9 20 9"></polyline>
-                              </svg>
-                              <span style={{ fontSize: '13px', letterSpacing: '0.2px' }}>{file.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </details>
-                    );
-                  })}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
-                  <button onClick={() => { setIsStagingModalOpen(false); resumeProductTour(8); }} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid #8892b0', color: '#8892b0', borderRadius: '6px', cursor: 'pointer' }} type="button">Cancel</button>
-                  <button
-                    onClick={() => void handleConfirmUpload()}
-                    disabled={isUploading}
-                    style={{ padding: '10px 20px', background: '#00d2ff', border: 'none', color: '#000', fontWeight: 'bold', borderRadius: '6px', cursor: isUploading ? 'not-allowed' : 'pointer', opacity: isUploading ? 0.5 : 1 }}
-                    type="button"
-                  >
-                    {isUploading ? "Uploading..." : "Confirm & Upload"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
     </div>
   );
 }
