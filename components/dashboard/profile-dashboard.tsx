@@ -6968,7 +6968,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     type="button"
                     disabled={isDeletingNewlyAddedProject}
                     onClick={() => void handleDeleteNewlyAddedProject()}
-                    className="border border-gray-700 bg-transparent px-6 py-2 text-gray-400 transition-all hover:border-red-900 hover:bg-red-950/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="border border-gray-700 bg-transparent px-6 py-2 text-gray-300 transition-all hover:border-red-900 hover:bg-red-950/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isDeletingNewlyAddedProject ? 'Deleting…' : 'Delete the project'}
                   </Button>
