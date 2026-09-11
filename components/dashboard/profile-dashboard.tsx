@@ -3370,7 +3370,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     let isActive = true;
-    const controller = new AbortController();
 
     const loadPublicProfile = async () => {
       try {
@@ -3379,7 +3378,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           // the session arrives later, this effect revalidates without hiding
           // the already-painted profile.
           accessToken: session?.access_token ?? null,
-          signal: controller.signal,
         });
         const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
 
@@ -3399,7 +3397,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           });
         }
       } catch (error) {
-        if (isActive && !(error instanceof DOMException && error.name === 'AbortError')) {
+        // Do not surface browser aborts from navigation; an active request is
+        // intentionally allowed to finish across Strict Mode rerenders.
+        const isAbortError =
+          error instanceof Error && error.name === 'AbortError';
+        if (isActive && !isAbortError) {
           setSpectatorProfileError(
             error instanceof Error ? error : new Error('Unable to load this public profile.')
           );
@@ -3415,7 +3417,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     return () => {
       isActive = false;
-      controller.abort();
     };
   }, [session?.access_token, spectatorRefreshToken, targetUsername]);
 
