@@ -123,6 +123,7 @@ export type AuditPreviewAsset = PreviewProject & {
 type AssetPreviewModalProps = {
   asset: AuditPreviewAsset | null;
   canVerify?: boolean;
+  hideAudit?: boolean;
   isReAuditing?: boolean;
   onReAudit?: () => void;
   onAuditCommitted?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
@@ -384,6 +385,7 @@ function MetricList({
 export function AssetPreviewModal({
   asset,
   canVerify = true,
+  hideAudit = false,
   isReAuditing = false,
   onReAudit,
   onAuditCommitted,
@@ -435,7 +437,9 @@ export function AssetPreviewModal({
     [activePreviewUrl, previewName]
   );
   const extension = getPreviewExtension(activePreviewUrl, previewName, liveProject);
-  const shouldRenderTextPreview = shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject);
+  const isCodeOnlyWorkspaceFile = hideAudit && !isFolder;
+  const shouldRenderTextPreview =
+    isCodeOnlyWorkspaceFile || shouldForceUtf8CodeRead(activePreviewUrl, previewName, liveProject);
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
@@ -762,7 +766,7 @@ export function AssetPreviewModal({
         }`}
       >
         <div className="sticky top-0 z-30 flex justify-end gap-2 border-b border-slate-900/70 bg-slate-950/90 p-3 backdrop-blur">
-          {!isFolder ? (
+          {!isFolder && !isCodeOnlyWorkspaceFile ? (
             <button
               type="button"
               onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
@@ -790,7 +794,7 @@ export function AssetPreviewModal({
         {!isFolder && viewerSrc && activePreviewUrl ? (
         <div
           className={`w-full ${
-            isExpandedViewer
+            isExpandedViewer || isCodeOnlyWorkspaceFile
               ? 'h-[75vh] md:h-[80vh] rounded-xl'
               : 'aspect-video md:h-[45vh] rounded-t-xl border-b border-slate-800'
           } bg-black relative overflow-hidden transition-all duration-300`}
@@ -837,7 +841,7 @@ export function AssetPreviewModal({
         </div>
         ) : null}
 
-        {!isExpandedViewer && (
+        {!isExpandedViewer && !isCodeOnlyWorkspaceFile && (
         <div
           id={AUDIT_CAPTURE_TARGET_ID}
           ref={auditCaptureRef}

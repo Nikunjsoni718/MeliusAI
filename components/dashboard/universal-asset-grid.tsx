@@ -34,6 +34,7 @@ type UniversalAssetGridProps = {
   folders?: ProjectFolderRow[];
   gridClassName?: string;
   isSpectator?: boolean;
+  isWorkspaceFile?: boolean;
   verifyingFolderIds?: string[];
   verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
@@ -576,6 +577,7 @@ function UniversalPreviewSurface({ project }: { project: ProjectRow }) {
 function UniversalAssetCard({
   project,
   isSpectator,
+  isWorkspaceFile = false,
   deletingAssetId,
   isVisibilityUpdating,
   verifyingAssetId,
@@ -588,6 +590,7 @@ function UniversalAssetCard({
 }: {
   project: ProjectRow;
   isSpectator: boolean;
+  isWorkspaceFile?: boolean;
   deletingAssetId: string | null;
   isVisibilityUpdating: boolean;
   verifyingAssetId: string | null;
@@ -693,7 +696,22 @@ function UniversalAssetCard({
             </div>
           </div>
 
-          {onReadProtocol || (!isSpectator && (onVerify || onReupload)) ? (
+          {isWorkspaceFile ? (
+            <div className="mt-auto flex w-full pt-2">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onPreview(project);
+                }}
+                disabled={!assetUrl}
+                className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                View File
+              </button>
+            </div>
+          ) : onReadProtocol || (!isSpectator && (onVerify || onReupload)) ? (
             <div className="mt-auto flex w-full flex-col gap-2 pt-2">
               {onReadProtocol ? (
                 <button
@@ -791,6 +809,7 @@ export function UniversalAssetGrid({
   folders = [],
   gridClassName,
   isSpectator = false,
+  isWorkspaceFile = false,
   verifyingFolderIds = [],
   verifyingAssetId = null,
   visibilityUpdatingIds = [],
@@ -912,6 +931,9 @@ export function UniversalAssetGrid({
     activePreviewTarget?.kind === 'folder'
       ? foldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ?? null
       : null;
+  const isWorkspaceFilePreview =
+    isWorkspaceFile ||
+    (activePreviewTarget?.kind === 'file' && activeFolderView === 'workspace' && activeFolderItem !== null);
   const activePreviewFile =
     activePreviewTarget?.kind === 'file'
       ? allRenderableAssets.find((project) => project.id === activePreviewTarget.id) ?? null
@@ -1044,6 +1066,7 @@ export function UniversalAssetGrid({
               key={item.asset.id}
               project={item.asset}
               isSpectator={isSpectator}
+              isWorkspaceFile={isWorkspaceFile}
               deletingAssetId={deletingAssetId}
               isVisibilityUpdating={visibilityUpdatingIds.includes(item.asset.id)}
               verifyingAssetId={verifyingAssetId}
@@ -1105,6 +1128,7 @@ export function UniversalAssetGrid({
                       key={asset.id}
                       project={asset}
                       isSpectator={isSpectator}
+                      isWorkspaceFile
                       deletingAssetId={deletingAssetId}
                       isVisibilityUpdating={visibilityUpdatingIds.includes(asset.id)}
                       verifyingAssetId={verifyingAssetId}
@@ -1131,7 +1155,9 @@ export function UniversalAssetGrid({
 
       <AssetPreviewModal
         asset={activePreviewModalAsset}
+        hideAudit={isWorkspaceFilePreview}
         canVerify={
+          !isWorkspaceFilePreview &&
           !isSpectator &&
           (activePreviewModalAsset?.kind === 'folder' ? Boolean(onVerifyFolder) : Boolean(onVerify))
         }

@@ -2456,29 +2456,17 @@ function ProjectPreviewSurface({
 function ProjectCard({
   project,
   isSpectator,
-  verifyingAssetId,
   deletingProjectId,
-  verifiedAssetId,
-  onVerify,
-  handleReUpload,
   onOpen,
   onDelete,
 }: {
   project: ProjectItem;
   isSpectator: boolean;
-  verifyingAssetId: string | null;
   deletingProjectId: string | null;
-  verifiedAssetId: string | null;
-  onVerify: (project: ProjectItem, event?: MouseEvent<HTMLButtonElement>) => void;
-  handleReUpload: (event: ChangeEvent<HTMLInputElement>, project: ProjectItem) => Promise<void>;
   onOpen: (project: ProjectItem) => void;
   onDelete: (projectId: string) => void;
 }) {
-  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
-  const isProjectVerifying = verifyingAssetId === project.id;
   const isProjectDeleting = deletingProjectId === project.id;
-  const isProjectVerified = verifiedAssetId === project.id;
-  const hasCompletedAudit = Boolean(project.has_been_audited);
   const fileExtension = getProjectExtension(project).toUpperCase() || project.file_type || 'Asset';
   const fileName = project.file_name || project.title;
 
@@ -2539,71 +2527,12 @@ function ProjectCard({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-
-                if (!hasCompletedAudit && !isSpectator) {
-                  onVerify(project, event);
-                  return;
-                }
-
                 onOpen(project);
               }}
               className="w-full py-2 px-4 rounded-full bg-[#11162d] border border-slate-800/60 hover:border-slate-700 text-slate-300 hover:text-white font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer"
             >
-              Read Full Audit Protocol
+              View File
             </button>
-
-            {!isSpectator && (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onVerify(project, event);
-                }}
-                disabled={verifyingAssetId !== null || isProjectDeleting}
-                aria-busy={isProjectVerifying}
-                data-tour="project-verify"
-                className={cn(
-                  'w-full py-2 px-4 rounded-full bg-[#070a19] border border-slate-900 hover:bg-[#11162d]/50 disabled:bg-slate-950/20 disabled:text-slate-700 text-slate-400 hover:text-slate-200 font-medium text-[11px] tracking-wide transition-all duration-200 text-center cursor-pointer',
-                  isProjectVerifying && 'animate-pulse border-cyan-500/40 text-cyan-300',
-                  (isProjectVerified || hasCompletedAudit) && !isProjectVerifying && 'border-emerald-500/30 text-emerald-300'
-                )}
-              >
-                {isProjectVerifying
-                  ? 'Auditing via GPT Engine...'
-                  : hasCompletedAudit || isProjectVerified
-                    ? 'AI Audit Completed'
-                    : 'Verify with MeliusAI'}
-              </button>
-            )}
-
-            {!isSpectator && hasCompletedAudit ? (
-              <>
-                <input
-                  ref={reuploadInputRef}
-                  type="file"
-                  accept="*/*"
-                  className="sr-only"
-                  aria-label={`Choose a replacement file for ${project.title}`}
-                  onChange={(event) => void handleReUpload(event, project)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    reuploadInputRef.current?.click();
-                  }}
-                  disabled={verifyingAssetId !== null || isProjectDeleting}
-                  className="h-auto w-full rounded-full border-slate-800/80 bg-slate-950/50 px-4 py-2 text-[11px] tracking-wide text-slate-400 shadow-none hover:border-cyan-500/40 hover:bg-cyan-950/20 hover:text-cyan-200 hover:shadow-[0_0_16px_rgba(34,211,238,0.08)]"
-                >
-                  <UploadIcon className="h-3.5 w-3.5" />
-                  Re-upload Asset
-                </Button>
-              </>
-            ) : null}
           </div>
 
           {!isSpectator && (
@@ -7742,6 +7671,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         assets={activeFolderProfileAssets}
                         emptyMessage="This project folder is empty."
                         isSpectator
+                        isWorkspaceFile
                         deletingAssetId={deletingProjectId}
                         verifyingAssetId={verifyingAssetId}
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
@@ -7752,11 +7682,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                           key={project.id}
                           project={project}
                           isSpectator={isSpectating}
-                          verifyingAssetId={verifyingAssetId}
                           deletingProjectId={deletingProjectId}
-                          verifiedAssetId={verifiedAssetId}
-                          onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, false, event)}
-                          handleReUpload={handleReUpload}
                           onOpen={handleOpenProjectPreview}
                           onDelete={(projectId) => void handleDeleteProject(projectId)}
                         />
@@ -8125,6 +8051,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     }
                   : null
               }
+              hideAudit={activeFolderId !== null}
+              canVerify={activeFolderId === null}
               onProjectUpdated={handlePreviewProjectUpdated}
               onAuditCommitted={handlePreviewProjectAuditCommitted}
               onClose={() => {
