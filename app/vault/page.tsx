@@ -992,9 +992,6 @@ function VaultPageContent() {
   });
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
   const [vaultFolders, setVaultFolders] = useState<ProjectFolderRow[]>([]);
-  const [activeVaultFolder, setActiveVaultFolder] = useState<ProjectFolderRow | null>(null);
-  const [folderAssets, setFolderAssets] = useState<ProjectRow[]>([]);
-  const [folderAssetsLoading, setFolderAssetsLoading] = useState(false);
   const [loading, setLoading] = useState(authEnabled);
   const [authLoading, setAuthLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
@@ -1027,8 +1024,6 @@ function VaultPageContent() {
         setLoading(false);
         setVaultAssets([]);
         setVaultFolders([]);
-        setActiveVaultFolder(null);
-        setFolderAssets([]);
         setVaultError('Vault sync is unavailable until Supabase browser credentials are configured.');
       }
       return;
@@ -1076,8 +1071,6 @@ function VaultPageContent() {
           if (!targetUsername) {
             setVaultAssets([]);
             setVaultFolders([]);
-            setActiveVaultFolder(null);
-            setFolderAssets([]);
             setLoading(false);
             router.replace('/auth');
           }
@@ -1096,8 +1089,6 @@ function VaultPageContent() {
           if (!targetUsername) {
             setVaultAssets([]);
             setVaultFolders([]);
-            setActiveVaultFolder(null);
-            setFolderAssets([]);
             setLoading(false);
             setVaultError('Unable to verify your secure session.');
           }
@@ -1122,8 +1113,6 @@ function VaultPageContent() {
       if (!nextViewerId && !targetUsername) {
         setVaultAssets([]);
         setVaultFolders([]);
-        setActiveVaultFolder(null);
-        setFolderAssets([]);
         setLoading(false);
         router.replace('/auth');
       }
@@ -1165,8 +1154,6 @@ function VaultPageContent() {
           });
           setVaultAssets(spectatorAssets);
           setVaultFolders(spectatorFolders);
-          setActiveVaultFolder(null);
-          setFolderAssets([]);
           setDescriptionDrafts(
             Object.fromEntries(
               spectatorAssets.map((asset) => [asset.id, asset.description ?? ''])
@@ -1178,8 +1165,6 @@ function VaultPageContent() {
         if (active) {
           setVaultAssets([]);
           setVaultFolders([]);
-          setActiveVaultFolder(null);
-          setFolderAssets([]);
           setVaultError(error instanceof Error ? error.message : 'Unable to load this public vault.');
         }
       } finally {
@@ -1225,8 +1210,6 @@ function VaultPageContent() {
             setViewerId(null);
             setVaultAssets([]);
             setVaultFolders([]);
-            setActiveVaultFolder(null);
-            setFolderAssets([]);
             setVaultError(null);
             router.replace('/auth');
           }
@@ -1259,8 +1242,6 @@ function VaultPageContent() {
           setVaultError(null);
           setVaultAssets(loadedAssets);
           setVaultFolders(loadedFolders);
-          setActiveVaultFolder(null);
-          setFolderAssets([]);
           setDescriptionDrafts((currentDrafts) =>
             Object.fromEntries(
               loadedAssets.map((asset) => [asset.id, currentDrafts[asset.id] ?? asset.description ?? ''])
@@ -1273,8 +1254,6 @@ function VaultPageContent() {
         if (active) {
           setVaultAssets([]);
           setVaultFolders([]);
-          setActiveVaultFolder(null);
-          setFolderAssets([]);
           setVaultError('Unable to sync vault assets right now.');
         }
       } finally {
@@ -1333,59 +1312,6 @@ function VaultPageContent() {
     };
   }, []);
 
-  async function handleOpenVaultFolder(folder: ProjectFolderRow) {
-    setActiveVaultFolder(folder);
-    setFolderAssets([]);
-    setFolderAssetsLoading(true);
-    setVaultError(null);
-
-    if (!supabase) {
-      setFolderAssetsLoading(false);
-      setVaultError('Vault sync is not ready.');
-      return;
-    }
-
-    try {
-      const ownerId = folder.user_id ?? viewerId;
-      let folderAssetsQuery = supabase
-        .from('projects')
-        .select(VAULT_PROJECT_CARD_SELECT)
-        .eq('folder_id', folder.id)
-        .order('created_at', { ascending: false });
-
-      if (ownerId) {
-        folderAssetsQuery = folderAssetsQuery.eq('user_id', ownerId);
-      }
-
-      const { data, error } = await folderAssetsQuery;
-
-      if (error) {
-        throw error;
-      }
-
-      const loadedFolderAssets = Array.isArray(data) ? (data as ProjectRow[]) : [];
-      setFolderAssets(loadedFolderAssets);
-      setDescriptionDrafts((currentDrafts) => ({
-        ...currentDrafts,
-        ...Object.fromEntries(
-          loadedFolderAssets.map((asset) => [asset.id, currentDrafts[asset.id] ?? asset.description ?? ''])
-        ),
-      }));
-    } catch (error) {
-      console.error('Failed to load vault folder contents', error);
-      setFolderAssets([]);
-      setVaultError(error instanceof Error ? error.message : 'Unable to open this project folder.');
-    } finally {
-      setFolderAssetsLoading(false);
-    }
-  }
-
-  function handleBackToVault() {
-    setActiveVaultFolder(null);
-    setFolderAssets([]);
-    setFolderAssetsLoading(false);
-  }
-
   function handleDescriptionChange(projectId: string, textValue: string) {
     if (!isOwner) {
       return;
@@ -1396,9 +1322,6 @@ function VaultPageContent() {
       [projectId]: textValue,
     }));
     setVaultAssets((currentAssets) =>
-      currentAssets.map((asset) => (asset.id === projectId ? { ...asset, description: textValue } : asset))
-    );
-    setFolderAssets((currentAssets) =>
       currentAssets.map((asset) => (asset.id === projectId ? { ...asset, description: textValue } : asset))
     );
 
@@ -1447,16 +1370,6 @@ function VaultPageContent() {
           : asset
       )
     );
-    setFolderAssets((currentAssets) =>
-      currentAssets.map((asset) =>
-        asset.id === projectId
-          ? {
-              ...asset,
-              is_public: nextVisibilityStatus,
-            }
-          : asset
-      )
-    );
 
     try {
       const { error } = await supabase
@@ -1470,16 +1383,6 @@ function VaultPageContent() {
       }
     } catch (error) {
       setVaultAssets((currentAssets) =>
-        currentAssets.map((asset) =>
-          asset.id === projectId
-            ? {
-                ...asset,
-                is_public: currentVisibilityStatus,
-              }
-            : asset
-        )
-      );
-      setFolderAssets((currentAssets) =>
         currentAssets.map((asset) =>
           asset.id === projectId
             ? {
@@ -1590,16 +1493,6 @@ Return Markdown sections for goods, bads, project description, and a final score
             : asset
         )
       );
-      setFolderAssets((currentAssets) =>
-        currentAssets.map((asset) =>
-          asset.id === project.id
-            ? {
-                ...asset,
-                ...updatePayload,
-              }
-            : asset
-        )
-      );
       setDescriptionDrafts((currentDrafts) => ({
         ...currentDrafts,
         [project.id]: accumulatedReportText,
@@ -1657,7 +1550,6 @@ Return Markdown sections for goods, bads, project description, and a final score
       }
 
       setVaultAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== id));
-      setFolderAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== id));
       setDescriptionDrafts((currentDrafts) => {
         const nextDrafts = { ...currentDrafts };
         delete nextDrafts[id];
@@ -1725,65 +1617,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                   </Card>
                 ))}
               </div>
-            ) : vaultError ? null : activeVaultFolder ? (
-              <div id="nested-folder-view">
-                <div className="folder-header">
-                  <button
-                    id="back-to-vault-btn"
-                    className="btn subtle"
-                    type="button"
-                    onClick={handleBackToVault}
-                  >
-                    ← Back to Vault
-                  </button>
-                  <h2 id="current-folder-title">{activeVaultFolder.name}</h2>
-                </div>
-
-                {folderAssetsLoading ? (
-                  <div id="folder-contents-grid" className="projects-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
-                    {Array.from({ length: 4 }).map((_, index) => (
-                      <Card key={index} className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
-                        <CardContent className="p-0">
-                          <div className="flex h-full flex-col p-5 sm:p-6">
-                            <div className="h-5 w-2/3 animate-pulse rounded-full bg-white/10" />
-                            <div className="mt-5 h-36 animate-pulse rounded-2xl border border-blue-950/50 bg-[#050b1b]/60" />
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <div id="folder-contents-grid" className="projects-grid">
-                    <UniversalAssetGrid
-                      assets={folderAssets}
-                      emptyMessage="This project folder is empty."
-                      isSpectator={!isOwner}
-                      deletingAssetId={deletingAssetId}
-                      verifyingAssetId={verifyingAssetId}
-                      visibilityUpdatingIds={visibilityUpdatingIds}
-                      onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
-                      onToggleVisibility={(projectId, currentVisibilityStatus) =>
-                        void handleToggleVisibility(projectId, currentVisibilityStatus)
-                      }
-                      onDelete={(projectId) => void handleDeleteVaultAsset(projectId)}
-                      onProjectUpdated={(projectId, projectPatch) => {
-                        setFolderAssets((currentAssets) =>
-                          currentAssets.map((asset) =>
-                            asset.id === projectId
-                              ? {
-                                  ...asset,
-                                  ...projectPatch,
-                                }
-                              : asset
-                          )
-                        );
-                        router.refresh();
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            ) : rootVaultItemCount === 0 ? (
+            ) : vaultError ? null : rootVaultItemCount === 0 ? (
               <Card className="w-full border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
                 <CardContent className="p-8">
                   <div className="w-full rounded-2xl border border-dashed border-blue-950/60 py-20 text-center font-mono text-xs text-slate-500">
@@ -1799,7 +1633,6 @@ Return Markdown sections for goods, bads, project description, and a final score
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
                 visibilityUpdatingIds={visibilityUpdatingIds}
-                onFolderOpen={(folder) => void handleOpenVaultFolder(folder)}
                 onVerify={(selectedProject, event) => void handleVerifyWithMeliusAI(selectedProject, event)}
                 onToggleVisibility={(projectId, currentVisibilityStatus) =>
                   void handleToggleVisibility(projectId, currentVisibilityStatus)
@@ -1814,17 +1647,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                             ...projectPatch,
                           }
                         : asset
-                    )
-                  );
-                  setFolderAssets((currentAssets) =>
-                    currentAssets.map((asset) =>
-                      asset.id === projectId
-                        ? {
-                            ...asset,
-                            ...projectPatch,
-                          }
-                        : asset
-                    )
+                      )
                   );
                   router.refresh();
                 }}

@@ -932,8 +932,8 @@ export function UniversalAssetGrid({
       ? foldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ?? null
       : null;
   const isWorkspaceFilePreview =
-    isWorkspaceFile ||
-    (activePreviewTarget?.kind === 'file' && activeFolderView === 'workspace' && activeFolderItem !== null);
+    activePreviewTarget?.kind === 'file' &&
+    (isWorkspaceFile || (activeFolderView === 'workspace' && activeFolderItem !== null));
   const activePreviewFile =
     activePreviewTarget?.kind === 'file'
       ? allRenderableAssets.find((project) => project.id === activePreviewTarget.id) ?? null
