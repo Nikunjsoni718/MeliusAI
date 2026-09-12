@@ -8345,6 +8345,9 @@ async def spectate_profile(
         if not profile_uuid_text:
             raise HTTPException(status_code=404, detail="User not found")
 
+        # Once the profile ID is known, these reads are independent. Keep them
+        # in one gather so the dashboard's root workspaces, standalone assets,
+        # and nested workspace files never wait on one another sequentially.
         folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
             run_spectate_profile_query(
                 lambda: (
