@@ -7813,7 +7813,29 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         visibleValidationStreamItems.map((item) => {
                           const asset = item.type === 'folder' ? item.folder : item.project;
                           const score = getWorkItemAuditScore(item) ?? 0;
-                          const isVerified = score >= 60;
+                          let statusBadge: { label: string; className: string };
+
+                          if (score >= 90) {
+                            statusBadge = {
+                              label: 'Production Ready',
+                              className: 'text-emerald-400 bg-emerald-400/10 border border-emerald-500/20',
+                            };
+                          } else if (score >= 75) {
+                            statusBadge = {
+                              label: 'Solid Build',
+                              className: 'text-cyan-400 bg-cyan-400/10 border border-cyan-500/20',
+                            };
+                          } else if (score >= 60) {
+                            statusBadge = {
+                              label: 'Needs Polish',
+                              className: 'text-amber-400 bg-amber-400/10 border border-amber-500/20',
+                            };
+                          } else {
+                            statusBadge = {
+                              label: 'Action Required',
+                              className: 'text-red-400 bg-red-400/10 border border-red-500/20',
+                            };
+                          }
 
                           return (
                             <button
@@ -7835,13 +7857,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                                   </span>
                                   <span
                                     className={cn(
-                                      'rounded-full border px-2.5 py-1 text-[11px] font-medium',
-                                      isVerified
-                                        ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
-                                        : 'border-orange-400/30 bg-orange-500/10 text-orange-300'
+                                      'rounded-full px-2.5 py-1 text-[11px] font-medium',
+                                      statusBadge.className
                                     )}
                                   >
-                                    {isVerified ? 'Verified' : 'Action Required'}
+                                    {statusBadge.label}
                                   </span>
                                 </div>
                               </div>
