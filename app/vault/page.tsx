@@ -1,12 +1,17 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Suspense, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
+import {
+  UniversalAssetGrid,
+  getUniversalAssetFileType,
+  type AssetGridSortOption,
+} from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Select } from '@/components/ui/select';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -32,6 +37,18 @@ type VaultToastState = {
   id: number;
   message: string;
 };
+
+const ALL_ASSETS_FILTER = 'all';
+const WORKSPACE_FILTER = 'workspace';
+
+const vaultSortOptions: Array<{ label: string; value: AssetGridSortOption }> = [
+  { label: 'Newest First', value: 'newest' },
+  { label: 'Oldest First', value: 'oldest' },
+  { label: 'Alphabetical (A-Z)', value: 'name-asc' },
+  { label: 'Alphabetical (Z-A)', value: 'name-desc' },
+  { label: 'Score: High to Low', value: 'score-desc' },
+  { label: 'Score: Low to High', value: 'score-asc' },
+];
 
 type SpectatorVaultResponse = {
   data?: unknown;
@@ -993,6 +1010,8 @@ function VaultPageContent() {
   });
   const [vaultAssets, setVaultAssets] = useState<ProjectRow[]>([]);
   const [vaultFolders, setVaultFolders] = useState<ProjectFolderRow[]>([]);
+  const [sortOption, setSortOption] = useState<AssetGridSortOption>('newest');
+  const [filterType, setFilterType] = useState(ALL_ASSETS_FILTER);
   const [loading, setLoading] = useState(authEnabled);
   const [authLoading, setAuthLoading] = useState(authEnabled);
   const [viewerId, setViewerId] = useState<string | null>(null);
@@ -1015,6 +1034,27 @@ function VaultPageContent() {
     ? Boolean(!authLoading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
     : Boolean(viewerId);
   const isSpectator = Boolean(targetUsername && !authLoading && !isOwner);
+  const vaultFileTypes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          vaultAssets
+            .filter((asset) => !asset.folder_id)
+            .map((asset) => getUniversalAssetFileType(asset))
+        )
+      ).sort((left, right) => left.localeCompare(right)),
+    [vaultAssets]
+  );
+
+  useEffect(() => {
+    if (
+      filterType !== ALL_ASSETS_FILTER &&
+      filterType !== WORKSPACE_FILTER &&
+      !vaultFileTypes.includes(filterType)
+    ) {
+      setFilterType(ALL_ASSETS_FILTER);
+    }
+  }, [filterType, vaultFileTypes]);
 
   useEffect(() => {
     if (!authEnabled || !supabase) {
@@ -1569,6 +1609,12 @@ Return Markdown sections for goods, bads, project description, and a final score
   }
 
   const rootVaultItemCount = vaultAssets.length + vaultFolders.length;
+  const vaultEmptyMessage =
+    filterType === ALL_ASSETS_FILTER
+      ? 'No verified Vault assets found yet.'
+      : filterType === WORKSPACE_FILTER
+        ? 'No workspaces match this filter.'
+        : `No ${filterType} standalone files match this filter.`;
 
   return (
     <>
@@ -1589,9 +1635,45 @@ Return Markdown sections for goods, bads, project description, and a final score
                 <p className="mt-1 text-sm text-zinc-400">Your private vault for all your projects</p>
               </div>
 
-              <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                Total Assets Committed: {rootVaultItemCount}
-              </Badge>
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:items-end">
+                <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
+                  Total Assets Committed: {rootVaultItemCount}
+                </Badge>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-slate-400 sm:w-48">
+                    <span className="shrink-0">Sort By</span>
+                    <Select
+                      aria-label="Sort Vault assets"
+                      className="h-10 min-w-0 rounded-xl px-3 text-xs"
+                      value={sortOption}
+                      onChange={(event) => setSortOption(event.target.value as AssetGridSortOption)}
+                    >
+                      {vaultSortOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-slate-400 sm:w-44">
+                    <span className="shrink-0">Filter by Type</span>
+                    <Select
+                      aria-label="Filter Vault assets by type"
+                      className="h-10 min-w-0 rounded-xl px-3 text-xs"
+                      value={filterType}
+                      onChange={(event) => setFilterType(event.target.value)}
+                    >
+                      <option value={ALL_ASSETS_FILTER}>All Assets</option>
+                      <option value={WORKSPACE_FILTER}>Workspace</option>
+                      {vaultFileTypes.map((fileType) => (
+                        <option key={fileType} value={fileType}>
+                          {fileType}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                </div>
+              </div>
             </div>
 
             {vaultError ? (
@@ -1630,6 +1712,8 @@ Return Markdown sections for goods, bads, project description, and a final score
               <UniversalAssetGrid
                 assets={vaultAssets}
                 folders={vaultFolders}
+                emptyMessage={vaultEmptyMessage}
+                filterType={filterType}
                 isSpectator={!isOwner}
                 deletingAssetId={deletingAssetId}
                 verifyingAssetId={verifyingAssetId}
@@ -1652,6 +1736,7 @@ Return Markdown sections for goods, bads, project description, and a final score
                   );
                   router.refresh();
                 }}
+                sortOption={sortOption}
               />
             )}
           </section>

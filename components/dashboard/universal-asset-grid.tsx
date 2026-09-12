@@ -35,6 +35,8 @@ type UniversalAssetGridProps = {
   gridClassName?: string;
   isSpectator?: boolean;
   isWorkspaceFile?: boolean;
+  filterType?: string;
+  sortOption?: AssetGridSortOption;
   verifyingFolderIds?: string[];
   verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
@@ -80,6 +82,16 @@ type UniversalGridItem =
   | { type: 'asset'; asset: ProjectRow };
 
 type FolderView = 'workspace';
+export type AssetGridSortOption =
+  | 'newest'
+  | 'oldest'
+  | 'name-asc'
+  | 'name-desc'
+  | 'score-desc'
+  | 'score-asc';
+
+const ALL_ASSETS_FILTER = 'all';
+const WORKSPACE_FILTER = 'workspace';
 type PreviewTarget =
   | {
       asset: ProjectRow;
@@ -251,7 +263,7 @@ export function getUniversalAssetUrl(project: ProjectRow) {
   return project.file_url?.trim() || null;
 }
 
-function getUniversalAssetFileType(project: ProjectRow) {
+export function getUniversalAssetFileType(project: ProjectRow) {
   const extension = getFileExtension(getUniversalAssetName(project));
 
   if (extension) {
@@ -310,6 +322,84 @@ function getFolderScore(folder: ProjectFolderWithFiles, projects: ProjectRow[]) 
   }
 
   return getAverageScore(projects);
+}
+
+function getGridItemName(item: UniversalGridItem) {
+  return item.type === 'folder'
+    ? item.folder.name?.trim() || 'Untitled Folder'
+    : getUniversalAssetName(item.asset);
+}
+
+function getGridItemScore(item: UniversalGridItem) {
+  return item.type === 'folder'
+    ? getFolderScore(item.folder, item.assets)
+    : getAssetScore(item.asset);
+}
+
+function getGridItemCreatedAt(item: UniversalGridItem) {
+  const createdAt = item.type === 'folder' ? item.folder.created_at : item.asset.created_at;
+  const timestamp = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function compareGridItemsByNewest(left: UniversalGridItem, right: UniversalGridItem) {
+  const leftCreatedAt = getGridItemCreatedAt(left);
+  const rightCreatedAt = getGridItemCreatedAt(right);
+
+  if (leftCreatedAt === null && rightCreatedAt !== null) {
+    return 1;
+  }
+  if (leftCreatedAt !== null && rightCreatedAt === null) {
+    return -1;
+  }
+  if (leftCreatedAt !== null && rightCreatedAt !== null && leftCreatedAt !== rightCreatedAt) {
+    return rightCreatedAt - leftCreatedAt;
+  }
+
+  return getGridItemName(left).localeCompare(getGridItemName(right), undefined, { sensitivity: 'base' });
+}
+
+function compareGridItems(left: UniversalGridItem, right: UniversalGridItem, sortOption: AssetGridSortOption) {
+  let comparison = 0;
+
+  if (sortOption === 'newest' || sortOption === 'oldest') {
+    const leftCreatedAt = getGridItemCreatedAt(left);
+    const rightCreatedAt = getGridItemCreatedAt(right);
+
+    if (leftCreatedAt === null && rightCreatedAt !== null) {
+      comparison = 1;
+    } else if (leftCreatedAt !== null && rightCreatedAt === null) {
+      comparison = -1;
+    } else if (leftCreatedAt !== null && rightCreatedAt !== null) {
+      comparison = sortOption === 'newest'
+        ? rightCreatedAt - leftCreatedAt
+        : leftCreatedAt - rightCreatedAt;
+    }
+  } else if (sortOption === 'name-asc' || sortOption === 'name-desc') {
+    comparison = getGridItemName(left).localeCompare(
+      getGridItemName(right),
+      undefined,
+      { sensitivity: 'base' }
+    );
+    if (sortOption === 'name-desc') {
+      comparison *= -1;
+    }
+  } else {
+    const leftScore = getGridItemScore(left);
+    const rightScore = getGridItemScore(right);
+
+    if (leftScore === null && rightScore !== null) {
+      comparison = 1;
+    } else if (leftScore !== null && rightScore === null) {
+      comparison = -1;
+    } else if (leftScore !== null && rightScore !== null) {
+      comparison = sortOption === 'score-desc'
+        ? rightScore - leftScore
+        : leftScore - rightScore;
+    }
+  }
+
+  return comparison || compareGridItemsByNewest(left, right);
 }
 
 function getNestedFolderAssets(folder: ProjectFolderWithFiles) {
@@ -817,6 +907,7 @@ export function UniversalAssetGrid({
   editingFolderId = null,
   emptyMessage = 'No verified Vault assets found yet.',
   folders = [],
+  filterType = ALL_ASSETS_FILTER,
   gridClassName,
   isSpectator = false,
   isWorkspaceFile = false,
@@ -835,6 +926,7 @@ export function UniversalAssetGrid({
   onReupload,
   onToggleVisibility,
   onVerify,
+  sortOption = 'newest',
 }: UniversalAssetGridProps) {
   const [activePreviewTarget, setActivePreviewTarget] = useState<PreviewTarget | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -906,26 +998,37 @@ export function UniversalAssetGrid({
     () => patchedAssets.filter((asset) => !asset.folder_id),
     [patchedAssets]
   );
+  const filteredFoldersWithAssets = useMemo(
+    () =>
+      filterType === ALL_ASSETS_FILTER || filterType === WORKSPACE_FILTER
+        ? foldersWithAssets
+        : [],
+    [filterType, foldersWithAssets]
+  );
+  const filteredRootAssets = useMemo(() => {
+    if (filterType === ALL_ASSETS_FILTER) {
+      return rootAssets;
+    }
+    if (filterType === WORKSPACE_FILTER) {
+      return [];
+    }
+
+    return rootAssets.filter((asset) => getUniversalAssetFileType(asset) === filterType);
+  }, [filterType, rootAssets]);
   const gridItems = useMemo<UniversalGridItem[]>(
     () =>
       [
-        ...foldersWithAssets.map(({ folder, assets: folderAssets }) => ({
+        ...filteredFoldersWithAssets.map(({ folder, assets: folderAssets }) => ({
           type: 'folder' as const,
           folder,
           assets: folderAssets,
         })),
-        ...rootAssets.map((asset) => ({
+        ...filteredRootAssets.map((asset) => ({
           type: 'asset' as const,
           asset,
-        })),
-      ].sort((left, right) => {
-        const leftDate = left.type === 'folder' ? left.folder.created_at : left.asset.created_at;
-        const rightDate = right.type === 'folder' ? right.folder.created_at : right.asset.created_at;
-        const leftTime = leftDate ? new Date(leftDate).getTime() : 0;
-        const rightTime = rightDate ? new Date(rightDate).getTime() : 0;
-        return rightTime - leftTime;
-      }),
-    [foldersWithAssets, rootAssets]
+        }))
+      ].sort((left, right) => compareGridItems(left, right, sortOption)),
+    [filteredFoldersWithAssets, filteredRootAssets, sortOption]
   );
   const activeFolderItem = activeFolderId && activeFolderView
     ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
