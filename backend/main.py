@@ -2509,14 +2509,18 @@ SPECTATE_PROJECT_PUBLIC_SELECT = (
 )
 SPECTATE_PROJECT_FOLDER_SELECT = (
     "id, user_id, name, status, created_at, macro_score, macro_summary, "
-    "executive_summary, pros, cons, recommendations, evaluation_score"
+    "score, evaluation_score, score_delta, delta_summary, executive_summary, pros, cons, recommendations, "
+    "audit_findings, has_been_audited"
 )
 VAULT_PROJECT_CARD_SELECT = (
     "id, user_id, folder_id, name, title, file_type, file_url, file_size, "
     "created_at, score, evaluation_score, score_delta, delta_summary, logic_score, status, has_been_audited, "
     "description, ai_summary, audit_summary, pros, cons, recommendations, audit_findings"
 )
-VAULT_FOLDER_CARD_SELECT = "id, user_id, name, created_at"
+VAULT_FOLDER_CARD_SELECT = (
+    "id, user_id, name, score, evaluation_score, score_delta, delta_summary, executive_summary, "
+    "pros, cons, recommendations, audit_findings, has_been_audited, created_at, updated_at"
+)
 VAULT_PROFILE_SELECT = (
     "id, username, full_name, avatar_url, current_status, avg_project_score"
 )

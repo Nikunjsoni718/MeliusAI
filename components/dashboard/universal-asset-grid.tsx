@@ -956,14 +956,13 @@ export function UniversalAssetGrid({
         ),
         score_delta: activePreviewFolderItem.folder.score_delta ?? null,
         delta_summary: activePreviewFolderItem.folder.delta_summary ?? null,
-        executive_summary:
-          getFolderSummary(activePreviewFolderItem.folder) ||
-          'This workspace does not have an aggregate folder audit yet.',
+        executive_summary: getFolderSummary(activePreviewFolderItem.folder) || null,
         audit_summary: getFolderSummary(activePreviewFolderItem.folder),
         pros: getStringList(activePreviewFolderItem.folder.pros),
         cons: getStringList(activePreviewFolderItem.folder.cons),
         recommendations: getStringList(activePreviewFolderItem.folder.recommendations),
         audit_findings: activePreviewFolderItem.folder.audit_findings ?? null,
+        has_been_audited: activePreviewFolderItem.folder.has_been_audited ?? false,
         previewUrl: null,
       }
     : activePreviewFile

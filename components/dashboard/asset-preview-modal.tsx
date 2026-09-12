@@ -99,6 +99,7 @@ export type PreviewProject = {
   score_delta?: number | null;
   delta_summary?: string | null;
   evaluation_score?: number | null;
+  has_been_audited?: boolean | null;
   logic_score?: number | null;
   previous_score?: number | null;
   last_improved_summary?: string | null;
@@ -448,6 +449,18 @@ export function AssetPreviewModal({
   const pros = normalizedAudit.findings.strengths;
   const cons = normalizedAudit.findings.weaknesses;
   const recommendations = normalizedAudit.findings.recommendations;
+  const hasWorkspaceAuditReport =
+    isFolder &&
+    liveProject?.has_been_audited === true &&
+    Boolean(
+      liveProject.executive_summary?.trim() ||
+        liveProject.audit_summary?.trim() ||
+        liveProject.ai_summary?.trim() ||
+        pros.length > 0 ||
+        cons.length > 0 ||
+        recommendations.length > 0
+    );
+  const isWorkspaceAuditEmptyState = isFolder && !hasWorkspaceAuditReport;
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const verificationInProgress = isVerifying || isReAuditing;
   const executiveSummaryMarkdown =
@@ -881,12 +894,14 @@ export function AssetPreviewModal({
             </section>
           ) : null}
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">Audit Summary</p>
-            <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{executiveSummaryMarkdown}</ReactMarkdown>
+          {!isWorkspaceAuditEmptyState ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">Audit Summary</p>
+              <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{executiveSummaryMarkdown}</ReactMarkdown>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="flex flex-wrap justify-end gap-2" data-image-export-ignore="true">
             <button
@@ -912,7 +927,7 @@ export function AssetPreviewModal({
               Share Score
             </button>
 
-            {canVerify && (!isFolder || onReAudit) ? (
+            {canVerify && (!isFolder || (onReAudit && !isWorkspaceAuditEmptyState)) ? (
               <button
                 type="button"
                 onClick={(event) => {
@@ -945,48 +960,104 @@ export function AssetPreviewModal({
             </p>
           ) : null}
 
-          <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
-            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-              <div className="relative flex h-32 w-32 items-center justify-center">
-                <div
-                  data-audit-score-arc="css"
-                  data-score={score}
-                  className="absolute inset-0 rounded-full border border-slate-800"
-                  style={{
-                    animation: 'none',
-                    background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
-                    opacity: 1,
-                    transition: 'none',
-                    visibility: 'visible',
-                  }}
-                />
-                <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
-                  <span className="text-3xl font-bold text-white">{score}</span>
-                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+          {isWorkspaceAuditEmptyState ? (
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex w-full max-w-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                <div className="relative flex h-32 w-32 items-center justify-center">
+                  <div
+                    data-audit-score-arc="css"
+                    data-score={score}
+                    className="absolute inset-0 rounded-full border border-slate-800"
+                    style={{
+                      animation: 'none',
+                      background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
+                      opacity: 1,
+                      transition: 'none',
+                      visibility: 'visible',
+                    }}
+                  />
+                  <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
+                    <span className="text-3xl font-bold text-white">{score}</span>
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+                  </div>
                 </div>
+                {scoreDelta !== null ? (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
+                      scoreDelta > 0
+                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                        : scoreDelta < 0
+                          ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                          : 'border-slate-700 bg-slate-800/70 text-slate-300'
+                    }`}
+                    title="Change from the previous audit"
+                  >
+                    {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
+                  </div>
+                ) : null}
               </div>
-              {scoreDelta !== null ? (
-                <div
-                  className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
-                    scoreDelta > 0
-                      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                      : scoreDelta < 0
-                        ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
-                        : 'border-slate-700 bg-slate-800/70 text-slate-300'
-                  }`}
-                  title="Change from the previous audit"
-                >
-                  {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
-                </div>
-              ) : null}
-            </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              <MetricList title="Highlights" tone="emerald" items={pros} />
-              <MetricList title="Areas for Improvement" tone="rose" items={cons} />
-              <MetricList title="Actionable Steps" tone="sky" items={recommendations} deductions={cons} />
+              <section className="w-full rounded-xl border border-cyan-400/20 bg-cyan-500/[0.04] px-6 py-8 text-center shadow-[0_0_28px_rgba(34,211,238,0.06)]">
+                <p className="mx-auto max-w-2xl text-sm leading-6 text-slate-300">
+                  Score is based on the average of files in this workspace. To get an architectural breakdown, highlights, and actionable steps, run a full workspace audit.
+                </p>
+                {canVerify && onReAudit ? (
+                  <button
+                    type="button"
+                    onClick={onReAudit}
+                    disabled={verificationInProgress}
+                    aria-busy={verificationInProgress}
+                    className="mt-5 rounded-full bg-cyan-500 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.22)] transition hover:bg-cyan-400 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {verificationInProgress ? 'Generating Workspace Audit...' : 'Generate Workspace Audit'}
+                  </button>
+                ) : null}
+              </section>
             </div>
-          </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
+              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                <div className="relative flex h-32 w-32 items-center justify-center">
+                  <div
+                    data-audit-score-arc="css"
+                    data-score={score}
+                    className="absolute inset-0 rounded-full border border-slate-800"
+                    style={{
+                      animation: 'none',
+                      background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
+                      opacity: 1,
+                      transition: 'none',
+                      visibility: 'visible',
+                    }}
+                  />
+                  <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
+                    <span className="text-3xl font-bold text-white">{score}</span>
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+                  </div>
+                </div>
+                {scoreDelta !== null ? (
+                  <div
+                    className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
+                      scoreDelta > 0
+                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                        : scoreDelta < 0
+                          ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                          : 'border-slate-700 bg-slate-800/70 text-slate-300'
+                    }`}
+                    title="Change from the previous audit"
+                  >
+                    {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <MetricList title="Highlights" tone="emerald" items={pros} />
+                <MetricList title="Areas for Improvement" tone="rose" items={cons} />
+                <MetricList title="Actionable Steps" tone="sky" items={recommendations} deductions={cons} />
+              </div>
+            </div>
+          )}
         </div>
         )}
       </div>
