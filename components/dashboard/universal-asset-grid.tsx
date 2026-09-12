@@ -80,7 +80,17 @@ type UniversalGridItem =
   | { type: 'asset'; asset: ProjectRow };
 
 type FolderView = 'workspace';
-type PreviewTarget = { kind: 'file' | 'folder'; id: string };
+type PreviewTarget =
+  | {
+      asset: ProjectRow;
+      hideAudit: boolean;
+      id: string;
+      kind: 'file';
+    }
+  | {
+      id: string;
+      kind: 'folder';
+    };
 
 const codeLanguageMap: Record<string, string> = {
   c: 'c',
@@ -920,23 +930,18 @@ export function UniversalAssetGrid({
   const activeFolderItem = activeFolderId && activeFolderView
     ? foldersWithAssets.find(({ folder }) => folder.id === activeFolderId) ?? null
     : null;
-  const allRenderableAssets = useMemo(
-    () => [
-      ...patchedAssets,
-      ...foldersWithAssets.flatMap(({ assets: folderAssets }) => folderAssets),
-    ],
-    [foldersWithAssets, patchedAssets]
-  );
   const activePreviewFolderItem =
     activePreviewTarget?.kind === 'folder'
       ? foldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ?? null
       : null;
   const isWorkspaceFilePreview =
-    activePreviewTarget?.kind === 'file' &&
-    (isWorkspaceFile || (activeFolderView === 'workspace' && activeFolderItem !== null));
+    activePreviewTarget?.kind === 'file' ? activePreviewTarget.hideAudit : false;
   const activePreviewFile =
     activePreviewTarget?.kind === 'file'
-      ? allRenderableAssets.find((project) => project.id === activePreviewTarget.id) ?? null
+      ? {
+          ...activePreviewTarget.asset,
+          ...(localProjectPatches[activePreviewTarget.id] ?? {}),
+        }
       : null;
   const activePreviewModalAsset: AuditPreviewAsset | null = activePreviewFolderItem
     ? {
@@ -982,8 +987,8 @@ export function UniversalAssetGrid({
     onProjectUpdated?.(projectId, projectPatch);
   }
 
-  function openFilePreview(project: ProjectRow) {
-    setActivePreviewTarget({ kind: 'file', id: project.id });
+  function openFilePreview(project: ProjectRow, hideAudit: boolean) {
+    setActivePreviewTarget({ asset: project, hideAudit, kind: 'file', id: project.id });
     advanceProductTour(10, 11, project.id);
   }
 
@@ -1071,8 +1076,8 @@ export function UniversalAssetGrid({
               isVisibilityUpdating={visibilityUpdatingIds.includes(item.asset.id)}
               verifyingAssetId={verifyingAssetId}
               onDelete={onDelete}
-              onPreview={openFilePreview}
-              onReadProtocol={openFilePreview}
+              onPreview={(project) => openFilePreview(project, isWorkspaceFile)}
+              onReadProtocol={(project) => openFilePreview(project, isWorkspaceFile)}
               onReupload={onReupload}
               onToggleVisibility={onToggleVisibility}
               onVerify={onVerify}
@@ -1133,8 +1138,8 @@ export function UniversalAssetGrid({
                       isVisibilityUpdating={visibilityUpdatingIds.includes(asset.id)}
                       verifyingAssetId={verifyingAssetId}
                       onDelete={onDelete}
-                      onPreview={openFilePreview}
-                      onReadProtocol={openFilePreview}
+                      onPreview={(project) => openFilePreview(project, true)}
+                      onReadProtocol={(project) => openFilePreview(project, true)}
                       onReupload={onReupload}
                       onToggleVisibility={onToggleVisibility}
                       onVerify={onVerify}
