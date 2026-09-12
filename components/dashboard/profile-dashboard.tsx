@@ -473,24 +473,6 @@ type SavedProfileItem = SpectatorProfilePayload & {
   avg_project_score?: number | null;
   average_project_score?: number | null;
 };
-type SpectatorRatingItem = SpectatorScanItem & {
-  project_id?: string | null;
-  score?: number | null;
-  summary?: string | null;
-  improvement_tips?: unknown;
-};
-type SpectatorScanItem = {
-  id: string;
-  project_id?: string | null;
-  title?: string | null;
-  score?: number | null;
-  evaluation_score?: number | null;
-  logic_score?: number | null;
-  summary?: string | null;
-  ai_summary?: string | null;
-  description?: string | null;
-  created_at?: string | null;
-};
 type NormalizedSpectateProfileResponse = {
   data?: unknown;
   assets?: ProjectRow[] | null;
@@ -881,52 +863,12 @@ function stitchSpectatorProjectFolders(
   });
 }
 
-function formatScanDate(value: string) {
+function formatValidationDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return 'Recent scan';
+    return 'Recently added';
   }
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function normalizeSpectatorRating(value: unknown): SpectatorScanItem | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const rating = value as Record<string, unknown>;
-  const id = typeof rating.id === 'string' && rating.id.trim()
-    ? rating.id.trim()
-    : typeof rating.project_id === 'string'
-      ? `rating-${rating.project_id}`
-      : '';
-
-  if (!id) {
-    return null;
-  }
-
-  const rawScore = Number(rating.logic_score ?? rating.evaluation_score ?? rating.score);
-  const improvementTips = Array.isArray(rating.improvement_tips)
-    ? rating.improvement_tips.map((item) => String(item)).filter(Boolean)
-    : [];
-
-  return {
-    id,
-    project_id: typeof rating.project_id === 'string' ? rating.project_id : null,
-    title: typeof rating.title === 'string' ? rating.title : null,
-    score: Number.isFinite(rawScore) ? rawScore : null,
-    evaluation_score: Number.isFinite(rawScore) ? rawScore : null,
-    logic_score: Number.isFinite(rawScore) ? rawScore : null,
-    summary: typeof rating.summary === 'string' ? rating.summary : null,
-    ai_summary: typeof rating.ai_summary === 'string' ? rating.ai_summary : null,
-    description:
-      typeof rating.description === 'string'
-        ? rating.description
-        : improvementTips.length > 0
-          ? improvementTips.join('\n')
-          : null,
-    created_at: typeof rating.created_at === 'string' ? rating.created_at : null,
-  };
 }
 
 function normalizeLiveOpportunity(value: unknown): LiveOpportunityItem | null {
@@ -1215,6 +1157,46 @@ function getProjectFileType(project: ProjectItem) {
   }
 
   return project.file_type?.toUpperCase() ?? 'FILE';
+}
+
+const validationFileTypeLabels: Record<string, string> = {
+  CSS: 'CSS',
+  HTML: 'HTML',
+  JAVA: 'Java',
+  JS: 'JavaScript',
+  JSON: 'JSON',
+  JSX: 'JSX',
+  MD: 'Markdown',
+  PHP: 'PHP',
+  PY: 'Python',
+  RB: 'Ruby',
+  RS: 'Rust',
+  SH: 'Shell',
+  SQL: 'SQL',
+  TS: 'TypeScript',
+  TSX: 'TSX',
+  VUE: 'Vue',
+  XML: 'XML',
+  YAML: 'YAML',
+  YML: 'YAML',
+};
+
+function getWorkItemAuditScore(item: WorkAssetGridItem) {
+  return getAuditAssetScore(item.type === 'folder' ? item.folder : item.project);
+}
+
+function isAuditedWorkItem(item: WorkAssetGridItem) {
+  const asset = item.type === 'folder' ? item.folder : item.project;
+  return asset.has_been_audited === true || getWorkItemAuditScore(item) !== null;
+}
+
+function getValidationStreamTypeLabel(item: WorkAssetGridItem) {
+  if (item.type === 'folder') {
+    return 'Workspace';
+  }
+
+  const fileType = getProjectFileType(item.project);
+  return validationFileTypeLabels[fileType] ?? fileType;
 }
 
 function getProjectDownloadHref(project: ProjectItem) {
@@ -2684,7 +2666,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editFolderName, setEditFolderName] = useState("");
-  const [scans, setScans] = useState<SpectatorScanItem[]>([]);
   const [showAllWork, setShowAllWork] = useState(false);
   const [showAllRatings, setShowAllRatings] = useState(false);
   const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
@@ -2718,6 +2699,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
   const [activePreviewProjectId, setActivePreviewProjectId] = useState<string | null>(null);
   const [activePreviewProjectOverride, setActivePreviewProjectOverride] = useState<ProjectItem | null>(null);
+  const [activePreviewFolderId, setActivePreviewFolderId] = useState<string | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -3554,66 +3536,26 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const displayedRootItemCount = isSpectating
     ? sortedProfileAssets.length + sortedProjectFolders.length
     : rootWorkItems.length;
-  const needsReviewCount = useMemo(() => {
-    return allProjects.filter((project) => typeof project.logic_score !== 'number').length;
-  }, [allProjects]);
-  const verifiedProjects = useMemo(() => {
-    return allProjects
-      .filter((project) => typeof project.logic_score === 'number')
-      .sort((left, right) => {
-        const leftDate = left.created_at ? new Date(left.created_at).getTime() : 0;
-        const rightDate = right.created_at ? new Date(right.created_at).getTime() : 0;
-        return rightDate - leftDate;
-      });
-  }, [allProjects]);
-  const spectatorScanProjects = useMemo(() => {
-    return scans
-      .map((scan) => {
-        const relatedProject = scan.project_id
-          ? allProjects.find((project) => project.id === scan.project_id) ?? null
-          : null;
-        const scanScore = scan.logic_score ?? scan.evaluation_score ?? scan.score ?? relatedProject?.logic_score ?? null;
-
-        return {
-          id: scan.id,
-          title: scan.title ?? relatedProject?.title ?? 'Portfolio asset',
-          file_type: relatedProject?.file_type ?? null,
-          status: relatedProject?.status ?? null,
-          logic_score: typeof scanScore === 'number' ? scanScore : null,
-          ai_summary: scan.ai_summary ?? scan.summary ?? relatedProject?.ai_summary ?? null,
-          description: scan.description ?? relatedProject?.description ?? null,
-          created_at: scan.created_at ?? relatedProject?.created_at ?? null,
-        } satisfies ProjectItem;
-      })
-      .sort((left, right) => {
-        const leftDate = left.created_at ? new Date(left.created_at).getTime() : 0;
-        const rightDate = right.created_at ? new Date(right.created_at).getTime() : 0;
-        return rightDate - leftDate;
-      });
-  }, [allProjects, scans]);
-  const allAuditableAssets = useMemo<AuditScoreItem[]>(
-    () => [...projectFolders, ...allProjects],
-    [projectFolders, allProjects]
+  const auditedWorkItems = useMemo(
+    () => rootWorkItems.filter(isAuditedWorkItem),
+    [rootWorkItems]
   );
-  const auditedAssets = useMemo(
-    () =>
-      allAuditableAssets.filter((asset) => {
-        const assetScore = getAuditAssetScore(asset);
-        return assetScore !== null && assetScore > 0;
-      }),
-    [allAuditableAssets]
+  const scoredAuditedWorkItems = useMemo(
+    () => auditedWorkItems.filter((item) => getWorkItemAuditScore(item) !== null),
+    [auditedWorkItems]
   );
+  const pendingAuditCount = rootWorkItems.length - auditedWorkItems.length;
   const totalScore = useMemo(
-    () => auditedAssets.reduce((sum, asset) => sum + (getAuditAssetScore(asset) ?? 0), 0),
-    [auditedAssets]
+    () => scoredAuditedWorkItems.reduce((sum, item) => sum + (getWorkItemAuditScore(item) ?? 0), 0),
+    [scoredAuditedWorkItems]
   );
   const globalAverageScore =
-    auditedAssets.length > 0 ? Math.round(totalScore / auditedAssets.length) : 0;
+    scoredAuditedWorkItems.length > 0
+      ? Math.round(totalScore / scoredAuditedWorkItems.length)
+      : 0;
   const computedAverageScore = globalAverageScore;
-  const normalizedScore = auditedAssets.length > 0 ? globalAverageScore : null;
-  const initialProjects = allProjects;
+  const normalizedScore = scoredAuditedWorkItems.length > 0 ? globalAverageScore : null;
   const initialWorkItems = rootWorkItems;
-  const initialReviews = spectatorScanProjects.length > 0 ? spectatorScanProjects : verifiedProjects;
   const visibleWorkItems = useMemo(() => {
     return showAllWork ? initialWorkItems : initialWorkItems.slice(0, 4);
   }, [initialWorkItems, showAllWork]);
@@ -3649,9 +3591,52 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       ? allProjects.find((project) => project.id === activePreviewProjectId) ?? null
       : null;
   }, [activePreviewProjectId, activePreviewProjectOverride, allProjects]);
-  const scanHistory = useMemo(() => {
-    return showAllRatings ? initialReviews : initialReviews.slice(0, 3);
-  }, [initialReviews, showAllRatings]);
+  const activePreviewFolder = useMemo(
+    () =>
+      activePreviewFolderId
+        ? (projectFolders.find((folder) => folder.id === activePreviewFolderId) as FolderAuditItem | undefined) ?? null
+        : null,
+    [activePreviewFolderId, projectFolders]
+  );
+  const activePreviewAsset = useMemo(() => {
+    if (activePreviewFolder) {
+      const folderScore = getFolderAuditScore(activePreviewFolder);
+
+      return {
+        id: activePreviewFolder.id,
+        kind: 'folder' as const,
+        name: activePreviewFolder.name,
+        title: activePreviewFolder.name,
+        score: folderScore,
+        evaluation_score: folderScore,
+        score_delta: activePreviewFolder.score_delta ?? null,
+        delta_summary: activePreviewFolder.delta_summary ?? null,
+        executive_summary: activePreviewFolder.executive_summary ?? null,
+        audit_summary: activePreviewFolder.audit_summary ?? null,
+        ai_summary: activePreviewFolder.ai_summary ?? null,
+        summary: activePreviewFolder.summary ?? null,
+        description: activePreviewFolder.description ?? null,
+        pros: activePreviewFolder.pros ?? null,
+        cons: activePreviewFolder.cons ?? null,
+        recommendations: activePreviewFolder.recommendations ?? null,
+        audit_findings: activePreviewFolder.audit_findings ?? null,
+        has_been_audited: activePreviewFolder.has_been_audited ?? false,
+      };
+    }
+
+    return activePreviewProject
+      ? {
+          ...activePreviewProject,
+          kind: 'file' as const,
+          name: activePreviewName ?? activePreviewProject.title,
+          previewUrl: activePreviewUrl,
+        }
+      : null;
+  }, [activePreviewFolder, activePreviewName, activePreviewProject, activePreviewUrl]);
+  const visibleValidationStreamItems = useMemo(
+    () => (showAllRatings ? rootWorkItems : rootWorkItems.slice(0, 3)),
+    [rootWorkItems, showAllRatings]
+  );
 
   const getConfirmedUserId = useCallback(async () => {
     if (!supabase) {
@@ -3930,7 +3915,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProjects([]);
       setProjectFolders([]);
       setActiveFolderId(null);
-      setScans([]);
       setProjectDescriptions({});
       setProjectDescription('');
       setLiveJobs([]);
@@ -3938,6 +3922,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setFetchError(null);
       setActivePreviewProjectId(null);
       setActivePreviewProjectOverride(null);
+      setActivePreviewFolderId(null);
       setActivePreviewName(null);
       setActivePreviewUrl(null);
       setShowAllWork(false);
@@ -4033,12 +4018,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           files: nestedProjects,
         };
       });
-      const payloadRatings = Array.isArray(spectatorProfilePayload.ratings)
-        ? spectatorProfilePayload.ratings
-        : [];
-      const hydratedScans = payloadRatings
-        .map(normalizeSpectatorRating)
-        .filter((scan): scan is SpectatorScanItem => scan !== null);
       const payloadOpportunities = Array.isArray(spectatorProfilePayload.opportunities)
         ? spectatorProfilePayload.opportunities
         : [];
@@ -4050,7 +4029,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProfileAssets(loadedAssets);
       setProjects(loadedProjects);
       setProjectFolders(loadedProjectFolders);
-      setScans(hydratedScans);
       if (!isOwnProfile || hydratedOpportunities.length > 0) {
         setLiveJobs(hydratedOpportunities);
       }
@@ -4890,6 +4868,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       // Workspace-only files can be supplied by folder.nested_projects without
       // appearing in allProjects. Keep the clicked file as the modal source so
       // its code URL and audit fields remain available to the shared preview.
+      setActivePreviewFolderId(null);
       setActivePreviewProjectOverride(isTopLevelProject ? null : asset);
       setActivePreviewProjectId(asset.id);
       setActivePreviewName(previewFileName);
@@ -4898,39 +4877,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       return;
     }
 
-    const auditReportText = getAuditModalAssetReportText(asset);
-    const previewUrl = getAuditReportDataUrl(asset);
-    const previewName = `${asset.name || 'Project Directory Audit'}.txt`;
-    const folderPreviewProject: ProjectItem = {
-      id: `folder-preview-${asset.id}`,
-      title: asset.name,
-      folder_id: asset.id,
-      file_type: 'txt',
-      status: 'audited',
-      preview_url: previewUrl,
-      preview_kind: 'code',
-      text_preview: auditReportText,
-      file_name: previewName,
-      file_url: previewUrl,
-      description: getAuditModalAssetSummary(asset),
-      executive_summary: asset.executive_summary ?? asset.audit_summary ?? asset.ai_summary ?? null,
-      summary: asset.summary ?? asset.ai_summary ?? null,
-      score: getFolderAuditScore(asset),
-      audit_summary: asset.audit_summary ?? asset.executive_summary ?? asset.ai_summary ?? null,
-      pros: Array.isArray(asset.pros) ? asset.pros : null,
-      cons: Array.isArray(asset.cons) ? asset.cons : null,
-      recommendations: Array.isArray(asset.recommendations) ? asset.recommendations : null,
-      evaluation_score: getFolderAuditScore(asset),
-      has_been_audited: true,
-      logic_score: getFolderAuditScore(asset),
-      ai_summary: asset.ai_summary ?? asset.executive_summary ?? asset.audit_summary ?? null,
-      created_at: asset.created_at ?? null,
-    };
-
-    setActivePreviewProjectOverride(folderPreviewProject);
-    setActivePreviewProjectId(folderPreviewProject.id);
-    setActivePreviewName(previewName);
-    setActivePreviewUrl(previewUrl);
+    setActivePreviewProjectOverride(null);
+    setActivePreviewFolderId(asset.id);
+    setActivePreviewProjectId(asset.id);
+    setActivePreviewName(null);
+    setActivePreviewUrl(null);
     advanceProductTour(10, 11, asset.id);
   }
 
@@ -6792,6 +6743,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     if (activeFolderId === folderId) {
       setActiveFolderId(null);
     }
+    if (activePreviewFolderId === folderId) {
+      setActivePreviewFolderId(null);
+      setActivePreviewProjectId(null);
+      setActivePreviewName(null);
+      setActivePreviewUrl(null);
+    }
   }
 
   const handleDeleteFolder = async (folderId: string) => {
@@ -7789,10 +7746,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             <section id="my-ratings" className="scroll-mt-24 space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">My Ratings</h2>
-                <p className="mt-1 text-sm text-slate-400">Your score and recent scans.</p>
+                <p className="mt-1 text-sm text-slate-400">Your audited assets and current scores.</p>
               </div>
 
-              <Card className="border-blue-950/50 bg-[#090d1f]/40 backdrop-blur-md">
+              <Card className="border border-slate-800 bg-slate-950/50 backdrop-blur-md">
                 <CardContent className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-center lg:gap-8">
                   <div className="space-y-6">
                     <div className="flex items-center gap-5">
@@ -7828,12 +7785,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">My Work</p>
-                        <p className="mt-3 text-2xl font-semibold text-white">{allProjects.length}</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Audited Assets</p>
+                        <p className="mt-3 text-2xl font-semibold text-white">{auditedWorkItems.length}</p>
                       </div>
                       <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Needs Review</p>
-                        <p className="mt-3 text-2xl font-semibold text-white">{needsReviewCount}</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pending Audits</p>
+                        <p className="mt-3 text-2xl font-semibold text-white">{pendingAuditCount}</p>
                       </div>
                     </div>
                   </div>
@@ -7842,47 +7799,68 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                     <div className="flex items-center justify-between gap-3">
                       <h3 className="text-lg font-semibold text-white">MeliusAI Validation Stream</h3>
                       <Badge variant="outline" className="border-white/10 text-slate-200">
-                        {scanHistory.length} scans
+                        {visibleValidationStreamItems.length} assets
                       </Badge>
                     </div>
 
                     <div className="mt-4 space-y-3">
-                      {scanHistory.length === 0 ? (
-                        <div className="rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4">
-                          <p className="text-sm text-white">No scans yet.</p>
-                          <p className="mt-1 text-sm text-slate-400">Add a project to start your first review.</p>
+                      {visibleValidationStreamItems.length === 0 ? (
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+                          <p className="text-sm text-white">No assets yet.</p>
+                          <p className="mt-1 text-sm text-slate-400">Add a file or workspace to start your first review.</p>
                         </div>
                       ) : (
-                        scanHistory.map((project) => (
-                          <div
-                            key={project.id}
-                            className="flex items-center justify-between gap-4 rounded-2xl border border-blue-950/50 bg-[#050b1b]/60 p-4"
-                          >
-                            <div>
-                              <p className="text-sm font-medium text-white">{project.title}</p>
-                              <p className="mt-1 text-sm text-slate-400">
-                                {project.created_at ? formatScanDate(project.created_at) : 'Recent scan'}
-                              </p>
-                              {project.description ? (
-                                <p className="mt-1 line-clamp-2 text-sm text-gray-400">
-                                  {project.description.replace(/##\s*Executive Summary/i, '').trim()}
+                        visibleValidationStreamItems.map((item) => {
+                          const asset = item.type === 'folder' ? item.folder : item.project;
+                          const score = getWorkItemAuditScore(item) ?? 0;
+                          const isVerified = score >= 60;
+
+                          return (
+                            <button
+                              key={asset.id}
+                              type="button"
+                              onClick={() => handleOpenProjectPreview(asset)}
+                              className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 text-left transition-colors hover:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-white">
+                                  {item.type === 'folder' ? item.folder.name : item.project.title}
                                 </p>
-                              ) : null}
-                            </div>
-                            <Badge variant="outline" className="border-sky-400/30 text-sky-100">
-                              {Math.round(project.logic_score ?? 0)}/100
-                            </Badge>
-                          </div>
-                        ))
+                                <p className="mt-1 text-sm text-slate-400">
+                                  {asset.created_at ? formatValidationDate(asset.created_at) : 'Recently added'}
+                                </p>
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-300">
+                                    {getValidationStreamTypeLabel(item)}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      'rounded-full border px-2.5 py-1 text-[11px] font-medium',
+                                      isVerified
+                                        ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
+                                        : 'border-orange-400/30 bg-orange-500/10 text-orange-300'
+                                    )}
+                                  >
+                                    {isVerified ? 'Verified' : 'Action Required'}
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-right">
+                                <span className="block text-lg font-semibold leading-none text-sky-100">{score}</span>
+                                <span className="mt-1 block text-[10px] font-medium uppercase tracking-wide text-sky-200/70">/100</span>
+                              </span>
+                            </button>
+                          );
+                        })
                       )}
                     </div>
-                    {initialReviews.length > 0 ? (
+                    {rootWorkItems.length > 3 ? (
                       <button
                         type="button"
                         onClick={() => setShowAllRatings((value) => !value)}
                         className="mt-6 block px-5 py-2 bg-blue-950/40 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-900/60 hover:border-blue-500 rounded-lg font-mono text-xs tracking-wider uppercase transition-all duration-200 cursor-pointer"
                       >
-                        {showAllRatings ? 'Collapse Reviews' : `See All Reviews (${initialProjects.length})`}
+                        {showAllRatings ? 'Collapse Reviews' : `See All Reviews (${rootWorkItems.length})`}
                       </button>
                     ) : null}
                   </div>
@@ -8041,23 +8019,23 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             ) : null}
 
             <AssetPreviewModal
-              asset={
-                activePreviewProject
-                  ? {
-                      ...activePreviewProject,
-                      kind: 'file',
-                      name: activePreviewName ?? activePreviewProject.title,
-                      previewUrl: activePreviewUrl,
-                    }
-                  : null
+              asset={activePreviewAsset}
+              hideAudit={activePreviewFolder ? false : activeFolderId !== null}
+              canVerify={activePreviewFolder ? isOwner : activeFolderId === null}
+              isReAuditing={Boolean(
+                activePreviewFolder && auditingFolders[activePreviewFolder.id]
+              )}
+              onReAudit={
+                activePreviewFolder && isOwner
+                  ? () => void handleVerifyFolder(activePreviewFolder.id)
+                  : undefined
               }
-              hideAudit={activeFolderId !== null}
-              canVerify={activeFolderId === null}
               onProjectUpdated={handlePreviewProjectUpdated}
               onAuditCommitted={handlePreviewProjectAuditCommitted}
               onClose={() => {
                 setActivePreviewProjectId(null);
                 setActivePreviewProjectOverride(null);
+                setActivePreviewFolderId(null);
                 setActivePreviewName(null);
                 setActivePreviewUrl(null);
               }}
