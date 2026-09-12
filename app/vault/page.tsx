@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Suspense, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { ChevronDown } from 'lucide-react';
 
 import {
   UniversalAssetGrid,
@@ -11,7 +12,6 @@ import {
 } from '@/components/dashboard/universal-asset-grid';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Select } from '@/components/ui/select';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -49,6 +49,100 @@ const vaultSortOptions: Array<{ label: string; value: AssetGridSortOption }> = [
   { label: 'Score: High to Low', value: 'score-desc' },
   { label: 'Score: Low to High', value: 'score-asc' },
 ];
+
+type VaultControlDropdownOption = {
+  label: string;
+  value: string;
+};
+
+function VaultControlDropdown({
+  label,
+  options,
+  value,
+  onValueChange,
+}: {
+  label: string;
+  options: readonly VaultControlDropdownOption[];
+  value: string;
+  onValueChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!controlRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={controlRef} className="relative flex w-full items-center gap-2 sm:w-auto">
+      <span className="shrink-0 text-sm font-medium text-slate-400">{label}</span>
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={label}
+        onClick={() => setIsOpen((currentValue) => !currentValue)}
+        className="flex h-10 min-w-0 flex-1 items-center justify-between gap-3 rounded-md border border-slate-800 bg-[#0B1021] px-3 text-left text-sm text-slate-200 transition-colors hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 sm:w-52"
+      >
+        <span className="truncate">{selectedOption?.label ?? label}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {isOpen ? (
+        <div className="absolute left-0 top-full z-50 mt-2 min-w-full overflow-hidden rounded-md border border-slate-800 bg-[#0B1021] py-1 shadow-xl shadow-black/50">
+          <div role="listbox" aria-label={label} className="max-h-64 overflow-y-auto py-1">
+            {options.map((option) => {
+              const isSelected = option.value === value;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onValueChange(option.value);
+                    setIsOpen(false);
+                  }}
+                  className={`flex w-full cursor-pointer items-center px-3 py-2 text-left text-sm transition-colors hover:bg-slate-800 hover:text-cyan-400 focus:bg-slate-800 focus:text-cyan-400 focus:outline-none ${
+                    isSelected ? 'bg-slate-800/70 text-cyan-400' : 'text-slate-200'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 type SpectatorVaultResponse = {
   data?: unknown;
@@ -1045,6 +1139,14 @@ function VaultPageContent() {
       ).sort((left, right) => left.localeCompare(right)),
     [vaultAssets]
   );
+  const vaultFilterOptions = useMemo<VaultControlDropdownOption[]>(
+    () => [
+      { label: 'All Assets', value: ALL_ASSETS_FILTER },
+      { label: 'Workspace', value: WORKSPACE_FILTER },
+      ...vaultFileTypes.map((fileType) => ({ label: fileType, value: fileType })),
+    ],
+    [vaultFileTypes]
+  );
 
   useEffect(() => {
     if (
@@ -1635,45 +1737,24 @@ Return Markdown sections for goods, bads, project description, and a final score
                 <p className="mt-1 text-sm text-zinc-400">Your private vault for all your projects</p>
               </div>
 
-              <div className="flex w-full flex-col gap-3 sm:w-auto sm:items-end">
-                <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
-                  Total Assets Committed: {rootVaultItemCount}
-                </Badge>
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-slate-400 sm:w-48">
-                    <span className="shrink-0">Sort By</span>
-                    <Select
-                      aria-label="Sort Vault assets"
-                      className="h-10 min-w-0 rounded-xl px-3 text-xs"
-                      value={sortOption}
-                      onChange={(event) => setSortOption(event.target.value as AssetGridSortOption)}
-                    >
-                      {vaultSortOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                  <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-slate-400 sm:w-44">
-                    <span className="shrink-0">Filter by Type</span>
-                    <Select
-                      aria-label="Filter Vault assets by type"
-                      className="h-10 min-w-0 rounded-xl px-3 text-xs"
-                      value={filterType}
-                      onChange={(event) => setFilterType(event.target.value)}
-                    >
-                      <option value={ALL_ASSETS_FILTER}>All Assets</option>
-                      <option value={WORKSPACE_FILTER}>Workspace</option>
-                      {vaultFileTypes.map((fileType) => (
-                        <option key={fileType} value={fileType}>
-                          {fileType}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                </div>
-              </div>
+              <Badge variant="outline" className="w-fit border-white/10 text-slate-200">
+                Total Assets Committed: {rootVaultItemCount}
+              </Badge>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-6 mt-6 mb-8">
+              <VaultControlDropdown
+                label="Sort By"
+                options={vaultSortOptions}
+                value={sortOption}
+                onValueChange={(value) => setSortOption(value as AssetGridSortOption)}
+              />
+              <VaultControlDropdown
+                label="Filter by Type"
+                options={vaultFilterOptions}
+                value={filterType}
+                onValueChange={setFilterType}
+              />
             </div>
 
             {vaultError ? (
