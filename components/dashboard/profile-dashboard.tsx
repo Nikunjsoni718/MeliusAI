@@ -170,6 +170,7 @@ type StagedFile = {
   sourceFile?: File;
   contentType?: string;
   githubRepository?: string;
+  githubIsPrivate?: boolean;
   githubRef?: string;
   githubCommitSha?: string;
 };
@@ -454,6 +455,7 @@ type SpectatorProfilePayload = {
   avatar_url?: string | null;
   age?: number | null;
   current_status?: string | null;
+  default_asset_is_public?: boolean | null;
   qualifications?: string[] | null;
   experience?: string[] | string | null;
   hobbies?: string[] | null;
@@ -532,7 +534,7 @@ const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
-  'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email';
+  'id, username, full_name, bio, age, current_status, avg_project_score, avatar_url, email, default_asset_is_public';
 const PROJECT_DASHBOARD_COLUMNS =
   'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id';
 const DASHBOARD_PROJECT_LIMIT = 80;
@@ -2736,6 +2738,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     avatarUrl: string | null;
     avgProjectScore: number | null;
   } | null>(null);
+  useEffect(() => {
+    if (isOwner && typeof profileData?.default_asset_is_public === 'boolean') {
+      setIsScorecardPublic(profileData.default_asset_is_public);
+    }
+  }, [isOwner, profileData?.default_asset_is_public]);
   const clearGitHubImportState = useCallback(() => {
     setIsGithubModalOpen(false);
     setIsFetchingGithub(false);
@@ -5138,6 +5145,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   ? getUploadContentType(sourceFile)
                   : undefined,
               githubRepository: repository.full_name.toLowerCase(),
+              githubIsPrivate: repository.private,
               githubRef: repository.default_branch,
               githubCommitSha: githubRepositoryTrees[repository.full_name]?.commitSha,
             } satisfies StagedFile;
@@ -5368,6 +5376,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             (repository) =>
               repository.full_name.toLowerCase() === githubRepository?.toLowerCase()
           );
+          const repositoryIsPrivate =
+            matchingRepository?.private ?? files.some((file) => file.githubIsPrivate === true);
           const folderName =
             matchingRepository?.name ??
             githubRepository?.split('/').pop() ??
@@ -5432,7 +5442,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                   file_type: file.name.split('.').pop(),
                   file_url: publicUrlData.publicUrl,
                   storage_path: filePath,
-                  is_public: isScorecardPublic,
+                  is_public: githubRepository ? !repositoryIsPrivate : isScorecardPublic,
                   status: 'pending',
                   github_repository: file.githubRepository ?? null,
                   github_file_path: isGithubAsset ? file.path : null,

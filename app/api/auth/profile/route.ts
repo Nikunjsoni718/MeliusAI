@@ -9,7 +9,7 @@ import type { UserRole } from '@/types/supabase';
 export const runtime = 'nodejs';
 
 const PROFILE_SELECT =
-  'id, username, full_name, birth_date, bio, avatar_url, github_username, updated_at, email, created_at';
+  'id, username, full_name, birth_date, bio, avatar_url, github_username, updated_at, email, created_at, current_status, public_profile_enabled, public_scorecard_enabled, public_contact_email_enabled, default_asset_is_public, audit_alerts_enabled, opportunity_match_alerts_enabled';
 
 type ProfileBootstrapPayload = {
   display_name?: unknown;
@@ -32,6 +32,13 @@ type ProfileRecord = {
   updated_at?: string | null;
   email?: string | null;
   created_at?: string | null;
+  current_status?: string | null;
+  public_profile_enabled?: boolean;
+  public_scorecard_enabled?: boolean;
+  public_contact_email_enabled?: boolean;
+  default_asset_is_public?: boolean;
+  audit_alerts_enabled?: boolean;
+  opportunity_match_alerts_enabled?: boolean;
 };
 
 function jsonError(message: string, status: number, details?: unknown) {
@@ -188,6 +195,13 @@ function toViewerProfile(user: User, profile: ProfileRecord) {
     username: profile.username ?? getMetadataText(user, 'username'),
     birth_date: profile.birth_date ?? getMetadataText(user, 'birth_date'),
     bio: profile.bio ?? null,
+    current_status: profile.current_status ?? null,
+    public_profile_enabled: profile.public_profile_enabled ?? true,
+    public_scorecard_enabled: profile.public_scorecard_enabled ?? true,
+    public_contact_email_enabled: profile.public_contact_email_enabled ?? false,
+    default_asset_is_public: profile.default_asset_is_public ?? true,
+    audit_alerts_enabled: profile.audit_alerts_enabled ?? false,
+    opportunity_match_alerts_enabled: profile.opportunity_match_alerts_enabled ?? false,
     headline: null,
     company_name: null,
     github_username: githubUsername,

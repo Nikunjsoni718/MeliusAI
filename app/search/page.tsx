@@ -120,7 +120,7 @@ export default function GlobalDirectorySearchPage() {
         const searchPattern = `%${query}%`;
         const [peopleResponse, companyResponse] = await Promise.all([
           supabase
-            .from('profiles')
+            .from('public_profile_directory')
             .select('id, full_name, username, current_status, avatar_url')
             .ilike('full_name', searchPattern)
             .limit(10),

@@ -2496,7 +2496,8 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
-    "id, username, full_name, email, bio, avatar_url, current_status, age, avg_project_score, skills"
+    "id, username, full_name, email, bio, avatar_url, current_status, age, avg_project_score, skills, "
+    "public_profile_enabled, public_scorecard_enabled, public_contact_email_enabled, default_asset_is_public"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
     "id, user_id, name, file_type, created_at, score, evaluation_score, score_delta, delta_summary, "
@@ -2614,6 +2615,66 @@ def attach_folder_files(
         )
 
     return nested_folders
+
+
+PUBLIC_SCORECARD_FIELDS = {
+    "score",
+    "evaluation_score",
+    "logic_score",
+    "score_delta",
+    "delta_summary",
+    "has_been_audited",
+    "ai_summary",
+    "audit_summary",
+    "macro_score",
+    "macro_summary",
+    "executive_summary",
+    "pros",
+    "cons",
+    "recommendations",
+    "audit_findings",
+}
+
+
+def redact_public_scorecard(profile: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
+    """Remove audit and score data from visitor-only spectator responses."""
+    profile["avg_project_score"] = None
+    for row in rows:
+        for field_name in PUBLIC_SCORECARD_FIELDS:
+            row.pop(field_name, None)
+
+
+def apply_spectator_profile_preferences(
+    profile: Dict[str, Any],
+    *,
+    is_owner: bool,
+    assets: List[Dict[str, Any]] | None = None,
+    folder_files: List[Dict[str, Any]] | None = None,
+    folders: List[Dict[str, Any]] | None = None,
+) -> bool:
+    """Apply public sharing settings and return whether audit data may be exposed."""
+    scorecards_enabled = bool(profile.get("public_scorecard_enabled", True))
+    contact_email_enabled = bool(profile.get("public_contact_email_enabled", False))
+
+    if not is_owner and not contact_email_enabled:
+        profile["email"] = None
+    else:
+        profile["email"] = normalize_email(profile.get("email"))
+
+    if not is_owner and not scorecards_enabled:
+        redact_public_scorecard(profile, assets or [])
+        redact_public_scorecard(profile, folder_files or [])
+        redact_public_scorecard(profile, folders or [])
+
+    # The switches are not needed by a visitor and should not become a side-channel
+    # for an owner's preference state.
+    if not is_owner:
+        profile.pop("public_profile_enabled", None)
+        profile.pop("public_scorecard_enabled", None)
+        profile.pop("public_contact_email_enabled", None)
+        profile.pop("default_asset_is_public", None)
+
+    return is_owner or scorecards_enabled
 
 
 def stitch_dashboard_projects(
@@ -8223,6 +8284,11 @@ async def spectate_profile(
                 detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
             )
 
+        current_user_id, authentication_status = await resolve_request_user(
+            request,
+            token,
+            required=False,
+        )
         query_stage = "profile"
         try:
             async with asyncio.timeout(SPECTATE_PROFILE_QUERY_TIMEOUT_SECONDS):
@@ -8246,15 +8312,15 @@ async def spectate_profile(
                 if not profile_uuid_text:
                     raise HTTPException(status_code=404, detail="User not found")
 
+                is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
+                viewer_type = "owner" if is_owner else "visitor"
+                if not is_owner and profile.get("public_profile_enabled", True) is False:
+                    # Treat private profiles as absent so a share URL cannot be
+                    # used as a profile-enumeration oracle.
+                    raise HTTPException(status_code=404, detail="User not found")
+
                 if view == "identity":
-                    current_user_id, authentication_status = await resolve_request_user(
-                        request,
-                        token,
-                        required=False,
-                    )
-                    is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
-                    viewer_type = "owner" if is_owner else "visitor"
-                    profile["email"] = normalize_email(profile.get("email"))
+                    apply_spectator_profile_preferences(profile, is_owner=is_owner)
                     profile["isOwner"] = is_owner
                     profile["viewerType"] = viewer_type
                     profile["authenticationStatus"] = authentication_status
@@ -8278,6 +8344,20 @@ async def spectate_profile(
                 if await _project_folder_column_supported(supabase, "parent_id"):
                     project_folder_select = f"{project_folder_select}, parent_id"
                 query_stage = "work_queries"
+                def project_query(folder_filter: str):
+                    query = (
+                        supabase.table("projects")
+                        .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                        .eq("user_id", profile_uuid_text)
+                    )
+                    if not is_owner:
+                        query = query.eq("is_public", True)
+                    if folder_filter == "null":
+                        query = query.is_("folder_id", "null")
+                    else:
+                        query = query.not_.is_("folder_id", "null")
+                    return query.order("created_at", desc=True)
+
                 folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
                     run_spectate_profile_query(
                         lambda: (
@@ -8290,25 +8370,11 @@ async def spectate_profile(
                         operation_name="project_folders",
                     ),
                     run_spectate_profile_query(
-                        lambda: (
-                            supabase.table("projects")
-                            .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                            .eq("user_id", profile_uuid_text)
-                            .is_("folder_id", "null")
-                            .order("created_at", desc=True)
-                            .execute()
-                        ),
+                        lambda: project_query("null").execute(),
                         operation_name="standalone_projects",
                     ),
                     run_spectate_profile_query(
-                        lambda: (
-                            supabase.table("projects")
-                            .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                            .eq("user_id", profile_uuid_text)
-                            .not_.is_("folder_id", "null")
-                            .order("created_at", desc=True)
-                            .execute()
-                        ),
+                        lambda: project_query("not-null").execute(),
                         operation_name="folder_files",
                     ),
                 )
@@ -8319,6 +8385,18 @@ async def spectate_profile(
                 project_folders = attach_folder_files(
                     sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
                     folder_files,
+                )
+                if not is_owner:
+                    project_folders = [
+                        folder for folder in project_folders if folder.get("nested_projects")
+                    ]
+
+                scorecards_visible = apply_spectator_profile_preferences(
+                    profile,
+                    is_owner=is_owner,
+                    assets=assets,
+                    folder_files=folder_files,
+                    folders=project_folders,
                 )
 
                 if view == "work":
@@ -8334,6 +8412,10 @@ async def spectate_profile(
                         "vaultAssets": assets,
                         "folder_files": folder_files,
                         "folderFiles": folder_files,
+                        "isOwner": is_owner,
+                        "viewerType": viewer_type,
+                        "authenticationStatus": authentication_status,
+                        "scorecardsVisible": scorecards_visible,
                     }
         except HTTPException:
             raise
@@ -8351,14 +8433,6 @@ async def spectate_profile(
             f"{len(project_folders)} folders, and {len(folder_files)} folder files"
         )
 
-        current_user_id, authentication_status = await resolve_request_user(
-            request,
-            token,
-            required=False,
-        )
-        is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
-        viewer_type = "owner" if is_owner else "visitor"
-        profile["email"] = normalize_email(profile.get("email"))
         profile["projects"] = assets
         profile["project_folders"] = project_folders
         profile["projectFolders"] = project_folders
@@ -8366,7 +8440,7 @@ async def spectate_profile(
         profile["folder_files"] = folder_files
         profile["folderFiles"] = folder_files
 
-        scan_rows = build_project_scan_rows(profile["projects"])
+        scan_rows = build_project_scan_rows(profile["projects"]) if scorecards_visible else []
         profile["ratings"] = scan_rows
         profile["scores"] = scan_rows
         profile["scans"] = scan_rows

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 
-import { SettingsTabPlaceholder } from '@/components/settings/settings-tab-placeholder';
+import { SettingsTabContent } from '@/components/settings/settings-tab-content';
 import { isSettingsTab, settingsTabs } from '@/lib/settings-tabs';
 
 export const dynamicParams = false;
@@ -16,5 +16,5 @@ export default async function SettingsTabPage({ params }: { params: Promise<{ ta
     notFound();
   }
 
-  return <SettingsTabPlaceholder tab={tab} />;
+  return <SettingsTabContent tab={tab} />;
 }

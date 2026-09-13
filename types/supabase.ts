@@ -20,6 +20,12 @@ export type ProfileRow = {
   avatar_url: string | null;
   age: number | null;
   current_status: string | null;
+  public_profile_enabled?: boolean;
+  public_scorecard_enabled?: boolean;
+  public_contact_email_enabled?: boolean;
+  default_asset_is_public?: boolean;
+  audit_alerts_enabled?: boolean;
+  opportunity_match_alerts_enabled?: boolean;
   education: string | null;
   qualifications: string[] | null;
   avg_project_score: number | null;

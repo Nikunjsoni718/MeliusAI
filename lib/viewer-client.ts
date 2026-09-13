@@ -21,6 +21,13 @@ export type ViewerProfile = Pick<
   | 'birth_date'
   | 'bio'
   | 'avatar_url'
+  | 'current_status'
+  | 'public_profile_enabled'
+  | 'public_scorecard_enabled'
+  | 'public_contact_email_enabled'
+  | 'default_asset_is_public'
+  | 'audit_alerts_enabled'
+  | 'opportunity_match_alerts_enabled'
 > & {
   role: UserRole;
   role_selected_at: string | null;
@@ -71,6 +78,13 @@ function normalizeViewerProfileResponse(body: ProfileResponse | null): ViewerPro
     username: candidate.username ?? null,
     birth_date: candidate.birth_date ?? null,
     bio: candidate.bio ?? null,
+    current_status: candidate.current_status ?? null,
+    public_profile_enabled: candidate.public_profile_enabled ?? true,
+    public_scorecard_enabled: candidate.public_scorecard_enabled ?? true,
+    public_contact_email_enabled: candidate.public_contact_email_enabled ?? false,
+    default_asset_is_public: candidate.default_asset_is_public ?? true,
+    audit_alerts_enabled: candidate.audit_alerts_enabled ?? false,
+    opportunity_match_alerts_enabled: candidate.opportunity_match_alerts_enabled ?? false,
     headline: candidate.headline ?? null,
     company_name: candidate.company_name ?? null,
     github_username: candidate.github_username ?? null,

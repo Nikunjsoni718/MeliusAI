@@ -78,11 +78,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid project status.' }, { status: 400 });
     }
 
+    let isPublic = body.is_public;
+    if (typeof isPublic === 'undefined') {
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('default_asset_is_public')
+        .eq('id', sessionData.user.id)
+        .maybeSingle();
+      if (profileError) {
+        throw profileError;
+      }
+      isPublic = profile?.default_asset_is_public ?? true;
+    }
+
     const { data, error } = await supabase
       .from('projects')
       .insert({
         user_id: sessionData.user.id,
-        is_public: body.is_public ?? true,
+        is_public: isPublic,
         title: body.title,
         name: body.title,
         description: body.description?.trim() || null,

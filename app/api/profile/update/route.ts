@@ -1,5 +1,6 @@
 import { after, NextResponse } from 'next/server';
 
+import { isCurrentStatus } from '@/lib/settings';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -146,6 +147,9 @@ export async function POST(req: Request) {
     }
 
     if (currentStatus !== undefined) {
+      if (currentStatus && !isCurrentStatus(currentStatus)) {
+        return NextResponse.json({ error: 'Invalid current status.' }, { status: 400 });
+      }
       updatePayload.current_status = currentStatus || null;
     }
 
