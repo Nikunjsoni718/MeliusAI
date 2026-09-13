@@ -8212,6 +8212,10 @@ async def spectate_profile(
         if not target_username:
             raise HTTPException(status_code=404, detail="User not found")
 
+        view = request.query_params.get("view")
+        if view not in (None, "identity", "work"):
+            raise HTTPException(status_code=400, detail="Unsupported profile view")
+
         supabase = get_supabase_spectate_client()
         if supabase is None:
             raise HTTPException(
@@ -8242,45 +8246,71 @@ async def spectate_profile(
                 if not profile_uuid_text:
                     raise HTTPException(status_code=404, detail="User not found")
 
+                if view == "identity":
+                    current_user_id, authentication_status = await resolve_request_user(
+                        request,
+                        token,
+                        required=False,
+                    )
+                    is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
+                    viewer_type = "owner" if is_owner else "visitor"
+                    profile["email"] = normalize_email(profile.get("email"))
+                    profile["isOwner"] = is_owner
+                    profile["viewerType"] = viewer_type
+                    profile["authenticationStatus"] = authentication_status
+                    profile["degraded"] = False
+                    profile["unavailableSources"] = []
+
+                    return {
+                        **profile,
+                        "success": True,
+                        "profile": profile,
+                        "resume": profile,
+                        "isOwner": is_owner,
+                        "viewerType": viewer_type,
+                        "authenticationStatus": authentication_status,
+                        "degraded": False,
+                        "unavailableSources": [],
+                    }
+
                 query_stage = "project_folders"
                 project_folder_select = SPECTATE_PROJECT_FOLDER_SELECT
                 if await _project_folder_column_supported(supabase, "parent_id"):
                     project_folder_select = f"{project_folder_select}, parent_id"
-                folders_response = await run_spectate_profile_query(
-                    lambda: (
-                        supabase.table("project_folders")
-                        .select(project_folder_select)
-                        .eq("user_id", profile_uuid_text)
-                        .order("created_at", desc=True)
-                        .execute()
+                query_stage = "work_queries"
+                folders_response, standalone_projects_response, folder_files_response = await asyncio.gather(
+                    run_spectate_profile_query(
+                        lambda: (
+                            supabase.table("project_folders")
+                            .select(project_folder_select)
+                            .eq("user_id", profile_uuid_text)
+                            .order("created_at", desc=True)
+                            .execute()
+                        ),
+                        operation_name="project_folders",
                     ),
-                    operation_name=query_stage,
-                )
-
-                query_stage = "standalone_projects"
-                standalone_projects_response = await run_spectate_profile_query(
-                    lambda: (
-                        supabase.table("projects")
-                        .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                        .eq("user_id", profile_uuid_text)
-                        .is_("folder_id", "null")
-                        .order("created_at", desc=True)
-                        .execute()
+                    run_spectate_profile_query(
+                        lambda: (
+                            supabase.table("projects")
+                            .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                            .eq("user_id", profile_uuid_text)
+                            .is_("folder_id", "null")
+                            .order("created_at", desc=True)
+                            .execute()
+                        ),
+                        operation_name="standalone_projects",
                     ),
-                    operation_name=query_stage,
-                )
-
-                query_stage = "folder_files"
-                folder_files_response = await run_spectate_profile_query(
-                    lambda: (
-                        supabase.table("projects")
-                        .select(SPECTATE_PROJECT_PUBLIC_SELECT)
-                        .eq("user_id", profile_uuid_text)
-                        .not_.is_("folder_id", "null")
-                        .order("created_at", desc=True)
-                        .execute()
+                    run_spectate_profile_query(
+                        lambda: (
+                            supabase.table("projects")
+                            .select(SPECTATE_PROJECT_PUBLIC_SELECT)
+                            .eq("user_id", profile_uuid_text)
+                            .not_.is_("folder_id", "null")
+                            .order("created_at", desc=True)
+                            .execute()
+                        ),
+                        operation_name="folder_files",
                     ),
-                    operation_name=query_stage,
                 )
 
                 query_stage = "response_normalization"
@@ -8290,6 +8320,21 @@ async def spectate_profile(
                     sort_rows_newest_first(clean_supabase_rows(folders_response.data)),
                     folder_files,
                 )
+
+                if view == "work":
+                    return {
+                        "success": True,
+                        "data": assets,
+                        "assets": assets,
+                        "projects": assets,
+                        "project_folders": project_folders,
+                        "projectFolders": project_folders,
+                        "folders": project_folders,
+                        "vault_assets": assets,
+                        "vaultAssets": assets,
+                        "folder_files": folder_files,
+                        "folderFiles": folder_files,
+                    }
         except HTTPException:
             raise
         except Exception as error:

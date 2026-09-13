@@ -9,14 +9,14 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BriefcaseBusiness, ChevronDown, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
-import { useSWRConfig } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 
 import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
-import { DashboardSkeleton, SkeletonBlock } from '@/components/dashboard/profile-dashboard';
 import { getUniversalAssetFileType, getUniversalAssetName } from '@/components/dashboard/universal-asset-grid';
 import {
   advanceProductTour,
@@ -32,6 +32,8 @@ import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
+
+import { ResumeContentSkeleton, ResumePageSkeleton, ResumeTopProjectsSkeleton } from './resume-page-skeleton';
 
 type ResumeStatus = string;
 type ResumeFolder = ProjectFolderRow & {
@@ -109,6 +111,14 @@ type WrappedSpectatorResumeResponse = {
   message?: string;
 };
 type SpectatorResumeResponse = SpectatorResumePayload | WrappedSpectatorResumeResponse;
+type ResumeIdentityResponse = {
+  isOwner: boolean;
+  resume: ResumeFields;
+};
+type ResumeWorkResponse = {
+  assets: ProjectRow[];
+  folders: ResumeFolder[];
+};
 
 const resumeTourTransitionBySection: Record<
   EditableResumeSection,
@@ -763,33 +773,148 @@ function EditableStringListSection({
   );
 }
 
-const resumeSkeletonSections = [
-  { id: 'tour-edit-metrics', label: 'core metrics' },
-  { id: 'tour-edit-qualifications', label: 'qualifications' },
-  { id: 'tour-edit-skills', label: 'skills' },
-  { id: 'tour-edit-experience', label: 'experience' },
-  { id: 'tour-edit-hobbies', label: 'hobbies' },
-] as const;
-
 function DashboardResumePageContent() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
   const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
-  const { authEnabled, loading, profile, supabase, user } = useViewerProfile();
+  const { authEnabled, loading, profile, session, supabase, user } = useViewerProfile();
   const { mutate } = useSWRConfig();
-  const [spectatedOwnership, setSpectatedOwnership] = useState<{
-    isOwner: boolean;
-    username: string;
-  } | null>(null);
-  const hasOwnershipForTarget = Boolean(
-    normalizedTargetUsername && spectatedOwnership?.username === normalizedTargetUsername
+  const sharedAuthState = session?.access_token ? 'authenticated' : 'public';
+  const resumeIdentityKey = targetUsername
+    ? ['resume-identity', 'shared', normalizedTargetUsername, sharedAuthState]
+    : user?.id && supabase
+      ? ['resume-identity', 'owner', user.id]
+      : null;
+  const {
+    data: resumeIdentity,
+    error: resumeIdentityError,
+    isLoading: isResumeIdentityLoading,
+    mutate: mutateResumeIdentity,
+  } = useSWR<ResumeIdentityResponse>(
+    resumeIdentityKey,
+    async () => {
+      if (targetUsername) {
+        const response = await fetchSpectateProfileResponse(targetUsername, {
+          accessToken: session?.access_token ?? null,
+          view: 'identity',
+        });
+        const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
+        const resume = getSpectatorResume(payload, targetUsername);
+        const payloadRecord = asRecord(payload);
+        const profileRecord = asRecord(payloadRecord?.profile);
+
+        if (!response.ok || !resume) {
+          throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
+        }
+
+        return {
+          resume,
+          isOwner: payloadRecord?.isOwner === true || profileRecord?.isOwner === true,
+        };
+      }
+
+      if (!supabase || !user) {
+        throw new Error('You must be signed in before loading your resume.');
+      }
+
+      const profileResponse = await supabase
+        .from('profiles')
+        .select(BASE_RESUME_SELECT)
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profileResponse.error) {
+        throw profileResponse.error;
+      }
+
+      return {
+        isOwner: true,
+        resume: (profileResponse.data as ResumeFields | null) ?? {},
+      };
+    },
+    {
+      dedupingInterval: 30_000,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+    }
   );
-  const isOwner = normalizedTargetUsername
-    ? Boolean(!loading && hasOwnershipForTarget && spectatedOwnership?.isOwner)
-    : Boolean(user?.id);
-  const isSpectator = Boolean(targetUsername && !loading && !isOwner);
+  const resumeWorkKey = targetUsername
+    ? ['resume-work', 'shared', normalizedTargetUsername, sharedAuthState]
+    : user?.id && supabase
+      ? ['resume-work', 'owner', user.id]
+      : null;
+  const {
+    data: resumeWork,
+    error: resumeWorkError,
+    isLoading: isResumeWorkLoading,
+  } = useSWR<ResumeWorkResponse>(
+    resumeWorkKey,
+    async () => {
+      if (targetUsername) {
+        const response = await fetchSpectateProfileResponse(targetUsername, {
+          accessToken: session?.access_token ?? null,
+          view: 'work',
+        });
+        const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.detail || payload?.message || 'Unable to load public projects.');
+        }
+
+        return {
+          assets: getSpectatorResumeAssets(payload),
+          folders: getSpectatorResumeFolders(payload),
+        };
+      }
+
+      if (!supabase || !user) {
+        throw new Error('You must be signed in before loading your projects.');
+      }
+
+      const [assetResponse, folderResponse] = await Promise.all([
+        supabase
+          .from('projects')
+          .select('*')
+          .eq('user_id', user.id)
+          .is('folder_id', null),
+        supabase
+          .from('project_folders')
+          .select('*')
+          .eq('user_id', user.id),
+      ]);
+
+      if (assetResponse.error) {
+        throw assetResponse.error;
+      }
+      if (folderResponse.error) {
+        throw folderResponse.error;
+      }
+
+      return {
+        assets: Array.isArray(assetResponse.data) ? (assetResponse.data as ProjectRow[]) : [],
+        folders: Array.isArray(folderResponse.data) ? (folderResponse.data as ResumeFolder[]) : [],
+      };
+    },
+    {
+      dedupingInterval: 30_000,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+    }
+  );
+  const isOwner = targetUsername ? resumeIdentity?.isOwner === true : Boolean(user?.id);
+  const isSpectator = Boolean(targetUsername && resumeIdentity && !isOwner);
+  const isResumeIdentityPending = targetUsername
+    ? !resumeIdentity && !resumeIdentityError
+    : Boolean(
+        (authEnabled && !user) ||
+        (isResumeIdentityLoading && resumeIdentityKey && !resumeIdentity && !resumeIdentityError)
+      );
+  const topProjects = useMemo(
+    () => (resumeWork ? getTopScoringWorkItems(resumeWork.folders, resumeWork.assets) : []),
+    [resumeWork]
+  );
   const isNewUserTourActive = Boolean(user && hasActiveProductTour(user.id));
   const viewerProfileHandle =
     profile?.username?.trim() ||
@@ -814,10 +939,8 @@ function DashboardResumePageContent() {
   const statusSaveRevisionRef = useRef(0);
   const sectionEditSnapshotRef = useRef<ResumeFormData | null>(null);
   const [formData, setFormData] = useState<ResumeFormData>(() => createDefaultFormData());
-  const [topProjects, setTopProjects] = useState<FeaturedWorkItem[]>([]);
   const [activeFeaturedPreview, setActiveFeaturedPreview] = useState<AuditPreviewAsset | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [formLoading, setFormLoading] = useState(true);
   const [isEditingCoreMetrics, setIsEditingCoreMetrics] = useState(false);
   const [isEditingQualifications, setIsEditingQualifications] = useState(false);
   const [isEditingSkills, setIsEditingSkills] = useState(false);
@@ -834,16 +957,21 @@ function DashboardResumePageContent() {
     isEditingSkills ||
     isEditingExperience ||
     isEditingHobbies;
+  const identityErrorMessage = resumeIdentityError
+    ? targetUsername
+      ? `Unable to load ${targetUsername}'s resume right now.`
+      : 'Unable to load your resume profile right now.'
+    : null;
+  const workErrorMessage = resumeWorkError
+    ? 'Top projects are unavailable right now. Please try again later.'
+    : null;
+  const visibleFormError = formError ?? identityErrorMessage;
 
   useEffect(() => {
-    setSpectatedOwnership(null);
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!isSpectator && !loading && authEnabled && !user) {
+    if (!targetUsername && !loading && authEnabled && !user) {
       router.replace('/auth');
     }
-  }, [authEnabled, isSpectator, loading, router, user]);
+  }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
     // Recover sessions persisted by the old pencil-click advancement behavior.
@@ -861,171 +989,50 @@ function DashboardResumePageContent() {
   }, []);
 
   useEffect(() => {
-    if (loading) {
+    if (!resumeIdentity || isEditingAnySection) {
       return;
     }
 
-    if (!isSpectator && (!supabase || !user)) {
-      setFormLoading(false);
-      return;
-    }
+    const nextFormData = createDefaultFormData();
+    const resume = resumeIdentity.resume;
+    const fallbackName = !targetUsername
+      ? (user?.user_metadata?.full_name as string | undefined) ??
+        (user?.user_metadata?.name as string | undefined) ??
+        ''
+      : '';
+    const fallbackAvatarUrl = !targetUsername
+      ? (user?.user_metadata?.avatar_url as string | undefined) ??
+        (user?.user_metadata?.picture as string | undefined) ??
+        null
+      : null;
 
-    if (isSpectator && !targetUsername) {
-      setFormLoading(false);
-      return;
-    }
+    setFormData((current) => ({
+      ...nextFormData,
+      name: resume.full_name ?? resume.name ?? fallbackName,
+      age: normalizeAge(resume.age),
+      status: resume.current_status ?? resume.status ?? '',
+      qualifications: normalizeList(resume.qualifications),
+      skills: normalizeList(resume.skills),
+      experience: normalizeList(resume.experience),
+      hobbies: normalizeList(resume.hobbies),
+      featuredProjectIds: current.featuredProjectIds,
+    }));
+    setAvatarUrl(resume.avatar_url ?? fallbackAvatarUrl);
+  }, [isEditingAnySection, resumeIdentity, targetUsername, user]);
 
-    let active = true;
+  useEffect(() => {
+    const featuredProjectIds = topProjects.map((item) =>
+      item.kind === 'folder' ? item.folder.id : item.project.id
+    );
 
-    const loadResume = async () => {
-      setFormLoading(true);
-      setFormError(null);
+    setFormData((current) => {
+      const hasSameFeaturedProjects =
+        current.featuredProjectIds.length === featuredProjectIds.length &&
+        current.featuredProjectIds.every((id, index) => id === featuredProjectIds[index]);
 
-      try {
-        let resume: ResumeFields | null = null;
-        let assets: ProjectRow[] = [];
-        let folders: ResumeFolder[] = [];
-        let fallbackAssets: ProjectRow[] = [];
-        let fallbackFolders: ResumeFolder[] = [];
-        let profileUuid: string | null = null;
-        let nextSpectatedOwnership: { isOwner: boolean; username: string } | null = null;
-
-        if (isSpectator && targetUsername) {
-          const response = await fetchSpectateProfileResponse(targetUsername, { supabase });
-          const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
-          const spectatorResume = getSpectatorResume(payload, targetUsername);
-          const payloadRecord = asRecord(payload);
-          const profileRecord = asRecord(payloadRecord?.profile);
-
-          if (!response.ok || !spectatorResume) {
-            throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
-          }
-
-          nextSpectatedOwnership = {
-            username: normalizedTargetUsername ?? targetUsername.toLowerCase(),
-            isOwner: payloadRecord?.isOwner === true || profileRecord?.isOwner === true,
-          };
-          resume = spectatorResume;
-          profileUuid = resume?.id ?? null;
-          fallbackAssets = getSpectatorResumeAssets(payload);
-          fallbackFolders = getSpectatorResumeFolders(payload);
-        } else if (supabase && user) {
-          const profileResponse = await supabase
-            .from('profiles')
-            .select(BASE_RESUME_SELECT)
-            .eq('id', user.id)
-            .maybeSingle();
-
-          if (profileResponse.error) {
-            throw profileResponse.error;
-          }
-
-          resume = profileResponse.data as ResumeFields | null;
-          profileUuid = resume?.id ?? user.id;
-        }
-
-        profileUuid = profileUuid ?? resume?.id ?? (!isSpectator ? user?.id ?? null : null);
-
-        if (!isSpectator && profileUuid && supabase) {
-          const [assetResponse, folderResponse] = await Promise.all([
-            supabase
-              .from('projects')
-              .select('*')
-              .eq('user_id', profileUuid)
-              .is('folder_id', null),
-            supabase
-              .from('project_folders')
-              .select('*')
-              .eq('user_id', profileUuid),
-          ]);
-          const { data: assetData, error: assetError } = assetResponse;
-          const { data: folderData, error: folderError } = folderResponse;
-
-          if (assetError) {
-            console.warn('Resume asset fetch failed; using available payload assets if present.', assetError);
-            assets = fallbackAssets;
-          } else {
-            const queriedAssets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
-            assets = queriedAssets;
-          }
-
-          if (folderError) {
-            console.warn('Resume workspace fetch failed; omitting workspace cards.', folderError);
-            folders = fallbackFolders;
-          } else {
-            folders = Array.isArray(folderData) ? (folderData as ResumeFolder[]) : [];
-          }
-        } else {
-          assets = fallbackAssets;
-          folders = fallbackFolders;
-        }
-
-        if (isSpectator) {
-          assets = assets.filter((project) => project.is_public !== false);
-        }
-
-        if (!active) {
-          return;
-        }
-
-        if (nextSpectatedOwnership) {
-          setSpectatedOwnership(nextSpectatedOwnership);
-        }
-
-        const nextFormData = createDefaultFormData();
-        const topProjects = getTopScoringWorkItems(folders, assets);
-        const topProjectIds = topProjects.map((item) =>
-          item.kind === 'folder' ? item.folder.id : item.project.id
-        );
-        const fallbackName = !isSpectator
-          ? (user?.user_metadata?.full_name as string | undefined) ??
-            (user?.user_metadata?.name as string | undefined) ??
-            ''
-          : '';
-        const fallbackAvatarUrl = !isSpectator
-          ? (user?.user_metadata?.avatar_url as string | undefined) ??
-            (user?.user_metadata?.picture as string | undefined) ??
-            null
-          : null;
-
-        setFormData({
-          ...nextFormData,
-          name:
-            resume?.full_name ??
-            resume?.name ??
-            fallbackName,
-          age: normalizeAge(resume?.age),
-          status: resume?.current_status ?? resume?.status ?? '',
-          qualifications: resume ? normalizeList(resume.qualifications) : nextFormData.qualifications,
-          skills: resume ? normalizeList(resume.skills) : nextFormData.skills,
-          experience: resume ? normalizeList(resume.experience) : nextFormData.experience,
-          hobbies: resume ? normalizeList(resume.hobbies) : nextFormData.hobbies,
-          featuredProjectIds: topProjectIds,
-        });
-        setTopProjects(topProjects);
-        setAvatarUrl(resume?.avatar_url ?? fallbackAvatarUrl);
-      } catch (error) {
-        console.error('Failed to load resume intake data', error);
-        if (active) {
-          setFormError(
-            isSpectator
-              ? `Unable to load ${targetUsername ?? 'this candidate'}'s resume right now.`
-              : 'Unable to load your resume profile right now.'
-          );
-        }
-      } finally {
-        if (active) {
-          setFormLoading(false);
-        }
-      }
-    };
-
-    void loadResume();
-
-    return () => {
-      active = false;
-    };
-  }, [isSpectator, loading, normalizedTargetUsername, supabase, targetUsername, user]);
+      return hasSameFeaturedProjects ? current : { ...current, featuredProjectIds };
+    });
+  }, [topProjects]);
 
   useEffect(() => {
     if (isSpectator) {
@@ -1061,6 +1068,20 @@ function DashboardResumePageContent() {
     if (!updatedProfileHandle || !user?.id) {
       return;
     }
+
+    await mutateResumeIdentity(
+      (cachedResumeIdentity) =>
+        cachedResumeIdentity
+          ? {
+              ...cachedResumeIdentity,
+              resume: {
+                ...cachedResumeIdentity.resume,
+                ...updatedProfile,
+              },
+            }
+          : cachedResumeIdentity,
+      { revalidate: false }
+    );
 
     await mutate(
       (cacheKey) =>
@@ -1335,6 +1356,7 @@ function DashboardResumePageContent() {
         throw updateError;
       }
 
+      await updateCachedResumeProfile({ avatar_url: publicUrl });
       setAvatarUrl(publicUrl);
     } catch (error) {
       console.error('Failed to upload resume avatar', error);
@@ -1441,47 +1463,8 @@ function DashboardResumePageContent() {
               <path d="M4 17h16" />
             </svg>
           </button>
-          {loading || formLoading ? (
-            <div
-              className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8"
-              aria-busy="true"
-              aria-label="Loading developer profile"
-            >
-              <div className="mb-8 space-y-4">
-                <SkeletonBlock className="h-3 w-44" />
-                <SkeletonBlock className="h-10 w-64 rounded-xl" />
-                <SkeletonBlock className="h-4 w-full max-w-2xl" />
-              </div>
-
-              <div className="space-y-5">
-                {resumeSkeletonSections.map((section, index) => (
-                  <div
-                    key={section.id}
-                    className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md"
-                  >
-                    <div className="mb-5 flex items-center justify-between gap-4">
-                      <SkeletonBlock className="h-3 w-40" />
-                      <button
-                        id={section.id}
-                        type="button"
-                        disabled
-                        aria-label={`Loading ${section.label} editor`}
-                        className="h-8 w-8 shrink-0 rounded-lg border border-white/10 bg-white/5 p-1.5"
-                      >
-                        <SkeletonBlock className="h-full w-full rounded-md" />
-                      </button>
-                    </div>
-                    <div className={cn('grid gap-4', index === 0 ? 'sm:grid-cols-2' : null)}>
-                      <SkeletonBlock className="h-4 w-full" />
-                      <SkeletonBlock className="h-4 w-4/5" />
-                      {index === 0 ? (
-                        <SkeletonBlock className="h-20 w-full rounded-xl sm:col-span-2" />
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {isResumeIdentityPending ? (
+            <ResumeContentSkeleton />
           ) : (
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-8 pt-16 sm:px-6 sm:py-8">
             <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -1517,8 +1500,16 @@ function DashboardResumePageContent() {
                   <div className="shrink-0">
                     <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-cyan-500/30 bg-[#050b1b]/70 text-slate-400 shadow-[0_0_26px_rgba(6,182,212,0.12)]">
                       {avatarUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                        <Image
+                          src={avatarUrl}
+                          alt={formData.name ? `${formData.name}'s profile photo` : 'Developer profile photo'}
+                          width={80}
+                          height={80}
+                          sizes="80px"
+                          priority
+                          fetchPriority="high"
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         <UserRound className="h-9 w-9" strokeWidth={1.4} />
                       )}
@@ -1664,7 +1655,11 @@ function DashboardResumePageContent() {
                     Your top 4 highest-scoring projects are automatically featured on your public profile.
                   </p>
                 ) : null}
-                {topProjects.length > 0 ? (
+                {isResumeWorkLoading ? (
+                  <ResumeTopProjectsSkeleton />
+                ) : workErrorMessage ? (
+                  <p className="mt-5 text-sm text-amber-300">{workErrorMessage}</p>
+                ) : topProjects.length > 0 ? (
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                     {topProjects.map((item) => {
                       const score = getFeaturedWorkItemScore(item);
@@ -1727,9 +1722,9 @@ function DashboardResumePageContent() {
                 placeholder="Photography"
               />
 
-              {formError ? (
+              {visibleFormError ? (
                 <p className="rounded-xl border border-rose-900/70 bg-rose-950/20 px-4 py-3 text-sm text-rose-300">
-                  {formError}
+                  {visibleFormError}
                 </p>
               ) : null}
             </div>
@@ -1750,13 +1745,7 @@ function DashboardResumePageContent() {
 export default function DashboardResumePage() {
   return (
     <Suspense
-      fallback={
-        <main className="min-h-screen bg-gradient-to-br from-[#020617] via-[#030712] to-[#010b24] text-white">
-          <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
-            <DashboardSkeleton />
-          </div>
-        </main>
-      }
+      fallback={<ResumePageSkeleton />}
     >
       <DashboardResumePageContent />
     </Suspense>

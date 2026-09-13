@@ -20,6 +20,7 @@ type SpectateProfileFetchOptions = {
   init?: RequestInit;
   signal?: AbortSignal;
   supabase?: SupabaseSessionClient | null;
+  view?: 'identity' | 'work';
 };
 
 export const PROFILE_SPECTATOR_BASE_URL = (
@@ -97,8 +98,13 @@ export async function fetchSpectateProfileResponse(
     requestInit.signal = options.signal;
   }
 
-  return fetch(
-    `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`,
-    requestInit
+  const endpoint = new URL(
+    `${PROFILE_SPECTATOR_BASE_URL}/api/spectate-profile/${encodeURIComponent(targetUsername)}`
   );
+
+  if (options.view) {
+    endpoint.searchParams.set('view', options.view);
+  }
+
+  return fetch(endpoint, requestInit);
 }
