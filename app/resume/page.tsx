@@ -144,8 +144,8 @@ const navigationItems = [
   { href: '/search', label: 'Search', icon: Search },
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Developer Profile', icon: FileText },
-  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/profile#opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 type CurrentStatusListboxProps = {

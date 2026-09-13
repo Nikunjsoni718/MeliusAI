@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, House, Mail, Search } from 'lucide-react';
+import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, House, Mail, Search, Settings } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
 import { AssetPreviewModal } from '@/components/dashboard/asset-preview-modal';
@@ -1594,41 +1594,6 @@ function SidebarNavButton({
     >
       <span className="text-slate-400 transition-colors group-hover:text-cyan-400">{icon}</span>
       <span className="font-sans text-sm tracking-wide">{label}</span>
-    </Link>
-  );
-}
-
-function SidebarProfileLink({
-  active,
-  avatarUrl,
-  href,
-  onClick,
-}: {
-  active?: boolean;
-  avatarUrl: string | null;
-  href: string;
-  onClick?: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      aria-label="Account Settings"
-      title="Account Settings"
-      onClick={onClick}
-      className={cn(
-        'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-slate-300 transition-all duration-200 hover:bg-blue-950/30 hover:text-white',
-        active ? 'bg-blue-950/35 text-white' : null
-      )}
-    >
-      <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-blue-950/60 bg-[#09152b]/70">
-        {avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={avatarUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-        ) : (
-          <SilhouetteIcon className="h-6 w-6" />
-        )}
-      </span>
-      <span className="font-sans text-sm tracking-wide">Account Settings</span>
     </Link>
   );
 }
@@ -3408,6 +3373,12 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
           href: `${profileHref}#opportunities`,
           label: 'Opportunities',
           icon: <BriefcaseBusiness className="h-5 w-5" strokeWidth={1.8} />,
+          ownerOnly: true,
+        },
+        {
+          href: '/settings',
+          label: 'Settings',
+          icon: <Settings className="h-5 w-5" strokeWidth={1.8} />,
           ownerOnly: true,
         },
       ];
@@ -7030,7 +7001,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                         label={item.label}
                         active={
                           pathname === item.href ||
-                          (item.href === profileHref && pathname.startsWith('/profile/'))
+                          (item.href === profileHref && pathname.startsWith('/profile/')) ||
+                          (item.href === '/settings' && pathname.startsWith('/settings/'))
                         }
                         icon={item.icon}
                         onPrefetch={() => prefetchDashboardNavigation(item)}
@@ -7043,21 +7015,13 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             </div>
             <div className="space-y-2 p-4">
               {isOwner ? (
-                <>
-                  <SidebarProfileLink
-                    active={pathname === profileHref || pathname.startsWith('/profile/')}
-                    avatarUrl={avatarUrl}
-                    href={profileHref}
-                    onClick={() => setIsSidebarOpen(false)}
-                  />
-                  <Button
-                    variant="ghost"
-                    onClick={handleSignOut}
-                    className="w-full justify-start rounded-lg border border-blue-950/60 bg-[#071329]/60 px-3 py-2.5 text-xs text-slate-200 hover:border-cyan-500/30 hover:bg-[#0b1d38]/80"
-                  >
-                    Sign out
-                  </Button>
-                </>
+                <Button
+                  variant="ghost"
+                  onClick={handleSignOut}
+                  className="w-full justify-start rounded-lg border border-blue-950/60 bg-[#071329]/60 px-3 py-2.5 text-xs text-slate-200 hover:border-cyan-500/30 hover:bg-[#0b1d38]/80"
+                >
+                  Sign out
+                </Button>
               ) : null}
             </div>
           </aside>
