@@ -13,7 +13,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, ChevronDown, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
+import { BriefcaseBusiness, ChevronDown, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, Settings, UserRound } from 'lucide-react';
 import useSWR, { useSWRConfig } from 'swr';
 
 import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
@@ -144,6 +144,7 @@ const navigationItems = [
   { href: '/search', label: 'Search', icon: Search },
   { href: '/vault', label: 'Vault', icon: FolderLock },
   { href: '/resume', label: 'Developer Profile', icon: FileText },
+  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/profile#opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
 ];
 
@@ -931,7 +932,10 @@ function DashboardResumePageContent() {
     : `${displayedProfileHref}#opportunities`;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const visibleNavigationItems = useMemo(
-    () => (isOwner ? navigationItems : navigationItems.filter((item) => item.label !== 'Search')),
+    () =>
+      isOwner
+        ? navigationItems
+        : navigationItems.filter((item) => item.label !== 'Search' && item.label !== 'Settings'),
     [isOwner]
   );
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -1426,7 +1430,11 @@ function DashboardResumePageContent() {
                       <SidebarLink
                         href={href}
                         label={item.label}
-                        active={pathname === item.href}
+                        active={
+                          item.href === '/settings'
+                            ? pathname === '/settings' || pathname.startsWith('/settings/')
+                            : pathname === item.href
+                        }
                         icon={<Icon className="h-5 w-5" strokeWidth={1.8} />}
                         onClick={() => setIsSidebarOpen(false)}
                       />
