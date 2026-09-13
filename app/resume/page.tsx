@@ -152,11 +152,7 @@ function CurrentStatusListbox({
 }: CurrentStatusListboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const controlRef = useRef<HTMLDivElement | null>(null);
-  const options = [
-    { label: 'Select your current status', value: '' },
-    ...statusOptions.map((status) => ({ label: status, value: status })),
-  ];
-  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+  const selectedLabel = value || 'Select your current status';
 
   useEffect(() => {
     if (!isOpen) {
@@ -188,14 +184,13 @@ function CurrentStatusListbox({
       <button
         id={id}
         type="button"
-        aria-controls={`${id}-options`}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         disabled={disabled}
         onClick={() => setIsOpen((current) => !current)}
-        className="flex h-11 w-full items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-950 px-3 text-left text-sm text-slate-200 transition-colors hover:border-slate-700 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex w-full items-center justify-between rounded-md border border-slate-800 bg-slate-950/50 px-3 py-2 text-sm text-slate-200 transition-colors hover:bg-slate-800 focus:border-slate-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className="truncate">{selectedOption.label}</span>
+        <span className="truncate">{selectedLabel}</span>
         <ChevronDown
           aria-hidden="true"
           className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', isOpen && 'rotate-180')}
@@ -204,33 +199,28 @@ function CurrentStatusListbox({
 
       {isOpen ? (
         <div
-          id={`${id}-options`}
           role="listbox"
           aria-label="Current Status"
-          className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-slate-800 bg-[#0B1021] py-1 shadow-md shadow-black/40"
+          className="absolute left-0 top-full z-50 mt-1 flex w-full flex-col overflow-hidden rounded-md border border-slate-800 bg-[#0B1021] shadow-lg"
         >
-          {options.map((option) => {
-            const isSelected = option.value === value;
-
-            return (
-              <button
-                key={option.value || 'unspecified'}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                onClick={() => {
-                  onValueChange(option.value);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  'flex w-full cursor-pointer items-center px-3 py-2 text-left text-sm !text-slate-200 transition-colors hover:bg-slate-800 hover:!text-white focus:bg-slate-800 focus:!text-white focus:outline-none',
-                  isSelected ? 'bg-slate-800 !text-white' : 'bg-transparent'
-                )}
-              >
-                {option.label}
-              </button>
-            );
-          })}
+          {statusOptions.map((status) => (
+            <button
+              key={status}
+              type="button"
+              role="option"
+              aria-selected={status === value}
+              onClick={() => {
+                onValueChange(status);
+                setIsOpen(false);
+              }}
+              className={cn(
+                'cursor-pointer px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800 hover:text-white focus:bg-slate-800 focus:text-white focus:outline-none',
+                status === value && 'bg-slate-800 text-white'
+              )}
+            >
+              {status}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>
