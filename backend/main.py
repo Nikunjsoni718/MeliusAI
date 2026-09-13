@@ -8243,10 +8243,13 @@ async def spectate_profile(
                     raise HTTPException(status_code=404, detail="User not found")
 
                 query_stage = "project_folders"
+                project_folder_select = SPECTATE_PROJECT_FOLDER_SELECT
+                if await _project_folder_column_supported(supabase, "parent_id"):
+                    project_folder_select = f"{project_folder_select}, parent_id"
                 folders_response = await run_spectate_profile_query(
                     lambda: (
                         supabase.table("project_folders")
-                        .select(SPECTATE_PROJECT_FOLDER_SELECT)
+                        .select(project_folder_select)
                         .eq("user_id", profile_uuid_text)
                         .order("created_at", desc=True)
                         .execute()

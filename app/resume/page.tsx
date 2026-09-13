@@ -12,11 +12,12 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BriefcaseBusiness, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
+import { BriefcaseBusiness, ChevronDown, FileText, FolderLock, House, LoaderCircle, Pencil, Save, Search, UserRound } from 'lucide-react';
 import { useSWRConfig } from 'swr';
 
+import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
 import { DashboardSkeleton, SkeletonBlock } from '@/components/dashboard/profile-dashboard';
-import { UniversalAssetGrid } from '@/components/dashboard/universal-asset-grid';
+import { getUniversalAssetFileType, getUniversalAssetName } from '@/components/dashboard/universal-asset-grid';
 import {
   advanceProductTour,
   hasActiveProductTour,
@@ -27,13 +28,24 @@ import {
 } from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
-import type { ProjectRow } from '@/types/supabase';
+import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
 type ResumeStatus = string;
+type ResumeFolder = ProjectFolderRow & {
+  ai_summary?: string | null;
+  audit_summary?: string | null;
+  description?: string | null;
+  macro_score?: number | null;
+  macro_summary?: string | null;
+  nested_projects?: ProjectRow[] | null;
+  summary?: string | null;
+};
+type FeaturedWorkItem =
+  | { kind: 'file'; project: ProjectRow }
+  | { kind: 'folder'; folder: ResumeFolder };
 type EditableResumeSection = 'coreMetrics' | 'qualifications' | 'skills' | 'experience' | 'hobbies';
 type EditableListField = 'qualifications' | 'experience' | 'hobbies' | 'skills';
 type ResumeFormData = {
@@ -86,6 +98,11 @@ type WrappedSpectatorResumeResponse = {
   vault_assets?: ProjectRow[] | null;
   vaultAssets?: ProjectRow[] | null;
   files?: ProjectRow[] | null;
+  folder_files?: ProjectRow[] | null;
+  folderFiles?: ProjectRow[] | null;
+  folders?: ResumeFolder[] | null;
+  project_folders?: ResumeFolder[] | null;
+  projectFolders?: ResumeFolder[] | null;
   isOwner?: boolean;
   viewerType?: string;
   detail?: string;
@@ -112,6 +129,106 @@ const navigationItems = [
   { href: '/resume', label: 'Developer Profile', icon: FileText },
   { href: '/profile#opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
 ];
+
+type CurrentStatusListboxProps = {
+  disabled?: boolean;
+  id: string;
+  onValueChange: (value: ResumeStatus) => void;
+  value: ResumeStatus;
+};
+
+function CurrentStatusListbox({
+  disabled = false,
+  id,
+  onValueChange,
+  value,
+}: CurrentStatusListboxProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const options = [
+    { label: 'Select your current status', value: '' },
+    ...statusOptions.map((status) => ({ label: status, value: status })),
+  ];
+  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      if (!controlRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown);
+    document.addEventListener('keydown', closeOnEscape);
+
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointerDown);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={controlRef} className="relative">
+      <button
+        id={id}
+        type="button"
+        aria-controls={`${id}-options`}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setIsOpen((current) => !current)}
+        className="flex h-11 w-full items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-950 px-3 text-left text-sm text-slate-200 transition-colors hover:border-slate-700 hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="truncate">{selectedOption.label}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', isOpen && 'rotate-180')}
+        />
+      </button>
+
+      {isOpen ? (
+        <div
+          id={`${id}-options`}
+          role="listbox"
+          aria-label="Current Status"
+          className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-slate-800 bg-slate-950 py-1 shadow-md shadow-black/40"
+        >
+          {options.map((option) => {
+            const isSelected = option.value === value;
+
+            return (
+              <button
+                key={option.value || 'unspecified'}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => {
+                  onValueChange(option.value);
+                  setIsOpen(false);
+                }}
+                className={cn(
+                  'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-slate-800 hover:text-slate-100 focus:bg-slate-800 focus:text-slate-100 focus:outline-none',
+                  isSelected ? 'bg-slate-900 text-slate-100' : 'text-slate-300'
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function SidebarLink({
   active,
@@ -183,6 +300,10 @@ function nullableString(value: unknown) {
 
 function nullableProjects(value: unknown) {
   return Array.isArray(value) ? (value as ProjectRow[]) : null;
+}
+
+function nullableFolders(value: unknown) {
+  return Array.isArray(value) ? (value as ResumeFolder[]) : null;
 }
 
 function normalizeSpectatorResumeFields(value: unknown, targetUsername: string): ResumeFields | null {
@@ -272,6 +393,25 @@ function getSpectatorResumeAssets(payload: SpectatorResumeResponse | null) {
     : [];
 }
 
+function getSpectatorResumeFolders(payload: SpectatorResumeResponse | null) {
+  const payloadRecord = asRecord(payload);
+  const profileRecord = asRecord(payloadRecord?.profile);
+  const resumeRecord = asRecord(payloadRecord?.resume);
+  const folders =
+    nullableFolders(payloadRecord?.project_folders) ??
+    nullableFolders(payloadRecord?.projectFolders) ??
+    nullableFolders(payloadRecord?.folders) ??
+    nullableFolders(profileRecord?.project_folders) ??
+    nullableFolders(profileRecord?.projectFolders) ??
+    nullableFolders(profileRecord?.folders) ??
+    nullableFolders(resumeRecord?.project_folders) ??
+    nullableFolders(resumeRecord?.projectFolders) ??
+    nullableFolders(resumeRecord?.folders) ??
+    [];
+
+  return folders.filter((folder) => !folder.parent_id);
+}
+
 function createDefaultFormData(): ResumeFormData {
   return {
     name: '',
@@ -302,23 +442,152 @@ function getAssetScore(project: ProjectRow) {
   return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
 }
 
-function isVerifiedAsset(project: ProjectRow) {
-  return Boolean(project.has_been_audited || getAssetScore(project) !== null);
+function getFolderScore(folder: ResumeFolder) {
+  const rawScore = folder.evaluation_score ?? folder.score ?? folder.macro_score ?? null;
+  const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
+
+  return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
 }
 
-function getTopScoringAssets(assets: ProjectRow[]) {
-  return [...assets]
-    .filter(isVerifiedAsset)
+function getFeaturedWorkItemScore(item: FeaturedWorkItem) {
+  return item.kind === 'folder' ? getFolderScore(item.folder) : getAssetScore(item.project);
+}
+
+function isAuditedFeaturedWorkItem(item: FeaturedWorkItem) {
+  const audited = item.kind === 'folder' ? item.folder.has_been_audited : item.project.has_been_audited;
+  const score = getFeaturedWorkItemScore(item);
+
+  return audited === true || (score ?? 0) > 0;
+}
+
+function getFeaturedWorkItemCreatedAt(item: FeaturedWorkItem) {
+  return item.kind === 'folder' ? item.folder.created_at : item.project.created_at;
+}
+
+function getTopScoringWorkItems(folders: ResumeFolder[], assets: ProjectRow[]) {
+  return [
+    ...folders.filter((folder) => !folder.parent_id).map((folder) => ({ kind: 'folder' as const, folder })),
+    ...assets.filter((asset) => !asset.folder_id).map((project) => ({ kind: 'file' as const, project })),
+  ]
+    .filter(isAuditedFeaturedWorkItem)
     .sort((left, right) => {
-      const scoreDifference = (getAssetScore(right) ?? 0) - (getAssetScore(left) ?? 0);
+      const scoreDifference = (getFeaturedWorkItemScore(right) ?? 0) - (getFeaturedWorkItemScore(left) ?? 0);
 
       if (scoreDifference !== 0) {
         return scoreDifference;
       }
 
-      return new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime();
+      return (
+        new Date(getFeaturedWorkItemCreatedAt(right) ?? 0).getTime() -
+        new Date(getFeaturedWorkItemCreatedAt(left) ?? 0).getTime()
+      );
     })
     .slice(0, 4);
+}
+
+function getFeaturedWorkItemName(item: FeaturedWorkItem) {
+  return item.kind === 'folder'
+    ? item.folder.name?.trim() || 'Untitled Workspace'
+    : getUniversalAssetName(item.project);
+}
+
+function getFeaturedWorkItemType(item: FeaturedWorkItem) {
+  if (item.kind === 'folder') {
+    return 'Workspace';
+  }
+
+  const fileType = getUniversalAssetFileType(item.project);
+  const fileTypeLabels: Record<string, string> = {
+    CSS: 'CSS',
+    HTML: 'HTML',
+    JAVA: 'Java',
+    JS: 'JavaScript',
+    JSON: 'JSON',
+    JSX: 'JSX',
+    MD: 'Markdown',
+    PY: 'Python',
+    TS: 'TypeScript',
+  };
+
+  return fileTypeLabels[fileType] ?? fileType;
+}
+
+function getFeaturedScoreTier(score: number | null) {
+  if ((score ?? 0) >= 90) {
+    return {
+      label: 'Production Ready',
+      className: 'border border-emerald-500/20 bg-emerald-400/10 text-emerald-400',
+    };
+  }
+  if ((score ?? 0) >= 75) {
+    return {
+      label: 'Solid Build',
+      className: 'border border-cyan-500/20 bg-cyan-400/10 text-cyan-400',
+    };
+  }
+  if ((score ?? 0) >= 60) {
+    return {
+      label: 'Needs Polish',
+      className: 'border border-amber-500/20 bg-amber-400/10 text-amber-400',
+    };
+  }
+
+  return {
+    label: 'Action Required',
+    className: 'border border-red-500/20 bg-red-400/10 text-red-400',
+  };
+}
+
+function formatFeaturedWorkItemDate(createdAt?: string | null) {
+  if (!createdAt) {
+    return 'Recently added';
+  }
+
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return 'Recently added';
+  }
+
+  return new Intl.DateTimeFormat('en', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+}
+
+function getFeaturedPreviewAsset(item: FeaturedWorkItem): AuditPreviewAsset {
+  if (item.kind === 'folder') {
+    const score = getFolderScore(item.folder);
+
+    return {
+      kind: 'folder',
+      id: item.folder.id,
+      name: getFeaturedWorkItemName(item),
+      title: getFeaturedWorkItemName(item),
+      score,
+      evaluation_score: item.folder.evaluation_score ?? score,
+      score_delta: item.folder.score_delta ?? null,
+      delta_summary: item.folder.delta_summary ?? null,
+      executive_summary: item.folder.executive_summary ?? item.folder.macro_summary ?? null,
+      audit_summary: item.folder.audit_summary ?? item.folder.macro_summary ?? null,
+      ai_summary: item.folder.ai_summary ?? null,
+      description: item.folder.description ?? null,
+      summary: item.folder.summary ?? null,
+      pros: item.folder.pros ?? null,
+      cons: item.folder.cons ?? null,
+      recommendations: item.folder.recommendations ?? null,
+      audit_findings: item.folder.audit_findings ?? null,
+      has_been_audited: item.folder.has_been_audited ?? false,
+    };
+  }
+
+  return {
+    ...item.project,
+    kind: 'file',
+    name: getFeaturedWorkItemName(item),
+    title: item.project.title ?? getFeaturedWorkItemName(item),
+    previewUrl: item.project.file_url ?? null,
+  };
 }
 
 function SectionHeader({
@@ -545,9 +814,11 @@ function DashboardResumePageContent() {
   );
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const successTimerRef = useRef<number | null>(null);
+  const statusSaveRevisionRef = useRef(0);
   const sectionEditSnapshotRef = useRef<ResumeFormData | null>(null);
   const [formData, setFormData] = useState<ResumeFormData>(() => createDefaultFormData());
-  const [topProjects, setTopProjects] = useState<ProjectRow[]>([]);
+  const [topProjects, setTopProjects] = useState<FeaturedWorkItem[]>([]);
+  const [activeFeaturedPreview, setActiveFeaturedPreview] = useState<AuditPreviewAsset | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(true);
   const [isEditingCoreMetrics, setIsEditingCoreMetrics] = useState(false);
@@ -556,6 +827,7 @@ function DashboardResumePageContent() {
   const [isEditingExperience, setIsEditingExperience] = useState(false);
   const [isEditingHobbies, setIsEditingHobbies] = useState(false);
   const [savingSection, setSavingSection] = useState<EditableResumeSection | null>(null);
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -615,7 +887,9 @@ function DashboardResumePageContent() {
       try {
         let resume: ResumeFields | null = null;
         let assets: ProjectRow[] = [];
+        let folders: ResumeFolder[] = [];
         let fallbackAssets: ProjectRow[] = [];
+        let fallbackFolders: ResumeFolder[] = [];
         let profileUuid: string | null = null;
         let nextSpectatedOwnership: { isOwner: boolean; username: string } | null = null;
 
@@ -637,6 +911,7 @@ function DashboardResumePageContent() {
           resume = spectatorResume;
           profileUuid = resume?.id ?? null;
           fallbackAssets = getSpectatorResumeAssets(payload);
+          fallbackFolders = getSpectatorResumeFolders(payload);
         } else if (supabase && user) {
           const profileResponse = await supabase
             .from('profiles')
@@ -655,10 +930,19 @@ function DashboardResumePageContent() {
         profileUuid = profileUuid ?? resume?.id ?? (!isSpectator ? user?.id ?? null : null);
 
         if (!isSpectator && profileUuid && supabase) {
-          const { data: assetData, error: assetError } = await supabase
-            .from('projects')
-            .select('*')
-            .eq('user_id', profileUuid);
+          const [assetResponse, folderResponse] = await Promise.all([
+            supabase
+              .from('projects')
+              .select('*')
+              .eq('user_id', profileUuid)
+              .is('folder_id', null),
+            supabase
+              .from('project_folders')
+              .select('*')
+              .eq('user_id', profileUuid),
+          ]);
+          const { data: assetData, error: assetError } = assetResponse;
+          const { data: folderData, error: folderError } = folderResponse;
 
           if (assetError) {
             console.warn('Resume asset fetch failed; using available payload assets if present.', assetError);
@@ -667,8 +951,16 @@ function DashboardResumePageContent() {
             const queriedAssets = Array.isArray(assetData) ? (assetData as ProjectRow[]) : [];
             assets = queriedAssets;
           }
+
+          if (folderError) {
+            console.warn('Resume workspace fetch failed; omitting workspace cards.', folderError);
+            folders = fallbackFolders;
+          } else {
+            folders = Array.isArray(folderData) ? (folderData as ResumeFolder[]) : [];
+          }
         } else {
           assets = fallbackAssets;
+          folders = fallbackFolders;
         }
 
         if (isSpectator) {
@@ -684,8 +976,10 @@ function DashboardResumePageContent() {
         }
 
         const nextFormData = createDefaultFormData();
-        const topProjects = isSpectator ? assets.slice(0, 4) : getTopScoringAssets(assets);
-        const topProjectIds = topProjects.map((asset) => asset.id);
+        const topProjects = getTopScoringWorkItems(folders, assets);
+        const topProjectIds = topProjects.map((item) =>
+          item.kind === 'folder' ? item.folder.id : item.project.id
+        );
         const fallbackName = !isSpectator
           ? (user?.user_metadata?.full_name as string | undefined) ??
             (user?.user_metadata?.name as string | undefined) ??
@@ -757,6 +1051,100 @@ function DashboardResumePageContent() {
 
   function updateFormField<K extends keyof ResumeFormData>(field: K, value: ResumeFormData[K]) {
     setFormData((current) => ({ ...current, [field]: value }));
+  }
+
+  async function updateCachedResumeProfile(updatedProfile: ResumeFields) {
+    const updatedProfileHandle = (
+      updatedProfile.username ??
+      normalizedTargetUsername ??
+      user?.id ??
+      ''
+    ).toLowerCase();
+
+    if (!updatedProfileHandle || !user?.id) {
+      return;
+    }
+
+    await mutate(
+      (cacheKey) =>
+        Array.isArray(cacheKey) &&
+        cacheKey[0] === 'spectate-profile' &&
+        typeof cacheKey[1] === 'string' &&
+        cacheKey[1].toLowerCase() === updatedProfileHandle &&
+        cacheKey[2] === user.id,
+      (cachedPayload: unknown) => {
+        if (!cachedPayload || typeof cachedPayload !== 'object') {
+          return cachedPayload;
+        }
+
+        const dashboardPayload = cachedPayload as {
+          profile?: ResumeFields | null;
+          [key: string]: unknown;
+        };
+
+        return {
+          ...dashboardPayload,
+          profile: {
+            ...(dashboardPayload.profile ?? {}),
+            ...updatedProfile,
+          },
+        };
+      },
+      { revalidate: false }
+    );
+  }
+
+  async function handleCurrentStatusChange(nextStatus: ResumeStatus) {
+    if (!isOwner || !supabase || !user || isSavingStatus || savingSection) {
+      return;
+    }
+
+    const previousStatus = formData.status;
+    const requestRevision = statusSaveRevisionRef.current + 1;
+    statusSaveRevisionRef.current = requestRevision;
+    setFormData((current) => ({ ...current, status: nextStatus }));
+    setFormError(null);
+    setIsSavingStatus(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ current_status: nextStatus || null })
+        .eq('id', user.id)
+        .select(BASE_RESUME_SELECT)
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      if (requestRevision !== statusSaveRevisionRef.current) {
+        return;
+      }
+
+      const updatedProfile = data as ResumeFields;
+      await updateCachedResumeProfile(updatedProfile);
+      setFormData((current) => ({
+        ...current,
+        status: updatedProfile.current_status ?? '',
+      }));
+      if (sectionEditSnapshotRef.current) {
+        sectionEditSnapshotRef.current = {
+          ...sectionEditSnapshotRef.current,
+          status: updatedProfile.current_status ?? '',
+        };
+      }
+    } catch (error) {
+      console.error('Failed to save current resume status', error);
+      if (requestRevision === statusSaveRevisionRef.current) {
+        setFormData((current) => ({ ...current, status: previousStatus }));
+        setFormError('Current status could not be saved. Please try again.');
+      }
+    } finally {
+      if (requestRevision === statusSaveRevisionRef.current) {
+        setIsSavingStatus(false);
+      }
+    }
   }
 
   function updateStringList(field: EditableListField, index: number, value: string) {
@@ -867,39 +1255,7 @@ function DashboardResumePageContent() {
       }
 
       const updatedProfile = updatedProfileData as ResumeFields;
-      const updatedProfileHandle = (
-        updatedProfile.username ??
-        normalizedTargetUsername ??
-        user.id
-      ).toLowerCase();
-
-      await mutate(
-        (cacheKey) =>
-          Array.isArray(cacheKey) &&
-          cacheKey[0] === 'spectate-profile' &&
-          typeof cacheKey[1] === 'string' &&
-          cacheKey[1].toLowerCase() === updatedProfileHandle &&
-          cacheKey[2] === user.id,
-        (cachedPayload: unknown) => {
-          if (!cachedPayload || typeof cachedPayload !== 'object') {
-            return cachedPayload;
-          }
-
-          const dashboardPayload = cachedPayload as {
-            profile?: ResumeFields | null;
-            [key: string]: unknown;
-          };
-
-          return {
-            ...dashboardPayload,
-            profile: {
-              ...(dashboardPayload.profile ?? {}),
-              ...updatedProfile,
-            },
-          };
-        },
-        { revalidate: false }
-      );
+      await updateCachedResumeProfile(updatedProfile);
 
       setFormData((current) => {
         if (section === 'coreMetrics') {
@@ -1231,20 +1587,12 @@ function DashboardResumePageContent() {
                     <div className="space-y-2">
                       <Label htmlFor={isEditingCoreMetrics ? 'resume-current-status' : undefined}>Current Status</Label>
                       {isEditingCoreMetrics ? (
-                        <Select
+                        <CurrentStatusListbox
                           id="resume-current-status"
-                          name="current_status"
                           value={formData.status}
-                          onChange={(event) => updateFormField('status', event.target.value as ResumeStatus)}
-                          className="rounded-xl border-blue-950/60 bg-[#050b1b]/70 focus:border-cyan-500/40 focus:ring-cyan-500/10"
-                        >
-                          <option value="">Select your current status</option>
-                          {statusOptions.map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </Select>
+                          disabled={isSavingStatus || savingSection === 'coreMetrics'}
+                          onValueChange={(status) => void handleCurrentStatusChange(status)}
+                        />
                       ) : (
                         <p className="py-3 text-sm text-zinc-300">{formData.status || 'Not specified'}</p>
                       )}
@@ -1312,19 +1660,55 @@ function DashboardResumePageContent() {
                 placeholder="Software Engineer at..."
               />
 
-              <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300">
-                <p className="mb-5 text-xs uppercase tracking-[0.2em] text-zinc-500">Featured Projects</p>
+              <div className="rounded-md border border-slate-800 bg-[#0B1021] p-6">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">Top Projects</p>
                 {isOwner ? (
-                  <p className="mb-4 text-sm leading-6 text-slate-400">
+                  <p className="mb-5 mt-2 text-sm leading-6 text-slate-500">
                     Your top 4 highest-scoring projects are automatically featured on your public profile.
                   </p>
                 ) : null}
-                <UniversalAssetGrid
-                  assets={topProjects}
-                  isSpectator={!isOwner}
-                  gridClassName="gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-4"
-                  emptyMessage="No verified Vault assets found yet."
-                />
+                {topProjects.length > 0 ? (
+                  <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {topProjects.map((item) => {
+                      const score = getFeaturedWorkItemScore(item);
+                      const statusTier = getFeaturedScoreTier(score);
+                      const itemId = item.kind === 'folder' ? item.folder.id : item.project.id;
+
+                      return (
+                        <button
+                          key={`${item.kind}-${itemId}`}
+                          type="button"
+                          onClick={() => setActiveFeaturedPreview(getFeaturedPreviewAsset(item))}
+                          className="group flex min-w-0 flex-col gap-4 rounded-md border border-slate-800 bg-slate-950/50 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/70"
+                        >
+                          <div className="flex min-w-0 items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-100">
+                                {getFeaturedWorkItemName(item)}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {formatFeaturedWorkItemDate(getFeaturedWorkItemCreatedAt(item))}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-200">
+                              {score ?? 0}/100
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-300">
+                              {getFeaturedWorkItemType(item)}
+                            </span>
+                            <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', statusTier.className)}>
+                              {statusTier.label}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-5 text-sm text-slate-500">No audited workspaces or files are available yet.</p>
+                )}
               </div>
 
               <EditableStringListSection
@@ -1356,6 +1740,12 @@ function DashboardResumePageContent() {
           )}
         </section>
       </div>
+      <AssetPreviewModal
+        asset={activeFeaturedPreview}
+        hideAudit={false}
+        canVerify={Boolean(activeFeaturedPreview?.kind === 'file' && isOwner)}
+        onClose={() => setActiveFeaturedPreview(null)}
+      />
     </main>
   );
 }
