@@ -180,7 +180,7 @@ function CurrentStatusListbox({
   }, [isOpen]);
 
   return (
-    <div ref={controlRef} className="relative">
+    <div ref={controlRef} className="relative z-50">
       <button
         id={id}
         type="button"
@@ -201,7 +201,7 @@ function CurrentStatusListbox({
         <div
           role="listbox"
           aria-label="Current Status"
-          className="absolute left-0 top-full z-50 mt-1 flex w-full flex-col overflow-hidden rounded-md border border-slate-800 bg-[#0B1021] shadow-lg"
+          className="absolute left-0 top-full z-50 mt-1 flex w-full flex-col rounded-md border border-slate-800 bg-[#0B1021] shadow-lg"
         >
           {statusOptions.map((status) => (
             <button
@@ -1501,7 +1501,7 @@ function DashboardResumePageContent() {
                 </p>
               ) : null}
 
-              <div className="rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
+              <div className="relative z-20 rounded-xl border border-blue-950/50 bg-[#090d1f]/40 p-6 backdrop-blur-md transition-all duration-300 focus-within:border-cyan-500/40">
                 <SectionHeader
                   editDisabled={isEditingAnySection}
                   editButtonId="tour-edit-metrics"
