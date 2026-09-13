@@ -120,7 +120,14 @@ const resumeTourTransitionBySection: Record<
   experience: { current: 6, next: 7 },
   hobbies: { current: 7, next: 8 },
 };
-const statusOptions: ResumeStatus[] = ['Studying', 'Working', 'Looking for an Opportunity'];
+const statusOptions: ResumeStatus[] = [
+  'Open to work',
+  'Actively interviewing',
+  'Employed',
+  'Studying',
+  'Freelancing',
+  'Building startup',
+];
 const BASE_RESUME_SELECT = 'id, username, full_name, avatar_url, age, current_status, qualifications, skills, experience, hobbies';
 const navigationItems = [
   { href: '/profile', label: 'Home', icon: House },
@@ -1660,7 +1667,7 @@ function DashboardResumePageContent() {
                 placeholder="Software Engineer at..."
               />
 
-              <div className="rounded-md border border-slate-800 bg-[#0B1021] p-6">
+              <div className="rounded-md border border-slate-800 bg-slate-950/50 p-6">
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">Top Projects</p>
                 {isOwner ? (
                   <p className="mb-5 mt-2 text-sm leading-6 text-slate-500">
@@ -1679,7 +1686,7 @@ function DashboardResumePageContent() {
                           key={`${item.kind}-${itemId}`}
                           type="button"
                           onClick={() => setActiveFeaturedPreview(getFeaturedPreviewAsset(item))}
-                          className="group flex min-w-0 flex-col gap-4 rounded-md border border-slate-800 bg-slate-950/50 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/70"
+                          className="group flex min-w-0 flex-col gap-4 rounded-md border border-slate-800 bg-[#0B1021] p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/70"
                         >
                           <div className="flex min-w-0 items-start justify-between gap-4">
                             <div className="min-w-0">
