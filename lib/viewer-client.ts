@@ -1,8 +1,9 @@
 'use client';
 
 import type { Session, User } from '@supabase/supabase-js';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useSWRConfig } from 'swr';
 
 import {
   clearPersistedAuthState,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { appendUsernameSuffix, generateUsername } from '@/lib/username';
+import { workspaceCacheKeys } from '@/lib/workspace-cache';
 import type { ProfileRow, UserRole } from '@/types/supabase';
 
 export type ViewerProfile = Pick<
@@ -53,6 +55,29 @@ const GITHUB_CONNECTION_UI_STORAGE_KEYS = [
   'github_success_dismissed',
 ] as const;
 const GITHUB_CONNECTION_INTENT_STORAGE_KEY = 'intent_to_link_github';
+
+export function isViewerProfileOwner({
+  viewerId,
+  viewerUsername,
+  profileId,
+  targetUsername,
+}: {
+  viewerId?: string | null;
+  viewerUsername?: string | null;
+  profileId?: string | null;
+  targetUsername?: string | null;
+}) {
+  const idsMatch = Boolean(viewerId && profileId && viewerId === profileId);
+  const normalizedViewerUsername = viewerUsername?.trim().toLowerCase();
+  const normalizedTargetUsername = targetUsername?.trim().replace(/^@+/, '').toLowerCase();
+  const usernamesMatch = Boolean(
+    normalizedViewerUsername &&
+      normalizedTargetUsername &&
+      normalizedViewerUsername === normalizedTargetUsername
+  );
+
+  return idsMatch || usernamesMatch;
+}
 
 function clearGitHubConnectionUiState() {
   if (typeof window === 'undefined') {
@@ -100,6 +125,7 @@ export function getDashboardHref(role: UserRole) {
 export function useViewerProfile() {
   const pathname = usePathname();
   const router = useRouter();
+  const { mutate } = useSWRConfig();
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState<ReturnType<typeof createSupabaseBrowserClient> | null>(() => {
     return authEnabled ? createSupabaseBrowserClient() : null;
@@ -112,6 +138,27 @@ export function useViewerProfile() {
   const [persistedRole, setPersistedRole] = useState<PersistedUserRole | null>(null);
   const authRefreshTimerRef = useRef<number | null>(null);
   const hasLoadedViewerRef = useRef(false);
+  const viewerLoadRevisionRef = useRef(0);
+  const cachedViewerIdRef = useRef<string | null | undefined>(undefined);
+
+  const syncWorkspaceAuthCache = useCallback(
+    (nextSession: Session | null) => {
+      const nextViewerId = nextSession?.user?.id ?? null;
+      const previousViewerId = cachedViewerIdRef.current;
+      cachedViewerIdRef.current = nextViewerId;
+
+      if (previousViewerId !== nextViewerId) {
+        void mutate(
+          (key) => Array.isArray(key) && key[0] === 'workspace',
+          undefined,
+          { revalidate: false }
+        );
+      }
+
+      void mutate(workspaceCacheKeys.viewerSession, nextSession, { revalidate: false });
+    },
+    [mutate]
+  );
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -126,6 +173,10 @@ export function useViewerProfile() {
     let active = true;
 
     const loadViewer = async ({ showLoading = !hasLoadedViewerRef.current }: { showLoading?: boolean } = {}) => {
+      const loadRevision = viewerLoadRevisionRef.current + 1;
+      viewerLoadRevisionRef.current = loadRevision;
+      const canCommit = () => active && loadRevision === viewerLoadRevisionRef.current;
+
       if (showLoading) {
         setLoading(true);
       }
@@ -151,7 +202,7 @@ export function useViewerProfile() {
 
       let sessionResult = await readSession();
 
-      if (!active) {
+      if (!canCommit()) {
         return;
       }
 
@@ -161,6 +212,7 @@ export function useViewerProfile() {
         setUser(null);
         setProfile(null);
         setError(null);
+        syncWorkspaceAuthCache(null);
         hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
@@ -175,13 +227,13 @@ export function useViewerProfile() {
       if (!currentSession?.user && persistedState.loginStatus === 'loggedIn' && !hasLoadedViewerRef.current) {
         await new Promise((resolve) => window.setTimeout(resolve, 450));
 
-        if (!active) {
+        if (!canCommit()) {
           return;
         }
 
         const retryResult = await readSession();
 
-        if (!active) {
+        if (!canCommit()) {
           return;
         }
 
@@ -191,6 +243,7 @@ export function useViewerProfile() {
           setUser(null);
           setProfile(null);
           setError(null);
+          syncWorkspaceAuthCache(null);
           hasLoadedViewerRef.current = true;
           setLoading(false);
           return;
@@ -204,12 +257,14 @@ export function useViewerProfile() {
         setSession(null);
         setUser(null);
         setError(sessionError.message);
+        syncWorkspaceAuthCache(null);
         hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
       }
 
       const currentUser = currentSession?.user ?? null;
+      syncWorkspaceAuthCache(currentSession ?? null);
       setSession(currentSession ?? null);
       setUser(currentUser);
 
@@ -218,6 +273,7 @@ export function useViewerProfile() {
         setPersistedRole(null);
         setProfile(null);
         setError(null);
+        syncWorkspaceAuthCache(null);
         hasLoadedViewerRef.current = true;
         setLoading(false);
         return;
@@ -235,13 +291,14 @@ export function useViewerProfile() {
         });
         const body = (await response.json().catch(() => null)) as ProfileResponse | null;
 
-        if (!active) {
+        if (!canCommit()) {
           return;
         }
 
         if (response.status === 401) {
           setProfile(null);
           setError(null);
+          void mutate(workspaceCacheKeys.viewerProfile(currentUser.id), undefined, { revalidate: false });
           return;
         }
 
@@ -336,14 +393,16 @@ export function useViewerProfile() {
         }
 
         setProfile(nextProfile);
+        void mutate(workspaceCacheKeys.viewerProfile(currentUser.id), nextProfile, { revalidate: false });
         setError(null);
       } catch (profileError) {
-        if (active) {
+        if (canCommit()) {
           setProfile(null);
           setError(profileError instanceof Error ? profileError.message : 'Unable to load profile.');
+          void mutate(workspaceCacheKeys.viewerProfile(currentUser.id), undefined, { revalidate: false });
         }
       } finally {
-        if (active) {
+        if (canCommit()) {
           setLoading(false);
         }
       }
@@ -357,6 +416,11 @@ export function useViewerProfile() {
       if (authRefreshTimerRef.current) {
         window.clearTimeout(authRefreshTimerRef.current);
       }
+
+      // Invalidate any in-flight viewer load before mutating local auth state.
+      // This prevents a late response for the previous account from winning.
+      viewerLoadRevisionRef.current += 1;
+      syncWorkspaceAuthCache(nextSession ?? null);
 
       setSession(nextSession ?? null);
       setUser(nextSession?.user ?? null);
@@ -389,7 +453,7 @@ export function useViewerProfile() {
       }
       subscription.unsubscribe();
     };
-  }, [pathname, router, supabase]);
+  }, [pathname, router, supabase, syncWorkspaceAuthCache, mutate]);
 
   return {
     authEnabled,
@@ -404,6 +468,18 @@ export function useViewerProfile() {
     session,
     supabase,
     user,
+    viewer: user
+      ? {
+          id: user.id,
+          username:
+            profile?.username ??
+            (typeof user.user_metadata?.username === 'string'
+              ? user.user_metadata.username
+              : typeof user.user_metadata?.preferred_username === 'string'
+                ? user.user_metadata.preferred_username
+                : null),
+        }
+      : null,
   };
 }
 

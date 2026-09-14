@@ -23,11 +23,40 @@ type SpectateProfileFetchOptions = {
   view?: 'identity' | 'work';
 };
 
+type SpectateProfileErrorPayload = {
+  error?: unknown;
+  detail?: unknown;
+  message?: unknown;
+};
+
 export const PROFILE_SPECTATOR_BASE_URL = (
   process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
 ).replace(/\/$/, '');
 
 let fallbackSupabaseClient: SupabaseSessionClient | null = null;
+
+/**
+ * The Python spectator API returns `error` for its safe public failures while
+ * older deployments returned `detail` or `message`. Keep every spectator
+ * surface compatible with both response shapes.
+ */
+export function getSpectateProfileErrorMessage(
+  payload: unknown,
+  fallback: string
+) {
+  if (!payload || typeof payload !== 'object') {
+    return fallback;
+  }
+
+  const errorPayload = payload as SpectateProfileErrorPayload;
+  for (const value of [errorPayload.error, errorPayload.detail, errorPayload.message]) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return fallback;
+}
 
 function getFallbackSupabaseClient() {
   if (typeof window === 'undefined' || !hasSupabaseBrowserEnv()) {

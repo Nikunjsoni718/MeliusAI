@@ -19,7 +19,7 @@ import {
 import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
 import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
 import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
-import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
+import { fetchSpectateProfileResponse, getSpectateProfileErrorMessage } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
@@ -1283,7 +1283,7 @@ function VaultPageContent() {
         const payload = (await response.json().catch(() => null)) as SpectatorVaultResponse | null;
 
         if (!response.ok) {
-          throw new Error(payload?.detail || payload?.message || 'Unable to load this public vault.');
+          throw new Error(getSpectateProfileErrorMessage(payload, 'Unable to load this public vault.'));
         }
 
         if (active) {

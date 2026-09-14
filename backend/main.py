@@ -49,6 +49,12 @@ except ImportError:
     create_client = None
     ClientOptions = None
 
+try:
+    from postgrest.exceptions import APIError as PostgrestAPIError
+except ImportError:
+    class PostgrestAPIError(Exception):
+        """Fallback used only when the optional postgrest dependency is absent."""
+
 # --- MULTIMODAL PARSER EXTENSIONS ---
 import fitz  # PyMuPDF
 import docx  # python-docx
@@ -120,6 +126,7 @@ logger.setLevel(logging.INFO)
 supabase_backend_client = None
 supabase_service_client = None
 supabase_spectate_client = None
+supabase_spectate_http_client = None
 supabase: Client | None = None
 bearer_scheme = HTTPBearer(auto_error=False)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -249,12 +256,17 @@ AUDIT_THREAD_POOL = ThreadPoolExecutor(
 PROJECT_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENT_REPOSITORIES)
 LLM_AUDIT_SEMAPHORE = asyncio.Semaphore(AUDIT_MAX_CONCURRENCY)
 AUTHORIZED_REVIEWER_ROLES = {"admin", "reviewer", "recruiter", "corporate", "organization"}
-SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 4.0
-SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 10.0
-SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS = 10.0
-SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS = 4.0
+SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS = 2.0
+SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS = 4.0
+SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS = 4.0
+SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS = 2.0
+SPECTATE_PROFILE_OPERATION_TIMEOUT_SECONDS = 4.5
+SPECTATE_PROFILE_MAX_ATTEMPTS = 2
+SPECTATE_PROFILE_RETRY_BACKOFF_SECONDS = 0.15
 # Keep the full public-profile query path below the upstream gateway's limit.
 SPECTATE_PROFILE_QUERY_TIMEOUT_SECONDS = 12.0
+SPECTATE_PROFILE_NOT_FOUND_MESSAGE = "Profile not found or private"
+SPECTATE_PROFILE_UNAVAILABLE_MESSAGE = "Profile data is temporarily unavailable"
 
 
 async def run_in_audit_thread(operation):
@@ -582,7 +594,7 @@ def get_supabase_service_client():
 
 def get_supabase_spectate_client():
     """Return a service-role client with bounded timeouts for public profile reads."""
-    global supabase_spectate_client
+    global supabase_spectate_client, supabase_spectate_http_client
 
     if create_client is None or ClientOptions is None:
         raise HTTPException(
@@ -606,15 +618,24 @@ def get_supabase_spectate_client():
                 detail="Supabase URL environment variable is not configured.",
             )
 
+        request_timeout = httpx.Timeout(
+            connect=SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS,
+            read=SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS,
+            write=SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS,
+            pool=SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS,
+        )
+        # ClientOptions.httpx_client is shared by the PostgREST and Auth
+        # clients, so optional JWT verification has the same hard network
+        # budget as the spectator queries.
+        supabase_spectate_http_client = httpx.Client(
+            timeout=request_timeout,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
         options = ClientOptions(
             auto_refresh_token=False,
             persist_session=False,
-            postgrest_client_timeout=httpx.Timeout(
-                connect=SPECTATE_PROFILE_HTTP_CONNECT_TIMEOUT_SECONDS,
-                read=SPECTATE_PROFILE_HTTP_READ_TIMEOUT_SECONDS,
-                write=SPECTATE_PROFILE_HTTP_WRITE_TIMEOUT_SECONDS,
-                pool=SPECTATE_PROFILE_HTTP_POOL_TIMEOUT_SECONDS,
-            ),
+            httpx_client=supabase_spectate_http_client,
+            postgrest_client_timeout=request_timeout,
         )
         supabase_spectate_client = create_client(
             supabase_url,
@@ -2497,7 +2518,8 @@ def is_supabase_rls_error(error: Exception) -> bool:
 
 SPECTATE_PROFILE_PUBLIC_SELECT = (
     "id, username, full_name, email, bio, avatar_url, current_status, age, avg_project_score, skills, "
-    "public_profile_enabled, public_scorecard_enabled, public_contact_email_enabled, default_asset_is_public"
+    "public_profile_enabled, public_scorecard_enabled, public_contact_email_enabled, default_asset_is_public, "
+    "audit_alerts_enabled, opportunity_match_alerts_enabled"
 )
 SPECTATE_PROJECT_PUBLIC_SELECT = (
     "id, user_id, name, file_type, created_at, score, evaluation_score, score_delta, delta_summary, "
@@ -2635,6 +2657,24 @@ PUBLIC_SCORECARD_FIELDS = {
     "audit_findings",
 }
 
+SPECTATOR_PREFERENCE_DEFAULTS = {
+    "public_profile_enabled": True,
+    "public_scorecard_enabled": True,
+    "public_contact_email_enabled": False,
+    "default_asset_is_public": True,
+    "audit_alerts_enabled": False,
+    "opportunity_match_alerts_enabled": False,
+}
+
+
+def normalize_spectator_profile_preferences(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize legacy NULL/missing flags before any public-read decision."""
+    for field_name, default_value in SPECTATOR_PREFERENCE_DEFAULTS.items():
+        value = profile.get(field_name)
+        profile[field_name] = value if isinstance(value, bool) else default_value
+
+    return profile
+
 
 def redact_public_scorecard(profile: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
     """Remove audit and score data from visitor-only spectator responses."""
@@ -2653,8 +2693,9 @@ def apply_spectator_profile_preferences(
     folders: List[Dict[str, Any]] | None = None,
 ) -> bool:
     """Apply public sharing settings and return whether audit data may be exposed."""
-    scorecards_enabled = bool(profile.get("public_scorecard_enabled", True))
-    contact_email_enabled = bool(profile.get("public_contact_email_enabled", False))
+    normalize_spectator_profile_preferences(profile)
+    scorecards_enabled = profile.get("public_scorecard_enabled", True) is True
+    contact_email_enabled = profile.get("public_contact_email_enabled", False) is True
 
     if not is_owner and not contact_email_enabled:
         profile["email"] = None
@@ -2669,10 +2710,8 @@ def apply_spectator_profile_preferences(
     # The switches are not needed by a visitor and should not become a side-channel
     # for an owner's preference state.
     if not is_owner:
-        profile.pop("public_profile_enabled", None)
-        profile.pop("public_scorecard_enabled", None)
-        profile.pop("public_contact_email_enabled", None)
-        profile.pop("default_asset_is_public", None)
+        for field_name in SPECTATOR_PREFERENCE_DEFAULTS:
+            profile.pop(field_name, None)
 
     return is_owner or scorecards_enabled
 
@@ -8245,21 +8284,107 @@ async def get_authenticated_vault(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+class SpectateProfileUpstreamError(RuntimeError):
+    """A bounded spectator read could not reach Supabase safely."""
+
+
+def spectate_profile_not_found_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": SPECTATE_PROFILE_NOT_FOUND_MESSAGE},
+    )
+
+
+def spectate_profile_unavailable_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"error": SPECTATE_PROFILE_UNAVAILABLE_MESSAGE},
+    )
+
+
 async def run_spectate_profile_query(
     operation: Callable[[], Any],
     *,
     operation_name: str,
 ) -> Any:
-    """Run one blocking Supabase request without retrying past the request budget."""
+    """Run an idempotent spectator read with a bounded retry budget."""
+    last_error: Exception | None = None
+
+    for attempt in range(1, SPECTATE_PROFILE_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(operation),
+                timeout=SPECTATE_PROFILE_OPERATION_TIMEOUT_SECONDS,
+            )
+        except (asyncio.TimeoutError, httpx.TimeoutException, httpx.TransportError) as error:
+            last_error = error
+            logger.warning(
+                "spectate_profile.query_retry operation=%s attempt=%s/%s error_type=%s",
+                operation_name,
+                attempt,
+                SPECTATE_PROFILE_MAX_ATTEMPTS,
+                type(error).__name__,
+            )
+            if attempt < SPECTATE_PROFILE_MAX_ATTEMPTS:
+                await asyncio.sleep(SPECTATE_PROFILE_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+        except PostgrestAPIError as error:
+            logger.warning(
+                "spectate_profile.query_api_error operation=%s error_code=%s",
+                operation_name,
+                getattr(error, "code", None),
+            )
+            raise SpectateProfileUpstreamError(operation_name) from error
+        except Exception as error:
+            logger.warning(
+                "spectate_profile.query_failed operation=%s error_type=%s",
+                operation_name,
+                type(error).__name__,
+            )
+            raise SpectateProfileUpstreamError(operation_name) from error
+
+    raise SpectateProfileUpstreamError(operation_name) from last_error
+
+
+async def resolve_spectator_request_user(
+    request: Request,
+    token: HTTPAuthorizationCredentials | None,
+    supabase_client: Any,
+) -> tuple[str | None, str]:
+    """Verify an optional bearer token without making public reads depend on it."""
+    if token is None or token.scheme.lower() != "bearer" or not token.credentials:
+        return None, "anonymous"
+
+    access_token = token.credentials.strip()
     try:
-        return await asyncio.to_thread(operation)
-    except Exception as error:
-        logger.error(
-            "spectate_profile.query_failed operation=%s error_type=%s",
-            operation_name,
-            type(error).__name__,
+        user_response = await run_spectate_profile_query(
+            lambda: supabase_client.auth.get_user(access_token),
+            operation_name="auth_user",
         )
-        raise
+    except SpectateProfileUpstreamError:
+        logger.warning("spectate_profile.auth_unavailable")
+        return None, "unavailable"
+
+    verified_user_id = get_supabase_user_id(user_response)
+    if not verified_user_id:
+        return None, "invalid"
+
+    try:
+        jwt_user_id = decode_supabase_jwt_sub(access_token)
+    except HTTPException:
+        return None, "invalid"
+
+    if verified_user_id != jwt_user_id:
+        logger.warning(
+            "Supabase JWT subject mismatch: verified_user_id=%s token_sub=%s",
+            verified_user_id,
+            jwt_user_id,
+        )
+        return None, "invalid"
+
+    request.state.user_id = verified_user_id
+    request.state.is_authenticated = True
+    return verified_user_id, "authenticated"
 
 
 @app.get("/api/spectate-profile/{username}")
@@ -8271,7 +8396,7 @@ async def spectate_profile(
     try:
         target_username = username.strip().lower()
         if not target_username:
-            raise HTTPException(status_code=404, detail="User not found")
+            return spectate_profile_not_found_response()
 
         view = request.query_params.get("view")
         if view not in (None, "identity", "work"):
@@ -8284,10 +8409,10 @@ async def spectate_profile(
                 detail="SUPABASE_SERVICE_ROLE_KEY is required for spectator profile reads.",
             )
 
-        current_user_id, authentication_status = await resolve_request_user(
+        current_user_id, authentication_status = await resolve_spectator_request_user(
             request,
             token,
-            required=False,
+            supabase,
         )
         query_stage = "profile"
         try:
@@ -8305,19 +8430,20 @@ async def spectate_profile(
                 profile_rows = profile_response.data or []
 
                 if not isinstance(profile_rows, list) or len(profile_rows) == 0:
-                    raise HTTPException(status_code=404, detail="User not found")
+                    return spectate_profile_not_found_response()
 
                 profile = dict(profile_rows[0])
                 profile_uuid_text = str(profile.get("id") or "").strip()
                 if not profile_uuid_text:
-                    raise HTTPException(status_code=404, detail="User not found")
+                    return spectate_profile_not_found_response()
 
+                normalize_spectator_profile_preferences(profile)
                 is_owner = bool(current_user_id and current_user_id == profile_uuid_text)
                 viewer_type = "owner" if is_owner else "visitor"
-                if not is_owner and profile.get("public_profile_enabled", True) is False:
+                if not is_owner and profile.get("public_profile_enabled") is False:
                     # Treat private profiles as absent so a share URL cannot be
                     # used as a profile-enumeration oracle.
-                    raise HTTPException(status_code=404, detail="User not found")
+                    return spectate_profile_not_found_response()
 
                 if view == "identity":
                     apply_spectator_profile_preferences(profile, is_owner=is_owner)
@@ -8419,6 +8545,14 @@ async def spectate_profile(
                     }
         except HTTPException:
             raise
+        except (SpectateProfileUpstreamError, asyncio.TimeoutError) as error:
+            logger.warning(
+                "spectate_profile.query_unavailable username=%s stage=%s error_type=%s",
+                target_username,
+                query_stage,
+                type(error).__name__,
+            )
+            return spectate_profile_unavailable_response()
         except Exception as error:
             logger.error(
                 "spectate_profile.query_aggregation_failed username=%s stage=%s error_type=%s",
@@ -8475,6 +8609,13 @@ async def spectate_profile(
         }
     except HTTPException:
         raise
+    except (SpectateProfileUpstreamError, asyncio.TimeoutError) as error:
+        logger.warning(
+            "spectate_profile.unavailable username=%s error_type=%s",
+            username,
+            type(error).__name__,
+        )
+        return spectate_profile_unavailable_response()
     except Exception as error:
         logger.exception("spectate_profile.failed username=%s", username)
         raise HTTPException(status_code=500, detail="Unable to load profile data.") from error

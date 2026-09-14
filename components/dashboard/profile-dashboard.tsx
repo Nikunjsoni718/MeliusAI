@@ -33,8 +33,12 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
-import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
-import { useViewerProfile } from '@/lib/viewer-client';
+import {
+  fetchSpectateProfileResponse,
+  getSpectateProfileErrorMessage,
+  PROFILE_SPECTATOR_BASE_URL,
+} from '@/lib/spectate-profile';
+import { isViewerProfileOwner, useViewerProfile } from '@/lib/viewer-client';
 import { workspaceCacheKeys } from '@/lib/workspace-cache';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
@@ -2593,6 +2597,18 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useParams<{ username?: string | string[] }>();
+  const targetUsername = useMemo(() => {
+    const routeUsername = Array.isArray(routeParams?.username)
+      ? routeParams.username[0]
+      : routeParams?.username;
+
+    return (
+      normalizeProfileUsername(routeUsername) ??
+      getProfileUsernameFromPathname(pathname) ??
+      normalizeProfileUsername(profileUsername) ??
+      normalizeProfileUsername(profileId)
+    );
+  }, [pathname, profileId, profileUsername, routeParams]);
   const isOrganizationWorkspace = variant === 'organization';
   const {
     authEnabled,
@@ -2686,8 +2702,28 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSyncState, setProfileSyncState] = useState<SyncState>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [usernameSaveError, setUsernameSaveError] = useState<string | null>(null);
-  const [isOwner, setIsOwner] = useState<boolean>(false);
+  const [backendIsOwner, setBackendIsOwner] = useState<boolean>(false);
+  const viewerUsername =
+    profile?.username ??
+    (typeof user?.user_metadata?.username === 'string'
+      ? user.user_metadata.username
+      : typeof user?.user_metadata?.preferred_username === 'string'
+        ? user.user_metadata.preferred_username
+        : null);
+  const identityOwnsProfile = isViewerProfileOwner({
+    viewerId: user?.id ?? profile?.id,
+    viewerUsername,
+    profileId: profileData?.id ?? null,
+    targetUsername,
+  });
+  // Keep owner controls hidden until the viewer session settles. Once it has,
+  // local immutable identity matching avoids a stale public response hiding an
+  // owner's workspace while the authenticated spectator request revalidates.
+  const isOwner = !loading && (backendIsOwner || identityOwnsProfile);
   const isSpectator = !isOwner;
+  const activeProfileHydrationKey = targetUsername
+    ? `${targetUsername}:${user?.id ?? 'public'}`
+    : null;
   const [authStorageDebug, setAuthStorageDebug] = useState<AuthStorageDebugState>({
     cookieNames: [],
     localStorageKeys: [],
@@ -3201,18 +3237,6 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     };
   }, [activePreviewProjectId]);
 
-  const targetUsername = useMemo(() => {
-    const routeUsername = Array.isArray(routeParams?.username)
-      ? routeParams.username[0]
-      : routeParams?.username;
-
-    return (
-      normalizeProfileUsername(routeUsername) ??
-      getProfileUsernameFromPathname(pathname) ??
-      normalizeProfileUsername(profileUsername) ??
-      normalizeProfileUsername(profileId)
-    );
-  }, [pathname, profileId, profileUsername, routeParams]);
   const requestedSpectatorTargetRef = useRef<string | null>(null);
   const {
     data: spectatorProfilePayload,
@@ -3228,7 +3252,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       });
       const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
       if (!response.ok || !payload) {
-        throw new Error(payload?.detail || payload?.message || 'Unable to load this public profile.');
+        throw new Error(getSpectateProfileErrorMessage(payload, 'Unable to load this public profile.'));
       }
       return payload;
     }
@@ -3832,7 +3856,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   }, []);
 
   useEffect(() => {
-    const profileKey = targetUsername ?? null;
+    const profileKey = activeProfileHydrationKey;
     const hasHydratedCurrentProfile = Boolean(profileKey) && hydratedProfileKeyRef.current === profileKey;
     const shouldBlockForInitialProfileLoad = profileKey
       ? !hasHydratedCurrentProfile
@@ -3845,7 +3869,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     if (shouldBlockForInitialProfileLoad) {
       setProfileLoading(true);
-      setIsOwner(false);
+      setBackendIsOwner(false);
       setIsEditing(false);
       setSettingsOpen(false);
       setResolvedProfileId(null);
@@ -3875,7 +3899,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProfileLoading(false);
       setFetchError(null);
     }
-  }, [targetUsername]);
+  }, [activeProfileHydrationKey]);
 
   useEffect(() => {
     if (!targetUsername) {
@@ -3886,7 +3910,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
     if (spectatorProfileError) {
       console.error('Error running security guard verification:', spectatorProfileError);
-      setIsOwner(false);
+      setBackendIsOwner(false);
       setLoadingState(false);
       setProfileLoading(false);
       setFetchError(spectatorProfileError instanceof Error ? spectatorProfileError.message : 'Unable to load profile.');
@@ -3894,7 +3918,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     }
 
     if (spectatorProfileLoading || !spectatorProfilePayload) {
-      if (hydratedProfileKeyRef.current !== targetUsername) {
+      if (hydratedProfileKeyRef.current !== activeProfileHydrationKey) {
         setProfileLoading(true);
       }
       return;
@@ -3922,7 +3946,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         (typeof user?.user_metadata?.preferred_username === 'string'
           ? user.user_metadata.preferred_username.trim()
           : null);
-      const isOwnProfile = spectatorProfilePayload.isOwner;
+      const isOwnProfile =
+        spectatorProfilePayload.isOwner === true ||
+        isViewerProfileOwner({
+          viewerId: user?.id ?? profile?.id,
+          viewerUsername: authenticatedUsername,
+          profileId: savedProfile.id,
+          targetUsername,
+        });
       // Mirror Vault's successful state flow: unwrap Supabase `data` into an
       // array first, preserve the ProjectRow shape, then derive any legacy view
       // model needed by the rest of this dashboard.
@@ -4018,7 +4049,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       const storedPortfolioLinks =
         sessionUserMetadata?.portfolio_links ?? undefined;
 
-      setIsOwner(isOwnProfile);
+      setBackendIsOwner(spectatorProfilePayload.isOwner === true);
       if (storedPortfolioLinks && isOwnProfile) {
         setPortfolioLinks((currentLinks) => ({
           ...currentLinks,
@@ -4040,7 +4071,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       );
       setRawSkillsInput(skillsInputValue);
       setProfileHydrated(true);
-      hydratedProfileKeyRef.current = targetUsername;
+      hydratedProfileKeyRef.current = activeProfileHydrationKey;
       setProfileFallback({
         displayName,
         username: usernameValue,
@@ -4058,18 +4089,21 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setProfileLoading(false);
     } catch (err) {
       console.error('Error running security guard verification:', err);
-      setIsOwner(false);
+      setBackendIsOwner(false);
       setLoadingState(false);
       setProfileLoading(false);
       setFetchError(err instanceof Error ? err.message : 'Unable to load profile.');
     }
   }, [
     profile?.username,
+    profile?.id,
     spectatorProfileError,
     spectatorProfileLoading,
     spectatorProfilePayload,
+    activeProfileHydrationKey,
     targetUsername,
     user,
+    user?.id,
     viewerMetadataUsername,
   ]);
 

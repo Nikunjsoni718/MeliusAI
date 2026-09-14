@@ -28,7 +28,7 @@ import {
 } from '@/components/onboarding/product-tour';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
+import { fetchSpectateProfileResponse, getSpectateProfileErrorMessage } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
 import { workspaceCacheKeys } from '@/lib/workspace-cache';
 import { cn } from '@/lib/utils';
@@ -807,7 +807,7 @@ function DashboardResumePageContent() {
         const profileRecord = asRecord(payloadRecord?.profile);
 
         if (!response.ok || !resume) {
-          throw new Error(payload?.detail || payload?.message || 'Unable to load this public resume.');
+          throw new Error(getSpectateProfileErrorMessage(payload, 'Unable to load this public resume.'));
         }
 
         return {
@@ -859,7 +859,7 @@ function DashboardResumePageContent() {
         const payload = (await response.json().catch(() => null)) as SpectatorResumeResponse | null;
 
         if (!response.ok) {
-          throw new Error(payload?.detail || payload?.message || 'Unable to load public projects.');
+          throw new Error(getSpectateProfileErrorMessage(payload, 'Unable to load public projects.'));
         }
 
         return {
