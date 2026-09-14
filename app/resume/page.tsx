@@ -255,6 +255,7 @@ function SidebarLink({
   return (
     <Link
       href={href}
+      prefetch={true}
       onClick={() => {
         if (label === 'Developer Profile') {
           pauseProductTour(2);

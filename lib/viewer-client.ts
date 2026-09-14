@@ -14,31 +14,11 @@ import {
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { appendUsernameSuffix, generateUsername } from '@/lib/username';
 import { workspaceCacheKeys } from '@/lib/workspace-cache';
-import type { ProfileRow, UserRole } from '@/types/supabase';
+import { useViewerBootstrap } from '@/components/providers/workspace-data-hydration';
+import type { UserRole } from '@/types/supabase';
+import type { ViewerProfile } from '@/lib/viewer-types';
 
-export type ViewerProfile = Pick<
-  ProfileRow,
-  | 'id'
-  | 'username'
-  | 'birth_date'
-  | 'bio'
-  | 'avatar_url'
-  | 'current_status'
-  | 'public_profile_enabled'
-  | 'public_scorecard_enabled'
-  | 'public_contact_email_enabled'
-  | 'default_asset_is_public'
-  | 'audit_alerts_enabled'
-  | 'opportunity_match_alerts_enabled'
-> & {
-  role: UserRole;
-  role_selected_at: string | null;
-  display_name: string;
-  headline: string | null;
-  company_name: string | null;
-  github_username: string | null;
-  is_github_linked: boolean;
-};
+export type { ViewerProfile } from '@/lib/viewer-types';
 
 type ProfileResponse = {
   data?: ViewerProfile | null;
@@ -126,18 +106,20 @@ export function useViewerProfile() {
   const pathname = usePathname();
   const router = useRouter();
   const { mutate } = useSWRConfig();
+  const bootstrap = useViewerBootstrap();
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState<ReturnType<typeof createSupabaseBrowserClient> | null>(() => {
     return authEnabled ? createSupabaseBrowserClient() : null;
   });
-  const [loading, setLoading] = useState(authEnabled);
+  const [loading, setLoading] = useState(authEnabled && !bootstrap?.user);
   const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<ViewerProfile | null>(null);
+  const [user, setUser] = useState<User | null>(() => bootstrap?.user ?? null);
+  const [profile, setProfile] = useState<ViewerProfile | null>(() => bootstrap?.profile ?? null);
   const [error, setError] = useState<string | null>(null);
   const [persistedRole, setPersistedRole] = useState<PersistedUserRole | null>(null);
   const authRefreshTimerRef = useRef<number | null>(null);
-  const hasLoadedViewerRef = useRef(false);
+  const hasLoadedViewerRef = useRef(Boolean(bootstrap?.user));
+  const hasPendingBootstrapProfileRef = useRef(Boolean(bootstrap?.user && bootstrap?.profile));
   const viewerLoadRevisionRef = useRef(0);
   const cachedViewerIdRef = useRef<string | null | undefined>(undefined);
 
@@ -159,6 +141,22 @@ export function useViewerProfile() {
     },
     [mutate]
   );
+
+  useEffect(() => {
+    if (!bootstrap?.user) return;
+
+    hasLoadedViewerRef.current = true;
+    cachedViewerIdRef.current = bootstrap.user.id;
+    setUser(bootstrap.user);
+    setProfile(bootstrap.profile);
+    setLoading(false);
+    hasPendingBootstrapProfileRef.current = Boolean(bootstrap.profile);
+    if (bootstrap.profile) {
+      void mutate(workspaceCacheKeys.viewerProfile(bootstrap.user.id), bootstrap.profile, {
+        revalidate: false,
+      });
+    }
+  }, [bootstrap?.profile, bootstrap?.user, mutate]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -283,6 +281,23 @@ export function useViewerProfile() {
       setPersistedRole(readPersistedAuthState().userRole);
       setError(null);
       hasLoadedViewerRef.current = true;
+
+      // The server bootstrap has already validated this user and loaded the
+      // same profile projection. Consume it once instead of immediately
+      // issuing a duplicate /api/auth/profile request during hydration.
+      if (
+        hasPendingBootstrapProfileRef.current &&
+        bootstrap?.user?.id === currentUser.id &&
+        bootstrap.profile
+      ) {
+        hasPendingBootstrapProfileRef.current = false;
+        setProfile(bootstrap.profile);
+        void mutate(workspaceCacheKeys.viewerProfile(currentUser.id), bootstrap.profile, {
+          revalidate: false,
+        });
+        setLoading(false);
+        return;
+      }
 
       try {
         const response = await fetch('/api/auth/profile', {
@@ -453,7 +468,7 @@ export function useViewerProfile() {
       }
       subscription.unsubscribe();
     };
-  }, [pathname, router, supabase, syncWorkspaceAuthCache, mutate]);
+  }, [bootstrap, pathname, router, supabase, syncWorkspaceAuthCache, mutate]);
 
   return {
     authEnabled,

@@ -1939,16 +1939,15 @@ function ProfilePhoto({
     <div className={cn('relative shrink-0', sizeClass)}>
       <div className="relative h-full w-full overflow-hidden rounded-full border border-sky-400/35 bg-[#050b1b]/70 shadow-[0_0_35px_rgba(56,189,248,0.35)]">
         {src ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <Image
             src={src}
-            alt=""
-            width={64}
-            height={64}
-            loading="eager"
+            alt="Profile avatar"
+            fill
+            priority
             fetchPriority="high"
-            decoding="async"
-            className="h-full w-full object-cover"
+            sizes="64px"
+            unoptimized={src.startsWith('blob:') || src.startsWith('data:')}
+            className="object-cover"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-lg font-semibold uppercase tracking-wide text-slate-300">
@@ -2514,6 +2513,8 @@ function ProjectCard({
 }
 
 type ProfileDashboardProps = {
+  initialSpectatorProfile?: unknown;
+  insideWorkspaceShell?: boolean;
   profileId?: string;
   profileUsername?: string;
   variant?: 'profile' | 'organization';
@@ -2593,7 +2594,13 @@ type GitHubConnectionProfile = {
   github_username: string | null;
 };
 
-export function ProfileDashboard({ profileId, profileUsername, variant = 'profile' }: ProfileDashboardProps) {
+export function ProfileDashboard({
+  initialSpectatorProfile,
+  insideWorkspaceShell = false,
+  profileId,
+  profileUsername,
+  variant = 'profile',
+}: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useParams<{ username?: string | string[] }>();
@@ -2638,7 +2645,14 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       !isGitHubConnectionExpired &&
       !isLinkingGitHub
   );
-  const [profileData, setProfileData] = useState<SavedProfileItem | null>(null);
+  const initialProfileData = useMemo(() => {
+    if (!initialSpectatorProfile || typeof initialSpectatorProfile !== 'object') return null;
+    const candidate = (initialSpectatorProfile as { profile?: unknown }).profile;
+    return candidate && typeof candidate === 'object' && 'id' in candidate
+      ? (candidate as SavedProfileItem)
+      : null;
+  }, [initialSpectatorProfile]);
+  const [profileData, setProfileData] = useState<SavedProfileItem | null>(initialProfileData);
   const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
@@ -2687,7 +2701,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [activePreviewFolderId, setActivePreviewFolderId] = useState<string | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(!initialProfileData);
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -2702,7 +2716,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
   const [profileSyncState, setProfileSyncState] = useState<SyncState>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [usernameSaveError, setUsernameSaveError] = useState<string | null>(null);
-  const [backendIsOwner, setBackendIsOwner] = useState<boolean>(false);
+  const [backendIsOwner, setBackendIsOwner] = useState<boolean>(() =>
+    initialSpectatorProfile && typeof initialSpectatorProfile === 'object'
+      ? (initialSpectatorProfile as { isOwner?: unknown }).isOwner === true
+      : false
+  );
   const viewerUsername =
     profile?.username ??
     (typeof user?.user_metadata?.username === 'string'
@@ -3255,6 +3273,10 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
         throw new Error(getSpectateProfileErrorMessage(payload, 'Unable to load this public profile.'));
       }
       return payload;
+    },
+    {
+      revalidateIfStale: !initialSpectatorProfile,
+      revalidateOnMount: !initialSpectatorProfile,
     }
   );
 
@@ -3330,7 +3352,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       : typeof profileFallback?.avgProjectScore === 'number'
       ? Math.round(profileFallback.avgProjectScore)
       : 0;
-  const isProfilePayloadPending = Boolean(targetUsername) && !profileData && !spectatorProfileError;
+  const isProfilePayloadPending =
+    Boolean(targetUsername) &&
+    !profileData &&
+    !spectatorProfileError &&
+    !initialSpectatorProfile;
   const dashboardNavigation = useMemo<DashboardNavigationItem[]>(
     () => {
       const items = [
@@ -6960,6 +6986,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               </div>
             </div>
           ) : null}
+          {!insideWorkspaceShell ? (
+            <>
           {isSidebarOpen ? (
             <button
               type="button"
@@ -7030,8 +7058,11 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
               ) : null}
             </div>
           </aside>
+            </>
+          ) : null}
 
           <main className="scrollbar-hide relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 pt-16 md:p-8 md:pt-8">
+            {!insideWorkspaceShell ? (
             <button
               type="button"
               aria-label="Toggle sidebar"
@@ -7053,6 +7084,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 <path d="M4 17h16" />
               </svg>
             </button>
+            ) : null}
             {process.env.NODE_ENV !== 'production' ? (
               <div className="fixed bottom-3 left-3 z-[60] max-w-[calc(100vw-1.5rem)] rounded-xl border border-cyan-400/30 bg-slate-950/95 p-3 text-[11px] text-cyan-50 shadow-2xl shadow-black/40 backdrop-blur md:left-auto md:right-3 md:max-w-sm">
                 <p className="font-semibold text-white">Mobile auth debug</p>
@@ -7104,7 +7136,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            {loading ? (
+            {loading && !initialSpectatorProfile ? (
               <DashboardSkeleton projectIds={projects.map((project) => project.id)} />
             ) : isProjectUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">

@@ -1,20 +1,14 @@
 import { notFound } from 'next/navigation';
 
 import { SettingsTabContent } from '@/components/settings/settings-tab-content';
-import { isSettingsTab, settingsTabs } from '@/lib/settings-tabs';
+import { isSettingsTab } from '@/lib/settings-tabs';
 
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return settingsTabs.map(({ slug }) => ({ tab: slug }));
-}
+export const dynamic = 'force-dynamic';
 
 export default async function SettingsTabPage({ params }: { params: Promise<{ tab: string }> }) {
   const { tab } = await params;
 
-  if (!isSettingsTab(tab)) {
-    notFound();
-  }
+  if (!isSettingsTab(tab)) notFound();
 
   return <SettingsTabContent tab={tab} />;
 }

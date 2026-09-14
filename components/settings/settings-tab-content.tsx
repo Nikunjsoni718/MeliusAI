@@ -521,7 +521,8 @@ function IntegrationsSettings() {
       const payload = (await response.json().catch(() => null)) as { connected?: boolean; error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? 'Unable to load GitHub connection.');
       return { connected: payload?.connected === true };
-    }
+    },
+    { revalidateIfStale: false, revalidateOnMount: false }
   );
   const connected = connection?.connected ?? (connectionError ? false : undefined);
 
@@ -637,7 +638,8 @@ export function SettingsTabContent({ tab }: { tab: SettingsTab }) {
       const body = (await response.json().catch(() => null)) as { settings?: PersistedSettings; error?: string } | null;
       if (!response.ok || !body?.settings) throw new Error(body?.error ?? 'Unable to load settings.');
       return body.settings;
-    }
+    },
+    { revalidateIfStale: false, revalidateOnMount: false }
   );
 
   const save = useCallback(async (update: Partial<PersistedSettings>) => {

@@ -1,6 +1,7 @@
 'use client';
 
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
+import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile-shared';
 
 type SupabaseSessionClient = {
   auth: {
@@ -29,9 +30,7 @@ type SpectateProfileErrorPayload = {
   message?: unknown;
 };
 
-export const PROFILE_SPECTATOR_BASE_URL = (
-  process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || 'https://meliusai.onrender.com'
-).replace(/\/$/, '');
+export { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile-shared';
 
 let fallbackSupabaseClient: SupabaseSessionClient | null = null;
 

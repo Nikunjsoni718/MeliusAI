@@ -9,6 +9,7 @@ import { workspaceCacheKeys } from '@/lib/workspace-cache';
 function WorkspaceAuthCacheBoundary({ children }: { children: ReactNode }) {
   const { mutate } = useSWRConfig();
   const previousViewerIdRef = useRef<string | null | undefined>(undefined);
+  const hasEstablishedInitialSessionRef = useRef(false);
 
   useEffect(() => {
     if (!hasSupabaseBrowserEnv()) return;
@@ -18,6 +19,15 @@ function WorkspaceAuthCacheBoundary({ children }: { children: ReactNode }) {
       const nextViewerId = session?.user?.id ?? null;
       const previousViewerId = previousViewerIdRef.current;
       previousViewerIdRef.current = nextViewerId;
+
+      // The first INITIAL_SESSION event is expected after a server-rendered
+      // fallback has already populated this provider. Treat it as a baseline
+      // rather than a change so hydration does not evict its own SSR data.
+      if (!hasEstablishedInitialSessionRef.current) {
+        hasEstablishedInitialSessionRef.current = true;
+        void mutate(workspaceCacheKeys.viewerSession, session ?? null, { revalidate: false });
+        return;
+      }
 
       // Public spectator payloads and owner payloads have separate keys, but
       // remove every workspace entry when identity changes so a late request
