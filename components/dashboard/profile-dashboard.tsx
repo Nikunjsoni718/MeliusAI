@@ -1,11 +1,12 @@
 'use client';
 
-import { Suspense, startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
+import useSWR from 'swr';
 import { BriefcaseBusiness, CheckCircle2, FileText, FolderLock, House, Mail, Search, Settings } from 'lucide-react';
 
 import faviconLogo from '@/app/favicon.png';
@@ -34,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
+import { workspaceCacheKeys } from '@/lib/workspace-cache';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
@@ -3211,20 +3213,32 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       normalizeProfileUsername(profileId)
     );
   }, [pathname, profileId, profileUsername, routeParams]);
-  const [spectatorProfilePayload, setSpectatorProfilePayload] = useState<NormalizedSpectateProfileResponse | null>(null);
-  const [spectatorProfileError, setSpectatorProfileError] = useState<Error | null>(null);
-  const [spectatorProfileLoading, setSpectatorProfileLoading] = useState(Boolean(targetUsername));
-  const [spectatorRefreshToken, setSpectatorRefreshToken] = useState(0);
   const requestedSpectatorTargetRef = useRef<string | null>(null);
+  const {
+    data: spectatorProfilePayload,
+    error: spectatorProfileError,
+    isLoading: spectatorProfileLoading,
+    mutate: mutateSpectatorProfile,
+  } = useSWR<NormalizedSpectateProfileResponse, Error>(
+    targetUsername ? workspaceCacheKeys.spectatorProfile(targetUsername, user?.id ?? null) : null,
+    async () => {
+      if (!targetUsername) throw new Error('A profile username is required.');
+      const response = await fetchSpectateProfileResponse(targetUsername, {
+        accessToken: session?.access_token ?? null,
+      });
+      const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
+      if (!response.ok || !payload) {
+        throw new Error(payload?.detail || payload?.message || 'Unable to load this public profile.');
+      }
+      return payload;
+    }
+  );
 
   useEffect(() => {
     if (!targetUsername) {
       requestedSpectatorTargetRef.current = null;
       pendingProjectAuditUpdatesRef.current.clear();
       pendingFolderAuditUpdatesRef.current.clear();
-      setSpectatorProfilePayload(null);
-      setSpectatorProfileError(null);
-      setSpectatorProfileLoading(false);
       return;
     }
 
@@ -3234,61 +3248,8 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     if (isNewTarget) {
       pendingProjectAuditUpdatesRef.current.clear();
       pendingFolderAuditUpdatesRef.current.clear();
-      setSpectatorProfilePayload(null);
-      setSpectatorProfileError(null);
-      setSpectatorProfileLoading(true);
     }
-
-    let isActive = true;
-
-    const loadPublicProfile = async () => {
-      try {
-        const response = await fetchSpectateProfileResponse(targetUsername, {
-          // A null token deliberately starts a public request immediately. If
-          // the session arrives later, this effect revalidates without hiding
-          // the already-painted profile.
-          accessToken: session?.access_token ?? null,
-        });
-        const payload = (await response.json().catch(() => null)) as NormalizedSpectateProfileResponse | null;
-
-        if (!response.ok || !payload) {
-          throw new Error(payload?.detail || payload?.message || 'Unable to load this public profile.');
-        }
-
-        if (isActive) {
-          setSpectatorProfileError(null);
-          // Commit LCP-critical identity and bio state before hydrating project
-          // grids, ratings, and other below-the-fold dashboard state.
-          if (payload.profile?.id) {
-            setProfileData(payload.profile);
-          }
-          startTransition(() => {
-            setSpectatorProfilePayload(payload);
-          });
-        }
-      } catch (error) {
-        // Do not surface browser aborts from navigation; an active request is
-        // intentionally allowed to finish across Strict Mode rerenders.
-        const isAbortError =
-          error instanceof Error && error.name === 'AbortError';
-        if (isActive && !isAbortError) {
-          setSpectatorProfileError(
-            error instanceof Error ? error : new Error('Unable to load this public profile.')
-          );
-        }
-      } finally {
-        if (isActive) {
-          setSpectatorProfileLoading(false);
-        }
-      }
-    };
-
-    void loadPublicProfile();
-
-    return () => {
-      isActive = false;
-    };
-  }, [session?.access_token, spectatorRefreshToken, targetUsername]);
+  }, [targetUsername]);
 
   const prefetchDashboardNavigation = useCallback(
     (item: DashboardNavigationItem) => {
@@ -5311,7 +5272,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
             workspace,
             ...currentFolders.filter((folder) => folder.id !== workspace.id),
           ]);
-          setSpectatorRefreshToken((currentToken) => currentToken + 1);
+          void mutateSpectatorProfile();
           showNewlyAddedProjects([
             {
               kind: 'folder',
@@ -5327,7 +5288,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
     return () => {
       void supabase.removeChannel(workspaceInsertChannel);
     };
-  }, [isOwner, showNewlyAddedProjects, supabase, targetUsername, user?.id]);
+  }, [isOwner, mutateSpectatorProfile, showNewlyAddedProjects, supabase, targetUsername, user?.id]);
 
   async function handleConfirmUpload(
     filesToUpload: StagedFile[],
@@ -6001,7 +5962,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
 
   function requestAuditProfileRevalidation() {
     if (targetUsername) {
-      setSpectatorRefreshToken((currentToken) => currentToken + 1);
+      void mutateSpectatorProfile();
     }
   }
 
@@ -6555,7 +6516,7 @@ export function ProfileDashboard({ profileId, profileUsername, variant = 'profil
       setEditFolderName("");
 
       if (targetUsername) {
-        setSpectatorRefreshToken((currentToken) => currentToken + 1);
+        void mutateSpectatorProfile();
       }
       router.refresh();
     } catch (error: any) {

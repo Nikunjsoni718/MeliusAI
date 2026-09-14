@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { fetchSpectateProfileResponse } from '@/lib/spectate-profile';
 import { useViewerProfile } from '@/lib/viewer-client';
+import { workspaceCacheKeys } from '@/lib/workspace-cache';
 import { cn } from '@/lib/utils';
 import type { ProjectFolderRow, ProjectRow } from '@/types/supabase';
 
@@ -782,11 +783,10 @@ function DashboardResumePageContent() {
   const normalizedTargetUsername = targetUsername?.toLowerCase() ?? null;
   const { authEnabled, loading, profile, session, supabase, user } = useViewerProfile();
   const { mutate } = useSWRConfig();
-  const sharedAuthState = session?.access_token ? 'authenticated' : 'public';
   const resumeIdentityKey = targetUsername
-    ? ['resume-identity', 'shared', normalizedTargetUsername, sharedAuthState]
+    ? workspaceCacheKeys.resumeIdentity('shared', normalizedTargetUsername ?? targetUsername, user?.id ?? null)
     : user?.id && supabase
-      ? ['resume-identity', 'owner', user.id]
+      ? workspaceCacheKeys.resumeIdentity('owner', user.id, user.id)
       : null;
   const {
     data: resumeIdentity,
@@ -836,15 +836,13 @@ function DashboardResumePageContent() {
       };
     },
     {
-      dedupingInterval: 30_000,
       revalidateOnFocus: false,
-      revalidateOnReconnect: false,
     }
   );
   const resumeWorkKey = targetUsername
-    ? ['resume-work', 'shared', normalizedTargetUsername, sharedAuthState]
+    ? workspaceCacheKeys.resumeWork('shared', normalizedTargetUsername ?? targetUsername, user?.id ?? null)
     : user?.id && supabase
-      ? ['resume-work', 'owner', user.id]
+      ? workspaceCacheKeys.resumeWork('owner', user.id, user.id)
       : null;
   const {
     data: resumeWork,
@@ -899,9 +897,7 @@ function DashboardResumePageContent() {
       };
     },
     {
-      dedupingInterval: 30_000,
       revalidateOnFocus: false,
-      revalidateOnReconnect: false,
     }
   );
   const isOwner = targetUsername ? resumeIdentity?.isOwner === true : Boolean(user?.id);

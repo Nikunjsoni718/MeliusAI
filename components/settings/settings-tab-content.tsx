@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import useSWR from 'swr';
 
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import {
@@ -9,6 +10,7 @@ import {
   type PersistedSettings,
 } from '@/lib/settings';
 import { getSettingsTab, type SettingsTab } from '@/lib/settings-tabs';
+import { workspaceCacheKeys } from '@/lib/workspace-cache';
 
 import { useSettingsViewer } from './settings-hub-layout';
 
@@ -505,23 +507,23 @@ function VaultDefaultsSettings({ save, settings }: { save: SettingsSave; setting
 
 function IntegrationsSettings() {
   const { setProfile, supabase, user } = useSettingsViewer();
-  const [connected, setConnected] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const loadConnection = useCallback(async () => {
-    try {
+  const userId = user?.id;
+  const {
+    data: connection,
+    error: connectionError,
+    mutate: mutateConnection,
+  } = useSWR(
+    userId ? workspaceCacheKeys.githubConnection(userId) : null,
+    async () => {
       const response = await fetch('/api/github/connection', { credentials: 'include', cache: 'no-store' });
       const payload = (await response.json().catch(() => null)) as { connected?: boolean; error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? 'Unable to load GitHub connection.');
-      setConnected(payload?.connected === true);
-    } catch (loadError) {
-      setError(getErrorMessage(loadError, 'Unable to load GitHub connection.'));
-      setConnected(false);
+      return { connected: payload?.connected === true };
     }
-  }, []);
-
-  useEffect(() => { void loadConnection(); }, [loadConnection]);
+  );
+  const connected = connection?.connected ?? (connectionError ? false : undefined);
 
   const hasGitHubIdentity = user?.identities?.some((identity) => identity.provider === 'github') ?? false;
 
@@ -567,7 +569,7 @@ function IntegrationsSettings() {
       const { error: profileError } = await supabase.from('profiles').update({ github_username: null, github_user_id: null }).eq('id', user.id);
       if (profileError) throw profileError;
       setProfile((current) => current?.id === user.id ? { ...current, github_username: null, is_github_linked: false } : current);
-      setConnected(false);
+      await mutateConnection({ connected: false }, { revalidate: false });
       await supabase.auth.refreshSession();
     } catch (disconnectError) {
       setError(getErrorMessage(disconnectError, 'Unable to disconnect GitHub.'));
@@ -581,13 +583,13 @@ function IntegrationsSettings() {
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <div className="grid h-11 w-11 place-items-center rounded-md border border-blue-950/50 bg-[#050b1b]/60"><GitHubMark className="h-5 w-5 text-cyan-100" /></div>
-            <div><h3 className="text-base font-medium text-slate-200">GitHub</h3><p className="mt-1 text-sm text-slate-400">{connected === null ? 'Checking connection…' : connected ? 'Connected securely' : 'Not connected'}</p></div>
+            <div><h3 className="text-base font-medium text-slate-200">GitHub</h3><p className="mt-1 text-sm text-slate-400">{connected === undefined ? 'Checking connection…' : connected ? 'Connected securely' : 'Not connected'}</p></div>
           </div>
-          <button type="button" disabled={pending || connected === null} onClick={connected ? disconnect : connect} className={connected ? secondaryButtonClassName : primaryButtonClassName}>
+          <button type="button" disabled={pending || connected === undefined} onClick={connected ? disconnect : connect} className={connected ? secondaryButtonClassName : primaryButtonClassName}>
             {pending ? 'Working…' : connected ? 'Disconnect' : hasGitHubIdentity ? 'Reconnect' : 'Connect'}
           </button>
         </div>
-        <FormNotice error={error} />
+        <FormNotice error={error ?? (connectionError ? getErrorMessage(connectionError, 'Unable to load GitHub connection.') : null)} />
       </div>
     </section>
   );
@@ -624,42 +626,35 @@ function BillingSettings() {
 export function SettingsTabContent({ tab }: { tab: SettingsTab }) {
   const { setProfile, user } = useSettingsViewer();
   const userId = user?.id;
-  const [settings, setSettings] = useState<PersistedSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!userId) return;
-    let active = true;
-    const load = async () => {
-      try {
-        setError(null);
-        const response = await fetch('/api/settings', { credentials: 'include', cache: 'no-store' });
-        const body = (await response.json().catch(() => null)) as { settings?: PersistedSettings; error?: string } | null;
-        if (!response.ok || !body?.settings) throw new Error(body?.error ?? 'Unable to load settings.');
-        if (active) setSettings(body.settings);
-      } catch (loadError) {
-        if (active) setError(getErrorMessage(loadError, 'Unable to load settings.'));
-      }
-    };
-    void load();
-    return () => { active = false; };
-  }, [userId]);
+  const {
+    data: settings,
+    error,
+    mutate: mutateSettings,
+  } = useSWR<PersistedSettings>(
+    userId ? workspaceCacheKeys.settings(userId) : null,
+    async () => {
+      const response = await fetch('/api/settings', { credentials: 'include', cache: 'no-store' });
+      const body = (await response.json().catch(() => null)) as { settings?: PersistedSettings; error?: string } | null;
+      if (!response.ok || !body?.settings) throw new Error(body?.error ?? 'Unable to load settings.');
+      return body.settings;
+    }
+  );
 
   const save = useCallback(async (update: Partial<PersistedSettings>) => {
     const response = await fetch('/api/settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
     const body = (await response.json().catch(() => null)) as { settings?: PersistedSettings; error?: string } | null;
     if (!response.ok || !body?.settings) throw new Error(body?.error ?? 'Unable to save settings.');
-    setSettings(body.settings);
+    await mutateSettings(body.settings, { revalidate: false });
     setProfile((current) => current ? { ...current, ...body.settings } : current);
     return body.settings;
-  }, [setProfile]);
+  }, [mutateSettings, setProfile]);
 
   if (!user) {
     return <section className="mx-auto w-full max-w-3xl rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 text-sm text-slate-400 backdrop-blur-md">Settings are unavailable until you sign in.</section>;
   }
 
   if (!settings) {
-    return error ? <section className="mx-auto w-full max-w-3xl rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 text-sm text-red-300 backdrop-blur-md" role="alert">{error}</section> : <SettingsLoadingSkeleton />;
+    return error ? <section className="mx-auto w-full max-w-3xl rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 text-sm text-red-300 backdrop-blur-md" role="alert">{getErrorMessage(error, 'Unable to load settings.')}</section> : <SettingsLoadingSkeleton />;
   }
 
   if (tab === 'account') return <AccountSettings settings={settings} save={save} />;
