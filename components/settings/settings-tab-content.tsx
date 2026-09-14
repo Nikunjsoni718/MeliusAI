@@ -13,11 +13,11 @@ import { getSettingsTab, type SettingsTab } from '@/lib/settings-tabs';
 import { useSettingsViewer } from './settings-hub-layout';
 
 const inputClassName =
-  'w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-slate-600 disabled:cursor-not-allowed disabled:opacity-60';
+  'w-full rounded-md border border-blue-950/50 bg-[#050b1b]/60 px-3 py-2.5 text-sm text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-60';
 const primaryButtonClassName =
-  'rounded-md border border-slate-700 bg-slate-800 px-3.5 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50';
+  'rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-500/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50';
 const secondaryButtonClassName =
-  'rounded-md border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm font-medium text-slate-300 transition-colors hover:border-slate-700 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50';
+  'rounded-lg border border-blue-950/60 bg-[#071329]/60 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:border-cyan-500/30 hover:bg-[#0b1d38]/80 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50';
 const destructiveButtonClassName =
   'rounded-md border border-red-900/70 bg-red-950/40 px-3.5 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-950/70 disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -36,7 +36,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 function Section({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <section className={`border-t border-slate-800 py-7 first:border-t-0 first:pt-0 ${className}`}>{children}</section>;
+  return <section className={`border-t border-blue-950/50 py-7 first:border-t-0 first:pt-0 ${className}`}>{children}</section>;
 }
 
 function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
@@ -69,7 +69,7 @@ function SettingsToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-5 rounded-md border border-slate-800 bg-slate-950 p-4">
+    <div className="flex items-start justify-between gap-5 rounded-md border border-blue-950/50 bg-[#050b1b]/60 p-4">
       <div>
         <p className="text-sm font-medium text-slate-200">{label}</p>
         <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
@@ -80,12 +80,12 @@ function SettingsToggle({
         aria-checked={checked}
         aria-label={label}
         onClick={() => onChange(!checked)}
-        className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors ${
-          checked ? 'border-slate-600 bg-slate-700' : 'border-slate-800 bg-slate-950'
+        className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
+          checked ? 'border-cyan-400/50 bg-cyan-500/20' : 'border-blue-950/60 bg-[#050b1b]/60'
         }`}
       >
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-slate-200 transition-transform ${
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-cyan-50 transition-transform ${
             checked ? 'translate-x-5' : 'translate-x-1'
           }`}
         />
@@ -99,7 +99,7 @@ function SettingsLoadingSkeleton() {
     <section className="mx-auto w-full max-w-3xl">
       <div className="h-3 w-20 animate-pulse rounded-md bg-slate-800/50" />
       <div className="mt-4 h-9 w-64 animate-pulse rounded-md bg-slate-800/50" />
-      <div className="mt-8 space-y-4 rounded-md border border-slate-800 bg-slate-950 p-5">
+      <div className="mt-8 space-y-4 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md">
         <div className="h-10 animate-pulse rounded-md bg-slate-800/50" />
         <div className="h-10 animate-pulse rounded-md bg-slate-800/50" />
         <div className="h-10 w-28 animate-pulse rounded-md bg-slate-800/50" />
@@ -231,12 +231,12 @@ function AccountSettings({
     <section aria-labelledby="settings-account-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="account" />
 
-      <div className="mt-8 rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6">
+      <div className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
         <Section>
           <form onSubmit={saveUsername}>
             <FieldLabel htmlFor="settings-username">Profile URL</FieldLabel>
-            <div className="flex overflow-hidden rounded-md border border-slate-800 bg-slate-950 focus-within:border-slate-600">
-              <span className="flex items-center border-r border-slate-800 px-3 text-sm text-slate-500">
+            <div className="flex overflow-hidden rounded-md border border-blue-950/50 bg-[#050b1b]/60 transition focus-within:border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-500/50">
+              <span className="flex items-center border-r border-blue-950/50 px-3 text-sm text-slate-500">
                 meliusai.in/profile/
               </span>
               <input
@@ -244,7 +244,7 @@ function AccountSettings({
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 autoComplete="username"
-                className="min-w-0 flex-1 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none"
+                className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm text-slate-200 outline-none"
               />
             </div>
             <p className="mt-2 text-sm text-slate-500">Lowercase letters, numbers, and underscores are used in your public URL.</p>
@@ -360,8 +360,8 @@ function ConfirmationDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" role="presentation">
-      <div role="dialog" aria-modal="true" aria-labelledby="settings-danger-title" className="w-full max-w-md rounded-md border border-red-900/50 bg-[#0B1021] p-5 text-slate-200 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#050b17]/85 p-4" role="presentation">
+      <div role="dialog" aria-modal="true" aria-labelledby="settings-danger-title" className="w-full max-w-md rounded-md border border-red-900/50 bg-[#090d1f] p-5 text-slate-200 shadow-2xl">
         <h3 id="settings-danger-title" className="text-lg font-semibold text-slate-200">{title}</h3>
         <p className="mt-3 text-sm leading-6 text-slate-400">
           Type <span className="font-medium text-red-200">{phrase}</span> to confirm. This cannot be undone.
@@ -422,7 +422,7 @@ function PublicProfileSettings({ save, settings }: { save: SettingsSave; setting
   return (
     <section aria-labelledby="settings-public-profile-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="public-profile" />
-      <form onSubmit={submit} className="mt-8 rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6">
+      <form onSubmit={submit} className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
         <Section>
           <div className="space-y-3">
             <SettingsToggle
@@ -487,7 +487,7 @@ function VaultDefaultsSettings({ save, settings }: { save: SettingsSave; setting
   return (
     <section aria-labelledby="settings-vault-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="vault" />
-      <form onSubmit={submit} className="mt-8 rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6">
+      <form onSubmit={submit} className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
         <Section>
           <FieldLabel htmlFor="settings-asset-privacy">Default asset privacy</FieldLabel>
           <select id="settings-asset-privacy" value={isPublic ? 'public' : 'private'} onChange={(event) => setIsPublic(event.target.value === 'public')} className={inputClassName}>
@@ -577,10 +577,10 @@ function IntegrationsSettings() {
   return (
     <section aria-labelledby="settings-integrations-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="integrations" />
-      <div className="mt-8 rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6">
+      <div className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <div className="grid h-11 w-11 place-items-center rounded-md border border-slate-800 bg-[#0B1021]"><GitHubMark className="h-5 w-5 text-slate-200" /></div>
+            <div className="grid h-11 w-11 place-items-center rounded-md border border-blue-950/50 bg-[#050b1b]/60"><GitHubMark className="h-5 w-5 text-cyan-100" /></div>
             <div><h3 className="text-base font-medium text-slate-200">GitHub</h3><p className="mt-1 text-sm text-slate-400">{connected === null ? 'Checking connection…' : connected ? 'Connected securely' : 'Not connected'}</p></div>
           </div>
           <button type="button" disabled={pending || connected === null} onClick={connected ? disconnect : connect} className={connected ? secondaryButtonClassName : primaryButtonClassName}>
@@ -601,7 +601,7 @@ function NotificationsSettings({ save, settings }: { save: SettingsSave; setting
   return (
     <section aria-labelledby="settings-notifications-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="notifications" />
-      <form onSubmit={submit} className="mt-8 rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6">
+      <form onSubmit={submit} className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
         <Section><div className="space-y-3"><SettingsToggle label="Audit Alerts" description="Receive emails when a manual Vault audit completes." checked={draft.audit_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, audit_alerts_enabled: value }))} /><SettingsToggle label="Opportunity Matches" description="Receive emails for future recruiter and bounty matches." checked={draft.opportunity_match_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, opportunity_match_alerts_enabled: value }))} /></div></Section>
         <button type="submit" disabled={pending} className={primaryButtonClassName}>{pending ? 'Saving…' : 'Save notifications'}</button><FormNotice error={error} success={success} />
       </form>
@@ -614,8 +614,8 @@ function BillingSettings() {
     <section aria-labelledby="settings-billing-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="billing" />
       <div className="mt-8 space-y-5">
-        <div className="rounded-md border border-slate-800 bg-slate-950 p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-base font-medium text-slate-200">Current plan</h3><p className="mt-1 text-sm text-slate-400">Your workspace is on the Free Tier.</p></div><span className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200">Free Tier</span></div></div>
-        <div className="rounded-md border border-slate-800 bg-slate-950 p-5 opacity-80 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-base font-medium text-slate-200">Pro Features</h3><p className="mt-1 text-sm text-slate-400">More automation and customization are on the way.</p></div><span className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-300">Coming Soon</span></div><ul className="mt-5 space-y-2 text-sm text-slate-400"><li>Automatic GitHub Imports &amp; Audits</li><li>Unlimited AI Audits</li><li>Custom Domains</li></ul><button type="button" disabled className={`${secondaryButtonClassName} mt-5`}>Upgrade to Pro</button></div>
+        <div className="rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-base font-medium text-slate-200">Current plan</h3><p className="mt-1 text-sm text-slate-400">Your workspace is on the Free Tier.</p></div><span className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-100">Free Tier</span></div></div>
+        <div className="rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 opacity-80 backdrop-blur-md sm:p-6"><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="text-base font-medium text-slate-200">Pro Features</h3><p className="mt-1 text-sm text-slate-400">More automation and customization are on the way.</p></div><span className="rounded-md border border-blue-950/60 bg-[#071329]/60 px-2.5 py-1 text-xs font-medium text-slate-300">Coming Soon</span></div><ul className="mt-5 space-y-2 text-sm text-slate-400"><li>Automatic GitHub Imports &amp; Audits</li><li>Unlimited AI Audits</li><li>Custom Domains</li></ul><button type="button" disabled className={`${secondaryButtonClassName} mt-5`}>Upgrade to Pro</button></div>
       </div>
     </section>
   );
@@ -655,11 +655,11 @@ export function SettingsTabContent({ tab }: { tab: SettingsTab }) {
   }, [setProfile]);
 
   if (!user) {
-    return <section className="mx-auto w-full max-w-3xl rounded-md border border-slate-800 bg-slate-950 p-5 text-sm text-slate-400">Settings are unavailable until you sign in.</section>;
+    return <section className="mx-auto w-full max-w-3xl rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 text-sm text-slate-400 backdrop-blur-md">Settings are unavailable until you sign in.</section>;
   }
 
   if (!settings) {
-    return error ? <section className="mx-auto w-full max-w-3xl rounded-md border border-slate-800 bg-slate-950 p-5 text-sm text-red-300" role="alert">{error}</section> : <SettingsLoadingSkeleton />;
+    return error ? <section className="mx-auto w-full max-w-3xl rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 text-sm text-red-300 backdrop-blur-md" role="alert">{error}</section> : <SettingsLoadingSkeleton />;
   }
 
   if (tab === 'account') return <AccountSettings settings={settings} save={save} />;
