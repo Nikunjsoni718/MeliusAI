@@ -70,6 +70,8 @@ function SettingsToggle({
   label: string;
   onChange: (checked: boolean) => void;
 }) {
+  const isChecked = Boolean(checked);
+
   return (
     <div className="flex items-start justify-between gap-5 rounded-md border border-blue-950/50 bg-[#050b1b]/60 p-4">
       <div>
@@ -79,16 +81,17 @@ function SettingsToggle({
       <button
         type="button"
         role="switch"
-        aria-checked={checked}
+        aria-checked={isChecked}
         aria-label={label}
-        onClick={() => onChange(!checked)}
+        data-state={isChecked ? 'checked' : 'unchecked'}
+        onClick={() => onChange(!isChecked)}
         className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
-          checked ? 'border-cyan-400/50 bg-cyan-500/20' : 'border-blue-950/60 bg-[#050b1b]/60'
+          isChecked ? 'border-cyan-400 bg-cyan-500' : 'border-slate-700 bg-[#151B2B]'
         }`}
       >
         <span
           className={`absolute top-0.5 h-4 w-4 rounded-full bg-cyan-50 transition-transform ${
-            checked ? 'translate-x-5' : 'translate-x-1'
+            isChecked ? 'translate-x-5' : 'translate-x-1'
           }`}
         />
       </button>
