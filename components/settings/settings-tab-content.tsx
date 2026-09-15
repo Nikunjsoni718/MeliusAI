@@ -85,13 +85,13 @@ function SettingsToggle({
         aria-label={label}
         data-state={isChecked ? 'checked' : 'unchecked'}
         onClick={() => onChange(!isChecked)}
-        className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
+        className={`inline-flex h-6 w-10 shrink-0 items-center justify-start rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
           isChecked ? 'border-cyan-400 bg-cyan-500' : 'border-slate-700 bg-[#151B2B]'
         }`}
       >
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-cyan-50 transition-transform ${
-            isChecked ? 'translate-x-5' : 'translate-x-1'
+          className={`h-4 w-4 shrink-0 rounded-full bg-cyan-50 transition-transform ${
+            isChecked ? 'translate-x-[18px]' : 'translate-x-0'
           }`}
         />
       </button>
