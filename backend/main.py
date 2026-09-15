@@ -2662,8 +2662,8 @@ SPECTATOR_PREFERENCE_DEFAULTS = {
     "public_scorecard_enabled": True,
     "public_contact_email_enabled": False,
     "default_asset_is_public": True,
-    "audit_alerts_enabled": False,
-    "opportunity_match_alerts_enabled": False,
+    "audit_alerts_enabled": True,
+    "opportunity_match_alerts_enabled": True,
 }
 
 

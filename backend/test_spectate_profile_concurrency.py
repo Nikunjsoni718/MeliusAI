@@ -171,6 +171,22 @@ class SpectateProfileQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(user_id)
         self.assertEqual(status, "unavailable")
 
+    def test_missing_notification_preferences_default_to_enabled_but_preserve_opt_outs(self):
+        legacy_profile = {"audit_alerts_enabled": None}
+        main.normalize_spectator_profile_preferences(legacy_profile)
+
+        self.assertIs(legacy_profile["audit_alerts_enabled"], True)
+        self.assertIs(legacy_profile["opportunity_match_alerts_enabled"], True)
+
+        opted_out_profile = {
+            "audit_alerts_enabled": False,
+            "opportunity_match_alerts_enabled": False,
+        }
+        main.normalize_spectator_profile_preferences(opted_out_profile)
+
+        self.assertIs(opted_out_profile["audit_alerts_enabled"], False)
+        self.assertIs(opted_out_profile["opportunity_match_alerts_enabled"], False)
+
     def test_legacy_null_preferences_use_safe_defaults_and_redact_visitors(self):
         profile = {
             "email": "member@example.com",
