@@ -77,6 +77,8 @@ export type ProjectRow = {
   github_sync_status?: 'untracked' | 'synced' | 'deleted' | 'error' | null;
   github_synced_at?: string | null;
   github_sync_error?: string | null;
+  last_commit_at?: string | null;
+  last_audit_at?: string | null;
   profession?: string | null;
   target_company?: string | null;
   auto_apply_enabled?: boolean | null;
@@ -84,6 +86,51 @@ export type ProjectRow = {
   status?: ProjectStatus | null;
   created_at: string;
   updated_at?: string | null;
+};
+
+export type NotificationRow = {
+  id: string;
+  user_id: string;
+  project_id: string | null;
+  type: 'session_cooldown_re_audit' | 'audit_completed' | 'stale_project_nudge' | 'system_security';
+  title: string;
+  message: string;
+  action_url: string;
+  is_read: boolean;
+  metadata: Json;
+  created_at: string;
+};
+
+export type WebPushSubscriptionRow = {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  expiration_time: number | null;
+  user_agent: string | null;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WebPushDeliveryRow = {
+  id: string;
+  user_id: string;
+  subscription_id: string;
+  notification_id: string | null;
+  email_batch_id: string | null;
+  event_key: string;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'processing' | 'sent' | 'expired' | 'failed';
+  attempt_count: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ProjectFolderRow = {
@@ -104,6 +151,8 @@ export type ProjectFolderRow = {
   has_been_audited?: boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
+  last_commit_at?: string | null;
+  last_audit_at?: string | null;
 };
 
 export type AuditSnapshotRow = {
@@ -255,6 +304,25 @@ export interface Database {
         Update: Partial<
           Omit<PendingImportRow, 'id' | 'user_id' | 'provider' | 'provider_repository_id' | 'created_at' | 'updated_at'>
         >;
+        Relationships: [];
+      };
+      notifications: {
+        Row: NotificationRow;
+        Insert: never;
+        Update: Pick<NotificationRow, 'is_read'>;
+        Relationships: [];
+      };
+      web_push_subscriptions: {
+        Row: WebPushSubscriptionRow;
+        Insert: Partial<Omit<WebPushSubscriptionRow, 'id' | 'created_at' | 'updated_at'>> &
+          Pick<WebPushSubscriptionRow, 'user_id' | 'endpoint' | 'p256dh' | 'auth'>;
+        Update: Partial<Omit<WebPushSubscriptionRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>;
+        Relationships: [];
+      };
+      web_push_deliveries: {
+        Row: WebPushDeliveryRow;
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       github_connections: {

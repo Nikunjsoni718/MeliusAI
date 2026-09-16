@@ -6,6 +6,7 @@ export const workspaceCacheKeys = {
   viewerSession: ['workspace', 'viewer-session'] as const,
   viewerProfile: (userId: string) => ['workspace', 'viewer-profile', userId] as const,
   settings: (userId: string) => ['workspace', 'settings', userId] as const,
+  notifications: (userId: string) => ['workspace', 'notifications', userId] as const,
   githubConnection: (userId: string) => ['workspace', 'github-connection', userId] as const,
   resumeIdentity: (scope: 'owner' | 'shared', identity: string, viewerId: string | null) =>
     ['workspace', 'resume-identity', scope, identity, viewerId ?? 'public'] as const,

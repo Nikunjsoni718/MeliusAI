@@ -17,6 +17,8 @@ import faviconLogo from '@/app/favicon.png';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
 import { isViewerProfileOwner, useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
+import { NotificationCenter } from '@/components/layout/notification-center';
+import { PushPermissionPrompt } from '@/components/layout/push-permission-prompt';
 
 type NavigationItem = {
   href: string;
@@ -158,6 +160,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
         </div>
         {isOwner ? (
           <div className="p-4">
+            {user?.id ? <NotificationCenter userId={user.id} /> : null}
             <button
               type="button"
               onClick={() => void signOut()}
@@ -180,6 +183,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
         </button>
         {children}
       </div>
+      {isOwner ? <PushPermissionPrompt /> : null}
     </div>
   );
 }

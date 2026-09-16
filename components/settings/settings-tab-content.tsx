@@ -10,6 +10,7 @@ import {
   type PersistedSettings,
 } from '@/lib/settings';
 import { getSettingsTab, type SettingsTab } from '@/lib/settings-tabs';
+import { disableWebPush, enableWebPush, getWebPushStatus } from '@/lib/web-push';
 import { workspaceCacheKeys } from '@/lib/workspace-cache';
 
 import { useSettingsViewer } from './settings-hub-layout';
@@ -64,11 +65,13 @@ function SettingsToggle({
   description,
   label,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   description: string;
   label: string;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   const isChecked = Boolean(checked);
 
@@ -84,8 +87,9 @@ function SettingsToggle({
         aria-checked={isChecked}
         aria-label={label}
         data-state={isChecked ? 'checked' : 'unchecked'}
+        disabled={disabled}
         onClick={() => onChange(!isChecked)}
-        className={`inline-flex h-6 w-10 shrink-0 items-center justify-start rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
+        className={`inline-flex h-6 w-10 shrink-0 items-center justify-start rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-50 ${
           isChecked ? 'border-cyan-400 bg-cyan-500' : 'border-slate-700 bg-[#151B2B]'
         }`}
       >
@@ -602,14 +606,37 @@ function IntegrationsSettings() {
 function NotificationsSettings({ save, settings }: { save: SettingsSave; settings: PersistedSettings }) {
   const [draft, setDraft] = useState({ audit_alerts_enabled: settings.audit_alerts_enabled, opportunity_match_alerts_enabled: settings.opportunity_match_alerts_enabled });
   const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null); const [success, setSuccess] = useState<string | null>(null);
+  const [pushEnabled, setPushEnabled] = useState(false); const [pushSupported, setPushSupported] = useState(true); const [pushPending, setPushPending] = useState(false); const [pushError, setPushError] = useState<string | null>(null);
   useEffect(() => setDraft({ audit_alerts_enabled: settings.audit_alerts_enabled, opportunity_match_alerts_enabled: settings.opportunity_match_alerts_enabled }), [settings]);
+  useEffect(() => {
+    let active = true;
+    void getWebPushStatus().then((status) => {
+      if (!active) return;
+      setPushSupported(status.supported);
+      setPushEnabled(status.enabled);
+    }).catch((statusError) => {
+      if (active) setPushError(getErrorMessage(statusError, 'Unable to read browser push settings.'));
+    });
+    return () => { active = false; };
+  }, []);
   const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); setPending(true); setError(null); setSuccess(null); try { await save(draft); setSuccess('Notification preferences saved.'); } catch (saveError) { setError(getErrorMessage(saveError, 'Unable to save notification preferences.')); } finally { setPending(false); } };
+  const togglePush = async (nextEnabled: boolean) => {
+    if (pushPending || !pushSupported) return;
+    setPushPending(true); setPushError(null);
+    try {
+      if (nextEnabled) await enableWebPush(); else await disableWebPush();
+      setPushEnabled(nextEnabled);
+    } catch (toggleError) {
+      setPushError(getErrorMessage(toggleError, 'Unable to update Web Push for this browser.'));
+    } finally { setPushPending(false); }
+  };
   return (
     <section aria-labelledby="settings-notifications-title" className="mx-auto w-full max-w-3xl">
       <SettingsHeader tab="notifications" />
       <form onSubmit={submit} className="mt-8 rounded-md border border-blue-950/50 bg-[#090d1f]/40 p-5 backdrop-blur-md sm:p-6">
-        <Section><div className="space-y-3"><SettingsToggle label="Audit Alerts" description="Receive emails when a manual Vault audit completes." checked={draft.audit_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, audit_alerts_enabled: value }))} /><SettingsToggle label="Opportunity Matches" description="Receive emails for future recruiter and bounty matches." checked={draft.opportunity_match_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, opportunity_match_alerts_enabled: value }))} /></div></Section>
+        <Section><div className="space-y-3"><SettingsToggle label="Audit Alerts" description="Receive emails when a manual Vault audit completes." checked={draft.audit_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, audit_alerts_enabled: value }))} /><SettingsToggle label="Opportunity Matches" description="Receive emails for future recruiter and bounty matches." checked={draft.opportunity_match_alerts_enabled} onChange={(value) => setDraft((current) => ({ ...current, opportunity_match_alerts_enabled: value }))} /><SettingsToggle label="Push Notifications" description={pushSupported ? 'Receive native MeliusAI notifications on this browser. Other devices are managed separately.' : 'Web Push requires a supported browser over HTTPS.'} checked={pushEnabled} disabled={pushPending || !pushSupported} onChange={(value) => void togglePush(value)} /></div></Section>
         <button type="submit" disabled={pending} className={primaryButtonClassName}>{pending ? 'Saving…' : 'Save notifications'}</button><FormNotice error={error} success={success} />
+        <FormNotice error={pushError} />
       </form>
     </section>
   );

@@ -167,7 +167,7 @@ type SpectatorVaultResponse = {
 };
 
 const VAULT_PROJECT_CARD_SELECT =
-  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, score_delta, delta_summary, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id';
+  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, score_delta, delta_summary, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id, github_repository';
 const VAULT_FOLDER_SELECT =
   'id, user_id, name, score, evaluation_score, score_delta, delta_summary, executive_summary, pros, cons, recommendations, audit_findings, has_been_audited, created_at, updated_at';
 
@@ -1089,6 +1089,8 @@ function VaultPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const targetUsername = searchParams.get('profile')?.trim().replace(/^@+/, '') || null;
+  const targetRepository = searchParams.get('repo')?.trim().toLowerCase() || null;
+  const targetAuditId = searchParams.get('audit')?.trim() || null;
   const normalizedTargetUsername = normalizeVaultIdentity(targetUsername);
   const authEnabled = hasSupabaseBrowserEnv();
   const [supabase] = useState(() => {
@@ -1157,6 +1159,25 @@ function VaultPageContent() {
       setFilterType(ALL_ASSETS_FILTER);
     }
   }, [filterType, vaultFileTypes]);
+
+  useEffect(() => {
+    if (loading || (!targetRepository && !targetAuditId)) {
+      return;
+    }
+    setFilterType(WORKSPACE_FILTER);
+    const matchingAsset = targetRepository
+      ? vaultAssets.find((asset) => asset.github_repository?.toLowerCase() === targetRepository)
+      : null;
+    const matchingFolder = matchingAsset?.folder_id
+      ? vaultFolders.find((folder) => folder.id === matchingAsset.folder_id)
+      : null;
+    setVisibilityToast({
+      id: Date.now(),
+      message: targetAuditId
+        ? '[ Audit result ready: select the matching workspace to review it. ]'
+        : `[ Workspace ready: ${matchingFolder?.name ?? targetRepository} ]`,
+    });
+  }, [loading, targetAuditId, targetRepository, vaultAssets, vaultFolders]);
 
   useEffect(() => {
     if (!authEnabled || !supabase) {
@@ -1710,7 +1731,25 @@ Return Markdown sections for goods, bads, project description, and a final score
     }
   }
 
-  const rootVaultItemCount = vaultAssets.length + vaultFolders.length;
+  const deepLinkedVaultAssets = useMemo(
+    () =>
+      targetRepository
+        ? vaultAssets.filter((asset) => asset.github_repository?.toLowerCase() === targetRepository)
+        : vaultAssets,
+    [targetRepository, vaultAssets]
+  );
+  const deepLinkedFolderIds = useMemo(
+    () => new Set(deepLinkedVaultAssets.map((asset) => asset.folder_id).filter((folderId): folderId is string => Boolean(folderId))),
+    [deepLinkedVaultAssets]
+  );
+  const deepLinkedVaultFolders = useMemo(
+    () =>
+      targetRepository
+        ? vaultFolders.filter((folder) => deepLinkedFolderIds.has(folder.id))
+        : vaultFolders,
+    [deepLinkedFolderIds, targetRepository, vaultFolders]
+  );
+  const rootVaultItemCount = deepLinkedVaultAssets.length + deepLinkedVaultFolders.length;
   const vaultEmptyMessage =
     filterType === ALL_ASSETS_FILTER
       ? 'No verified Vault assets found yet.'
@@ -1791,8 +1830,8 @@ Return Markdown sections for goods, bads, project description, and a final score
               </Card>
             ) : (
               <UniversalAssetGrid
-                assets={vaultAssets}
-                folders={vaultFolders}
+                assets={deepLinkedVaultAssets}
+                folders={deepLinkedVaultFolders}
                 emptyMessage={vaultEmptyMessage}
                 filterType={filterType}
                 isSpectator={!isOwner}

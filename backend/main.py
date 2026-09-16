@@ -16,7 +16,7 @@ import ast
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -26,6 +26,10 @@ import httpx
 import pypdf
 from pptx import Presentation
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+try:
+    from pywebpush import webpush
+except ImportError:  # Local tooling can inspect the app before Render installs requirements.
+    webpush = None
 from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, HTTPException, Request, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -1182,6 +1186,1110 @@ async def _run_supabase(operation: Callable[[], Any]) -> Any:
     return await asyncio.to_thread(operation)
 
 
+NOTIFICATION_COOLDOWN_MINUTES = 45
+NOTIFICATION_EMAIL_BATCH_HOURS = 4
+NOTIFICATION_MINIMUM_CHANGED_LINES = 15
+NOTIFICATION_BATCH_RETRY_DELAY_MINUTES = 5
+WEB_PUSH_RETRY_DELAY_MINUTES = 5
+WEB_PUSH_MAX_ATTEMPTS = 3
+
+
+def _notification_timestamp() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _notification_timestamp_text(value: datetime | None = None) -> str:
+    return (value or _notification_timestamp()).isoformat()
+
+
+def _web_push_vapid_config() -> dict[str, str] | None:
+    public_key = (os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY") or "").strip()
+    private_key = (os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY") or "").strip()
+    subject = (os.getenv("WEB_PUSH_VAPID_SUBJECT") or "").strip()
+    if not public_key or not private_key or not subject:
+        return None
+    return {"public_key": public_key, "private_key": private_key, "subject": subject}
+
+
+def _web_push_error_status(error: Exception) -> int | None:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    return int(status_code) if isinstance(status_code, int) else None
+
+
+def _web_push_payload(*, title: str, message: str, action_url: str, tag: str) -> dict[str, str]:
+    return {
+        "title": title,
+        "body": message,
+        "action_url": action_url if action_url.startswith("/") and not action_url.startswith("//") else "/vault",
+        "tag": tag,
+    }
+
+
+def _parse_notification_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _latest_notification_timestamp(rows: list[dict[str, Any]], column_name: str) -> datetime | None:
+    values = [_parse_notification_timestamp(row.get(column_name)) for row in rows]
+    return max((value for value in values if value is not None), default=None)
+
+
+def is_notification_eligible_code_file(file_path: str) -> bool:
+    """Return whether a changed file contributes toward the cooldown threshold.
+
+    This deliberately differs from the workspace sync allow-list: documentation
+    files are still synced into the Vault but do not produce audit reminders.
+    """
+    normalized_path = normalize_github_file_path(file_path)
+    if not normalized_path:
+        return False
+    path = PurePosixPath(normalized_path)
+    if path.name.casefold() == ".gitignore":
+        return False
+    if path.suffix.casefold() in {".md", ".txt"}:
+        return False
+    return is_trackable_github_asset(normalized_path)
+
+
+def get_github_before_sha(payload: dict[str, Any]) -> str | None:
+    """Return the previous push SHA, or None when GitHub has no comparable base."""
+    before_sha = payload.get("before")
+    if not isinstance(before_sha, str):
+        return None
+    normalized = before_sha.strip().lower()
+    if re.fullmatch(r"0{40}|0{64}", normalized):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", normalized):
+        return None
+    return normalized
+
+
+async def calculate_notification_lines_changed(
+    payload: dict[str, Any],
+    *,
+    repository: str,
+    access_token: str | None,
+    http_client: httpx.AsyncClient | None = None,
+) -> int | None:
+    """Calculate a push's eligible diff size without invoking any AI service."""
+    base_sha = get_github_before_sha(payload)
+    head_sha = get_github_after_sha(payload)
+    if base_sha is None:
+        logger.info("notification.cooldown_skipped_no_compare_base repository=%s", repository)
+        return None
+
+    owns_client = http_client is None
+    active_client = http_client or httpx.AsyncClient(
+        follow_redirects=False,
+        timeout=httpx.Timeout(30.0),
+    )
+    try:
+        diff = await github_diffs.calculate_cumulative_diff(
+            repository,
+            base_sha,
+            head_sha,
+            access_token=access_token,
+            http_client=active_client,
+        )
+    except github_diffs.DiffServiceError as error:
+        logger.warning(
+            "notification.cooldown_diff_unavailable repository=%s code=%s",
+            repository,
+            error.code,
+        )
+        return None
+    finally:
+        if owns_client:
+            await active_client.aclose()
+
+    return sum(
+        int(file.get("insertions") or 0) + int(file.get("deletions") or 0)
+        for file in diff.files
+        if file.get("status") in {"added", "modified"}
+        and is_notification_eligible_code_file(str(file.get("filename") or ""))
+    )
+
+
+async def _repository_tracking_rows(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+) -> list[dict[str, Any]]:
+    response = await _run_supabase(
+        lambda: supabase_client.table("projects")
+        .select("id, last_commit_at, last_audit_at")
+        .eq("user_id", user_id)
+        .eq("github_repository", repository)
+        .execute()
+    )
+    return _response_rows(response)
+
+
+async def _repository_has_current_audit(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+) -> bool:
+    rows = await _repository_tracking_rows(
+        supabase_client,
+        user_id=user_id,
+        repository=repository,
+    )
+    latest_commit = _latest_notification_timestamp(rows, "last_commit_at")
+    latest_audit = _latest_notification_timestamp(rows, "last_audit_at")
+    return bool(latest_commit and latest_audit and latest_audit >= latest_commit)
+
+
+async def _update_repository_commit_tracking(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+    committed_at: datetime,
+) -> None:
+    timestamp = _notification_timestamp_text(committed_at)
+    await _run_supabase(
+        lambda: supabase_client.table("projects")
+        .update({"last_commit_at": timestamp})
+        .eq("user_id", user_id)
+        .eq("github_repository", repository)
+        .execute()
+    )
+
+    # Audited repository workspaces have a canonical repository-state mapping.
+    # Assets without a baseline still receive their timestamp above.
+    try:
+        state_response = await _run_supabase(
+            lambda: supabase_client.table("workspace_repository_states")
+            .select("workspace_id")
+            .eq("user_id", user_id)
+            .eq("repository", repository)
+            .execute()
+        )
+        folder_ids = [
+            str(row.get("workspace_id"))
+            for row in _response_rows(state_response)
+            if row.get("workspace_id")
+        ]
+        if folder_ids:
+            await _run_supabase(
+                lambda: supabase_client.table("project_folders")
+                .update({"last_commit_at": timestamp})
+                .eq("user_id", user_id)
+                .in_("id", folder_ids)
+                .execute()
+            )
+    except Exception:
+        logger.warning(
+            "notification.workspace_commit_tracking_deferred user_id=%s repository=%s",
+            user_id,
+            repository,
+        )
+
+
+async def _schedule_repository_cooldown(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+    lines_changed: int,
+    qualifying_commit_at: datetime,
+) -> None:
+    scheduled_at = qualifying_commit_at + timedelta(minutes=NOTIFICATION_COOLDOWN_MINUTES)
+    await _run_supabase(
+        lambda: supabase_client.table("notification_cooldowns")
+        .upsert(
+            {
+                "user_id": user_id,
+                "repository": repository,
+                "lines_changed": lines_changed,
+                "last_qualifying_commit_at": _notification_timestamp_text(qualifying_commit_at),
+                "scheduled_at": _notification_timestamp_text(scheduled_at),
+                "updated_at": _notification_timestamp_text(qualifying_commit_at),
+            },
+            on_conflict="user_id,repository",
+        )
+        .execute()
+    )
+
+
+async def _record_push_notification_activity(
+    supabase_client: Any,
+    *,
+    payload: dict[str, Any],
+    repository: str,
+    user_ids: set[str],
+    access_token: str | None,
+) -> None:
+    committed_at = _notification_timestamp()
+    for user_id in sorted(user_ids):
+        await _update_repository_commit_tracking(
+            supabase_client,
+            user_id=user_id,
+            repository=repository,
+            committed_at=committed_at,
+        )
+
+    lines_changed = await calculate_notification_lines_changed(
+        payload,
+        repository=repository,
+        access_token=access_token,
+    )
+    if lines_changed is None or lines_changed < NOTIFICATION_MINIMUM_CHANGED_LINES:
+        logger.info(
+            "notification.cooldown_not_scheduled repository=%s lines_changed=%s",
+            repository,
+            lines_changed,
+        )
+        return
+
+    for user_id in sorted(user_ids):
+        await _schedule_repository_cooldown(
+            supabase_client,
+            user_id=user_id,
+            repository=repository,
+            lines_changed=lines_changed,
+            qualifying_commit_at=committed_at,
+        )
+
+
+def _notification_error_is_unique(error: Exception) -> bool:
+    message = str(error).casefold()
+    return "duplicate key" in message or "unique" in message or "23505" in message
+
+
+async def _insert_notification(
+    supabase_client: Any,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    try:
+        response = await _run_supabase(
+            lambda: supabase_client.table("notifications")
+            .insert(payload)
+            .select("id, user_id, project_id, type, title, message, action_url, is_read, metadata, created_at")
+            .execute()
+        )
+    except Exception as error:
+        if _notification_error_is_unique(error):
+            return None
+        raise
+    rows = _response_rows(response)
+    return rows[0] if rows else None
+
+
+async def _queue_web_push_event(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    event_key: str,
+    payload: dict[str, str],
+    notification_id: str | None = None,
+    email_batch_id: str | None = None,
+) -> int:
+    """Persist one idempotent push delivery per subscribed browser device."""
+    if (notification_id is None) == (email_batch_id is None):
+        raise ValueError("A push event must belong to exactly one notification or email batch.")
+    if webpush is None or _web_push_vapid_config() is None:
+        logger.info("web_push.skipped_not_configured user_id=%s event_key=%s", user_id, event_key)
+        return 0
+
+    response = await _run_supabase(
+        lambda: supabase_client.table("web_push_subscriptions")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    queued = 0
+    for subscription in _response_rows(response):
+        subscription_id = str(subscription.get("id") or "")
+        if not subscription_id:
+            continue
+        try:
+            await _run_supabase(
+                lambda subscription_id=subscription_id: supabase_client.table("web_push_deliveries")
+                .upsert(
+                    {
+                        "user_id": user_id,
+                        "subscription_id": subscription_id,
+                        "notification_id": notification_id,
+                        "email_batch_id": email_batch_id,
+                        "event_key": event_key,
+                        "payload": payload,
+                        "status": "pending",
+                        "next_attempt_at": _notification_timestamp_text(),
+                        "last_error": None,
+                        "updated_at": _notification_timestamp_text(),
+                    },
+                    on_conflict="subscription_id,event_key",
+                    ignore_duplicates=True,
+                )
+                .execute()
+            )
+            queued += 1
+        except Exception as error:
+            if not _notification_error_is_unique(error):
+                raise
+    return queued
+
+
+async def _send_pending_web_push_deliveries(
+    supabase_client: Any,
+    *,
+    limit: int = 100,
+) -> dict[str, int]:
+    """Deliver persisted push events without touching any audit or AI code."""
+    vapid = _web_push_vapid_config()
+    if webpush is None or vapid is None:
+        return {"sent": 0, "expired": 0, "failed": 0}
+
+    now = _notification_timestamp()
+    # A worker may be interrupted after claiming a row but before it records a
+    # result. Make that claim eligible again on the next polling cycle rather
+    # than leaving a device delivery permanently stuck in ``processing``.
+    stale_claim_at = now - timedelta(minutes=WEB_PUSH_RETRY_DELAY_MINUTES)
+    await _run_supabase(
+        lambda: supabase_client.table("web_push_deliveries")
+        .update({
+            "status": "failed",
+            "next_attempt_at": _notification_timestamp_text(now),
+            "last_error": "Recovered an interrupted push delivery claim.",
+            "updated_at": _notification_timestamp_text(now),
+        })
+        .eq("status", "processing")
+        .lte("updated_at", _notification_timestamp_text(stale_claim_at))
+        .execute()
+    )
+    response = await _run_supabase(
+        lambda: supabase_client.table("web_push_deliveries")
+        .select("id, user_id, subscription_id, event_key, payload, status, attempt_count, next_attempt_at, notification_id, email_batch_id")
+        .in_("status", ["pending", "failed"])
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    sent = expired = failed = 0
+    for delivery in _response_rows(response):
+        delivery_id = str(delivery.get("id") or "")
+        user_id = str(delivery.get("user_id") or "")
+        subscription_id = str(delivery.get("subscription_id") or "")
+        next_attempt_at = _parse_notification_timestamp(delivery.get("next_attempt_at"))
+        attempts = int(delivery.get("attempt_count") or 0)
+        if (
+            not delivery_id
+            or not user_id
+            or not subscription_id
+            or attempts >= WEB_PUSH_MAX_ATTEMPTS
+            or (next_attempt_at is not None and next_attempt_at > now)
+        ):
+            continue
+
+        claim_response = await _run_supabase(
+            lambda delivery_id=delivery_id: supabase_client.table("web_push_deliveries")
+            .update({"status": "processing", "updated_at": _notification_timestamp_text(now)})
+            .eq("id", delivery_id)
+            .in_("status", ["pending", "failed"])
+            .select("id")
+            .execute()
+        )
+        if not _response_rows(claim_response):
+            continue
+
+        subscription_response = await _run_supabase(
+            lambda subscription_id=subscription_id: supabase_client.table("web_push_subscriptions")
+            .select("id, endpoint, p256dh, auth")
+            .eq("id", subscription_id)
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        subscription_rows = _response_rows(subscription_response)
+        if not subscription_rows:
+            expired += 1
+            await _run_supabase(
+                lambda delivery_id=delivery_id: supabase_client.table("web_push_deliveries")
+                .update({"status": "expired", "updated_at": _notification_timestamp_text(now)})
+                .eq("id", delivery_id)
+                .execute()
+            )
+            continue
+
+        subscription = subscription_rows[0]
+        raw_payload = delivery.get("payload")
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        if not {"title", "body", "action_url", "tag"}.issubset(payload):
+            await _run_supabase(
+                lambda delivery_id=delivery_id: supabase_client.table("web_push_deliveries")
+                .update({"status": "expired", "updated_at": _notification_timestamp_text(now)})
+                .eq("id", delivery_id)
+                .execute()
+            )
+            expired += 1
+            continue
+
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info={
+                    "endpoint": str(subscription.get("endpoint") or ""),
+                    "keys": {"p256dh": str(subscription.get("p256dh") or ""), "auth": str(subscription.get("auth") or "")},
+                },
+                data=json.dumps(payload, separators=(",", ":")),
+                vapid_private_key=vapid["private_key"],
+                vapid_claims={"sub": vapid["subject"]},
+                ttl=300,
+            )
+            sent += 1
+            await _run_supabase(
+                lambda: supabase_client.table("web_push_deliveries")
+                .update({"status": "sent", "sent_at": _notification_timestamp_text(now), "updated_at": _notification_timestamp_text(now), "last_error": None})
+                .eq("id", delivery_id)
+                .execute()
+            )
+            await _run_supabase(
+                lambda: supabase_client.table("web_push_subscriptions")
+                .update({"last_success_at": _notification_timestamp_text(now), "last_failure_at": None, "last_failure_reason": None, "updated_at": _notification_timestamp_text(now)})
+                .eq("id", subscription_id)
+                .execute()
+            )
+        except Exception as error:
+            status_code = _web_push_error_status(error)
+            if status_code in {404, 410}:
+                expired += 1
+                await _run_supabase(
+                    lambda: supabase_client.table("web_push_subscriptions")
+                    .delete()
+                    .eq("id", subscription_id)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+                continue
+            failed += 1
+            next_attempt = now + timedelta(minutes=WEB_PUSH_RETRY_DELAY_MINUTES)
+            await _run_supabase(
+                lambda: supabase_client.table("web_push_deliveries")
+                .update({
+                    "status": "failed",
+                    "attempt_count": attempts + 1,
+                    "next_attempt_at": _notification_timestamp_text(next_attempt),
+                    "last_error": str(error)[:1000],
+                    "updated_at": _notification_timestamp_text(now),
+                })
+                .eq("id", delivery_id)
+                .execute()
+            )
+            await _run_supabase(
+                lambda: supabase_client.table("web_push_subscriptions")
+                .update({"last_failure_at": _notification_timestamp_text(now), "last_failure_reason": str(error)[:1000], "updated_at": _notification_timestamp_text(now)})
+                .eq("id", subscription_id)
+                .execute()
+            )
+    return {"sent": sent, "expired": expired, "failed": failed}
+
+
+async def _dispatch_notification_web_push(
+    supabase_client: Any,
+    notification: dict[str, Any],
+) -> None:
+    notification_id = str(notification.get("id") or "")
+    user_id = str(notification.get("user_id") or "")
+    if not notification_id or not user_id:
+        return
+    await _queue_web_push_event(
+        supabase_client,
+        user_id=user_id,
+        event_key=f"notification:{notification_id}",
+        notification_id=notification_id,
+        payload=_web_push_payload(
+            title=str(notification.get("title") or "MeliusAI update"),
+            message=str(notification.get("message") or "You have a workspace update."),
+            action_url=str(notification.get("action_url") or "/vault"),
+            tag=f"notification:{notification_id}",
+        ),
+    )
+    await _send_pending_web_push_deliveries(supabase_client)
+
+
+async def _ensure_notification_email_batch(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    window_started_at: datetime,
+) -> None:
+    idempotency_key = f"cooldown-batch/{user_id}/{window_started_at.isoformat()}"
+    try:
+        await _run_supabase(
+            lambda: supabase_client.table("notification_email_batches")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "window_started_at": _notification_timestamp_text(window_started_at),
+                    "due_at": _notification_timestamp_text(
+                        window_started_at + timedelta(hours=NOTIFICATION_EMAIL_BATCH_HOURS)
+                    ),
+                    "provider_idempotency_key": idempotency_key,
+                }
+            )
+            .execute()
+        )
+    except Exception as error:
+        if not _notification_error_is_unique(error):
+            raise
+
+
+async def _ensure_follow_on_notification_email_batch(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    previous_window_due_at: datetime,
+) -> None:
+    """Start the next fixed window if a cooldown arrived after the prior one.
+
+    Only one batch can be pending for a user. A cooldown created while that
+    batch is still open therefore cannot create its own row immediately; once
+    the prior batch reaches a terminal state, this seeds the next window from
+    the first unread cooldown that was outside the prior window.
+    """
+    response = await _run_supabase(
+        lambda: supabase_client.table("notifications")
+        .select("created_at")
+        .eq("user_id", user_id)
+        .eq("type", "session_cooldown_re_audit")
+        .eq("is_read", False)
+        .gte("created_at", _notification_timestamp_text(previous_window_due_at))
+        .order("created_at")
+        .limit(1)
+        .execute()
+    )
+    rows = _response_rows(response)
+    next_window_start = _parse_notification_timestamp(rows[0].get("created_at")) if rows else None
+    if next_window_start is not None:
+        await _ensure_notification_email_batch(
+            supabase_client,
+            user_id=user_id,
+            window_started_at=next_window_start,
+        )
+
+
+async def _delete_repository_cooldown(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+) -> None:
+    await _run_supabase(
+        lambda: supabase_client.table("notification_cooldowns")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("repository", repository)
+        .execute()
+    )
+
+
+async def _process_due_notification_cooldowns(
+    supabase_client: Any,
+    *,
+    limit: int = 100,
+) -> dict[str, int]:
+    now = _notification_timestamp()
+    response = await _run_supabase(
+        lambda: supabase_client.table("notification_cooldowns")
+        .select("user_id, repository, lines_changed, last_qualifying_commit_at, scheduled_at")
+        .lte("scheduled_at", _notification_timestamp_text(now))
+        .order("scheduled_at")
+        .limit(limit)
+        .execute()
+    )
+    created = suppressed = 0
+    for cooldown in _response_rows(response):
+        user_id = str(cooldown.get("user_id") or "")
+        repository = str(cooldown.get("repository") or "")
+        qualifying_commit_at = _parse_notification_timestamp(cooldown.get("last_qualifying_commit_at"))
+        if not user_id or not repository or qualifying_commit_at is None:
+            continue
+        try:
+            rows = await _repository_tracking_rows(
+                supabase_client,
+                user_id=user_id,
+                repository=repository,
+            )
+            latest_audit = _latest_notification_timestamp(rows, "last_audit_at")
+            if latest_audit is not None and latest_audit >= qualifying_commit_at:
+                suppressed += 1
+                await _delete_repository_cooldown(
+                    supabase_client,
+                    user_id=user_id,
+                    repository=repository,
+                )
+                continue
+
+            lines_changed = int(cooldown.get("lines_changed") or 0)
+            notification = await _insert_notification(
+                supabase_client,
+                {
+                    "user_id": user_id,
+                    "project_id": repository,
+                    "type": "session_cooldown_re_audit",
+                    "title": "Coding session complete",
+                    "message": (
+                        f"You just shipped {lines_changed} new lines of code to {repository}. "
+                        "Run a fresh audit to see how it impacts your scorecard."
+                    ),
+                    "action_url": f"/vault?repo={quote(repository, safe='')}",
+                    "metadata": {
+                        "repo_name": repository,
+                        "lines_changed": lines_changed,
+                        "qualifying_commit_at": _notification_timestamp_text(qualifying_commit_at),
+                    },
+                },
+            )
+            if notification is not None:
+                created += 1
+                await _ensure_notification_email_batch(
+                    supabase_client,
+                    user_id=user_id,
+                    window_started_at=_parse_notification_timestamp(notification.get("created_at")) or now,
+                )
+                try:
+                    await _dispatch_notification_web_push(supabase_client, notification)
+                except Exception:
+                    logger.exception(
+                        "web_push.cooldown_queue_failed user_id=%s repository=%s",
+                        user_id,
+                        repository,
+                    )
+            await _delete_repository_cooldown(
+                supabase_client,
+                user_id=user_id,
+                repository=repository,
+            )
+        except Exception:
+            logger.exception(
+                "notification.cooldown_processing_failed user_id=%s repository=%s",
+                user_id,
+                repository,
+            )
+    return {"created": created, "suppressed": suppressed}
+
+
+async def _load_notification_profile(supabase_client: Any, user_id: str) -> dict[str, Any] | None:
+    response = await _run_supabase(
+        lambda: supabase_client.table("profiles")
+        .select("email, audit_alerts_enabled")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    rows = _response_rows(response)
+    return rows[0] if rows else None
+
+
+async def _send_resend_email(
+    *,
+    recipient: str,
+    subject: str,
+    text_body: str,
+    idempotency_key: str,
+) -> str:
+    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    sender = (os.getenv("RESEND_FROM_EMAIL") or "").strip()
+    if not api_key or not sender:
+        raise RuntimeError("RESEND_API_KEY and RESEND_FROM_EMAIL are required for notification emails.")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), follow_redirects=False) as resend_client:
+        response = await resend_client.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Idempotency-Key": idempotency_key,
+                "User-Agent": "MeliusAI-Notifications/1.0",
+            },
+            json={"from": sender, "to": [recipient], "subject": subject, "text": text_body},
+        )
+    if not response.is_success:
+        raise RuntimeError(f"Resend returned HTTP {response.status_code}: {response.text[:300]}")
+    body = response.json()
+    return str(body.get("id") or "")
+
+
+def _should_suppress_notification_batch(
+    profile: dict[str, Any] | None,
+    eligible_notifications: list[dict[str, Any]],
+) -> bool:
+    return not profile or profile.get("audit_alerts_enabled") is False or not eligible_notifications
+
+
+def _build_cooldown_batch_email(
+    eligible_notifications: list[dict[str, Any]],
+) -> tuple[str, str]:
+    """Build the one-project or unified email without invoking an audit."""
+    first = eligible_notifications[0]
+    metadata = first.get("metadata") if isinstance(first.get("metadata"), dict) else {}
+    repository = str(first.get("project_id") or "project")
+    lines_changed = int(metadata.get("lines_changed") or 0)
+    if len(eligible_notifications) == 1:
+        return (
+            f"Updates pending in {repository}",
+            f"You shipped {lines_changed} lines to {repository}. "
+            "Run your audit in MeliusAI to keep your verified skills up to date.",
+        )
+    return (
+        "Updates pending across multiple projects",
+        f"You recently shipped updates to {repository} and {len(eligible_notifications) - 1} other projects. "
+        "Run your audits in MeliusAI to keep your verified skills up to date.",
+    )
+
+
+async def _dispatch_batch_web_push(
+    supabase_client: Any,
+    *,
+    batch_id: str,
+    user_id: str,
+    eligible_notifications: list[dict[str, Any]],
+) -> None:
+    if not eligible_notifications:
+        return
+    subject, body = _build_cooldown_batch_email(eligible_notifications)
+    first_repository = str(eligible_notifications[0].get("project_id") or "")
+    action_url = f"/vault?repo={quote(first_repository, safe='')}" if first_repository else "/vault"
+    await _queue_web_push_event(
+        supabase_client,
+        user_id=user_id,
+        event_key=f"batch:{batch_id}",
+        email_batch_id=batch_id,
+        payload=_web_push_payload(
+            title=subject,
+            message=body,
+            action_url=action_url,
+            tag=f"batch:{batch_id}",
+        ),
+    )
+
+
+async def _process_due_notification_batches(
+    supabase_client: Any,
+    *,
+    limit: int = 100,
+) -> dict[str, int]:
+    now = _notification_timestamp()
+    response = await _run_supabase(
+        lambda: supabase_client.table("notification_email_batches")
+        .select("*")
+        .in_("status", ["pending", "failed"])
+        .lte("due_at", _notification_timestamp_text(now))
+        .order("due_at")
+        .limit(limit)
+        .execute()
+    )
+    sent = suppressed = failed = 0
+    for batch in _response_rows(response):
+        batch_id = str(batch.get("id") or "")
+        user_id = str(batch.get("user_id") or "")
+        window_started_at = _parse_notification_timestamp(batch.get("window_started_at"))
+        due_at = _parse_notification_timestamp(batch.get("due_at"))
+        if not batch_id or not user_id or window_started_at is None or due_at is None:
+            continue
+        next_attempt_at = _parse_notification_timestamp(batch.get("next_attempt_at"))
+        if next_attempt_at is not None and next_attempt_at > now:
+            continue
+        try:
+            profile = await _load_notification_profile(supabase_client, user_id)
+            notifications_response = await _run_supabase(
+                lambda: supabase_client.table("notifications")
+                .select("id, project_id, metadata")
+                .eq("user_id", user_id)
+                .eq("type", "session_cooldown_re_audit")
+                .eq("is_read", False)
+                .gte("created_at", _notification_timestamp_text(window_started_at))
+                .lt("created_at", _notification_timestamp_text(due_at))
+                .execute()
+            )
+            eligible: list[dict[str, Any]] = []
+            for notification in _response_rows(notifications_response):
+                repository = str(notification.get("project_id") or "")
+                if not repository:
+                    continue
+                if await _repository_has_current_audit(
+                    supabase_client,
+                    user_id=user_id,
+                    repository=repository,
+                ):
+                    await _run_supabase(
+                        lambda notification_id=str(notification.get("id")): supabase_client.table("notifications")
+                        .update({"is_read": True})
+                        .eq("id", notification_id)
+                        .eq("user_id", user_id)
+                        .execute()
+                    )
+                    continue
+                eligible.append(notification)
+
+            if eligible:
+                try:
+                    await _dispatch_batch_web_push(
+                        supabase_client,
+                        batch_id=batch_id,
+                        user_id=user_id,
+                        eligible_notifications=eligible,
+                    )
+                except Exception:
+                    logger.exception("web_push.batch_queue_failed batch_id=%s", batch_id)
+
+            if _should_suppress_notification_batch(profile, eligible):
+                suppressed += 1
+                await _run_supabase(
+                    lambda: supabase_client.table("notification_email_batches")
+                    .update({"status": "suppressed", "updated_at": _notification_timestamp_text(now)})
+                    .eq("id", batch_id)
+                    .execute()
+                )
+                await _ensure_follow_on_notification_email_batch(
+                    supabase_client,
+                    user_id=user_id,
+                    previous_window_due_at=due_at,
+                )
+                continue
+            recipient = str(profile.get("email") or "").strip()
+            if not recipient:
+                raise RuntimeError("The notification recipient has no email address.")
+
+            subject, body = _build_cooldown_batch_email(eligible)
+            provider_message_id = await _send_resend_email(
+                recipient=recipient,
+                subject=subject,
+                text_body=body,
+                idempotency_key=str(batch.get("provider_idempotency_key") or batch_id),
+            )
+            sent += 1
+            await _run_supabase(
+                lambda: supabase_client.table("notification_email_batches")
+                .update(
+                    {
+                        "status": "sent",
+                        "provider_message_id": provider_message_id or None,
+                        "sent_at": _notification_timestamp_text(now),
+                        "updated_at": _notification_timestamp_text(now),
+                        "last_error": None,
+                    }
+                )
+                .eq("id", batch_id)
+                .execute()
+            )
+            await _ensure_follow_on_notification_email_batch(
+                supabase_client,
+                user_id=user_id,
+                previous_window_due_at=due_at,
+            )
+        except Exception as error:
+            failed += 1
+            logger.warning("notification.batch_email_failed batch_id=%s error=%s", batch_id, error)
+            await _run_supabase(
+                lambda: supabase_client.table("notification_email_batches")
+                .update(
+                    {
+                        "status": "failed",
+                        "attempt_count": int(batch.get("attempt_count") or 0) + 1,
+                        "next_attempt_at": _notification_timestamp_text(
+                            now + timedelta(minutes=NOTIFICATION_BATCH_RETRY_DELAY_MINUTES)
+                        ),
+                        "updated_at": _notification_timestamp_text(now),
+                        "last_error": str(error)[:1000],
+                    }
+                )
+                .eq("id", batch_id)
+                .execute()
+            )
+    return {"sent": sent, "suppressed": suppressed, "failed": failed}
+
+
+async def _send_preference_gated_notification_email(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    notification_id: str,
+    subject: str,
+    text_body: str,
+) -> bool:
+    profile = await _load_notification_profile(supabase_client, user_id)
+    if not profile or profile.get("audit_alerts_enabled") is False:
+        return False
+    recipient = str(profile.get("email") or "").strip()
+    if not recipient:
+        logger.info("notification.email_suppressed_no_recipient user_id=%s", user_id)
+        return False
+    await _send_resend_email(
+        recipient=recipient,
+        subject=subject,
+        text_body=text_body,
+        idempotency_key=f"notification/{notification_id}",
+    )
+    return True
+
+
+async def _record_completed_repository_audit_notification(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    folder_id: str,
+    repository: str,
+    audit_id: str,
+    score: int,
+) -> None:
+    completed_at = _notification_timestamp()
+    timestamp = _notification_timestamp_text(completed_at)
+    await _run_supabase(
+        lambda: supabase_client.table("project_folders")
+        .update({"last_audit_at": timestamp})
+        .eq("id", folder_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    await _run_supabase(
+        lambda: supabase_client.table("projects")
+        .update({"last_audit_at": timestamp})
+        .eq("folder_id", folder_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    notification = await _insert_notification(
+        supabase_client,
+        {
+            "user_id": user_id,
+            "project_id": repository,
+            "type": "audit_completed",
+            "title": "Audit complete",
+            "message": f"Your audit for {repository} is ready. Overall Score: {score}/100.",
+            "action_url": (
+                f"/vault?repo={quote(repository, safe='')}&audit={quote(audit_id, safe='')}"
+            ),
+            "metadata": {"repo_name": repository, "audit_id": audit_id, "score": score},
+        },
+    )
+    if notification is None:
+        return
+    try:
+        await _send_preference_gated_notification_email(
+            supabase_client,
+            user_id=user_id,
+            notification_id=str(notification["id"]),
+            subject=f"Audit complete for {repository}",
+            text_body=f"Your audit for {repository} is ready. Overall Score: {score}/100.",
+        )
+    except Exception:
+        logger.exception(
+            "notification.audit_email_failed user_id=%s audit_id=%s",
+            user_id,
+            audit_id,
+        )
+    try:
+        await _dispatch_notification_web_push(supabase_client, notification)
+    except Exception:
+        logger.exception(
+            "web_push.audit_queue_failed user_id=%s audit_id=%s",
+            user_id,
+            audit_id,
+        )
+
+
+async def _notification_exists_since(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    project_id: str,
+    notification_type: str,
+    since: datetime,
+) -> bool:
+    response = await _run_supabase(
+        lambda: supabase_client.table("notifications")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("project_id", project_id)
+        .eq("type", notification_type)
+        .gte("created_at", _notification_timestamp_text(since))
+        .limit(1)
+        .execute()
+    )
+    return bool(_response_rows(response))
+
+
+async def _process_stale_project_notifications(supabase_client: Any) -> dict[str, int]:
+    now = _notification_timestamp()
+    newer_boundary = now - timedelta(days=14)
+    older_boundary = now - timedelta(days=15)
+    response = await _run_supabase(
+        lambda: supabase_client.table("projects")
+        .select("id, user_id, title, name, github_repository, last_commit_at, last_audit_at")
+        .gte("last_commit_at", _notification_timestamp_text(older_boundary))
+        .lte("last_commit_at", _notification_timestamp_text(newer_boundary))
+        .execute()
+    )
+    created = emailed = 0
+    processed: set[tuple[str, str]] = set()
+    for project in _response_rows(response):
+        user_id = str(project.get("user_id") or "")
+        repository = str(project.get("github_repository") or project.get("id") or "")
+        if not user_id or not repository or (user_id, repository) in processed:
+            continue
+        processed.add((user_id, repository))
+        last_commit = _parse_notification_timestamp(project.get("last_commit_at"))
+        last_audit = _parse_notification_timestamp(project.get("last_audit_at"))
+        if last_commit is None or (last_audit is not None and last_audit >= last_commit):
+            continue
+        if await _notification_exists_since(
+            supabase_client,
+            user_id=user_id,
+            project_id=repository,
+            notification_type="stale_project_nudge",
+            since=now - timedelta(days=14),
+        ):
+            continue
+        project_name = str(project.get("github_repository") or project.get("title") or project.get("name") or "your project")
+        notification = await _insert_notification(
+            supabase_client,
+            {
+                "user_id": user_id,
+                "project_id": repository,
+                "type": "stale_project_nudge",
+                "title": f"Unaudited updates on {project_name}",
+                "message": (
+                    f"It has been 14 days since your last commit to {project_name}. "
+                    "Update your scorecard to showcase your latest progress."
+                ),
+                "action_url": f"/vault?repo={quote(repository, safe='')}",
+                "metadata": {"repo_name": project_name},
+            },
+        )
+        if notification is None:
+            continue
+        created += 1
+        try:
+            if await _send_preference_gated_notification_email(
+                supabase_client,
+                user_id=user_id,
+                notification_id=str(notification["id"]),
+                subject=f"Unaudited updates on {project_name}",
+                text_body=(
+                    f"It has been 14 days since your last commit to {project_name}. "
+                    "Update your scorecard in MeliusAI to showcase your latest progress."
+                ),
+            ):
+                emailed += 1
+        except Exception:
+            logger.exception(
+                "notification.stale_email_failed user_id=%s project_id=%s",
+                user_id,
+                repository,
+            )
+    return {"created": created, "emailed": emailed}
+
+
 async def _load_repository_assets(
     supabase_client: Any,
     *,
@@ -2002,6 +3110,20 @@ async def process_github_push_event(
         workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
     access_token = _get_github_access_token()
+    try:
+        await _record_push_notification_activity(
+            supabase_client,
+            payload=payload,
+            repository=repository,
+            user_ids=set(workspace_contexts.keys()),
+            access_token=access_token,
+        )
+    except Exception:
+        # Notification tracking must never block the existing repository sync.
+        logger.exception(
+            "notification.push_tracking_failed repository=%s",
+            repository,
+        )
     owns_http_client = http_client is None
     active_http_client = http_client or httpx.AsyncClient(
         follow_redirects=True,
@@ -2279,13 +3401,7 @@ async def handle_github_webhook(request: Request):
             detail="Server configuration error.",
         )
 
-    expected_signature = "sha256=" + hmac.new(
-        secret_key.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
-
-    if not hmac.compare_digest(expected_signature, sig_header or ""):
+    if not verify_github_webhook_signature(raw_body, sig_header, secret_key):
         logger.warning("Webhook signature mismatch for delivery.")
         raise HTTPException(
             status_code=401,
@@ -2416,6 +3532,46 @@ async def handle_github_webhook(request: Request):
             "removed_files": removed_paths,
         },
     )
+
+
+def _is_notification_cron_authorized(request: Request) -> bool:
+    secret = (os.getenv("NOTIFICATION_CRON_SECRET") or os.getenv("CRON_SECRET") or "").strip()
+    authorization = request.headers.get("authorization") or ""
+    return bool(secret) and hmac.compare_digest(authorization, f"Bearer {secret}")
+
+
+@app.post("/api/cron/process-notifications")
+async def process_notification_jobs(request: Request):
+    """Run cooldown and email batch jobs. This endpoint never invokes AI."""
+    if not _is_notification_cron_authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise HTTPException(status_code=503, detail="Notification storage is not configured.")
+    cooldowns = await _process_due_notification_cooldowns(service_client)
+    batches = await _process_due_notification_batches(service_client)
+    web_push = await _send_pending_web_push_deliveries(service_client)
+    return {"success": True, "cooldowns": cooldowns, "batches": batches, "web_push": web_push}
+
+
+@app.post("/api/cron/check-stale-projects")
+async def check_stale_projects(request: Request):
+    """Create 14-day stale-project nudges without triggering an audit."""
+    if not _is_notification_cron_authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise HTTPException(status_code=503, detail="Notification storage is not configured.")
+    result = await _process_stale_project_notifications(service_client)
+    return {"success": True, **result}
+
+
+@app.get("/api/web-push/vapid-public-key")
+async def get_web_push_vapid_public_key():
+    vapid = _web_push_vapid_config()
+    if vapid is None:
+        raise HTTPException(status_code=503, detail="Web Push is not configured.")
+    return {"publicKey": vapid["public_key"]}
 
 
 def get_supabase_read_client(request: Request | None = None):
@@ -7177,6 +8333,23 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
             committed["score"],
             folder_id,
         )
+        try:
+            await _record_completed_repository_audit_notification(
+                service,
+                user_id=current_user_id,
+                folder_id=folder_id,
+                repository=repository,
+                audit_id=str(diff_record["id"]),
+                score=int(committed["score"]),
+            )
+        except Exception:
+            # The verified audit is authoritative; notification delivery must
+            # not turn a successful user-requested audit into a failed request.
+            logger.exception(
+                "notification.audit_completion_record_failed folder_id=%s diff_id=%s",
+                folder_id,
+                diff_record["id"],
+            )
         response = _repository_audit_response(committed, incremental=not baseline, no_changes=no_changes, diff_id=diff_record["id"])
         # These projections are optional and never determine the next baseline.
         try:
