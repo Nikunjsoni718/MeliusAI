@@ -110,12 +110,18 @@ export function NotificationCenter({ userId }: { userId: string }) {
         <section
           role="dialog"
           aria-label="Notifications"
-          className="absolute bottom-full left-3 z-[70] mb-2 w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-slate-700/80 bg-[#0A0F1C] shadow-2xl shadow-black/60"
+          className="fixed top-6 left-1/2 z-[70] w-[min(25rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl"
         >
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <div>
-              <h2 className="text-sm font-semibold text-white">Notifications</h2>
-              <p className="mt-0.5 text-[11px] text-slate-500">Project activity and audit updates</p>
+          <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
+          <div className="relative flex items-center justify-between border-b border-white/10 px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-400/10 text-cyan-200 shadow-[0_0_18px_rgba(6,182,212,0.15)]">
+                <Bell className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-sm font-semibold text-white">Notifications</h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">Project activity and audit updates</p>
+              </div>
             </div>
             <button
               type="button"

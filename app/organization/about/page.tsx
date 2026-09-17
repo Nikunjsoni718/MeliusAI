@@ -445,9 +445,10 @@ function OrganizationManifestoPageContent() {
         </div>
 
         {saveSuccess ? (
-          <div className="fixed right-5 top-5 z-50 flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-[#071a18]/95 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-2xl" role="status">
-            <CheckCircle2 className="h-4 w-4" />
-            Organization profile updated
+          <div className="fixed top-6 left-1/2 z-50 flex w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 items-center gap-3 overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl" role="status">
+            <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
+            <span className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-400/10 text-cyan-200"><CheckCircle2 className="h-4 w-4" /></span>
+            <span className="relative">Organization profile updated</span>
           </div>
         ) : null}
 

@@ -7086,7 +7086,8 @@ export function ProfileDashboard({
             </button>
             ) : null}
             {process.env.NODE_ENV !== 'production' ? (
-              <div className="fixed bottom-3 left-3 z-[60] max-w-[calc(100vw-1.5rem)] rounded-xl border border-cyan-400/30 bg-slate-950/95 p-3 text-[11px] text-cyan-50 shadow-2xl shadow-black/40 backdrop-blur md:left-auto md:right-3 md:max-w-sm">
+              <div className="fixed top-[5.5rem] left-1/2 z-[60] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 p-3 text-[11px] text-cyan-50 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl">
+                <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
                 <p className="font-semibold text-white">Mobile auth debug</p>
                 <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                   <dt className="text-slate-400">session</dt>
@@ -7113,25 +7114,27 @@ export function ProfileDashboard({
             <AnimatePresence>
               {bioToastMessage ? (
                 <motion.div
-                  initial={{ opacity: 0, y: -12, scale: 0.98 }}
+                  initial={{ opacity: 0, y: -24, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                  exit={{ opacity: 0, y: -24, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed left-4 right-4 top-4 z-50 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100 shadow-[0_0_30px_rgba(244,63,94,0.16)] backdrop-blur-2xl sm:left-auto sm:right-5 sm:max-w-sm"
+                  className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-rose-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl"
                   role="status"
                 >
+                  <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
                   {bioToastMessage}
                 </motion.div>
               ) : null}
               {projectVerifyError ? (
                 <motion.div
-                  initial={{ opacity: 0, y: -12, scale: 0.98 }}
+                  initial={{ opacity: 0, y: -24, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                  exit={{ opacity: 0, y: -24, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed left-4 right-4 top-20 z-50 rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 shadow-[0_0_30px_rgba(56,189,248,0.16)] backdrop-blur-2xl sm:left-auto sm:right-5 sm:max-w-sm"
+                  className="fixed top-[5.5rem] left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-sky-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-sky-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl"
                   role="status"
                 >
+                  <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
                   {projectVerifyError}
                 </motion.div>
               ) : null}

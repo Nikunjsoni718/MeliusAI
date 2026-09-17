@@ -1866,12 +1866,13 @@ Return Markdown sections for goods, bads, project description, and a final score
       <AnimatePresence>
         {visibilityToast ? (
           <motion.div
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 0, y: -24 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
+            exit={{ opacity: 0, y: -24 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="fixed right-4 top-4 z-50 max-w-sm rounded-2xl border border-rose-900/70 bg-[#050b1b]/95 px-4 py-3 shadow-2xl backdrop-blur-xl"
+            className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl"
           >
+            <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
             <p className="font-mono text-[11px] tracking-wide text-rose-300">{visibilityToast.message}</p>
           </motion.div>
         ) : null}

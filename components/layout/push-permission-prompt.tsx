@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { BellRing } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import { enableWebPush, getWebPushPreference, syncPreviouslyEnabledWebPush, WEB_PUSH_PREFERENCE_KEY } from '@/lib/web-push';
 
@@ -43,15 +45,37 @@ export function PushPermissionPrompt() {
     setVisible(false);
   }
 
-  if (!visible) return null;
   return (
-    <aside className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-cyan-900/70 bg-[#081120]/95 p-4 shadow-2xl shadow-black/60 backdrop-blur-xl">
-      <p className="text-sm font-medium text-white">Get pinged when your audit score updates or cooldown finishes.</p>
-      <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={later} className="rounded-md px-3 py-2 text-xs text-slate-400 transition hover:bg-slate-800 hover:text-slate-100">Maybe later</button>
-        <button type="button" onClick={() => void enable()} className="rounded-md bg-cyan-400 px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300">Enable push</button>
-      </div>
-      {error ? <p className="mt-2 text-xs text-rose-300">{error}</p> : null}
-    </aside>
+    <AnimatePresence>
+      {visible ? (
+        <motion.aside
+          aria-live="polite"
+          initial={{ opacity: 0, y: -24, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -24, scale: 0.98 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          className="fixed top-6 left-1/2 z-[80] w-full max-w-md -translate-x-1/2 px-4"
+        >
+          <div className="relative overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 p-4 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl">
+            <div aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
+            <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-16 h-28 w-28 rounded-full bg-cyan-400/15 blur-3xl" />
+            <div className="relative flex items-start gap-3">
+              <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-400/10 text-cyan-200 shadow-[0_0_18px_rgba(6,182,212,0.18)]">
+                <BellRing className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-white">Stay in the loop</p>
+                <p className="mt-1 text-sm leading-5 text-slate-400">Get pinged when your audit score updates or cooldown finishes.</p>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <button type="button" onClick={later} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-400 transition hover:bg-slate-800/80 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70">Maybe later</button>
+                  <button type="button" onClick={() => void enable()} className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-medium text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)] transition hover:bg-cyan-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1221]">Enable push</button>
+                </div>
+                {error ? <p className="mt-3 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</p> : null}
+              </div>
+            </div>
+          </div>
+        </motion.aside>
+      ) : null}
+    </AnimatePresence>
   );
 }

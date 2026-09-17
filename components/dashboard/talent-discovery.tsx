@@ -463,11 +463,12 @@ export function OrganizationJobPostingHub() {
 
       {successMessage ? (
         <div
-          className="fixed right-5 top-5 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-emerald-400/30 bg-[#071a18]/95 px-5 py-4 text-sm text-emerald-100 shadow-[0_0_38px_rgba(52,211,153,0.16)] backdrop-blur-xl"
+          className="fixed top-6 left-1/2 z-50 flex w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 items-start gap-3 overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 px-5 py-4 text-sm text-emerald-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl"
           role="status"
         >
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
-          {successMessage}
+          <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
+          <span className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-400/10 text-cyan-200 shadow-[0_0_18px_rgba(6,182,212,0.15)]"><CheckCircle2 className="h-4 w-4" /></span>
+          <span className="relative pt-1">{successMessage}</span>
         </div>
       ) : null}
 
