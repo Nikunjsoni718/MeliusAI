@@ -83,6 +83,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("15/100 is the absolute minimum score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Assume every codebase starts with a perfect score of 100/100.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("impactScore", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("exactly 2 or 3 complete sentences", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("Sentence 1 briefly explains what the project actually is", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("main strengths and its most critical vulnerabilities", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
 
         for contract, keys in expected_keys.items():
             with self.subTest(contract=contract):
@@ -92,6 +95,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("No Automatic Failures", prompt)
                 self.assertIn("fragment after its hook is ten words or", prompt)
                 self.assertIn("Catchy Hook: Short fragment", prompt)
+                self.assertIn("exactly 2 or 3 complete sentences", prompt)
                 self.assertIn("SCHEMA BINDING", prompt)
                 for key in keys:
                     self.assertIn(f"`{key}`", prompt)

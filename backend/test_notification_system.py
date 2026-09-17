@@ -203,6 +203,56 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         full_audit.assert_not_called()
         incremental.assert_not_called()
 
+    def test_new_github_repository_root_reuses_lifecycle_rpc_without_email_batching(self):
+        create_source = inspect.getsource(main._create_project_folder)
+        hierarchy_source = inspect.getsource(main._build_github_folder_hierarchy)
+        self.assertIn('"create_project_folder_with_notification"', create_source)
+        self.assertIn("_dispatch_project_lifecycle_web_push", create_source)
+        self.assertIn("notify_on_creation=True", hierarchy_source)
+        self.assertNotIn("notification_email_batches", create_source)
+        self.assertNotIn("orchestrate_audit", create_source)
+        self.assertNotIn("run_incremental_audit", create_source)
+
+    async def test_new_github_repository_root_dispatches_the_rpc_notification_immediately(self):
+        folder = {"id": "folder-id", "name": "owner/repository", "source": "github"}
+        notification = {
+            "id": "notification-id",
+            "type": "project_created",
+            "user_id": "user-a",
+            "title": "Project created",
+            "message": "Project 'owner/repository' was successfully created.",
+            "action_url": "/vault?folder=folder-id",
+        }
+        rpc = Mock()
+        rpc.execute.return_value = SimpleNamespace(
+            data=[{"folder": folder, "notification": notification}]
+        )
+        client = Mock()
+        client.rpc.return_value = rpc
+        dispatch = AsyncMock()
+
+        with patch.object(main, "_dispatch_project_lifecycle_web_push", new=dispatch):
+            result = await main._create_project_folder(
+                client,
+                user_id="user-a",
+                folder_name="owner/repository",
+                parent_id=None,
+                source_supported=True,
+                parent_id_supported=True,
+                notify_on_creation=True,
+            )
+
+        self.assertEqual(result, folder)
+        client.rpc.assert_called_once_with(
+            "create_project_folder_with_notification",
+            {
+                "p_user_id": "user-a",
+                "p_name": "owner/repository",
+                "p_source": "github",
+            },
+        )
+        dispatch.assert_awaited_once_with(client, notification)
+
     def test_web_push_and_stale_workers_have_no_audit_calls(self):
         worker_sources = "\n".join(
             inspect.getsource(worker)

@@ -196,7 +196,19 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 ### 5. Output Formatting (Strict JSON)
 Return a valid JSON object exactly matching the route schema. Every `text` value must use
 "Catchy Hook: Short fragment". CRITICAL LIMIT: the fragment after its hook is ten words or
-fewer. Do not write full sentences or essays."""
+fewer. Do not write full sentences or essays.
+
+### 6. Primary Audit Summary (All Evaluation Contracts)
+- The primary audit summary field for every evaluation (`description`, `executive_summary`,
+  `updated_architecture_summary`, or `ai_summary`, as required by the route schema) is a single
+  paragraph of **exactly 2 or 3 complete sentences**—never one sentence and never more than three.
+- Sentence 1 briefly explains what the project actually is from the supplied code context, including
+  its evident stack or architectural shape when supported by the evidence.
+- Sentences 2 and, when needed, 3 give a high-level assessment of current architectural health:
+  identify its main strengths and its most critical vulnerabilities or improvements to address.
+- Keep the paragraph concise enough for the product's glassmorphic summary card. This strict 2-3
+  sentence rule applies only to the primary audit summary, not `delta_summary` or Lighthouse finding
+  fragments."""
 
 AUDIT_PROMPT_SCHEMA_BINDINGS = {
     "file": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using exactly
@@ -2653,7 +2665,27 @@ async def _create_project_folder(
     parent_id: str | None,
     source_supported: bool,
     parent_id_supported: bool,
+    notify_on_creation: bool = False,
 ) -> dict[str, Any]:
+    # A GitHub repository maps to one root workspace folder. Route only that
+    # root through the lifecycle RPC so the folder and its in-app notification
+    # are committed atomically. Nested repository directories remain internal
+    # structure and must not create a notification per path.
+    if notify_on_creation:
+        response = await _run_supabase(
+            lambda: supabase_client.rpc(
+                "create_project_folder_with_notification",
+                {
+                    "p_user_id": user_id,
+                    "p_name": folder_name,
+                    "p_source": "github",
+                },
+            ).execute()
+        )
+        folder, notification = _project_lifecycle_result(response)
+        await _dispatch_project_lifecycle_web_push(supabase_client, notification)
+        return folder
+
     insert_payload: dict[str, Any] = {
         "user_id": user_id,
         "name": folder_name,
@@ -2682,6 +2714,7 @@ async def _get_or_create_project_folder(
     parent_id: str | None,
     source_supported: bool,
     parent_id_supported: bool,
+    notify_on_creation: bool = False,
 ) -> dict[str, Any]:
     existing_folder = await _find_project_folder(
         supabase_client,
@@ -2702,6 +2735,7 @@ async def _get_or_create_project_folder(
             parent_id=parent_id,
             source_supported=source_supported,
             parent_id_supported=parent_id_supported,
+            notify_on_creation=notify_on_creation,
         )
     except Exception:
         existing_folder = await _find_project_folder(
@@ -2735,6 +2769,7 @@ async def _build_github_folder_hierarchy(
         parent_id=None,
         source_supported=source_supported,
         parent_id_supported=parent_id_supported,
+        notify_on_creation=True,
     )
     root_folder_id = str(root_folder.get("id") or "").strip()
     if not root_folder_id:
