@@ -92,7 +92,7 @@ export type NotificationRow = {
   id: string;
   user_id: string;
   project_id: string | null;
-  type: 'session_cooldown_re_audit' | 'audit_completed' | 'stale_project_nudge' | 'system_security';
+  type: 'session_cooldown_re_audit' | 'audit_completed' | 'stale_project_nudge' | 'system_security' | 'project_created' | 'project_deleted';
   title: string;
   message: string;
   action_url: string;

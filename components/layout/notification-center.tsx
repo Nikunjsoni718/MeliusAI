@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, CheckCheck } from 'lucide-react';
+import { Bell, CheckCheck, FolderPlus, Trash2, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -35,6 +35,27 @@ function repositoryLabel(notification: WorkspaceNotification) {
 
 function safeActionUrl(value: string) {
   return value.startsWith('/') && !value.startsWith('//') ? value : '/vault';
+}
+
+function lifecyclePresentation(notification: WorkspaceNotification, projectName: string | null) {
+  const name = projectName?.trim() || 'Project';
+  if (notification.type === 'project_created') {
+    return {
+      icon: FolderPlus as LucideIcon,
+      iconClassName: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200',
+      title: 'Project created',
+      message: `Project '${name}' was successfully created.`,
+    };
+  }
+  if (notification.type === 'project_deleted') {
+    return {
+      icon: Trash2 as LucideIcon,
+      iconClassName: 'border-rose-300/25 bg-rose-400/10 text-rose-200',
+      title: 'Project deleted',
+      message: `Project '${name}' has been deleted.`,
+    };
+  }
+  return null;
 }
 
 export function NotificationCenter({ userId }: { userId: string }) {
@@ -139,6 +160,8 @@ export function NotificationCenter({ userId }: { userId: string }) {
                 <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
                 {group.map((notification) => {
                   const project = repositoryLabel(notification);
+                  const lifecycle = lifecyclePresentation(notification, project);
+                  const LifecycleIcon = lifecycle?.icon;
                   return (
                     <button
                       key={notification.id}
@@ -149,12 +172,21 @@ export function NotificationCenter({ userId }: { userId: string }) {
                         !notification.is_read && 'bg-cyan-950/20'
                       )}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="text-sm font-medium text-slate-100">{notification.title}</p>
-                        <time className="shrink-0 text-[10px] text-slate-500">{relativeTime(notification.created_at)}</time>
+                      <div className="flex items-start gap-3">
+                        {LifecycleIcon ? (
+                          <span className={cn('mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border shadow-[0_0_16px_rgba(6,182,212,0.12)]', lifecycle?.iconClassName)}>
+                            <LifecycleIcon className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-sm font-medium text-slate-100">{lifecycle?.title ?? notification.title}</p>
+                            <time className="shrink-0 text-[10px] text-slate-500">{relativeTime(notification.created_at)}</time>
+                          </div>
+                          {project ? <span className="mt-1 inline-flex rounded border border-cyan-400/15 bg-slate-800/80 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">{project}</span> : null}
+                          <p className="mt-1.5 text-xs leading-5 text-slate-400">{lifecycle?.message ?? notification.message}</p>
+                        </div>
                       </div>
-                      {project ? <span className="mt-1 inline-flex rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">{project}</span> : null}
-                      <p className="mt-1.5 text-xs leading-5 text-slate-400">{notification.message}</p>
                     </button>
                   );
                 })}

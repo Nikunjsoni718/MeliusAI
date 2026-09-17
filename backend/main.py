@@ -1217,13 +1217,26 @@ def _web_push_error_status(error: Exception) -> int | None:
     return int(status_code) if isinstance(status_code, int) else None
 
 
-def _web_push_payload(*, title: str, message: str, action_url: str, tag: str) -> dict[str, str]:
-    return {
+def _web_push_payload(
+    *,
+    title: str,
+    message: str,
+    action_url: str,
+    tag: str,
+    notification_type: str | None = None,
+    project_name: str | None = None,
+) -> dict[str, str]:
+    payload = {
         "title": title,
         "body": message,
         "action_url": action_url if action_url.startswith("/") and not action_url.startswith("//") else "/vault",
         "tag": tag,
     }
+    if notification_type:
+        payload["type"] = notification_type
+    if project_name:
+        payload["project_name"] = project_name
+    return payload
 
 
 def _parse_notification_timestamp(value: Any) -> datetime | None:
@@ -1703,6 +1716,12 @@ async def _dispatch_notification_web_push(
     user_id = str(notification.get("user_id") or "")
     if not notification_id or not user_id:
         return
+    metadata = notification.get("metadata")
+    project_name = (
+        str(metadata.get("project_name") or metadata.get("repo_name") or "").strip()
+        if isinstance(metadata, dict)
+        else ""
+    )
     await _queue_web_push_event(
         supabase_client,
         user_id=user_id,
@@ -1713,6 +1732,8 @@ async def _dispatch_notification_web_push(
             message=str(notification.get("message") or "You have a workspace update."),
             action_url=str(notification.get("action_url") or "/vault"),
             tag=f"notification:{notification_id}",
+            notification_type=str(notification.get("type") or "").strip() or None,
+            project_name=project_name or None,
         ),
     )
     await _send_pending_web_push_deliveries(supabase_client)
@@ -4144,6 +4165,120 @@ async def verify_user(
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
     return user_id
+
+
+class ProjectFolderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    source: str = Field(min_length=1, max_length=32)
+
+
+def _project_lifecycle_result(response: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    rows = _response_rows(response)
+    result = rows[0] if rows else None
+    if not isinstance(result, dict):
+        raise RuntimeError("Project lifecycle mutation returned no result.")
+    notification = result.get("notification")
+    resource = result.get("folder") or result.get("project")
+    if not isinstance(notification, dict) or not isinstance(resource, dict):
+        raise RuntimeError("Project lifecycle mutation returned an invalid result.")
+    return resource, notification
+
+
+async def _dispatch_project_lifecycle_web_push(
+    supabase_client: Any,
+    notification: dict[str, Any],
+) -> None:
+    """Push a completed project mutation immediately without invoking AI or email batching."""
+    try:
+        await _dispatch_notification_web_push(supabase_client, notification)
+    except Exception:
+        logger.exception(
+            "web_push.project_lifecycle_queue_failed notification_id=%s",
+            notification.get("id"),
+        )
+
+
+@app.post("/api/projects/folders", status_code=201)
+async def create_project_folder(
+    payload: ProjectFolderCreateRequest,
+    current_user_id: str = Depends(verify_user),
+):
+    source = payload.source.strip().lower()
+    if source not in {"github", "local"}:
+        raise HTTPException(status_code=422, detail="Project folder source must be github or local.")
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise HTTPException(status_code=503, detail="Project lifecycle notifications are not configured.")
+    try:
+        response = await _run_supabase(
+            lambda: service_client.rpc(
+                "create_project_folder_with_notification",
+                {
+                    "p_user_id": current_user_id,
+                    "p_name": payload.name,
+                    "p_source": source,
+                },
+            ).execute()
+        )
+        folder, notification = _project_lifecycle_result(response)
+    except Exception as error:
+        logger.exception("project_folder.create_failed user_id=%s", current_user_id)
+        raise HTTPException(status_code=500, detail="Unable to create the project folder.") from error
+
+    await _dispatch_project_lifecycle_web_push(service_client, notification)
+    return {"folder": folder}
+
+
+@app.delete("/api/projects/folders/{folder_id}")
+async def delete_project_folder(
+    folder_id: UUID,
+    current_user_id: str = Depends(verify_user),
+):
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise HTTPException(status_code=503, detail="Project lifecycle notifications are not configured.")
+    try:
+        response = await _run_supabase(
+            lambda: service_client.rpc(
+                "delete_project_folder_with_notification",
+                {"p_user_id": current_user_id, "p_folder_id": str(folder_id)},
+            ).execute()
+        )
+        folder, notification = _project_lifecycle_result(response)
+    except Exception as error:
+        if "PROJECT_FOLDER_NOT_FOUND" in str(error):
+            raise HTTPException(status_code=404, detail="Project folder not found.") from error
+        logger.exception("project_folder.delete_failed user_id=%s folder_id=%s", current_user_id, folder_id)
+        raise HTTPException(status_code=500, detail="Unable to delete the project folder.") from error
+
+    await _dispatch_project_lifecycle_web_push(service_client, notification)
+    return {"deleted": True, "folder": folder}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(
+    project_id: UUID,
+    current_user_id: str = Depends(verify_user),
+):
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise HTTPException(status_code=503, detail="Project lifecycle notifications are not configured.")
+    try:
+        response = await _run_supabase(
+            lambda: service_client.rpc(
+                "delete_project_with_notification",
+                {"p_user_id": current_user_id, "p_project_id": str(project_id)},
+            ).execute()
+        )
+        project, notification = _project_lifecycle_result(response)
+    except Exception as error:
+        if "PROJECT_NOT_FOUND" in str(error):
+            raise HTTPException(status_code=404, detail="Project not found.") from error
+        logger.exception("project.delete_failed user_id=%s project_id=%s", current_user_id, project_id)
+        raise HTTPException(status_code=500, detail="Unable to delete the project.") from error
+
+    await _dispatch_project_lifecycle_web_push(service_client, notification)
+    return {"deleted": True, "project": project}
 
 
 class GitHubRepositoryConnectionRequest(BaseModel):

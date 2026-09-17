@@ -534,6 +534,8 @@ const PROFILE_EMBEDDING_SYNC_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   : '';
 const FOLDER_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project`;
 const FOLDER_BASELINE_AUDIT_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/audit-project/baseline`;
+const PROJECT_FOLDERS_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/projects/folders`;
+const PROJECTS_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/projects`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
@@ -5403,19 +5405,31 @@ export function ProfileDashboard({
             matchingRepository?.name ??
             githubRepository?.split('/').pop() ??
             fallbackFolderName;
-          const { data: folderData, error: folderError } = await supabase
-            .from('project_folders')
-            .insert({
+          const { data: folderAuthData } = await supabase.auth.getSession();
+          const folderAccessToken = folderAuthData.session?.access_token;
+          if (!folderAccessToken) {
+            throw new Error('Your session has expired. Please sign in again.');
+          }
+          const folderResponse = await fetch(PROJECT_FOLDERS_ENDPOINT, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${folderAccessToken}`,
+            },
+            body: JSON.stringify({
               name: folderName,
               source: githubRepository ? 'github' : 'local',
-              user_id: user.id,
-            })
-            .select()
-            .single();
-
-          if (folderError) {
-            throw folderError;
+            }),
+          });
+          const folderPayload = (await folderResponse.json().catch(() => null)) as {
+            folder?: ProjectFolderRow;
+            detail?: string;
+          } | null;
+          if (!folderResponse.ok) {
+            throw new Error(folderPayload?.detail ?? 'Unable to create the project folder.');
           }
+          const folderData = folderPayload?.folder;
           if (!folderData?.id) {
             throw new Error('Folder was created without a returned ID.');
           }
@@ -6373,24 +6387,20 @@ export function ProfileDashboard({
       throw new Error('Project storage is not available right now.');
     }
 
-    const userId = await getConfirmedUserId();
-    if (!userId) {
+    const { data: authData } = await supabase.auth.getSession();
+    const accessToken = authData.session?.access_token;
+    if (!accessToken) {
       throw new Error('Your session has expired. Please sign in again.');
     }
 
-    const { data: deletedProjects, error: deleteError } = await supabase
-      .from('projects')
-      .delete()
-      .eq('id', projectId)
-      .eq('user_id', userId)
-      .select('id');
-
-    if (deleteError) {
-      throw deleteError;
-    }
-
-    if (!deletedProjects || deletedProjects.length === 0) {
-      throw new Error('Project not found or unauthorized.');
+    const response = await fetch(`${PROJECTS_ENDPOINT}/${encodeURIComponent(projectId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    if (!response.ok) {
+      throw new Error(payload?.detail ?? 'Unable to delete this project.');
     }
 
     setProjects((currentProjects) => currentProjects.filter((project) => project.id !== projectId));
@@ -6710,29 +6720,20 @@ export function ProfileDashboard({
       throw new Error('Vault sync is not ready.');
     }
 
-    const userId = await getConfirmedUserId();
-    if (!userId) {
+    const { data: authData } = await supabase.auth.getSession();
+    const accessToken = authData.session?.access_token;
+    if (!accessToken) {
       throw new Error('Your session has expired. Please sign in again.');
     }
 
-    const { error: filesError } = await supabase
-      .from('projects')
-      .delete()
-      .eq('folder_id', folderId)
-      .eq('user_id', userId);
-
-    if (filesError) {
-      throw filesError;
-    }
-
-    const { error: folderError } = await supabase
-      .from('project_folders')
-      .delete()
-      .eq('id', folderId)
-      .eq('user_id', userId);
-
-    if (folderError) {
-      throw folderError;
+    const response = await fetch(`${PROJECT_FOLDERS_ENDPOINT}/${encodeURIComponent(folderId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    if (!response.ok) {
+      throw new Error(payload?.detail ?? 'Unable to delete this project folder.');
     }
 
     setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));

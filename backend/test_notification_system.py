@@ -183,6 +183,26 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.await_args.kwargs["email_batch_id"], "batch-id")
         self.assertEqual(queue.await_args.kwargs["payload"]["title"], "Updates pending across multiple projects")
 
+    async def test_project_lifecycle_dispatch_is_immediate_and_non_ai(self):
+        dispatch = AsyncMock()
+        with (
+            patch.object(main, "_dispatch_notification_web_push", new=dispatch),
+            patch.object(main, "orchestrate_audit") as full_audit,
+            patch.object(main, "run_incremental_audit") as incremental,
+        ):
+            await main._dispatch_project_lifecycle_web_push(
+                object(),
+                {
+                    "id": "notification-id",
+                    "type": "project_created",
+                    "title": "Project created",
+                    "message": "Project 'Workspace' was successfully created.",
+                },
+            )
+        dispatch.assert_awaited_once()
+        full_audit.assert_not_called()
+        incremental.assert_not_called()
+
     def test_web_push_and_stale_workers_have_no_audit_calls(self):
         worker_sources = "\n".join(
             inspect.getsource(worker)
@@ -241,6 +261,15 @@ class NotificationMigrationTests(unittest.TestCase):
         self.assertIn("unique (subscription_id, event_key)", migration)
         self.assertIn("using (auth.uid() = user_id)", migration)
         self.assertIn("Service role manages web push deliveries", migration)
+
+    def test_project_lifecycle_types_and_transactional_mutations_are_present(self):
+        migration = (Path(__file__).resolve().parents[1] / "supabase" / "migrations" / "202609170001_project_lifecycle_notifications.sql").read_text(encoding="utf-8")
+        self.assertIn("'project_created'", migration)
+        self.assertIn("'project_deleted'", migration)
+        self.assertIn("create_project_folder_with_notification", migration)
+        self.assertIn("delete_project_folder_with_notification", migration)
+        self.assertIn("delete_project_with_notification", migration)
+        self.assertNotIn("notification_email_batches", migration)
 
 
 if __name__ == "__main__":

@@ -5,10 +5,24 @@ self.addEventListener('push', (event) => {
   } catch {
     payload = { body: event.data ? event.data.text() : '' };
   }
+  if (!payload || typeof payload !== 'object') payload = {};
 
-  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'MeliusAI update';
+  const projectName = typeof payload.project_name === 'string' && payload.project_name.trim()
+    ? payload.project_name.trim()
+    : 'Project';
+  const lifecycleFallback = payload.type === 'project_created'
+    ? { title: 'Project created', body: `Project '${projectName}' was successfully created.` }
+    : payload.type === 'project_deleted'
+      ? { title: 'Project deleted', body: `Project '${projectName}' has been deleted.` }
+      : null;
+
+  const title = typeof payload.title === 'string' && payload.title
+    ? payload.title
+    : lifecycleFallback?.title ?? 'MeliusAI update';
   const options = {
-    body: typeof payload.body === 'string' ? payload.body : 'You have a workspace update.',
+    body: typeof payload.body === 'string' && payload.body
+      ? payload.body
+      : lifecycleFallback?.body ?? 'You have a workspace update.',
     icon: '/favicon.png',
     badge: '/favicon.png',
     tag: typeof payload.tag === 'string' ? payload.tag : 'meliusai-notification',
