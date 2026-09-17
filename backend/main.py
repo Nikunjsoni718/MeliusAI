@@ -1198,7 +1198,8 @@ async def _run_supabase(operation: Callable[[], Any]) -> Any:
     return await asyncio.to_thread(operation)
 
 
-NOTIFICATION_COOLDOWN_MINUTES = 25
+# Temporary test setting. Restore to 25 minutes after validating the cooldown flow.
+NOTIFICATION_COOLDOWN_MINUTES = 1
 NOTIFICATION_EMAIL_BATCH_MINUTES = 150
 NOTIFICATION_MINIMUM_CHANGED_LINES = 15
 NOTIFICATION_BATCH_RETRY_DELAY_MINUTES = 5
@@ -1473,7 +1474,7 @@ async def _record_push_notification_activity(
         )
         cooldown_scheduled = True
     if cooldown_scheduled:
-        logger.info(f"Started 25-minute debounce timer for {repository}")
+        logger.info(f"Started {NOTIFICATION_COOLDOWN_MINUTES}-minute debounce timer for {repository}")
 
 
 def _notification_error_is_unique(error: Exception) -> bool:
@@ -1718,11 +1719,26 @@ async def _dispatch_notification_web_push(
     if not notification_id or not user_id:
         return 0
     metadata = notification.get("metadata")
+    metadata_values = metadata if isinstance(metadata, dict) else {}
     project_name = (
-        str(metadata.get("project_name") or metadata.get("repo_name") or "").strip()
-        if isinstance(metadata, dict)
-        else ""
+        str(
+            notification.get("project_id")
+            or metadata_values.get("repo_name")
+            or metadata_values.get("project_name")
+            or ""
+        ).strip()
     )
+    message = str(notification.get("message") or "You have a workspace update.")
+    if str(notification.get("type") or "").strip() == "session_cooldown_re_audit":
+        try:
+            lines_changed = int(metadata_values.get("lines_changed"))
+        except (TypeError, ValueError):
+            lines_changed = None
+        if project_name and lines_changed is not None:
+            message = (
+                f"You just shipped {lines_changed} new lines of code to {project_name}. "
+                "Run a fresh audit to see how it impacts your scorecard."
+            )
     queued = await _queue_web_push_event(
         supabase_client,
         user_id=user_id,
@@ -1730,7 +1746,7 @@ async def _dispatch_notification_web_push(
         notification_id=notification_id,
         payload=_web_push_payload(
             title=str(notification.get("title") or "MeliusAI update"),
-            message=str(notification.get("message") or "You have a workspace update."),
+            message=message,
             action_url=str(notification.get("action_url") or "/vault"),
             tag=f"notification:{notification_id}",
             notification_type=str(notification.get("type") or "").strip() or None,
