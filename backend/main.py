@@ -1420,7 +1420,7 @@ async def _schedule_repository_cooldown(
     lines_changed: int,
     qualifying_commit_at: datetime,
 ) -> None:
-    scheduled_at = qualifying_commit_at + timedelta(minutes=NOTIFICATION_COOLDOWN_MINUTES)
+    scheduled_at = qualifying_commit_at + timedelta(minutes=1)
     await _run_supabase(
         lambda: supabase_client.table("notification_cooldowns")
         .upsert(
@@ -1474,7 +1474,7 @@ async def _record_push_notification_activity(
         )
         cooldown_scheduled = True
     if cooldown_scheduled:
-        logger.info(f"Started {NOTIFICATION_COOLDOWN_MINUTES}-minute debounce timer for {repository}")
+        logger.info(f"Started 1-minute debounce timer for {repository}")
 
 
 def _notification_error_is_unique(error: Exception) -> bool:

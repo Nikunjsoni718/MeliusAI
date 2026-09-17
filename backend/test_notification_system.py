@@ -84,10 +84,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         source = Path(main.__file__).read_text(encoding="utf-8")
         self.assertNotIn("_notification_log", source)
         self.assertNotIn("notification.lifecycle", source)
-        self.assertIn(
-            'logger.info(f"Started {NOTIFICATION_COOLDOWN_MINUTES}-minute debounce timer for {repository}")',
-            source,
-        )
+        self.assertIn('logger.info(f"Started 1-minute debounce timer for {repository}")', source)
         self.assertIn('logger.info(f"Timer expired for {repository}: Desktop push queued")', source)
         self.assertIn('logger.info(f"Manual audit completed for {repository}: Timer bypassed")', source)
 
