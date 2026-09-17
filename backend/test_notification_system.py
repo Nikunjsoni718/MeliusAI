@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 try:
     from backend import main
@@ -21,77 +21,46 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(main.NOTIFICATION_COOLDOWN_MINUTES, 25)
         self.assertEqual(main.NOTIFICATION_EMAIL_BATCH_MINUTES, 150)
 
-    def test_notification_lifecycle_logs_are_utc_and_structured(self):
-        captured_logger = Mock()
-        fixed_now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
-        with (
-            patch.object(main, "logger", captured_logger),
-            patch.object(main, "_notification_timestamp", return_value=fixed_now),
-        ):
-            main._notification_log(
-                "webhook.cooldown_started",
-                user_id="user-a",
-                repository="owner/repository",
-                scheduled_at="2026-09-17T12:25:00+00:00",
-            )
-
-        message, timestamp, event, fields = captured_logger.info.call_args.args
-        self.assertEqual(message, "notification.lifecycle timestamp=%s event=%s%s")
-        self.assertEqual(timestamp, "2026-09-17T12:00:00+00:00")
-        self.assertEqual(event, "webhook.cooldown_started")
-        self.assertIn("user_id=user-a", fields)
-        self.assertIn("repository=owner/repository", fields)
-
-    async def test_cooldown_deadline_and_started_log_use_25_minutes(self):
+    async def test_cooldown_deadline_uses_25_minutes(self):
         query = Mock()
-        query.select.return_value = query
-        query.eq.return_value = query
-        query.maybe_single.return_value = query
         query.upsert.return_value = query
         query.execute.return_value = SimpleNamespace(data=[])
         client = Mock()
         client.table.return_value = query
-        lifecycle_log = Mock()
         committed_at = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
 
-        with patch.object(main, "_notification_log", lifecycle_log):
-            await main._schedule_repository_cooldown(
-                client,
-                user_id="user-a",
-                repository="owner/repository",
-                lines_changed=20,
-                qualifying_commit_at=committed_at,
-            )
+        await main._schedule_repository_cooldown(
+            client,
+            user_id="user-a",
+            repository="owner/repository",
+            lines_changed=20,
+            qualifying_commit_at=committed_at,
+        )
 
         payload = query.upsert.call_args.args[0]
         self.assertEqual(payload["scheduled_at"], "2026-09-17T12:25:00+00:00")
-        self.assertEqual(lifecycle_log.call_args.args[0], "webhook.cooldown_started")
-        self.assertEqual(lifecycle_log.call_args.kwargs["cooldown_minutes"], 25)
 
-    async def test_qualifying_push_resets_an_existing_repository_cooldown(self):
-        query = Mock()
-        query.select.return_value = query
-        query.eq.return_value = query
-        query.maybe_single.return_value = query
-        query.upsert.return_value = query
-        query.execute.return_value = SimpleNamespace(
-            data=[{"scheduled_at": "2026-09-17T12:25:00+00:00"}]
-        )
-        client = Mock()
-        client.table.return_value = query
-        lifecycle_log = Mock()
-
-        with patch.object(main, "_notification_log", lifecycle_log):
-            await main._schedule_repository_cooldown(
-                client,
-                user_id="user-a",
+    async def test_qualifying_push_logs_the_short_debounce_milestone(self):
+        update = AsyncMock()
+        schedule = AsyncMock()
+        captured_logger = Mock()
+        with (
+            patch.object(main, "_update_repository_commit_tracking", new=update),
+            patch.object(main, "calculate_notification_lines_changed", new=AsyncMock(return_value=20)),
+            patch.object(main, "_schedule_repository_cooldown", new=schedule),
+            patch.object(main, "logger", captured_logger),
+        ):
+            await main._record_push_notification_activity(
+                object(),
+                payload={"after": "a" * 40},
                 repository="owner/repository",
-                lines_changed=32,
-                qualifying_commit_at=datetime(2026, 9, 17, 12, 5, tzinfo=timezone.utc),
+                user_ids={"user-a"},
+                access_token="token",
             )
 
-        self.assertEqual(lifecycle_log.call_args.args[0], "webhook.cooldown_reset")
-        self.assertEqual(lifecycle_log.call_args.kwargs["previous_scheduled_at"], "2026-09-17T12:25:00+00:00")
+        captured_logger.info.assert_called_once_with(
+            "Started 25-minute debounce timer for owner/repository"
+        )
 
     async def test_batch_deadline_uses_150_minutes(self):
         query = Mock()
@@ -100,53 +69,91 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         query.execute.return_value = SimpleNamespace(data=[{"id": "batch-id"}])
         client = Mock()
         client.table.return_value = query
-        lifecycle_log = Mock()
         started_at = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
 
-        with patch.object(main, "_notification_log", lifecycle_log):
-            await main._ensure_notification_email_batch(
-                client,
-                user_id="user-a",
-                window_started_at=started_at,
-            )
+        await main._ensure_notification_email_batch(
+            client,
+            user_id="user-a",
+            window_started_at=started_at,
+        )
 
         payload = query.insert.call_args.args[0]
         self.assertEqual(payload["due_at"], "2026-09-17T14:30:00+00:00")
-        self.assertEqual(lifecycle_log.call_args.args[0], "batch.started")
-        self.assertEqual(lifecycle_log.call_args.kwargs["batch_window_minutes"], 150)
 
-    async def test_empty_cooldown_and_batch_sweeps_emit_zero_pending_lifecycle_logs(self):
-        cooldown_query = Mock()
-        cooldown_query.select.return_value = cooldown_query
-        cooldown_query.lte.return_value = cooldown_query
-        cooldown_query.order.return_value = cooldown_query
-        cooldown_query.limit.return_value = cooldown_query
-        cooldown_query.execute.return_value = SimpleNamespace(data=[])
-        cooldown_client = Mock()
-        cooldown_client.table.return_value = cooldown_query
+    def test_structured_notification_logs_are_absent_and_only_milestones_remain(self):
+        source = Path(main.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("_notification_log", source)
+        self.assertNotIn("notification.lifecycle", source)
+        self.assertIn('logger.info(f"Started 25-minute debounce timer for {repository}")', source)
+        self.assertIn('logger.info(f"Timer expired for {repository}: Desktop push queued")', source)
+        self.assertIn('logger.info(f"Manual audit completed for {repository}: Timer bypassed")', source)
 
-        batch_query = Mock()
-        batch_query.select.return_value = batch_query
-        batch_query.in_.return_value = batch_query
-        batch_query.lte.return_value = batch_query
-        batch_query.order.return_value = batch_query
-        batch_query.limit.return_value = batch_query
-        batch_query.execute.return_value = SimpleNamespace(data=[])
-        batch_client = Mock()
-        batch_client.table.return_value = batch_query
-        lifecycle_log = Mock()
+    def test_notification_cron_has_no_routine_success_logs_and_keeps_github_summary(self):
+        self.assertNotIn("logger.info", inspect.getsource(main.process_notification_jobs))
+        self.assertNotIn("logger.info", inspect.getsource(main._process_due_notification_batches))
+        self.assertNotIn("logger.info", inspect.getsource(main._send_pending_web_push_deliveries))
+        webhook_source = inspect.getsource(main.process_github_push_in_background)
+        self.assertIn('"github_webhook.processed delivery_id=%s result=%s"', webhook_source)
 
-        with patch.object(main, "_notification_log", lifecycle_log):
-            cooldown_result = await main._process_due_notification_cooldowns(cooldown_client)
-            batch_result = await main._process_due_notification_batches(batch_client)
+    def test_timer_expiry_log_requires_at_least_one_queued_push(self):
+        source = inspect.getsource(main._process_due_notification_cooldowns)
+        self.assertIn("queued_pushes = await _dispatch_notification_web_push", source)
+        self.assertIn("if queued_pushes:", source)
+        self.assertIn('logger.info(f"Timer expired for {repository}: Desktop push queued")', source)
 
-        self.assertEqual(cooldown_result, {"created": 0, "suppressed": 0})
-        self.assertEqual(batch_result, {"sent": 0, "suppressed": 0, "failed": 0})
-        lifecycle_calls = {
-            call.args[0]: call.kwargs for call in lifecycle_log.call_args_list
+    async def test_expired_cooldown_logs_when_a_desktop_push_is_queued(self):
+        now = datetime(2026, 9, 17, 12, 25, tzinfo=timezone.utc)
+        cooldown = {
+            "user_id": "user-a",
+            "repository": "owner/repository",
+            "lines_changed": 20,
+            "last_qualifying_commit_at": "2026-09-17T12:00:00+00:00",
+            "scheduled_at": "2026-09-17T12:25:00+00:00",
         }
-        self.assertEqual(lifecycle_calls["cron.cooldown_sweep"]["pending_cooldown_count"], 0)
-        self.assertEqual(lifecycle_calls["cron.batch_sweep"]["pending_batch_count"], 0)
+        notification = {"id": "notification-id", "created_at": "2026-09-17T12:25:00+00:00"}
+        captured_logger = Mock()
+        with (
+            patch.object(main, "_notification_timestamp", return_value=now),
+            patch.object(main, "_run_supabase", new=AsyncMock(return_value=SimpleNamespace(data=[cooldown]))),
+            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[])),
+            patch.object(main, "_insert_notification", new=AsyncMock(return_value=notification)),
+            patch.object(main, "_ensure_notification_email_batch", new=AsyncMock()),
+            patch.object(main, "_dispatch_notification_web_push", new=AsyncMock(return_value=1)),
+            patch.object(main, "_delete_repository_cooldown", new=AsyncMock()),
+            patch.object(main, "logger", captured_logger),
+        ):
+            result = await main._process_due_notification_cooldowns(object())
+
+        self.assertEqual(result, {"created": 1, "suppressed": 0})
+        captured_logger.info.assert_called_once_with(
+            "Timer expired for owner/repository: Desktop push queued"
+        )
+
+    async def test_expired_cooldown_is_silent_without_a_subscribed_device(self):
+        now = datetime(2026, 9, 17, 12, 25, tzinfo=timezone.utc)
+        cooldown = {
+            "user_id": "user-a",
+            "repository": "owner/repository",
+            "lines_changed": 20,
+            "last_qualifying_commit_at": "2026-09-17T12:00:00+00:00",
+            "scheduled_at": "2026-09-17T12:25:00+00:00",
+        }
+        notification = {"id": "notification-id", "created_at": "2026-09-17T12:25:00+00:00"}
+        captured_logger = Mock()
+        with (
+            patch.object(main, "_notification_timestamp", return_value=now),
+            patch.object(main, "_run_supabase", new=AsyncMock(return_value=SimpleNamespace(data=[cooldown]))),
+            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[])),
+            patch.object(main, "_insert_notification", new=AsyncMock(return_value=notification)),
+            patch.object(main, "_ensure_notification_email_batch", new=AsyncMock()),
+            patch.object(main, "_dispatch_notification_web_push", new=AsyncMock(return_value=0)),
+            patch.object(main, "_delete_repository_cooldown", new=AsyncMock()),
+            patch.object(main, "logger", captured_logger),
+        ):
+            result = await main._process_due_notification_cooldowns(object())
+
+        self.assertEqual(result, {"created": 1, "suppressed": 0})
+        captured_logger.info.assert_not_called()
 
     def test_github_signature_requires_the_exact_signed_body(self):
         body = b'{"repository":"owner/repo"}'
@@ -293,7 +300,8 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main, "orchestrate_audit") as full_audit,
             patch.object(main, "run_incremental_audit") as incremental,
         ):
-            await main._dispatch_notification_web_push(object(), notification)
+            queued = await main._dispatch_notification_web_push(object(), notification)
+        self.assertEqual(queued, 1)
         queue.assert_awaited_once()
         sender.assert_awaited_once()
         full_audit.assert_not_called()
@@ -335,10 +343,32 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         full_audit.assert_not_called()
         incremental.assert_not_called()
 
-    def test_manual_audit_cancels_its_cooldown_and_logs_the_override(self):
-        source = inspect.getsource(main._record_completed_repository_audit_notification)
-        self.assertIn('reason="manual_audit_completed"', source)
-        self.assertIn("manual_audit.completed_timers_bypassed", source)
+    async def test_manual_audit_cancels_its_cooldown_and_logs_the_short_milestone(self):
+        cooldown_delete = AsyncMock()
+        captured_logger = Mock()
+        with (
+            patch.object(main, "_run_supabase", new=AsyncMock()),
+            patch.object(main, "_delete_repository_cooldown", new=cooldown_delete),
+            patch.object(main, "_insert_notification", new=AsyncMock(return_value=None)),
+            patch.object(main, "logger", captured_logger),
+        ):
+            await main._record_completed_repository_audit_notification(
+                object(),
+                user_id="user-a",
+                folder_id="folder-id",
+                repository="owner/repository",
+                audit_id="audit-id",
+                score=92,
+            )
+
+        cooldown_delete.assert_awaited_once_with(
+            ANY,
+            user_id="user-a",
+            repository="owner/repository",
+        )
+        captured_logger.info.assert_called_once_with(
+            "Manual audit completed for owner/repository: Timer bypassed"
+        )
 
     def test_new_github_repository_root_reuses_lifecycle_rpc_without_email_batching(self):
         create_source = inspect.getsource(main._create_project_folder)

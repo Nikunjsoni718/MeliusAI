@@ -1214,21 +1214,6 @@ def _notification_timestamp_text(value: datetime | None = None) -> str:
     return (value or _notification_timestamp()).isoformat()
 
 
-def _notification_log(event: str, **context: Any) -> None:
-    """Emit a compact, UTC-stamped lifecycle record for Render log searches."""
-    fields = " ".join(
-        f"{key}={str(value).replace(chr(10), ' ').replace(chr(13), ' ').strip()[:512]}"
-        for key, value in context.items()
-        if value is not None and str(value).strip()
-    )
-    logger.info(
-        "notification.lifecycle timestamp=%s event=%s%s",
-        _notification_timestamp_text(),
-        event,
-        f" {fields}" if fields else "",
-    )
-
-
 def _web_push_vapid_config() -> dict[str, str] | None:
     public_key = (os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY") or "").strip()
     private_key = (os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY") or "").strip()
@@ -1322,7 +1307,6 @@ async def calculate_notification_lines_changed(
     base_sha = get_github_before_sha(payload)
     head_sha = get_github_after_sha(payload)
     if base_sha is None:
-        _notification_log("webhook.cooldown_skipped_no_compare_base", repository=repository)
         return None
 
     owns_client = http_client is None
@@ -1338,12 +1322,7 @@ async def calculate_notification_lines_changed(
             access_token=access_token,
             http_client=active_client,
         )
-    except github_diffs.DiffServiceError as error:
-        _notification_log(
-            "webhook.cooldown_diff_unavailable",
-            repository=repository,
-            error_code=error.code,
-        )
+    except github_diffs.DiffServiceError:
         return None
     finally:
         if owns_client:
@@ -1429,36 +1408,7 @@ async def _update_repository_commit_tracking(
                 .execute()
             )
     except Exception:
-        _notification_log(
-            "webhook.workspace_commit_tracking_deferred",
-            user_id=user_id,
-            repository=repository,
-        )
-
-    _notification_log(
-        "webhook.commit_tracking_updated",
-        user_id=user_id,
-        repository=repository,
-        committed_at=timestamp,
-    )
-
-
-async def _load_repository_cooldown(
-    supabase_client: Any,
-    *,
-    user_id: str,
-    repository: str,
-) -> dict[str, Any] | None:
-    response = await _run_supabase(
-        lambda: supabase_client.table("notification_cooldowns")
-        .select("scheduled_at, lines_changed, last_qualifying_commit_at")
-        .eq("user_id", user_id)
-        .eq("repository", repository)
-        .maybe_single()
-        .execute()
-    )
-    rows = _response_rows(response)
-    return rows[0] if rows else None
+        logger.exception("Workspace commit tracking failed for %s", repository)
 
 
 async def _schedule_repository_cooldown(
@@ -1470,11 +1420,6 @@ async def _schedule_repository_cooldown(
     qualifying_commit_at: datetime,
 ) -> None:
     scheduled_at = qualifying_commit_at + timedelta(minutes=NOTIFICATION_COOLDOWN_MINUTES)
-    existing_cooldown = await _load_repository_cooldown(
-        supabase_client,
-        user_id=user_id,
-        repository=repository,
-    )
     await _run_supabase(
         lambda: supabase_client.table("notification_cooldowns")
         .upsert(
@@ -1489,17 +1434,6 @@ async def _schedule_repository_cooldown(
             on_conflict="user_id,repository",
         )
         .execute()
-    )
-    _notification_log(
-        "webhook.cooldown_reset" if existing_cooldown else "webhook.cooldown_started",
-        user_id=user_id,
-        repository=repository,
-        lines_changed=lines_changed,
-        previous_scheduled_at=(existing_cooldown or {}).get("scheduled_at"),
-        scheduled_at=_notification_timestamp_text(scheduled_at),
-        cooldown_minutes=NOTIFICATION_COOLDOWN_MINUTES,
-        batch_window_minutes=NOTIFICATION_EMAIL_BATCH_MINUTES,
-        batch_starts_after_cooldown=True,
     )
 
 
@@ -1526,24 +1460,9 @@ async def _record_push_notification_activity(
         access_token=access_token,
     )
     if lines_changed is None or lines_changed < NOTIFICATION_MINIMUM_CHANGED_LINES:
-        _notification_log(
-            "webhook.cooldown_not_scheduled",
-            repository=repository,
-            lines_changed=lines_changed,
-            minimum_lines=NOTIFICATION_MINIMUM_CHANGED_LINES,
-        )
         return
 
-    _notification_log(
-        "webhook.ingested",
-        repository=repository,
-        user_count=len(user_ids),
-        lines_changed=lines_changed,
-        cooldown_minutes=NOTIFICATION_COOLDOWN_MINUTES,
-        batch_window_minutes=NOTIFICATION_EMAIL_BATCH_MINUTES,
-        batch_starts_after_cooldown=True,
-    )
-
+    cooldown_scheduled = False
     for user_id in sorted(user_ids):
         await _schedule_repository_cooldown(
             supabase_client,
@@ -1552,6 +1471,9 @@ async def _record_push_notification_activity(
             lines_changed=lines_changed,
             qualifying_commit_at=committed_at,
         )
+        cooldown_scheduled = True
+    if cooldown_scheduled:
+        logger.info(f"Started 25-minute debounce timer for {repository}")
 
 
 def _notification_error_is_unique(error: Exception) -> bool:
@@ -1591,13 +1513,6 @@ async def _queue_web_push_event(
     if (notification_id is None) == (email_batch_id is None):
         raise ValueError("A push event must belong to exactly one notification or email batch.")
     if webpush is None or _web_push_vapid_config() is None:
-        _notification_log(
-            "web_push.skipped_not_configured",
-            user_id=user_id,
-            event_key=event_key,
-            notification_id=notification_id,
-            batch_id=email_batch_id,
-        )
         return 0
 
     response = await _run_supabase(
@@ -1636,14 +1551,6 @@ async def _queue_web_push_event(
         except Exception as error:
             if not _notification_error_is_unique(error):
                 raise
-    _notification_log(
-        "web_push.queued",
-        user_id=user_id,
-        event_key=event_key,
-        notification_id=notification_id,
-        batch_id=email_batch_id,
-        subscription_count=queued,
-    )
     return queued
 
 
@@ -1655,7 +1562,6 @@ async def _send_pending_web_push_deliveries(
     """Deliver persisted push events without touching any audit or AI code."""
     vapid = _web_push_vapid_config()
     if webpush is None or vapid is None:
-        _notification_log("web_push.delivery_sweep_skipped_not_configured")
         return {"sent": 0, "expired": 0, "failed": 0}
 
     now = _notification_timestamp()
@@ -1684,10 +1590,6 @@ async def _send_pending_web_push_deliveries(
         .execute()
     )
     delivery_rows = _response_rows(response)
-    _notification_log(
-        "web_push.delivery_sweep",
-        pending_delivery_count=len(delivery_rows),
-    )
     sent = expired = failed = 0
     for delivery in delivery_rows:
         delivery_id = str(delivery.get("id") or "")
@@ -1732,16 +1634,6 @@ async def _send_pending_web_push_deliveries(
                 .eq("id", delivery_id)
                 .execute()
             )
-            _notification_log(
-                "web_push.delivery_expired",
-                user_id=user_id,
-                delivery_id=delivery_id,
-                subscription_id=subscription_id,
-                event_key=delivery.get("event_key"),
-                notification_id=delivery.get("notification_id"),
-                batch_id=delivery.get("email_batch_id"),
-                reason="subscription_missing",
-            )
             continue
 
         subscription = subscription_rows[0]
@@ -1755,16 +1647,6 @@ async def _send_pending_web_push_deliveries(
                 .execute()
             )
             expired += 1
-            _notification_log(
-                "web_push.delivery_expired",
-                user_id=user_id,
-                delivery_id=delivery_id,
-                subscription_id=subscription_id,
-                event_key=delivery.get("event_key"),
-                notification_id=delivery.get("notification_id"),
-                batch_id=delivery.get("email_batch_id"),
-                reason="invalid_payload",
-            )
             continue
 
         try:
@@ -1792,15 +1674,6 @@ async def _send_pending_web_push_deliveries(
                 .eq("id", subscription_id)
                 .execute()
             )
-            _notification_log(
-                "web_push.delivery_sent",
-                user_id=user_id,
-                delivery_id=delivery_id,
-                subscription_id=subscription_id,
-                event_key=delivery.get("event_key"),
-                notification_id=delivery.get("notification_id"),
-                batch_id=delivery.get("email_batch_id"),
-            )
         except Exception as error:
             status_code = _web_push_error_status(error)
             if status_code in {404, 410}:
@@ -1811,16 +1684,6 @@ async def _send_pending_web_push_deliveries(
                     .eq("id", subscription_id)
                     .eq("user_id", user_id)
                     .execute()
-                )
-                _notification_log(
-                    "web_push.delivery_expired",
-                    user_id=user_id,
-                    delivery_id=delivery_id,
-                    subscription_id=subscription_id,
-                    event_key=delivery.get("event_key"),
-                    notification_id=delivery.get("notification_id"),
-                    batch_id=delivery.get("email_batch_id"),
-                    reason=f"provider_status_{status_code}",
                 )
                 continue
             failed += 1
@@ -1843,42 +1706,24 @@ async def _send_pending_web_push_deliveries(
                 .eq("id", subscription_id)
                 .execute()
             )
-            _notification_log(
-                "web_push.delivery_failed",
-                user_id=user_id,
-                delivery_id=delivery_id,
-                subscription_id=subscription_id,
-                event_key=delivery.get("event_key"),
-                notification_id=delivery.get("notification_id"),
-                batch_id=delivery.get("email_batch_id"),
-                next_attempt_at=_notification_timestamp_text(next_attempt),
-                error_type=type(error).__name__,
-            )
     return {"sent": sent, "expired": expired, "failed": failed}
 
 
 async def _dispatch_notification_web_push(
     supabase_client: Any,
     notification: dict[str, Any],
-) -> None:
+) -> int:
     notification_id = str(notification.get("id") or "")
     user_id = str(notification.get("user_id") or "")
     if not notification_id or not user_id:
-        return
+        return 0
     metadata = notification.get("metadata")
     project_name = (
         str(metadata.get("project_name") or metadata.get("repo_name") or "").strip()
         if isinstance(metadata, dict)
         else ""
     )
-    _notification_log(
-        "web_push.notification_dispatch",
-        user_id=user_id,
-        notification_id=notification_id,
-        notification_type=notification.get("type"),
-        repository=project_name or notification.get("project_id"),
-    )
-    await _queue_web_push_event(
+    queued = await _queue_web_push_event(
         supabase_client,
         user_id=user_id,
         event_key=f"notification:{notification_id}",
@@ -1893,6 +1738,7 @@ async def _dispatch_notification_web_push(
         ),
     )
     await _send_pending_web_push_deliveries(supabase_client)
+    return queued
 
 
 async def _ensure_notification_email_batch(
@@ -1904,7 +1750,7 @@ async def _ensure_notification_email_batch(
     idempotency_key = f"cooldown-batch/{user_id}/{window_started_at.isoformat()}"
     due_at = window_started_at + timedelta(minutes=NOTIFICATION_EMAIL_BATCH_MINUTES)
     try:
-        response = await _run_supabase(
+        await _run_supabase(
             lambda: supabase_client.table("notification_email_batches")
             .insert(
                 {
@@ -1917,24 +1763,9 @@ async def _ensure_notification_email_batch(
             .select("id, due_at")
             .execute()
         )
-        batch_rows = _response_rows(response)
-        _notification_log(
-            "batch.started",
-            user_id=user_id,
-            batch_id=(batch_rows[0] if batch_rows else {}).get("id"),
-            window_started_at=_notification_timestamp_text(window_started_at),
-            due_at=_notification_timestamp_text(due_at),
-            batch_window_minutes=NOTIFICATION_EMAIL_BATCH_MINUTES,
-        )
     except Exception as error:
         if not _notification_error_is_unique(error):
             raise
-        _notification_log(
-            "batch.already_open",
-            user_id=user_id,
-            window_started_at=_notification_timestamp_text(window_started_at),
-            due_at=_notification_timestamp_text(due_at),
-        )
 
 
 async def _ensure_follow_on_notification_email_batch(
@@ -1964,12 +1795,6 @@ async def _ensure_follow_on_notification_email_batch(
     rows = _response_rows(response)
     next_window_start = _parse_notification_timestamp(rows[0].get("created_at")) if rows else None
     if next_window_start is not None:
-        _notification_log(
-            "batch.follow_on_requested",
-            user_id=user_id,
-            previous_due_at=_notification_timestamp_text(previous_window_due_at),
-            next_window_started_at=_notification_timestamp_text(next_window_start),
-        )
         await _ensure_notification_email_batch(
             supabase_client,
             user_id=user_id,
@@ -1982,7 +1807,6 @@ async def _delete_repository_cooldown(
     *,
     user_id: str,
     repository: str,
-    reason: str,
 ) -> None:
     await _run_supabase(
         lambda: supabase_client.table("notification_cooldowns")
@@ -1990,12 +1814,6 @@ async def _delete_repository_cooldown(
         .eq("user_id", user_id)
         .eq("repository", repository)
         .execute()
-    )
-    _notification_log(
-        "cooldown.deleted",
-        user_id=user_id,
-        repository=repository,
-        reason=reason,
     )
 
 
@@ -2014,31 +1832,14 @@ async def _process_due_notification_cooldowns(
         .execute()
     )
     cooldown_rows = _response_rows(response)
-    _notification_log(
-        "cron.cooldown_sweep",
-        pending_cooldown_count=len(cooldown_rows),
-    )
     created = suppressed = 0
     for cooldown in cooldown_rows:
         user_id = str(cooldown.get("user_id") or "")
         repository = str(cooldown.get("repository") or "")
         qualifying_commit_at = _parse_notification_timestamp(cooldown.get("last_qualifying_commit_at"))
         if not user_id or not repository or qualifying_commit_at is None:
-            _notification_log(
-                "cooldown.skipped_invalid_row",
-                user_id=user_id,
-                repository=repository,
-            )
             continue
         try:
-            _notification_log(
-                "cooldown.expired",
-                user_id=user_id,
-                repository=repository,
-                lines_changed=cooldown.get("lines_changed"),
-                scheduled_at=cooldown.get("scheduled_at"),
-                qualifying_commit_at=_notification_timestamp_text(qualifying_commit_at),
-            )
             rows = await _repository_tracking_rows(
                 supabase_client,
                 user_id=user_id,
@@ -2047,18 +1848,10 @@ async def _process_due_notification_cooldowns(
             latest_audit = _latest_notification_timestamp(rows, "last_audit_at")
             if latest_audit is not None and latest_audit >= qualifying_commit_at:
                 suppressed += 1
-                _notification_log(
-                    "cooldown.suppressed_current_audit",
-                    user_id=user_id,
-                    repository=repository,
-                    latest_audit_at=_notification_timestamp_text(latest_audit),
-                    qualifying_commit_at=_notification_timestamp_text(qualifying_commit_at),
-                )
                 await _delete_repository_cooldown(
                     supabase_client,
                     user_id=user_id,
                     repository=repository,
-                    reason="audit_current",
                 )
                 continue
 
@@ -2084,46 +1877,27 @@ async def _process_due_notification_cooldowns(
             )
             if notification is not None:
                 created += 1
-                _notification_log(
-                    "cooldown.notification_created",
-                    user_id=user_id,
-                    repository=repository,
-                    notification_id=notification.get("id"),
-                    lines_changed=lines_changed,
-                )
                 await _ensure_notification_email_batch(
                     supabase_client,
                     user_id=user_id,
                     window_started_at=_parse_notification_timestamp(notification.get("created_at")) or now,
                 )
                 try:
-                    await _dispatch_notification_web_push(supabase_client, notification)
-                except Exception:
-                    logger.exception(
-                        "notification.lifecycle timestamp=%s event=cooldown.web_push_dispatch_failed user_id=%s repository=%s",
-                        _notification_timestamp_text(),
-                        user_id,
-                        repository,
+                    queued_pushes = await _dispatch_notification_web_push(
+                        supabase_client,
+                        notification,
                     )
-            else:
-                _notification_log(
-                    "cooldown.notification_already_exists",
-                    user_id=user_id,
-                    repository=repository,
-                )
+                    if queued_pushes:
+                        logger.info(f"Timer expired for {repository}: Desktop push queued")
+                except Exception:
+                    logger.exception("Cooldown desktop push failed for %s", repository)
             await _delete_repository_cooldown(
                 supabase_client,
                 user_id=user_id,
                 repository=repository,
-                reason="processed",
             )
-        except Exception:
-            logger.exception(
-                "notification.lifecycle timestamp=%s event=cooldown.processing_failed user_id=%s repository=%s",
-                _notification_timestamp_text(),
-                user_id,
-                repository,
-            )
+        except Exception as error:
+            logger.exception("Cooldown processing failed for %s", repository)
     return {"created": created, "suppressed": suppressed}
 
 
@@ -2203,12 +1977,6 @@ async def _dispatch_batch_web_push(
 ) -> None:
     if not eligible_notifications:
         return
-    _notification_log(
-        "batch.web_push_dispatch",
-        user_id=user_id,
-        batch_id=batch_id,
-        eligible_notification_count=len(eligible_notifications),
-    )
     subject, body = _build_cooldown_batch_email(eligible_notifications)
     first_repository = str(eligible_notifications[0].get("project_id") or "")
     action_url = f"/vault?repo={quote(first_repository, safe='')}" if first_repository else "/vault"
@@ -2242,10 +2010,6 @@ async def _process_due_notification_batches(
         .execute()
     )
     batch_rows = _response_rows(response)
-    _notification_log(
-        "cron.batch_sweep",
-        pending_batch_count=len(batch_rows),
-    )
     sent = suppressed = failed = 0
     for batch in batch_rows:
         batch_id = str(batch.get("id") or "")
@@ -2253,20 +2017,9 @@ async def _process_due_notification_batches(
         window_started_at = _parse_notification_timestamp(batch.get("window_started_at"))
         due_at = _parse_notification_timestamp(batch.get("due_at"))
         if not batch_id or not user_id or window_started_at is None or due_at is None:
-            _notification_log(
-                "batch.skipped_invalid_row",
-                batch_id=batch_id,
-                user_id=user_id,
-            )
             continue
         next_attempt_at = _parse_notification_timestamp(batch.get("next_attempt_at"))
         if next_attempt_at is not None and next_attempt_at > now:
-            _notification_log(
-                "batch.retry_deferred",
-                batch_id=batch_id,
-                user_id=user_id,
-                next_attempt_at=_notification_timestamp_text(next_attempt_at),
-            )
             continue
         try:
             profile = await _load_notification_profile(supabase_client, user_id)
@@ -2281,14 +2034,6 @@ async def _process_due_notification_batches(
                 .execute()
             )
             candidate_notifications = _response_rows(notifications_response)
-            _notification_log(
-                "batch.evaluating",
-                batch_id=batch_id,
-                user_id=user_id,
-                window_started_at=_notification_timestamp_text(window_started_at),
-                due_at=_notification_timestamp_text(due_at),
-                candidate_notification_count=len(candidate_notifications),
-            )
             eligible: list[dict[str, Any]] = []
             for notification in candidate_notifications:
                 repository = str(notification.get("project_id") or "")
@@ -2306,22 +2051,8 @@ async def _process_due_notification_batches(
                         .eq("user_id", user_id)
                         .execute()
                     )
-                    _notification_log(
-                        "batch.notification_discarded_current_audit",
-                        batch_id=batch_id,
-                        user_id=user_id,
-                        repository=repository,
-                        notification_id=notification.get("id"),
-                    )
                     continue
                 eligible.append(notification)
-
-            _notification_log(
-                "batch.eligible_notifications_resolved",
-                batch_id=batch_id,
-                user_id=user_id,
-                eligible_notification_count=len(eligible),
-            )
 
             if eligible:
                 try:
@@ -2332,34 +2063,15 @@ async def _process_due_notification_batches(
                         eligible_notifications=eligible,
                     )
                 except Exception:
-                    logger.exception(
-                        "notification.lifecycle timestamp=%s event=batch.web_push_dispatch_failed batch_id=%s user_id=%s",
-                        _notification_timestamp_text(),
-                        batch_id,
-                        user_id,
-                    )
+                    logger.exception("Batch desktop push failed")
 
             if _should_suppress_notification_batch(profile, eligible):
                 suppressed += 1
-                suppression_reason = (
-                    "profile_missing"
-                    if not profile
-                    else "alerts_disabled"
-                    if profile.get("audit_alerts_enabled") is False
-                    else "no_eligible_notifications"
-                )
                 await _run_supabase(
                     lambda: supabase_client.table("notification_email_batches")
                     .update({"status": "suppressed", "updated_at": _notification_timestamp_text(now)})
                     .eq("id", batch_id)
                     .execute()
-                )
-                _notification_log(
-                    "batch.suppressed",
-                    batch_id=batch_id,
-                    user_id=user_id,
-                    eligible_notification_count=len(eligible),
-                    reason=suppression_reason,
                 )
                 await _ensure_follow_on_notification_email_batch(
                     supabase_client,
@@ -2372,13 +2084,6 @@ async def _process_due_notification_batches(
                 raise RuntimeError("The notification recipient has no email address.")
 
             subject, body = _build_cooldown_batch_email(eligible)
-            _notification_log(
-                "batch.email_sending",
-                batch_id=batch_id,
-                user_id=user_id,
-                eligible_notification_count=len(eligible),
-                delivery_kind="single" if len(eligible) == 1 else "digest",
-            )
             provider_message_id = await _send_resend_email(
                 recipient=recipient,
                 subject=subject,
@@ -2400,13 +2105,6 @@ async def _process_due_notification_batches(
                 .eq("id", batch_id)
                 .execute()
             )
-            _notification_log(
-                "batch.email_sent",
-                batch_id=batch_id,
-                user_id=user_id,
-                provider_message_id=provider_message_id or None,
-                eligible_notification_count=len(eligible),
-            )
             await _ensure_follow_on_notification_email_batch(
                 supabase_client,
                 user_id=user_id,
@@ -2414,12 +2112,7 @@ async def _process_due_notification_batches(
             )
         except Exception as error:
             failed += 1
-            _notification_log(
-                "batch.email_failed",
-                batch_id=batch_id,
-                user_id=user_id,
-                error_type=type(error).__name__,
-            )
+            logger.exception("Batch email delivery failed")
             await _run_supabase(
                 lambda: supabase_client.table("notification_email_batches")
                 .update(
@@ -2449,41 +2142,17 @@ async def _send_preference_gated_notification_email(
 ) -> bool:
     profile = await _load_notification_profile(supabase_client, user_id)
     if not profile:
-        _notification_log(
-            "notification.email_suppressed",
-            user_id=user_id,
-            notification_id=notification_id,
-            reason="profile_missing",
-        )
         return False
     if profile.get("audit_alerts_enabled") is False:
-        _notification_log(
-            "notification.email_suppressed",
-            user_id=user_id,
-            notification_id=notification_id,
-            reason="alerts_disabled",
-        )
         return False
     recipient = str(profile.get("email") or "").strip()
     if not recipient:
-        _notification_log(
-            "notification.email_suppressed",
-            user_id=user_id,
-            notification_id=notification_id,
-            reason="recipient_missing",
-        )
         return False
     provider_message_id = await _send_resend_email(
         recipient=recipient,
         subject=subject,
         text_body=text_body,
         idempotency_key=f"notification/{notification_id}",
-    )
-    _notification_log(
-        "notification.email_sent",
-        user_id=user_id,
-        notification_id=notification_id,
-        provider_message_id=provider_message_id or None,
     )
     return True
 
@@ -2517,17 +2186,8 @@ async def _record_completed_repository_audit_notification(
         supabase_client,
         user_id=user_id,
         repository=repository,
-        reason="manual_audit_completed",
     )
-    _notification_log(
-        "manual_audit.completed_timers_bypassed",
-        user_id=user_id,
-        repository=repository,
-        folder_id=folder_id,
-        audit_id=audit_id,
-        score=score,
-        completed_at=timestamp,
-    )
+    logger.info(f"Manual audit completed for {repository}: Timer bypassed")
     notification = await _insert_notification(
         supabase_client,
         {
@@ -2543,23 +2203,7 @@ async def _record_completed_repository_audit_notification(
         },
     )
     if notification is None:
-        _notification_log(
-            "manual_audit.notification_already_exists",
-            user_id=user_id,
-            repository=repository,
-            folder_id=folder_id,
-            audit_id=audit_id,
-        )
         return
-    _notification_log(
-        "manual_audit.notification_created",
-        user_id=user_id,
-        repository=repository,
-        folder_id=folder_id,
-        audit_id=audit_id,
-        notification_id=notification.get("id"),
-        score=score,
-    )
     try:
         await _send_preference_gated_notification_email(
             supabase_client,
@@ -2569,23 +2213,11 @@ async def _record_completed_repository_audit_notification(
             text_body=f"Your audit for {repository} is ready. Overall Score: {score}/100.",
         )
     except Exception:
-        logger.exception(
-            "notification.lifecycle timestamp=%s event=manual_audit.email_failed user_id=%s repository=%s audit_id=%s",
-            _notification_timestamp_text(),
-            user_id,
-            repository,
-            audit_id,
-        )
+        logger.exception("Manual audit email delivery failed")
     try:
         await _dispatch_notification_web_push(supabase_client, notification)
     except Exception:
-        logger.exception(
-            "notification.lifecycle timestamp=%s event=manual_audit.web_push_dispatch_failed user_id=%s repository=%s audit_id=%s",
-            _notification_timestamp_text(),
-            user_id,
-            repository,
-            audit_id,
-        )
+        logger.exception("Manual audit desktop push failed")
 
 
 async def _notification_exists_since(
@@ -2672,11 +2304,7 @@ async def _process_stale_project_notifications(supabase_client: Any) -> dict[str
             ):
                 emailed += 1
         except Exception:
-            logger.exception(
-                "notification.stale_email_failed user_id=%s project_id=%s",
-                user_id,
-                repository,
-            )
+            logger.exception("Stale project email delivery failed")
     return {"created": created, "emailed": emailed}
 
 
@@ -3460,11 +3088,6 @@ async def process_github_push_event(
     """Synchronize GitHub push changes into MeliusAI workspace asset records."""
     repository = get_github_repository_full_name(payload)
     commit_sha = get_github_after_sha(payload)
-    _notification_log(
-        "webhook.push_received",
-        repository=repository,
-        commit_sha=commit_sha,
-    )
     ref = str(payload.get("ref") or "").strip()
     changes = extract_github_push_changes(payload)
     trackable_paths = sorted(
@@ -3537,11 +3160,7 @@ async def process_github_push_event(
         )
     except Exception:
         # Notification tracking must never block the existing repository sync.
-        logger.exception(
-            "notification.lifecycle timestamp=%s event=webhook.notification_tracking_failed repository=%s",
-            _notification_timestamp_text(),
-            repository,
-        )
+        logger.exception("GitHub notification tracking failed for %s", repository)
     owns_http_client = http_client is None
     active_http_client = http_client or httpx.AsyncClient(
         follow_redirects=True,
@@ -3848,12 +3467,6 @@ async def handle_github_webhook(request: Request):
     delivery_id = (
         (request.headers.get("x-github-delivery") or "").strip() or None
     )
-    _notification_log(
-        "webhook.delivery_received",
-        event_name=event_name or "unknown",
-        delivery_id=delivery_id,
-        payload_bytes=len(raw_body),
-    )
     if event_name not in {"push", "repository"}:
         return {
             "accepted": True,
@@ -3962,28 +3575,9 @@ async def process_notification_jobs(request: Request):
     service_client = get_supabase_service_client()
     if service_client is None:
         raise HTTPException(status_code=503, detail="Notification storage is not configured.")
-    _notification_log("cron.process_notifications_started")
-    try:
-        cooldowns = await _process_due_notification_cooldowns(service_client)
-        batches = await _process_due_notification_batches(service_client)
-        web_push = await _send_pending_web_push_deliveries(service_client)
-    except Exception as error:
-        _notification_log(
-            "cron.process_notifications_failed",
-            error_type=type(error).__name__,
-        )
-        raise
-    _notification_log(
-        "cron.process_notifications_completed",
-        cooldowns_created=cooldowns.get("created"),
-        cooldowns_suppressed=cooldowns.get("suppressed"),
-        batches_sent=batches.get("sent"),
-        batches_suppressed=batches.get("suppressed"),
-        batches_failed=batches.get("failed"),
-        web_push_sent=web_push.get("sent"),
-        web_push_expired=web_push.get("expired"),
-        web_push_failed=web_push.get("failed"),
-    )
+    cooldowns = await _process_due_notification_cooldowns(service_client)
+    batches = await _process_due_notification_batches(service_client)
+    web_push = await _send_pending_web_push_deliveries(service_client)
     return {"success": True, "cooldowns": cooldowns, "batches": batches, "web_push": web_push}
 
 
@@ -4604,10 +4198,7 @@ async def _dispatch_project_lifecycle_web_push(
     try:
         await _dispatch_notification_web_push(supabase_client, notification)
     except Exception:
-        logger.exception(
-            "web_push.project_lifecycle_queue_failed notification_id=%s",
-            notification.get("id"),
-        )
+        logger.exception("Project lifecycle desktop push failed")
 
 
 @app.post("/api/projects/folders", status_code=201)
@@ -8892,11 +8483,7 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
         except Exception:
             # The verified audit is authoritative; notification delivery must
             # not turn a successful user-requested audit into a failed request.
-            logger.exception(
-                "notification.audit_completion_record_failed folder_id=%s diff_id=%s",
-                folder_id,
-                diff_record["id"],
-            )
+            logger.exception("Audit completion notification failed")
         response = _repository_audit_response(committed, incremental=not baseline, no_changes=no_changes, diff_id=diff_record["id"])
         # These projections are optional and never determine the next baseline.
         try:
