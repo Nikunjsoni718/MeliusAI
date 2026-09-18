@@ -160,7 +160,7 @@ export type AuditSnapshotRow = {
   workspace_id: string;
   commit_sha: string;
   score: number;
-  score_delta: number;
+  score_delta: number | null;
   delta_summary: string;
   created_at: string;
 };

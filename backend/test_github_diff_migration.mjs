@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const modulePath = process.env.PGLITE_MODULE_PATH;
 const { PGlite } = await import(modulePath ? pathToFileURL(modulePath).href : '@electric-sql/pglite');
 const db = new PGlite();
-const migration = await readFile(new URL('../supabase/migrations/202609050001_workspace_cumulative_diffs.sql', import.meta.url), 'utf8');
+const baselineMigration = await readFile(new URL('../supabase/migrations/202609050001_workspace_cumulative_diffs.sql', import.meta.url), 'utf8');
+const severityMigration = await readFile(new URL('../supabase/migrations/202609180001_audit_severity_refactor.sql', import.meta.url), 'utf8');
 const user = '00000000-0000-0000-0000-000000000001';
 const stranger = '00000000-0000-0000-0000-000000000002';
 const workspace = '00000000-0000-0000-0000-000000000003';
@@ -22,13 +23,16 @@ try {
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     grant usage on schema auth, public to anon, authenticated, service_role;
     create table public.profiles(id uuid primary key);
-    create table public.project_folders(id uuid primary key, user_id uuid references profiles(id), evaluation_score integer,
-      score_delta integer, delta_summary text, executive_summary text, pros text[], cons text[], recommendations text[], has_been_audited boolean);
+    create table public.projects(id uuid primary key, score integer, evaluation_score integer, logic_score integer);
+    create table public.project_folders(id uuid primary key, user_id uuid references profiles(id), score integer, evaluation_score integer,
+      score_delta integer, delta_summary text, executive_summary text, pros text[], cons text[], recommendations text[], audit_findings jsonb, has_been_audited boolean);
+    create table public.audit_snapshots(id uuid primary key, workspace_id uuid, commit_sha text, score integer, score_delta integer not null default 0, delta_summary text);
     grant select on public.project_folders to authenticated;
     insert into profiles values ('${user}'), ('${stranger}');
     insert into project_folders(id, user_id) values('${workspace}', '${user}');
   `);
-  await db.exec(migration);
+  await db.exec(baselineMigration);
+  await db.exec(severityMigration);
   await db.exec('set role service_role');
   let state = await rpc('initialize_repository_baseline', [workspace, user, 'owner/repo', 'main', base]);
   check(state.baseline_version, 0);
@@ -45,9 +49,12 @@ try {
   const diff = await save();
   check((await save()).id, diff.id);
   const competing = await save(newerHead);
-  const report = { score: 80, score_delta: 5, delta_summary: 'Authorization improved.', executive_summary: 'Safer authorization.',
-    pros: ['Authorization: Owner check added.'], cons: [], recommendations: [] };
+  const report = { score: 80, delta_summary: 'Authorization controls are now isolated from presentation code.', executive_summary: 'Safer authorization boundaries are verified.',
+    pros: ['Authorization: Owner check added.'], cons: ['Session Gap: Rotation is not verified.'], recommendations: ['Rotate Session: Enforce expiration checks.'],
+    finding_impacts: { pros: [{ text: 'Authorization: Owner check added.' }], cons: [{ findingId: 'F1', text: 'Session Gap: Rotation is not verified.', severity: 'WARNING' }], recommendations: [{ findingId: 'F1', text: 'Rotate Session: Enforce expiration checks.', impactArea: 'security' }] } };
   await mustFail(() => rpc('finalize_verified_audit', [diff.id, stranger, 0, report]), /WORKSPACE_NOT_FOUND/);
+  await mustFail(() => rpc('finalize_verified_audit', [diff.id, user, 0, { ...report, score: 12 }]), /INVALID_DIFF/);
+  await mustFail(() => rpc('finalize_verified_audit', [diff.id, user, 0, { ...report, score: 99 }]), /INVALID_DIFF/);
 
   // Failure of the UI projection rolls back every verification write.
   await db.exec('reset role; alter table project_folders add constraint simulated_projection_failure check(evaluation_score < 80); set role service_role;');
@@ -56,7 +63,7 @@ try {
   check((await db.query('select baseline_version from workspace_repository_states')).rows[0].baseline_version, 0);
   await db.exec('reset role; alter table project_folders drop constraint simulated_projection_failure; set role service_role;');
   check(await rpc('finalize_verified_audit', [diff.id, user, 0, report]), report);
-  check(await rpc('finalize_verified_audit', [diff.id, user, 0, { ...report, score: 12 }]), report);
+  check(await rpc('finalize_verified_audit', [diff.id, user, 0, report]), report);
   await mustFail(() => rpc('finalize_verified_audit', [competing.id, user, 0, report]), /VERIFY_CONFLICT/);
   state = (await db.query('select * from workspace_repository_states')).rows[0];
   check(state.last_verified_commit_sha, head);
@@ -70,7 +77,7 @@ try {
   // The next window begins at the head captured by the winning verification.
   const next = await save(newerHead, { total_insertions: 0, total_deletions: 0, files: [] }, 1, head);
   check(next.base_sha, head);
-  await rpc('finalize_verified_audit', [next.id, user, 1, { ...report, score_delta: 0 }]);
+  await rpc('finalize_verified_audit', [next.id, user, 1, report]);
   await mustFail(() => rpc('finalize_verified_audit', [diff.id, user, 0, report]), /VERIFY_CONFLICT/);
 
   await db.exec('reset role; set role authenticated;');

@@ -17,11 +17,11 @@ else:
 
 @unittest.skipIf(main is None, f"Backend dependencies are unavailable: {BACKEND_IMPORT_ERROR}")
 class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
-    def test_notification_timing_uses_a_1_minute_cooldown_and_150_minute_batch(self):
-        self.assertEqual(main.NOTIFICATION_COOLDOWN_MINUTES, 1)
+    def test_notification_timing_uses_a_25_minute_cooldown_and_150_minute_batch(self):
+        self.assertEqual(main.NOTIFICATION_COOLDOWN_MINUTES, 25)
         self.assertEqual(main.NOTIFICATION_EMAIL_BATCH_MINUTES, 150)
 
-    async def test_cooldown_deadline_uses_1_minute(self):
+    async def test_cooldown_deadline_uses_25_minutes(self):
         query = Mock()
         query.upsert.return_value = query
         query.execute.return_value = SimpleNamespace(data=[])
@@ -38,7 +38,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         )
 
         payload = query.upsert.call_args.args[0]
-        self.assertEqual(payload["scheduled_at"], "2026-09-17T12:01:00+00:00")
+        self.assertEqual(payload["scheduled_at"], "2026-09-17T12:25:00+00:00")
 
     async def test_qualifying_push_logs_the_short_debounce_milestone(self):
         update = AsyncMock()
@@ -59,7 +59,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
             )
 
         captured_logger.info.assert_called_once_with(
-            "Started 1-minute debounce timer for owner/repository"
+            "Started 25-minute debounce timer for owner/repository"
         )
 
     async def test_batch_deadline_uses_150_minutes(self):
@@ -84,7 +84,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         source = Path(main.__file__).read_text(encoding="utf-8")
         self.assertNotIn("_notification_log", source)
         self.assertNotIn("notification.lifecycle", source)
-        self.assertIn('logger.info(f"Started 1-minute debounce timer for {repository}")', source)
+        self.assertIn('logger.info(f"Started 25-minute debounce timer for {repository}")', source)
         self.assertIn('logger.info(f"Timer expired for {repository}: Desktop push queued")', source)
         self.assertIn('logger.info(f"Manual audit completed for {repository}: Timer bypassed")', source)
 

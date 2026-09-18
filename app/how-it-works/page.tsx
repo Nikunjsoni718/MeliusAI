@@ -37,7 +37,7 @@ function AiEngineMockup() {
         <div className="h-2 w-7/12 rounded-full bg-slate-700" />
       </div>
       <div className="mt-8 rounded-xl border border-slate-800 bg-slate-900/70 p-4 text-sm leading-6 text-slate-300">
-        Deducting exact points for race conditions, missing guards, and weak type boundaries.
+        Classifying verified risks by security, reliability, performance, and architectural impact.
       </div>
     </div>
   );
@@ -99,7 +99,7 @@ export default function Page() {
               2. The AI Audits the Logic
             </h2>
             <p className="mt-6 text-lg leading-8 text-slate-400">
-              The Melius engine scans the work line-by-line, issuing a ruthless, deduction-based score out of 100.
+              The Melius engine scans the work line-by-line, producing evidence-based engineering findings and directives.
             </p>
           </div>
           <div className="w-full md:w-1/2">

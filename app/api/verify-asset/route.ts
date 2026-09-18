@@ -24,15 +24,18 @@ type VerifyAssetPayload = {
 type AuditPayload = {
   ai_summary: string;
   score: number;
-  score_delta: number;
   delta_summary: string;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
   finding_impacts: {
     pros: Array<{ text: string }>;
-    cons: Array<{ deductionId: string; text: string; impactScore: number }>;
-    recommendations: Array<{ deductionId: string; text: string }>;
+    cons: Array<{ findingId: string; text: string; severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION' }>;
+    recommendations: Array<{
+      findingId: string;
+      text: string;
+      impactArea: 'security' | 'reliability' | 'performance' | 'maintainability' | 'operability';
+    }>;
   };
 };
 
@@ -412,7 +415,7 @@ async function persistAuditResult({
       score: audit.score,
       evaluation_score: audit.score,
       logic_score: audit.score,
-      score_delta: audit.score_delta,
+      score_delta: null,
       delta_summary: audit.delta_summary,
       audit_summary: audit.ai_summary,
       ai_summary: audit.ai_summary,
@@ -526,7 +529,6 @@ export async function POST(request: Request) {
     const audit: AuditPayload = {
       ai_summary: result.aiSummary,
       score: result.score,
-      score_delta: result.scoreDelta,
       delta_summary: result.deltaSummary,
       strengths: result.strengths,
       weaknesses: result.weaknesses,

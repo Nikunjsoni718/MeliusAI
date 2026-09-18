@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
-import { normalizeAuditReport, type AuditFinding } from '@/lib/audit-report-normalizer';
+import { normalizeAuditReport, type AuditFinding, type AuditSeverity } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -74,7 +74,7 @@ const auditTextFileExtensions = new Set([
   'yml',
 ]);
 const previewProjectSelect =
-  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, score_delta, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
+  'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
 
 export type PreviewProject = {
   id?: string;
@@ -96,7 +96,6 @@ export type PreviewProject = {
   ai_summary?: string | null;
   audit_summary?: string | null;
   score?: number | null;
-  score_delta?: number | null;
   delta_summary?: string | null;
   evaluation_score?: number | null;
   has_been_audited?: boolean | null;
@@ -158,7 +157,6 @@ type VerifyAssetResponse = {
   executive_summary?: string;
   summary?: string;
   score?: number;
-  score_delta?: number | null;
   delta_summary?: string | null;
   previous_score?: number;
   last_improved_summary?: string;
@@ -180,14 +178,13 @@ type PendingAuditUpdate = {
   projectId: string;
   patch: Partial<PreviewProject>;
   score: number | null;
-  scoreDelta: number | null;
   deltaSummary: string | null;
 };
 
 function getAuditScore(project: PreviewProject) {
   for (const value of [project.evaluation_score, project.score, project.logic_score]) {
     if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
+      return Math.max(0, Math.min(98, Math.round(value)));
     }
   }
 
@@ -203,7 +200,6 @@ function getDeltaSummary(project: PreviewProject) {
 function confirmsPendingAuditUpdate(project: PreviewProject, pendingUpdate: PendingAuditUpdate) {
   return (
     getAuditScore(project) === pendingUpdate.score &&
-    (project.score_delta ?? null) === pendingUpdate.scoreDelta &&
     getDeltaSummary(project) === pendingUpdate.deltaSummary
   );
 }
@@ -307,72 +303,24 @@ function getProjectAssetText(project: PreviewProject | null | undefined, preview
   );
 }
 
-function MetricList({
-  title,
-  tone,
-  items,
-  deductions = [],
-}: {
-  title: string;
-  tone: 'emerald' | 'rose' | 'sky';
-  items: AuditFinding[];
-  deductions?: AuditFinding[];
-}) {
+function MetricList({ title, items }: { title: string; items: AuditFinding[] }) {
   const toneClasses = {
-    emerald: {
-      card: 'border-emerald-500/15 bg-emerald-500/[0.04]',
-      heading: 'text-emerald-300',
-      marker: 'text-emerald-300',
-      badge: 'bg-emerald-500/10 text-emerald-400',
-    },
-    rose: {
-      card: 'border-rose-500/15 bg-rose-500/[0.04]',
-      heading: 'text-rose-300',
-      marker: 'text-rose-300',
-      badge: 'bg-rose-500/10 text-rose-400',
-    },
-    sky: {
-      card: 'border-cyan-500/15 bg-cyan-500/[0.04]',
-      heading: 'text-cyan-300',
-      marker: 'text-cyan-300',
-      badge: 'bg-sky-500/10 text-sky-400',
-    },
-  };
-  const recoveryByDeductionId = new Map(
-    deductions
-      .filter(
-        (finding): finding is AuditFinding & { deductionId: string; impactScore: number } =>
-          typeof finding.deductionId === 'string' && typeof finding.impactScore === 'number' && finding.impactScore < 0
-      )
-      .map((finding) => [finding.deductionId, Math.abs(finding.impactScore)])
-  );
-  const getBadgeLabel = (item: AuditFinding) => {
-    if (tone === 'rose' && typeof item.impactScore === 'number' && item.impactScore < 0) {
-      return `${item.impactScore} pts`;
-    }
-    if (tone === 'sky' && item.deductionId) {
-      const recoveryPoints = recoveryByDeductionId.get(item.deductionId);
-      return recoveryPoints ? `+${recoveryPoints} pts` : null;
-    }
-    return null;
+    card: 'border-emerald-500/15 bg-emerald-500/[0.04]',
+    heading: 'text-emerald-300',
+    marker: 'text-emerald-300',
   };
 
   return (
-    <div className={`rounded-xl border p-4 ${toneClasses[tone].card}`}>
-      <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses[tone].heading}`}>{title}</h4>
+    <div className={`rounded-xl border p-4 ${toneClasses.card}`}>
+      <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses.heading}`}>{title}</h4>
       <ul className="mt-3 space-y-2">
         {items.length > 0 ? (
           items.map((item, index) => (
             <li key={`${title}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-300">
-              <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses[tone].marker}`}>
-                {tone === 'emerald' ? '✓' : '•'}
+              <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses.marker}`}>
+                ✓
               </span>
               <span className="min-w-0 flex-1">{item.text}</span>
-              {getBadgeLabel(item) ? (
-                <span className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-xs font-semibold ${toneClasses[tone].badge}`}>
-                  {getBadgeLabel(item)}
-                </span>
-              ) : null}
             </li>
           ))
         ) : (
@@ -380,6 +328,76 @@ function MetricList({
         )}
       </ul>
     </div>
+  );
+}
+
+const severityPresentation: Record<AuditSeverity, { title: string; badge: string; panel: string }> = {
+  CRITICAL: {
+    title: 'Critical Findings',
+    badge: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
+    panel: 'border-rose-500/20 bg-rose-500/[0.045]',
+  },
+  WARNING: {
+    title: 'Warnings',
+    badge: 'border-amber-400/30 bg-amber-400/10 text-amber-100',
+    panel: 'border-amber-500/20 bg-amber-500/[0.045]',
+  },
+  OPTIMIZATION: {
+    title: 'Optimizations',
+    badge: 'border-sky-400/30 bg-sky-400/10 text-sky-100',
+    panel: 'border-sky-500/20 bg-sky-500/[0.045]',
+  },
+};
+
+function EngineeringFindings({ items }: { items: AuditFinding[] }) {
+  const grouped = (['CRITICAL', 'WARNING', 'OPTIMIZATION'] as const).map((severity) => ({
+    severity,
+    items: items.filter((item) => (item.severity ?? 'WARNING') === severity),
+  }));
+
+  return (
+    <section className="rounded-xl border border-slate-700/80 bg-slate-950/40 p-4">
+      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">Engineering Findings</h4>
+      <div className="mt-3 space-y-3">
+        {grouped.some((group) => group.items.length > 0) ? grouped.map((group) => {
+          if (group.items.length === 0) return null;
+          const presentation = severityPresentation[group.severity];
+          return (
+            <div key={group.severity} className={`rounded-lg border p-3 ${presentation.panel}`}>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">{presentation.title}</p>
+              <ul className="mt-2 space-y-2">
+                {group.items.map((item, index) => (
+                  <li key={`${group.severity}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-200">
+                    <span className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${presentation.badge}`}>
+                      [{group.severity}]
+                    </span>
+                    <span>{item.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        }) : <p className="text-xs italic text-slate-500">No verified findings were generated.</p>}
+      </div>
+    </section>
+  );
+}
+
+function EngineeringDirectives({ items }: { items: AuditFinding[] }) {
+  return (
+    <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4">
+      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">Engineering Directives</h4>
+      <ul className="mt-3 space-y-2">
+        {items.length > 0 ? items.map((item, index) => (
+          <li key={`directive-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-200">
+            <span className="mt-0.5 shrink-0 rounded border border-cyan-400/25 bg-cyan-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase text-cyan-100">
+              {item.impactArea ?? 'maintainability'} impact
+            </span>
+            <span>{item.text}</span>
+          </li>
+        )) : <li className="text-xs italic text-slate-500">No directives generated yet.</li>}
+      </ul>
+    </section>
   );
 }
 
@@ -444,7 +462,6 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  const scoreDelta = liveProject?.score_delta ?? null;
   const deltaSummary = liveProject?.delta_summary?.trim() || null;
   const pros = normalizedAudit.findings.strengths;
   const cons = normalizedAudit.findings.weaknesses;
@@ -731,12 +748,6 @@ export function AssetPreviewModal({
           liveProject.last_improved_summary,
         previous_score:
           data.previous_score ?? data.project?.previous_score ?? liveProject.previous_score,
-        score_delta:
-          data.score_delta !== undefined
-            ? data.score_delta
-            : data.project?.score_delta !== undefined
-              ? data.project.score_delta
-              : liveProject.score_delta,
         delta_summary:
           data.delta_summary !== undefined
             ? data.delta_summary
@@ -751,7 +762,6 @@ export function AssetPreviewModal({
         projectId,
         patch: projectPatch,
         score: getAuditScore(updatedProject),
-        scoreDelta: updatedProject.score_delta ?? null,
         deltaSummary: getDeltaSummary(updatedProject),
       };
       projectRefreshRevisionRef.current += 1;
@@ -885,10 +895,10 @@ export function AssetPreviewModal({
             </p>
           </div>
 
-          {scoreDelta !== null && deltaSummary ? (
+          {deltaSummary ? (
             <section className="rounded-xl border border-cyan-400/25 bg-gradient-to-r from-cyan-500/10 via-blue-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(34,211,238,0.08)]">
               <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
-                Recent Changes
+                Audit Change Summary
               </h3>
               <p className="mt-3 text-sm leading-relaxed text-slate-200">{deltaSummary}</p>
             </section>
@@ -922,9 +932,9 @@ export function AssetPreviewModal({
               disabled={!liveProject?.id}
               data-tour="share-score"
               className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label={`Share your ${score} out of 100 MeliusAI audit score`}
+              aria-label={`Share your ${score} out of 100 MeliusAI engineering audit`}
             >
-              Share Score
+              Share Audit
             </button>
 
             {canVerify && (!isFolder || (onReAudit && !isWorkspaceAuditEmptyState)) ? (
@@ -981,25 +991,16 @@ export function AssetPreviewModal({
                     <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
                   </div>
                 </div>
-                {scoreDelta !== null ? (
-                  <div
-                    className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
-                      scoreDelta > 0
-                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                        : scoreDelta < 0
-                          ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
-                          : 'border-slate-700 bg-slate-800/70 text-slate-300'
-                    }`}
-                    title="Change from the previous audit"
-                  >
-                    {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
-                  </div>
+                {score >= 96 ? (
+                  <p className="text-center text-[10px] leading-4 text-slate-400">
+                    Baseline engineering standards met. Continued architectural review is recommended.
+                  </p>
                 ) : null}
               </div>
 
               <section className="w-full rounded-xl border border-cyan-400/20 bg-cyan-500/[0.04] px-6 py-8 text-center shadow-[0_0_28px_rgba(34,211,238,0.06)]">
                 <p className="mx-auto max-w-2xl text-sm leading-6 text-slate-300">
-                  Score is based on the average of files in this workspace. To get an architectural breakdown, highlights, and actionable steps, run a full workspace audit.
+                  This preliminary assessment is based on the workspace file average. Run a full workspace audit for evidence-based findings and engineering directives.
                 </p>
                 {canVerify && onReAudit ? (
                   <button
@@ -1035,26 +1036,17 @@ export function AssetPreviewModal({
                     <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
                   </div>
                 </div>
-                {scoreDelta !== null ? (
-                  <div
-                    className={`rounded-full border px-3 py-1 text-[11px] font-bold tracking-wide ${
-                      scoreDelta > 0
-                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                        : scoreDelta < 0
-                          ? 'border-rose-400/30 bg-rose-400/10 text-rose-300'
-                          : 'border-slate-700 bg-slate-800/70 text-slate-300'
-                    }`}
-                    title="Change from the previous audit"
-                  >
-                    {scoreDelta > 0 ? '+' : ''}{scoreDelta} pts
-                  </div>
+                {score >= 96 ? (
+                  <p className="text-center text-[10px] leading-4 text-slate-400">
+                    Baseline engineering standards met. Continued architectural review is recommended.
+                  </p>
                 ) : null}
               </div>
 
               <div className="grid gap-3 md:grid-cols-3">
-                <MetricList title="Highlights" tone="emerald" items={pros} />
-                <MetricList title="Areas for Improvement" tone="rose" items={cons} />
-                <MetricList title="Actionable Steps" tone="sky" items={recommendations} deductions={cons} />
+                <MetricList title="Verified Strengths" items={pros} />
+                <EngineeringFindings items={cons} />
+                <EngineeringDirectives items={recommendations} />
               </div>
             </div>
           )}

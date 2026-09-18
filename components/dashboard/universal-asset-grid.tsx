@@ -285,7 +285,7 @@ function getAssetScore(project: ProjectRow) {
   const score = project.evaluation_score ?? project.logic_score ?? project.score ?? null;
 
   return typeof score === 'number' && Number.isFinite(score)
-    ? Math.max(0, Math.min(100, Math.round(score)))
+    ? Math.max(0, Math.min(98, Math.round(score)))
     : null;
 }
 
@@ -318,7 +318,7 @@ function getFolderScore(folder: ProjectFolderWithFiles, projects: ProjectRow[]) 
         : Number.NaN;
 
   if (Number.isFinite(numericFolderScore)) {
-    return Math.max(0, Math.min(100, Math.round(numericFolderScore)));
+    return Math.max(0, Math.min(98, Math.round(numericFolderScore)));
   }
 
   return getAverageScore(projects);
@@ -745,7 +745,7 @@ function UniversalAssetCard({
               </span>
               {score !== null ? (
                 <span className="rounded-md border border-slate-800/80 bg-slate-950/60 px-2.5 py-0.5 text-[11px] font-medium tracking-wide text-slate-400">
-                  Score: {score}/100
+                  Audit: {score}/100
                 </span>
               ) : null}
             </div>
@@ -1057,7 +1057,6 @@ export function UniversalAssetGrid({
           activePreviewFolderItem.folder,
           activePreviewFolderItem.assets
         ),
-        score_delta: activePreviewFolderItem.folder.score_delta ?? null,
         delta_summary: activePreviewFolderItem.folder.delta_summary ?? null,
         executive_summary: getFolderSummary(activePreviewFolderItem.folder) || null,
         audit_summary: getFolderSummary(activePreviewFolderItem.folder),

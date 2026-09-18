@@ -25,7 +25,7 @@ const steps = [
   {
     step: '03',
     title: 'Verify',
-    summary: 'MeliusAI translates work into a score, goods vs. bads, a roadmap, and company-specific readiness gaps.',
+    summary: 'MeliusAI translates work into an evidence-based assessment, engineering findings, directives, and company-specific readiness gaps.',
     details: [
       'Verification focuses on explainable signal instead of vague hype.',
       'The Ready Meter shows exactly what still blocks a target role.',

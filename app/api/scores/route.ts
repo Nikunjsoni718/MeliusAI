@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
       description: rawAssetContent,
       aboutText: profile?.bio ?? '',
     });
-    const computed_score = Math.round(Number.parseFloat(String(analysis.logicScore)));
+    const computed_score = Math.max(15, Math.min(98, Math.round(Number.parseFloat(String(analysis.logicScore)))));
 
     if (!Number.isFinite(computed_score)) {
       throw new Error('Industrial evaluation suite returned an invalid computed_score metric.');
@@ -163,6 +163,7 @@ export async function POST(request: NextRequest) {
         .filter(Boolean)
         .join(' '),
       audit_summary: analysis.audit.summary,
+      audit_findings: analysis.audit.findingImpacts,
       has_been_audited: true,
       ai_summary: JSON.stringify(analysis.audit),
       file_url: fileUrl ?? `meliusai://dynamic-ingestion/${traceId}`,

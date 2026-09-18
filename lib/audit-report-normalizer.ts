@@ -7,10 +7,16 @@ export type NormalizedAuditReport = {
   findings: NormalizedAuditFindings;
 };
 
+export const AUDIT_SCORE_CEILING = 98;
+
+export type AuditSeverity = 'CRITICAL' | 'WARNING' | 'OPTIMIZATION';
+export type AuditImpactArea = 'security' | 'reliability' | 'performance' | 'maintainability' | 'operability';
+
 export type AuditFinding = {
   text: string;
-  impactScore?: number;
-  deductionId?: string;
+  findingId?: string;
+  severity?: AuditSeverity;
+  impactArea?: AuditImpactArea;
 };
 
 export type NormalizedAuditFindings = {
@@ -197,6 +203,40 @@ function cleanListLine(line: string) {
     .trim();
 }
 
+function normalizeSeverity(value: unknown): AuditSeverity | undefined {
+  const severity = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return severity === 'CRITICAL' || severity === 'WARNING' || severity === 'OPTIMIZATION'
+    ? severity
+    : undefined;
+}
+
+function normalizeImpactArea(value: unknown): AuditImpactArea | undefined {
+  const impactArea = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return impactArea === 'security' ||
+    impactArea === 'reliability' ||
+    impactArea === 'performance' ||
+    impactArea === 'maintainability' ||
+    impactArea === 'operability'
+    ? impactArea
+    : undefined;
+}
+
+function severityFromLegacyImpact(value: unknown): AuditSeverity | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value >= 0) {
+    return undefined;
+  }
+
+  if (value <= -15) {
+    return 'CRITICAL';
+  }
+
+  if (value <= -6) {
+    return 'WARNING';
+  }
+
+  return 'OPTIMIZATION';
+}
+
 export function normalizeAuditList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
@@ -235,20 +275,18 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     return null;
   }
 
-  const rawImpactScore = record.impactScore ?? record.impact_score;
-  const impactScore =
-    typeof rawImpactScore === 'number' && Number.isInteger(rawImpactScore) && rawImpactScore !== 0
-      ? rawImpactScore
-      : undefined;
-  const rawDeductionId = record.deductionId ?? record.deduction_id;
-  const deductionId = typeof rawDeductionId === 'string' && rawDeductionId.trim()
-    ? rawDeductionId.trim()
+  const rawFindingId = record.findingId ?? record.finding_id ?? record.deductionId ?? record.deduction_id;
+  const findingId = typeof rawFindingId === 'string' && rawFindingId.trim()
+    ? rawFindingId.trim()
     : undefined;
+  const severity = normalizeSeverity(record.severity) ?? severityFromLegacyImpact(record.impactScore ?? record.impact_score);
+  const impactArea = normalizeImpactArea(record.impactArea ?? record.impact_area);
 
   return {
     text: record.text.trim(),
-    ...(impactScore !== undefined ? { impactScore } : {}),
-    ...(deductionId !== undefined ? { deductionId } : {}),
+    ...(findingId !== undefined ? { findingId } : {}),
+    ...(severity !== undefined ? { severity } : {}),
+    ...(impactArea !== undefined ? { impactArea } : {}),
   };
 }
 
@@ -318,7 +356,7 @@ function getScore(sources: Record<string, unknown>[], reportTexts: string[]) {
       const score = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
 
       if (Number.isFinite(score)) {
-        scores.push(Math.max(0, Math.min(100, Math.round(score))));
+        scores.push(Math.max(0, Math.min(AUDIT_SCORE_CEILING, Math.round(score))));
       }
     }
   }
@@ -332,7 +370,7 @@ function getScore(sources: Record<string, unknown>[], reportTexts: string[]) {
   for (const reportText of reportTexts) {
     const match = reportText.match(/(?:score[^\n]*?[:\s])?(\d{1,3})\s*\/\s*100/i);
     if (match) {
-      return Math.max(0, Math.min(100, Number.parseInt(match[1], 10)));
+      return Math.max(0, Math.min(AUDIT_SCORE_CEILING, Number.parseInt(match[1], 10)));
     }
   }
 

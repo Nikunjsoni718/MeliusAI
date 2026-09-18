@@ -1,43 +1,43 @@
 function normalizeAuditScore(score: number) {
   if (!Number.isFinite(score)) return 0;
-  return Math.max(0, Math.min(100, score));
+  return Math.max(0, Math.min(98, score));
 }
 
 export function getMotivationalMessage(score: number) {
   const normalizedScore = normalizeAuditScore(score);
 
-  if (normalizedScore >= 90) {
-    return 'Outstanding work! 🌟 Your architecture is exceptionally clean and production-ready. You earned these bragging rights—hit share! 🚀';
+  if (normalizedScore >= 96) {
+    return 'Baseline engineering standards are met. Continue reviewing architectural and operational trade-offs as the system evolves.';
   }
 
   if (normalizedScore >= 80) {
-    return 'Great code! 👏 You are just a few minor tweaks away from that 90+ bracket. Fix the bugs, re-audit, and claim your bragging rights! 🔄';
+    return 'The assessment identified material warnings. Prioritize their verified impact before expanding scope.';
   }
 
   if (normalizedScore >= 70) {
-    return 'Solid effort! 👍 The foundation is definitely there. Implement a few of the suggested refactors below and you will see a massive jump in your score. 📈';
+    return 'The foundation is usable, but multiple risks require deliberate remediation and follow-up verification.';
   }
 
   if (normalizedScore >= 50) {
-    return 'Good start, but there is room to grow. 🌱 Focus on the core logic and security fixes highlighted below to drastically improve your next audit. 🛠️';
+    return 'Address the critical finding before treating this implementation as production-ready.';
   }
 
-  return "Every great project starts with a rough draft! 📝 Read the roast, tackle the critical fixes first, and let's see how much you improve on the next run. 💪";
+  return 'Multiple critical findings require fundamental remediation before production deployment.';
 }
 
 export function getShareText(score: number) {
   const normalizedScore = normalizeAuditScore(score);
   const displayedScore = Math.round(normalizedScore);
 
-  if (normalizedScore >= 90) {
-    return `I just scored a top-tier ${displayedScore}/100 on my code architecture using MeliusAI! 🏆 Think your code can beat mine? Check it out:`;
+  if (normalizedScore >= 96) {
+    return `MeliusAI completed an evidence-based engineering audit of this codebase: ${displayedScore}/100. Review the verified findings and directives:`;
   }
 
   if (normalizedScore >= 70) {
-    return `Just audited my code with MeliusAI and scored a solid ${displayedScore}/100. 🛠️ Time to refactor and hit that 90+ club. Audit yours here:`;
+    return `MeliusAI completed an engineering audit of this codebase: ${displayedScore}/100. The report identifies prioritized technical risks:`;
   }
 
-  return `MeliusAI just humbled my codebase with a ${displayedScore}/100... 😅 Back to the drawing board! See if it roasts your code too:`;
+  return `MeliusAI completed an engineering audit of this codebase: ${displayedScore}/100. Critical remediation is documented in the report:`;
 }
 
 export function getMotivationalBannerClassName(score: number) {

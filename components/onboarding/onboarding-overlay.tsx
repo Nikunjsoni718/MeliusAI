@@ -71,9 +71,9 @@ const stepContent = {
     description: 'Enter your background so the AI can accurately evaluate your code.',
   },
   3: {
-    eyebrow: 'Repository baseline',
+    eyebrow: 'Repository audit',
     title: 'Final Step: Initialize Workspace',
-    description: 'Upload a code folder or repository to generate your baseline score.',
+    description: 'Upload a code folder or repository to generate an evidence-based engineering audit.',
   },
 } as const;
 

@@ -79,7 +79,7 @@ export function ProjectFolderCard({
                 WORKSPACE
               </span>
               <span className="rounded-md border border-slate-800/80 bg-slate-950/60 px-2.5 py-0.5 text-[11px] font-medium tracking-wide text-slate-400">
-                {averageScore !== null ? `Score: ${averageScore}/100` : fileLabel}
+                {averageScore !== null ? `Audit: ${Math.max(0, Math.min(98, Math.round(averageScore)))}/100` : fileLabel}
               </span>
             </div>
 

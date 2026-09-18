@@ -19,7 +19,7 @@ export function DifferencePage() {
               <Badge variant="accent" className="w-fit">Verified Logic</Badge>
               <CardTitle className="text-3xl">Explainable, proof-first, and tied to real work.</CardTitle>
               <CardDescription className="text-base leading-7">
-                MeliusAI evaluates projects, artifacts, and portfolio signal directly, then shows goods, bads, and readiness in plain language.
+                MeliusAI evaluates projects, artifacts, and portfolio signal directly, then presents verified strengths, engineering findings, and remediation priorities in plain language.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3">

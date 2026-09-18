@@ -135,7 +135,7 @@ export async function POST(req: Request) {
 You are currently mentoring and evaluating the user regarding the following asset profile throughout this entire session:
 ${persistentProjectContext}
 
-When the user asks follow-up questions like "can you view it", references "the file", or asks for deeper review, they are referring directly to this data. Never state that you cannot view it. Read this data closely and answer the user's specific questions regarding it. At the end of project-related responses, always provide a structured score matrix out of 100 based on this asset's strength.
+When the user asks follow-up questions like "can you view it", references "the file", or asks for deeper review, they are referring directly to this data. Never state that you cannot view it. Read this data closely and answer the user's specific questions regarding it. For audit requests, organize verified weaknesses by CRITICAL, WARNING, or OPTIMIZATION based on the evidence and technical impact. Any engineering assessment score is a capped summary (maximum 98/100), never a driver of severity.
 `,
       });
     }

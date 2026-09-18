@@ -39,7 +39,7 @@ function freezeScoreArcs(captureTarget: HTMLElement) {
 
     if (scoreArc instanceof SVGElement) {
       const rawScore = Number(scoreArc.dataset.score ?? 0);
-      const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : 0;
+      const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(98, rawScore)) : 0;
 
       scoreArc.setAttribute('pathLength', '100');
       scoreArc.setAttribute('stroke-dasharray', `${score} ${100 - score}`);

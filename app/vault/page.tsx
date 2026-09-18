@@ -16,9 +16,8 @@ import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
 } from '@/lib/audit-motivation';
-import { normalizeAuditReport } from '@/lib/audit-report-normalizer';
+import { normalizeAuditReport, type AuditFinding, type AuditSeverity } from '@/lib/audit-report-normalizer';
 import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
-import { extractEvaluationScore, streamAssetAudit } from '@/lib/client-agent-audit';
 import { fetchSpectateProfileResponse, getSpectateProfileErrorMessage } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
@@ -31,6 +30,22 @@ type VaultAuditReport = {
   summary: string;
   architecturalAssets: string[];
   architecturalVulnerabilities: string[];
+  findings: AuditFinding[];
+  directives: AuditFinding[];
+};
+
+const severityOrder: AuditSeverity[] = ['CRITICAL', 'WARNING', 'OPTIMIZATION'];
+
+const severityLabels: Record<AuditSeverity, string> = {
+  CRITICAL: 'Critical Findings',
+  WARNING: 'Warnings',
+  OPTIMIZATION: 'Optimizations',
+};
+
+const severityPillClassNames: Record<AuditSeverity, string> = {
+  CRITICAL: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
+  WARNING: 'border-amber-400/40 bg-amber-500/10 text-amber-100',
+  OPTIMIZATION: 'border-sky-400/40 bg-sky-500/10 text-sky-100',
 };
 
 type VaultToastState = {
@@ -167,9 +182,9 @@ type SpectatorVaultResponse = {
 };
 
 const VAULT_PROJECT_CARD_SELECT =
-  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, score_delta, delta_summary, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id, github_repository';
+  'id, user_id, name, file_url, file_type, created_at, logic_score, ai_summary, is_public, description, evaluation_score, has_been_audited, score, delta_summary, audit_summary, pros, cons, recommendations, audit_findings, status, title, file_size, folder_id, github_repository';
 const VAULT_FOLDER_SELECT =
-  'id, user_id, name, score, evaluation_score, score_delta, delta_summary, executive_summary, pros, cons, recommendations, audit_findings, has_been_audited, created_at, updated_at';
+  'id, user_id, name, score, evaluation_score, delta_summary, executive_summary, pros, cons, recommendations, audit_findings, has_been_audited, created_at, updated_at';
 
 const vaultDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -560,6 +575,9 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
       architectural_vulnerabilities?: unknown;
       architecturalAssets?: unknown;
       architecturalVulnerabilities?: unknown;
+      findings?: unknown;
+      directives?: unknown;
+      findingImpacts?: unknown;
       breakdown?: {
         strengths?: unknown;
         weaknesses?: unknown;
@@ -595,12 +613,32 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
             : normalizeAuditList(parsed.breakdown?.vulnerabilities).length > 0
               ? normalizeAuditList(parsed.breakdown?.vulnerabilities)
               : normalizeAuditList(parsed.breakdown?.weaknesses);
-
-    return {
+    const normalizedFindings = normalizeAuditReport({
       score,
       summary,
+      strengths: architecturalAssets,
+      weaknesses: parsed.findings ?? architecturalVulnerabilities,
+      recommendations: parsed.directives,
+      audit_findings: parsed.findingImpacts ?? project.audit_findings,
+    });
+    const findings = normalizedFindings.findings.weaknesses.map((finding) => ({
+      ...finding,
+      severity: finding.severity ?? 'WARNING' as const,
+    }));
+    const directives = normalizedFindings.findings.recommendations.map((directive) => ({
+      ...directive,
+      impactArea: directive.impactArea ?? 'maintainability' as const,
+    }));
+
+    return {
+      score: normalizedFindings.score ?? score,
+      summary,
       architecturalAssets,
-      architecturalVulnerabilities,
+      architecturalVulnerabilities: normalizedFindings.weaknesses.length > 0
+        ? normalizedFindings.weaknesses
+        : architecturalVulnerabilities,
+      findings,
+      directives,
     };
   } catch {
     const payload = project.ai_summary?.trim() ?? '';
@@ -613,8 +651,22 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
       fallbackSummary;
     const scoreMatch = payload.match(/(?:logic[_\s]?score|score)\s*[:=]\s*(\d{1,3})/i);
 
-    return {
+    const normalizedFindings = normalizeAuditReport({
       score: scoreMatch ? Number(scoreMatch[1]) : fallbackScore,
+      ai_summary: payload,
+      audit_findings: project.audit_findings,
+    });
+    const findings = normalizedFindings.findings.weaknesses.map((finding) => ({
+      ...finding,
+      severity: finding.severity ?? 'WARNING' as const,
+    }));
+    const directives = normalizedFindings.findings.recommendations.map((directive) => ({
+      ...directive,
+      impactArea: directive.impactArea ?? 'maintainability' as const,
+    }));
+
+    return {
+      score: normalizedFindings.score,
       summary: fallbackSummaryText || fallbackSummary,
       architecturalAssets: extractSectionItems(
         payload,
@@ -622,6 +674,8 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
         /architectural\s+vulnerabilities\s*[:\-]*/i
       ),
       architecturalVulnerabilities: extractSectionItems(payload, /architectural\s+vulnerabilities\s*[:\-]*/i),
+      findings,
+      directives,
     };
   }
 }
@@ -844,6 +898,10 @@ function AuditReportModal({
     report && report.architecturalVulnerabilities.length > 0
       ? report.architecturalVulnerabilities
       : ['This audit payload did not include a structured architectural vulnerability stream.'];
+  const categorizedFindings = severityOrder.map((severity) => ({
+    severity,
+    findings: report?.findings.filter((finding) => finding.severity === severity) ?? [],
+  }));
 
   return (
     <AnimatePresence>
@@ -885,10 +943,16 @@ function AuditReportModal({
                   </p>
                 </div>
                 <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-right shadow-[0_0_24px_rgba(34,211,238,0.12)]">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-cyan-300">Score</p>
-                  <p className="mt-1 text-2xl font-semibold text-white">{report.score ?? '--'}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-cyan-300">Engineering Assessment</p>
+                  <p className="mt-1 text-2xl font-semibold text-white">{report.score ?? '--'}<span className="ml-1 text-xs font-medium text-cyan-200/70">/100</span></p>
                 </div>
               </div>
+
+              {typeof report.score === 'number' && report.score >= 96 ? (
+                <p className="text-xs leading-5 text-slate-400">
+                  Baseline engineering standards met. Continued architectural review is recommended.
+                </p>
+              ) : null}
 
               <div
                 role="status"
@@ -931,6 +995,54 @@ function AuditReportModal({
                   </ul>
                 </div>
               </div>
+
+              {categorizedFindings.some(({ findings }) => findings.length > 0) ? (
+                <div className="space-y-3">
+                  {categorizedFindings.map(({ severity, findings }) =>
+                    findings.length > 0 ? (
+                      <section
+                        key={severity}
+                        className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                          {severityLabels[severity]}
+                        </p>
+                        <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
+                          {findings.map((finding) => (
+                            <li key={finding.findingId ?? finding.text} className="flex items-start gap-3">
+                              <span
+                                className={cn(
+                                  'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold',
+                                  severityPillClassNames[severity]
+                                )}
+                              >
+                                [{severity}]
+                              </span>
+                              <span>{finding.text}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null
+                  )}
+                </div>
+              ) : null}
+
+              {report && report.directives.length > 0 ? (
+                <section className="rounded-xl border border-cyan-400/20 bg-cyan-500/[0.03] p-4">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-cyan-200">Engineering Directives</p>
+                  <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
+                    {report.directives.map((directive) => (
+                      <li key={directive.findingId ?? directive.text} className="flex items-start gap-3">
+                        <span className="mt-0.5 shrink-0 rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
+                          {(directive.impactArea ?? 'maintainability').replace(/^./, (character) => character.toUpperCase())} impact
+                        </span>
+                        <span>{directive.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               {assetUrl ? (
                 <div className="flex justify-end">
@@ -996,7 +1108,7 @@ function VaultProjectCard({
               </span>
               {project.has_been_audited ? (
                 <span className="text-[11px] font-medium text-slate-400 bg-slate-950/60 px-2.5 py-0.5 rounded-md border border-slate-800/80 tracking-wide">
-                  Score: {project.evaluation_score || project.logic_score || 0}/100
+                  Audit: {Math.min(98, project.evaluation_score || project.logic_score || 0)}/100
                 </span>
               ) : null}
             </div>
@@ -1614,38 +1726,48 @@ function VaultPageContent() {
     }
 
     try {
-      const accumulatedReportText = await streamAssetAudit({
-        fileUrl,
-        filename: project.name || project.title || `asset_${project.id.slice(0, 5)}.pptx`,
-        instruction: `Run a full MeliusAI asset audit for this vault file.
-Project Title: ${getVaultAssetName(project)}
-Current Notes: ${project.description || 'No existing project notes.'}
-Return Markdown sections for goods, bads, project description, and a final score out of 100.`,
-        onChunk: () => undefined,
+      const response = await fetch('/api/verify-asset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assetName: getVaultAssetName(project),
+          fileUrl,
+          filename: project.name || project.title || `asset_${project.id.slice(0, 5)}.pptx`,
+          projectId: project.id,
+          userContextDescription: project.description || '',
+        }),
       });
-      const extractedScore = extractEvaluationScore(accumulatedReportText);
-      const normalizedAudit = normalizeAuditReport({
-        reportText: accumulatedReportText,
-        score: extractedScore,
-      });
-      const verifiedScore = normalizedAudit.score ?? extractedScore;
+      const audit = (await response.json().catch(() => null)) as {
+        ai_summary?: string;
+        delta_summary?: string;
+        error?: string;
+        finding_impacts?: ProjectRow['audit_findings'];
+        recommendations?: string[];
+        score?: number;
+        strengths?: string[];
+        weaknesses?: string[];
+      } | null;
+
+      if (!response.ok || !audit || typeof audit.score !== 'number') {
+        throw new Error(audit?.error || 'MeliusAI verification did not return a structured audit result.');
+      }
+
+      const verifiedScore = Math.max(15, Math.min(98, Math.round(audit.score)));
+      const auditSummary = audit.ai_summary?.trim() || 'MeliusAI completed an evidence-based engineering audit.';
       const updatePayload = {
-        ai_summary: accumulatedReportText,
-        audit_summary: normalizedAudit.summary || accumulatedReportText,
-        cons: normalizedAudit.weaknesses,
-        description: accumulatedReportText,
+        ai_summary: auditSummary,
+        audit_summary: auditSummary,
+        cons: audit.weaknesses ?? [],
+        delta_summary: audit.delta_summary ?? null,
+        description: auditSummary,
         evaluation_score: verifiedScore,
         has_been_audited: true,
         logic_score: verifiedScore,
-        pros: normalizedAudit.strengths,
-        recommendations: normalizedAudit.recommendations,
+        pros: audit.strengths ?? [],
+        recommendations: audit.recommendations ?? [],
+        audit_findings: audit.finding_impacts ?? null,
         score: verifiedScore,
       };
-      const { error } = await supabase.from('projects').update(updatePayload).eq('id', project.id);
-
-      if (error) {
-        throw new Error(`Supabase Database Sync Failed: ${error.message}`);
-      }
 
       setVaultAssets((currentAssets) =>
         currentAssets.map((asset) =>
@@ -1659,7 +1781,7 @@ Return Markdown sections for goods, bads, project description, and a final score
       );
       setDescriptionDrafts((currentDrafts) => ({
         ...currentDrafts,
-        [project.id]: accumulatedReportText,
+        [project.id]: auditSummary,
       }));
       router.refresh();
       window.alert(`Verification Complete! ${getVaultAssetName(project)} has been successfully audited.`);

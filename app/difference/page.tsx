@@ -10,7 +10,7 @@ const oldWayPoints = [
 
 const meliusWayPoints = [
   'Line-by-line AI audits mapping pure architectural logic.',
-  'Instant, deduction-based grades stored securely in a private vault.',
+  'Evidence-based engineering assessments stored securely in a private vault.',
   'Organizations bypassing interview noise by hiring verified metrics directly.',
 ];
 

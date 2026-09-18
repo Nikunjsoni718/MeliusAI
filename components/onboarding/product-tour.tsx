@@ -438,10 +438,10 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       {
         id: 'project-upload',
         target: '[data-tour="project-upload"]',
-        title: 'Initialize Your Baseline',
+        title: 'Start an Engineering Audit',
         content: (
           <ActionInstruction>
-            Time to prove your skills. Drop your first repository here to run a deep architectural audit and generate your baseline score.
+            Add your first repository to run an evidence-based architectural audit with prioritized engineering findings.
           </ActionInstruction>
         ),
         placement: 'bottom-end',
@@ -474,11 +474,11 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       {
         id: 'share-score',
         target: '[data-tour="share-score"]',
-        title: 'Show off your skills',
+        title: 'Share the Audit Report',
         content: (
           <div>
             <p className="m-0 text-sm leading-6 text-slate-200">
-              Share your verified score to your network.
+              Share the verified findings and engineering directives with your network.
             </p>
           </div>
         ),

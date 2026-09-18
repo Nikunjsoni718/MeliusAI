@@ -27,7 +27,7 @@ const reviewItems = [
   {
     title: "Scoring contract",
     description:
-      "Return exactly one 1-100 score and exactly 3 actionable tips for each analyzed repository.",
+      "Classify verified findings by engineering severity, then return one capped 15-98 assessment score and evidence-oriented directives.",
   },
   {
     title: "AI boundary",

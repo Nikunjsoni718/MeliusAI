@@ -32,7 +32,7 @@ function copyTextWithFallback(value: string) {
 export function ShareScoreModal({ score, onClose }: ShareScoreModalProps) {
   const { loading: isProfileLoading, profile, user } = useViewerProfile();
   const normalizedScore = Number.isFinite(score)
-    ? Math.max(0, Math.min(100, Math.round(score)))
+    ? Math.max(0, Math.min(98, Math.round(score)))
     : 0;
   const [message, setMessage] = useState(() => getShareText(normalizedScore));
   const [isSharing, setIsSharing] = useState(false);
@@ -141,7 +141,7 @@ export function ShareScoreModal({ score, onClose }: ShareScoreModalProps) {
               MeliusAI Audit
             </p>
             <h2 id="share-results-title" className="mt-1 text-xl font-bold tracking-tight text-white">
-              Share Your Results
+              Share Audit Report
             </h2>
           </div>
           <button

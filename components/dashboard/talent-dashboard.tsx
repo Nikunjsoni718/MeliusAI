@@ -606,7 +606,7 @@ function renderDashboard(input: {
           <section className="grid gap-5 lg:grid-cols-[1.08fr_0.92fr]">
             <Card>
               <CardHeader>
-                <CardTitle>Goods vs. Bads</CardTitle>
+                <CardTitle>Engineering Assessment</CardTitle>
                 <CardDescription>Here is what looks strong. Here is what to fix next.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 lg:grid-cols-2">

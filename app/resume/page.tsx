@@ -449,14 +449,14 @@ function getAssetScore(project: ProjectRow) {
     null;
   const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
 
-  return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
+  return Number.isFinite(score) ? Math.max(0, Math.min(98, Math.round(score))) : null;
 }
 
 function getFolderScore(folder: ResumeFolder) {
   const rawScore = folder.evaluation_score ?? folder.score ?? folder.macro_score ?? null;
   const score = typeof rawScore === 'number' ? rawScore : Number(rawScore);
 
-  return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : null;
+  return Number.isFinite(score) ? Math.max(0, Math.min(98, Math.round(score))) : null;
 }
 
 function getFeaturedWorkItemScore(item: FeaturedWorkItem) {
@@ -576,7 +576,6 @@ function getFeaturedPreviewAsset(item: FeaturedWorkItem): AuditPreviewAsset {
       title: getFeaturedWorkItemName(item),
       score,
       evaluation_score: item.folder.evaluation_score ?? score,
-      score_delta: item.folder.score_delta ?? null,
       delta_summary: item.folder.delta_summary ?? null,
       executive_summary: item.folder.executive_summary ?? item.folder.macro_summary ?? null,
       audit_summary: item.folder.audit_summary ?? item.folder.macro_summary ?? null,

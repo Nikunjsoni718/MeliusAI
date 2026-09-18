@@ -78,7 +78,6 @@ type ProjectItem = {
   summary?: string | null;
   user_description?: string | null;
   score?: number | null;
-  score_delta?: number | null;
   delta_summary?: string | null;
   audit_summary?: string | null;
   pros?: string[] | null;
@@ -140,7 +139,6 @@ type AuditProjection = {
   score?: number | string | null;
   evaluation_score?: number | string | null;
   logic_score?: number | string | null;
-  score_delta?: number | string | null;
   delta_summary?: string | null;
   executive_summary?: string | null;
   audit_summary?: string | null;
@@ -348,13 +346,13 @@ function getGitHubDescendantFilePaths(node: GitHubTreeNode): string[] {
 
 function normalizeAuditScore(rawScore: number | string | null | undefined) {
   if (typeof rawScore === 'number' && Number.isFinite(rawScore)) {
-    return Math.max(0, Math.min(100, Math.round(rawScore)));
+    return Math.max(0, Math.min(98, Math.round(rawScore)));
   }
 
   if (typeof rawScore === 'string' && rawScore.trim()) {
     const parsedScore = Number.parseInt(rawScore, 10);
     if (Number.isFinite(parsedScore)) {
-      return Math.max(0, Math.min(100, parsedScore));
+      return Math.max(0, Math.min(98, parsedScore));
     }
   }
 
@@ -416,7 +414,7 @@ function getAuditModalAssetReportText(asset: AuditModalAsset) {
     pros.length > 0 ? `Strengths\n${pros.map((item) => `- ${item}`).join('\n')}` : '',
     cons.length > 0 ? `Weaknesses\n${cons.map((item) => `- ${item}`).join('\n')}` : '',
     recommendations.length > 0 ? `Recommendations\n${recommendations.map((item) => `- ${item}`).join('\n')}` : '',
-    `MeliusAI Score: ${score}/100`,
+    `MeliusAI Engineering Assessment: ${score}/100`,
   ]
     .filter((section) => section.trim().length > 0)
     .join('\n\n');
@@ -739,16 +737,8 @@ function getAuditProjectionSummary(value: AuditProjection) {
 }
 
 function getAuditMutationFingerprint(value: AuditProjection) {
-  const scoreDelta =
-    typeof value.score_delta === 'number' && Number.isFinite(value.score_delta)
-      ? value.score_delta
-      : typeof value.score_delta === 'string' && value.score_delta.trim() && Number.isFinite(Number(value.score_delta))
-        ? Number(value.score_delta)
-        : null;
-
   return JSON.stringify({
     score: getAuditProjectionScore(value),
-    score_delta: scoreDelta,
     delta_summary: typeof value.delta_summary === 'string' ? value.delta_summary.trim() : '',
     summary: getAuditProjectionSummary(value),
     pros: normalizeProfileList(value.pros),
@@ -1304,7 +1294,6 @@ function mapProjectRowToProjectItem(row: ProjectRow): ProjectItem {
     summary: hydratedSummary ?? null,
     user_description: row.user_description ?? null,
     score: hydratedScore,
-    score_delta: row.score_delta ?? null,
     delta_summary: row.delta_summary ?? null,
     audit_summary: hydratedAuditSummary,
     pros: Array.isArray(row.pros) ? row.pros : null,
@@ -1336,10 +1325,6 @@ function mergeVerifiedProject(
     evaluation_score: projectPatch.evaluation_score ?? projectPatch.score ?? currentProject.evaluation_score,
     logic_score: projectPatch.logic_score ?? projectPatch.score ?? currentProject.logic_score,
     score: projectPatch.score ?? projectPatch.logic_score ?? projectPatch.evaluation_score ?? currentProject.score,
-    score_delta:
-      projectPatch.score_delta !== undefined
-        ? projectPatch.score_delta
-        : currentProject.score_delta,
     delta_summary:
       projectPatch.delta_summary !== undefined
         ? projectPatch.delta_summary
@@ -1373,7 +1358,6 @@ function toProjectRowAuditPatch(projectPatch: Partial<ProjectItem>): Partial<Pro
     pros: projectPatch.pros,
     recommendations: projectPatch.recommendations,
     audit_findings: projectPatch.audit_findings as ProjectRow['audit_findings'],
-    score_delta: projectPatch.score_delta,
     delta_summary: projectPatch.delta_summary,
     score:
       projectPatch.score ??
@@ -2455,7 +2439,7 @@ function ProjectCard({
               </span>
               {project.has_been_audited ? (
                 <span className="text-[11px] font-medium text-slate-400 bg-slate-950/60 px-2.5 py-0.5 rounded-md border border-slate-800/80 tracking-wide">
-                  Score: {project.evaluation_score || 0}/100
+                  Audit: {normalizeAuditScore(project.evaluation_score) ?? 0}/100
                 </span>
               ) : null}
             </div>
@@ -3600,7 +3584,6 @@ export function ProfileDashboard({
         title: activePreviewFolder.name,
         score: folderScore,
         evaluation_score: folderScore,
-        score_delta: activePreviewFolder.score_delta ?? null,
         delta_summary: activePreviewFolder.delta_summary ?? null,
         executive_summary: activePreviewFolder.executive_summary ?? null,
         audit_summary: activePreviewFolder.audit_summary ?? null,
@@ -6263,7 +6246,6 @@ export function ProfileDashboard({
         last_improved_summary?: string;
         improvement_summary?: string;
         previous_score?: number;
-        score_delta?: number | null;
         delta_summary?: string | null;
         project?: ProjectItem;
         report?: {
@@ -6316,7 +6298,7 @@ export function ProfileDashboard({
         recommendationList.length > 0
           ? `Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
           : '',
-        `MeliusAI Verification Score: ${pythonScore ?? payload.report?.score ?? payload.report?.calculatedScore ?? 0}/100`,
+        `MeliusAI Engineering Assessment: ${normalizeAuditScore(pythonScore ?? payload.report?.score ?? payload.report?.calculatedScore) ?? 0}/100`,
       ]
         .filter((section) => section.trim().length > 0)
         .join('\n\n');
@@ -6351,10 +6333,6 @@ export function ProfileDashboard({
           updatedProject?.last_improved_summary,
         previous_score:
           payload.previous_score ?? updatedProject?.previous_score ?? project.previous_score,
-        score_delta:
-          payload.score_delta !== undefined
-            ? payload.score_delta
-            : updatedProject?.score_delta,
         delta_summary:
           payload.delta_summary !== undefined
             ? payload.delta_summary
@@ -6659,10 +6637,8 @@ export function ProfileDashboard({
           pros?: string[] | null;
           recommendations?: string[] | null;
           finding_impacts?: unknown;
-          score_delta?: number | null;
         };
         folder_score?: number | string | null;
-        score_delta?: number | null;
         delta_summary?: string | null;
       };
       const folderScore = normalizeAuditScore(
@@ -6670,7 +6646,6 @@ export function ProfileDashboard({
       );
       const folderSummary =
         data.folder_audit?.executive_summary ?? data.folder_audit?.description ?? null;
-      const folderScoreDelta = data.score_delta ?? data.folder_audit?.score_delta ?? null;
       const folderDeltaSummary = data.delta_summary ?? data.folder_audit?.delta_summary ?? null;
       const resolvedSummary = folderSummary?.trim() || null;
       const folderPatch: Partial<ProjectFolderRow> = {
@@ -6680,7 +6655,6 @@ export function ProfileDashboard({
               score: folderScore,
             }
           : {}),
-        score_delta: folderScoreDelta,
         delta_summary: folderDeltaSummary,
         has_been_audited: true,
         ...(resolvedSummary ? { executive_summary: resolvedSummary } : {}),
@@ -6699,7 +6673,7 @@ export function ProfileDashboard({
       requestAuditProfileRevalidation();
       alert(
         folderScore !== null
-          ? `Folder audit completed successfully with a score of ${folderScore}/100.`
+          ? `Folder audit completed successfully with an engineering assessment of ${folderScore}/100.`
           : 'Folder audit completed successfully!'
       );
 
@@ -7197,7 +7171,7 @@ export function ProfileDashboard({
                                 : 'border-purple-400/45 bg-purple-500/10 text-purple-100'
                             )}
                           >
-                            {`Avg Score: ${computedAverageScore}/100`}
+                            {`Avg Assessment: ${computedAverageScore}/100`}
                           </Link>
                         )}
                       </div>
@@ -7750,8 +7724,8 @@ export function ProfileDashboard({
                 ) : (
             <section id="my-ratings" className="scroll-mt-24 space-y-4">
               <div>
-                <h2 className="text-2xl font-semibold text-white">My Ratings</h2>
-                <p className="mt-1 text-sm text-slate-400">Your audited assets and current scores.</p>
+                <h2 className="text-2xl font-semibold text-white">Engineering Assessments</h2>
+                <p className="mt-1 text-sm text-slate-400">Your audited assets and current assessment summaries.</p>
               </div>
 
               <Card className="border border-slate-800 bg-slate-950/50 backdrop-blur-md">

@@ -54,8 +54,13 @@ export async function POST(_: Request, context: { params: { id: string } | Promi
     const { data: updatedProject, error: updateError } = await supabase
       .from('projects')
       .update({
+        score: analysis.logicScore,
+        evaluation_score: analysis.logicScore,
         logic_score: analysis.logicScore,
         ai_summary: JSON.stringify(analysis.audit),
+        audit_summary: analysis.audit.summary,
+        audit_findings: analysis.audit.findingImpacts,
+        has_been_audited: true,
       })
       .eq('id', id)
       .eq('user_id', user.id)

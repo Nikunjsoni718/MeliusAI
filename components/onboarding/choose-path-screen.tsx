@@ -21,7 +21,7 @@ const paths: Array<{
     badge: 'accent',
     title: 'Individual (Talent)',
     description: 'Analyze my work and find my dream job.',
-    points: ['Universal portfolio scan', 'Goods vs. bads breakdown', 'Auto-apply when ready'],
+    points: ['Universal portfolio scan', 'Engineering findings and directives', 'Auto-apply when ready'],
   },
   {
     role: 'recruiter',
