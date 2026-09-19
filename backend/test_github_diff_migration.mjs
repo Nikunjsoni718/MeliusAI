@@ -63,7 +63,7 @@ try {
   const competing = await save(newerHead);
   const report = { score: 80, delta_summary: 'Authorization controls are now isolated from presentation code.', executive_summary: 'Safer authorization boundaries are verified.',
     pros: ['Authorization: Owner check added.'], cons: ['Session Gap: Rotation is not verified.'], recommendations: ['Rotate Session: Enforce expiration checks.'],
-    finding_impacts: { pros: [{ text: 'Authorization: Owner check added.' }], cons: [{ findingId: 'F1', text: 'Session Gap: Rotation is not verified.', severity: 'WARNING' }], recommendations: [{ findingId: 'F1', text: 'Rotate Session: Enforce expiration checks.', impactArea: 'security' }] } };
+    finding_impacts: { pros: [{ text: 'Authorization: Owner check added.' }], cons: [{ findingId: 'F1', text: 'Session Gap: Rotation is not verified.', severity: 'WARNING', isCatastrophic: false }], recommendations: [{ findingId: 'F1', text: 'Rotate Session: Enforce expiration checks.', impactArea: 'security' }] } };
   await mustFail(() => rpc('finalize_verified_audit', [diff.id, stranger, 0, report]), /WORKSPACE_NOT_FOUND/);
   await mustFail(() => rpc('finalize_verified_audit', [diff.id, user, 0, { ...report, score: 12 }]), /INVALID_DIFF/);
   await mustFail(() => rpc('finalize_verified_audit', [diff.id, user, 0, { ...report, score: 99 }]), /INVALID_DIFF/);

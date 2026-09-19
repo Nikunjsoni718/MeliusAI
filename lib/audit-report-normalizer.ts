@@ -16,6 +16,7 @@ export type AuditFinding = {
   text: string;
   findingId?: string;
   severity?: AuditSeverity;
+  isCatastrophic?: boolean;
   impactArea?: AuditImpactArea;
 };
 
@@ -200,6 +201,8 @@ function cleanListLine(line: string) {
     .replace(/^[-*+]\s+/, '')
     .replace(/^\d+[.)]\s+/, '')
     .replace(/^\*{1,2}|\*{1,2}$/g, '')
+    .replace(/^\[\s*(?:critical|warning|optimization)\s*\]\s*/i, '')
+    .replace(/^(?:critical|warning|optimization)\s*[:\-\u2013\u2014]\s*/i, '')
     .trim();
 }
 
@@ -219,6 +222,10 @@ function normalizeImpactArea(value: unknown): AuditImpactArea | undefined {
     impactArea === 'operability'
     ? impactArea
     : undefined;
+}
+
+function normalizeCatastrophic(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function severityFromLegacyImpact(value: unknown): AuditSeverity | undefined {
@@ -267,7 +274,8 @@ export function normalizeAuditList(value: unknown): string[] {
 
 function normalizeAuditFinding(value: unknown): AuditFinding | null {
   if (typeof value === 'string' && value.trim()) {
-    return { text: value.trim() };
+    const text = cleanListLine(value);
+    return text ? { text } : null;
   }
 
   const record = asRecord(value);
@@ -280,12 +288,19 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     ? rawFindingId.trim()
     : undefined;
   const severity = normalizeSeverity(record.severity) ?? severityFromLegacyImpact(record.impactScore ?? record.impact_score);
+  const isCatastrophic = normalizeCatastrophic(record.isCatastrophic ?? record.is_catastrophic);
   const impactArea = normalizeImpactArea(record.impactArea ?? record.impact_area);
+  const text = cleanListLine(record.text);
+
+  if (!text) {
+    return null;
+  }
 
   return {
-    text: record.text.trim(),
+    text,
     ...(findingId !== undefined ? { findingId } : {}),
     ...(severity !== undefined ? { severity } : {}),
+    ...(isCatastrophic !== undefined ? { isCatastrophic } : {}),
     ...(impactArea !== undefined ? { impactArea } : {}),
   };
 }
@@ -298,11 +313,12 @@ export function normalizeAuditFindings(value: unknown): AuditFinding[] {
   const seen = new Set<string>();
   return value.flatMap((item) => {
     const finding = normalizeAuditFinding(item);
-    if (!finding || seen.has(finding.text)) {
+    const identity = finding?.text.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+    if (!finding || !identity || seen.has(identity)) {
       return [];
     }
 
-    seen.add(finding.text);
+    seen.add(identity);
     return [finding];
   });
 }

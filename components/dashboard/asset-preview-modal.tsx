@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
-import { normalizeAuditReport, type AuditFinding, type AuditSeverity } from '@/lib/audit-report-normalizer';
+import { normalizeAuditReport, type AuditFinding } from '@/lib/audit-report-normalizer';
 import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
@@ -331,28 +331,16 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
   );
 }
 
-const severityPillClassNames: Record<AuditSeverity, string> = {
-  CRITICAL: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
-  WARNING: 'border-amber-400/30 bg-amber-400/10 text-amber-100',
-  OPTIMIZATION: 'border-sky-400/30 bg-sky-400/10 text-sky-100',
-};
-
 function EngineeringFindings({ items }: { items: AuditFinding[] }) {
   return (
     <section className="rounded-xl border border-slate-700/80 bg-slate-950/40 p-4">
       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">Areas for Improvement</h4>
       <ul className="mt-3 space-y-2">
-        {items.length > 0 ? items.map((item, index) => {
-          const severity = item.severity ?? 'WARNING';
-          return (
-            <li key={`${severity}-${item.text}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-zinc-200">
-              <span className="min-w-0 flex-1">{item.text}</span>
-              <span className={`mt-0.5 ml-auto shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${severityPillClassNames[severity]}`}>
-                [{severity}]
-              </span>
-            </li>
-          );
-        }) : <li className="text-xs italic text-slate-500">No verified findings were generated.</li>}
+        {items.length > 0 ? items.map((item, index) => (
+          <li key={`${item.findingId ?? item.text}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-zinc-200">
+            <span className="min-w-0 flex-1">{item.text}</span>
+          </li>
+        )) : <li className="text-xs italic text-slate-500">No verified findings were generated.</li>}
       </ul>
     </section>
   );

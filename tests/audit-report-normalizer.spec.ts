@@ -33,3 +33,41 @@ test('normalizes new finding and directive metadata while retaining legacy links
     { text: 'Secure Route: Ownership is checked.', findingId: 'F2', severity: 'OPTIMIZATION' },
   ]);
 });
+
+test('preserves internal catastrophe metadata and collapses exact normalized duplicates', () => {
+  expect(
+    normalizeAuditFindings([
+      {
+        findingId: 'F1',
+        text: 'Across frontend: searchTerm reaches dangerouslySetInnerHTML in preview.tsx.',
+        severity: 'CRITICAL',
+        isCatastrophic: true,
+      },
+      {
+        findingId: 'F2',
+        text: '  across frontend: searchTerm reaches dangerouslySetInnerHTML in preview.tsx.  ',
+        severity: 'CRITICAL',
+        isCatastrophic: true,
+      },
+    ])
+  ).toEqual([
+    {
+      findingId: 'F1',
+      text: 'Across frontend: searchTerm reaches dangerouslySetInnerHTML in preview.tsx.',
+      severity: 'CRITICAL',
+      isCatastrophic: true,
+    },
+  ]);
+});
+
+test('keeps internal severity metadata while removing leaked display labels', () => {
+  expect(
+    normalizeAuditFindings([
+      { findingId: 'F1', text: '[CRITICAL] Input reaches renderHtml in preview.tsx.', severity: 'CRITICAL' },
+      { findingId: 'F2', text: 'WARNING: Return clearInterval(timer) from usePolling.', severity: 'WARNING' },
+    ])
+  ).toEqual([
+    { findingId: 'F1', text: 'Input reaches renderHtml in preview.tsx.', severity: 'CRITICAL' },
+    { findingId: 'F2', text: 'Return clearInterval(timer) from usePolling.', severity: 'WARNING' },
+  ]);
+});

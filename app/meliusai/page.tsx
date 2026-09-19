@@ -51,8 +51,8 @@ type StoredChatRow = {
 const MELIUS_CHAT_ENDPOINT = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api/chat`
   : '/api/chat';
-const CRITICAL_EVALUATION_MARKER =
-  '[CRITICAL EVALUATION SYSTEM NOTICE: THE USER HAS LINKED A CHOSEN VAULT PROJECT]';
+const LINKED_PROJECT_CONTEXT_MARKER =
+  '[LINKED PROJECT CONTEXT: THE USER HAS LINKED A CHOSEN VAULT PROJECT]';
 const USER_QUESTION_MARKER = '[USER QUESTION / ACTION INSTRUCTION]:';
 const ANALYZING_PROJECT_MARKER = '[Analyzing Profile Project:';
 
@@ -156,7 +156,7 @@ function hasLinkedProjectContext(message: MeliusChatMessage) {
       message.metadata?.attachedProjectTitle ||
       message.metadata?.title ||
       getMessageText(message).includes(ANALYZING_PROJECT_MARKER) ||
-      getMessageText(message).includes(CRITICAL_EVALUATION_MARKER)
+      getMessageText(message).includes(LINKED_PROJECT_CONTEXT_MARKER)
   );
 }
 
@@ -167,7 +167,7 @@ function buildVaultProjectPayload(inputText: string, stagedAsset: ProjectAttachm
     return userQuestion;
   }
 
-  return `${CRITICAL_EVALUATION_MARKER}
+  return `${LINKED_PROJECT_CONTEXT_MARKER}
 
 Project Asset Title: ${getProjectTitle(stagedAsset)}
 

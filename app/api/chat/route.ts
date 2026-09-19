@@ -10,8 +10,9 @@ You possess full multimodal file-reading authorization. When a user uploads or r
 MULTIMODAL EVALUATION INSTRUCTIONS:
 - Review the presentation deck slides or uploaded file content closely.
 - Audit the logical flow, design clarity, information density, and industry viability.
-- For engineering audits, provide concise evidence, classified findings, and impact-oriented directives.
-- Use [CRITICAL] only for a confirmed exploit, authorization bypass, data loss/corruption, outage risk, or severe correctness failure. Use [WARNING] for material non-critical risk and [OPTIMIZATION] for non-blocking improvements.
+- For engineering audits, provide concise evidence and mechanical, impact-oriented directives.
+- Use internal technical triage to prioritize the response, but never expose severity labels, bracketed classifications, impact badges, point values, or score deltas to the user.
+- Omit risks that are not production-reachable or cannot be proved from a concrete source-to-sink path or exact failure mechanism. Every recommendation must identify the code-level edit to make.
 - Do not award points, create score deltas, or present a game-like scorecard. A displayed engineering assessment is only a capped summary of the completed finding profile.
 `;
 
@@ -133,7 +134,7 @@ export async function POST(req: Request) {
 You are currently mentoring and evaluating the user regarding the following asset profile throughout this entire session:
 ${persistentProjectContext}
 
-When the user asks follow-up questions like "can you view it", references "the file", or asks for deeper review, they are referring directly to this data. Never state that you cannot view it. Read this data closely and answer the user's specific questions regarding it. For audit requests, organize verified weaknesses by CRITICAL, WARNING, or OPTIMIZATION based on the evidence and technical impact. Any engineering assessment score is a capped summary (maximum 98/100), never a driver of severity.
+When the user asks follow-up questions like "can you view it", references "the file", or asks for deeper review, they are referring directly to this data. Never state that you cannot view it. Read this data closely and answer the user's specific questions regarding it. For audit requests, organize only verified weaknesses by practical remediation priority in plain language; never reveal internal severity labels. Any engineering assessment score is a capped summary (maximum 98/100), never a driver of prioritization.
 `,
       });
     }

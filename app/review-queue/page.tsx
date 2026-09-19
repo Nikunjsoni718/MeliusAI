@@ -27,7 +27,7 @@ const reviewItems = [
   {
     title: "Scoring contract",
     description:
-      "Classify verified findings by engineering severity, then return one capped 15-98 assessment score and evidence-oriented directives.",
+      "Use only evidence-proven findings, then return one capped 15-98 assessment score with practical directives.",
   },
   {
     title: "AI boundary",

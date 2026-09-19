@@ -81,6 +81,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("System Design & Architecture:", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Classify each verified weakness from its own evidence", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Never choose a severity to target a score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("Contextual Triage", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("source variable or input, sink function or API, and file", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("drop-in, jargon-free", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("isCatastrophic", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("CRITICAL", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("impactArea", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("exactly 2 or 3 complete sentences", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
@@ -116,12 +120,24 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
             ),
-            15,
+            62,
         )
         self.assertEqual(main.calculate_audit_score({"pros": [{"text": "Passed: Typed boundary is present."}], "cons": []}), 98)
         self.assertEqual(
             main.calculate_audit_score({"pros": [], "cons": [{"findingId": "F1", "text": "Input Gap: Validation is missing.", "severity": "WARNING"}]}),
-            84,
+            93,
+        )
+        self.assertEqual(
+            main.calculate_audit_score(
+                {"pros": [], "cons": [{"findingId": "F1", "text": "Full compromise: Any caller can mint an admin account.", "severity": "CRITICAL", "isCatastrophic": True}]}
+            ),
+            24,
+        )
+        self.assertEqual(
+            main.calculate_audit_score(
+                {"pros": [], "cons": [{"findingId": f"W{index}", "text": f"Warning {index}: Production boundary needs proof.", "severity": "WARNING"} for index in range(20)]}
+            ),
+            25,
         )
         normalized = main.normalize_agentic_audit_report(
             {"score": 7, "executive_summary": "The code parses but needs fundamental remediation."},
@@ -138,7 +154,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             },
             "Fallback summary.",
         )
-        self.assertEqual(finding_normalized["evaluated_score"], 84)
+        self.assertEqual(finding_normalized["evaluated_score"], 93)
 
     def test_incremental_prompt_receives_legacy_evidence_without_numeric_score_metadata(self):
         payload = main._serialize_previous_audit_for_incremental_review(
@@ -176,7 +192,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             description="The component has clean boundaries with one exposed credential to remediate.",
             delta_summary="The architecture and state boundaries improved despite the remaining credential exposure.",
             pros=[{"text": "Clear Boundary: Typed API service isolates access."}],
-            cons=[{"findingId": "F1", "text": "Secret Exposure: client contains a hardcoded credential.", "severity": "CRITICAL"}],
+            cons=[{"findingId": "F1", "text": "Secret Exposure: client contains a hardcoded credential.", "severity": "CRITICAL", "isCatastrophic": False}],
             recommendations=[{"findingId": "F1", "text": "Move Secret: Read credentials from server-side environment.", "impactArea": "security"}],
         )
         native_analysis = {
@@ -201,7 +217,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 previous_score=75,
             )
 
-        self.assertEqual(result["evaluated_score"], 55)
+        self.assertEqual(result["evaluated_score"], 86)
         self.assertNotIn("score_delta", result)
         self.assertEqual(result["cons"], ["Secret Exposure: client contains a hardcoded credential."])
         self.assertEqual(result["finding_impacts"]["pros"], [{"text": "Clear Boundary: Typed API service isolates access."}])
@@ -247,7 +263,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     "description": "The file has a clear boundary but needs stronger input validation.",
                     "delta_summary": "Input validation improved without changing the overall architecture.",
                     "pros": [{"text": "Clear Boundary: Parsing is isolated from persistence."}],
-                    "cons": [{"findingId": "F1", "text": "Validation Gap: External input remains insufficiently constrained.", "severity": "WARNING"}],
+                    "cons": [{"findingId": "F1", "text": "Validation Gap: External input remains insufficiently constrained.", "severity": "WARNING", "isCatastrophic": False}],
                     "recommendations": [{"findingId": "F1", "text": "Validate Inputs: Reject malformed values before processing.", "impactArea": "security"}],
                 },
                 "file",
@@ -258,7 +274,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     "delta_summary": "The workspace now separates API ownership checks from presentation logic.",
                     "executive_summary": "The workspace is close to production-ready with targeted security work remaining.",
                     "pros": [{"text": "Clean Boundaries: API and UI responsibilities are separated."}],
-                    "cons": [{"findingId": "F1", "text": "Rate Limit Gap: Public mutations lack throttling.", "severity": "WARNING"}],
+                    "cons": [{"findingId": "F1", "text": "Rate Limit Gap: Public mutations lack throttling.", "severity": "WARNING", "isCatastrophic": False}],
                     "recommendations": [{"findingId": "F1", "text": "Add Limits: Apply route-level quotas before deployment.", "impactArea": "reliability"}],
                 },
                 "workspace",
@@ -270,7 +286,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     "goods_and_strengths": ["Typed Boundary: Request data is normalized before use."],
                     "bads_and_flaws": ["Input Gap: Caller-supplied URLs are not constrained."],
                     "strategic_recommendations": ["Validate URLs: Restrict outbound targets to trusted hosts."],
-                    "findings": [{"findingId": "F1", "text": "Input Gap: Caller-supplied URLs are not constrained.", "severity": "WARNING"}],
+                    "findings": [{"findingId": "F1", "text": "Input Gap: Caller-supplied URLs are not constrained.", "severity": "WARNING", "isCatastrophic": False}],
                 },
                 "standalone",
             ),
@@ -303,7 +319,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "resolved_issues": [],
             "updated_architecture_summary": "The change introduces an authorization regression.",
             "pros": [{"text": "Existing Strength: Input validation remains intact."}],
-            "cons": [{"findingId": "F1", "text": "Authorization Regression: Mutation path lacks an authorization check.", "severity": "CRITICAL"}],
+            "cons": [{"findingId": "F1", "text": "Authorization Regression: Mutation path lacks an authorization check.", "severity": "CRITICAL", "isCatastrophic": False}],
             "recommendations": [{"findingId": "F1", "text": "Restore Authorization: Check ownership before mutation.", "impactArea": "security"}],
         }
         captured_incremental_request = {}
@@ -326,7 +342,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                     "recommendations": ["Existing Recommendation: Add cache invalidation tests."],
                     "finding_impacts": {
                         "pros": [{"text": "Existing Strength: Input validation remains intact."}],
-                        "cons": [{"findingId": "F1", "text": "Existing Weakness: Cache invalidation is incomplete.", "severity": "WARNING"}],
+                        "cons": [{"findingId": "F1", "text": "Existing Weakness: Cache invalidation is incomplete.", "severity": "WARNING", "isCatastrophic": False}],
                         "recommendations": [{"findingId": "F1", "text": "Existing Recommendation: Add cache invalidation tests.", "impactArea": "reliability"}],
                     },
                 },

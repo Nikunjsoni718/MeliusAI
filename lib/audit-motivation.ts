@@ -7,11 +7,11 @@ export function getMotivationalMessage(score: number) {
   const normalizedScore = normalizeAuditScore(score);
 
   if (normalizedScore >= 96) {
-    return 'Baseline engineering standards are met. Continue reviewing architectural and operational trade-offs as the system evolves.';
+    return 'Baseline engineering standards met. Continued architectural review is recommended.';
   }
 
   if (normalizedScore >= 80) {
-    return 'The assessment identified material warnings. Prioritize their verified impact before expanding scope.';
+    return 'The assessment identified meaningful areas to address before expanding scope.';
   }
 
   if (normalizedScore >= 70) {
@@ -19,10 +19,10 @@ export function getMotivationalMessage(score: number) {
   }
 
   if (normalizedScore >= 50) {
-    return 'Address the critical finding before treating this implementation as production-ready.';
+    return 'Start with the most consequential verified issue before treating this implementation as production-ready.';
   }
 
-  return 'Multiple critical findings require fundamental remediation before production deployment.';
+  return 'Focus on foundational remediation and re-verify before production deployment.';
 }
 
 export function getShareText(score: number) {
@@ -37,7 +37,7 @@ export function getShareText(score: number) {
     return `MeliusAI completed an engineering audit of this codebase: ${displayedScore}/100. The report identifies prioritized technical risks:`;
   }
 
-  return `MeliusAI completed an engineering audit of this codebase: ${displayedScore}/100. Critical remediation is documented in the report:`;
+  return `MeliusAI completed an engineering audit of this codebase: ${displayedScore}/100. The report documents the next practical improvements:`;
 }
 
 export function getMotivationalBannerClassName(score: number) {

@@ -79,9 +79,9 @@ MODEL_REPORT = {
         {"text": "Existing Strength: Input validation is consistent."},
         {"text": "New Strength: Cache invalidation is added."},
     ],
-    "cons": [{"deductionId": "D1", "text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
+    "cons": [{"findingId": "F1", "text": "Existing Weakness: Cache invalidation is incomplete.", "severity": "WARNING", "isCatastrophic": False}],
     "recommendations": [
-        {"deductionId": "D1", "text": "Existing Recommendation: Add cache invalidation tests."},
+        {"findingId": "F1", "text": "Existing Recommendation: Add cache invalidation tests.", "impactArea": "reliability"},
     ],
 }
 
@@ -112,10 +112,9 @@ class GeminiDeltaTests(unittest.TestCase):
     def test_merged_model_lists_are_preserved_in_folder_audit(self):
         result = main.build_incremental_folder_audit_result(
             main.IncrementalAuditReport.model_validate(MODEL_REPORT),
-            REPORT["score"],
         )
-        self.assertEqual(result["folder_score"], 92)
-        self.assertEqual(result["score_delta"], 40)
+        self.assertEqual(result["folder_score"], 93)
+        self.assertNotIn("score_delta", result)
         self.assertEqual(
             result["folder_audit"]["pros"],
             [item["text"] for item in MODEL_REPORT["pros"]],

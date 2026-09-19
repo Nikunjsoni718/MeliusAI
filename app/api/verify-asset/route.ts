@@ -30,7 +30,12 @@ type AuditPayload = {
   recommendations: string[];
   finding_impacts: {
     pros: Array<{ text: string }>;
-    cons: Array<{ findingId: string; text: string; severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION' }>;
+    cons: Array<{
+      findingId: string;
+      text: string;
+      severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION';
+      isCatastrophic: boolean;
+    }>;
     recommendations: Array<{
       findingId: string;
       text: string;
@@ -415,7 +420,6 @@ async function persistAuditResult({
       score: audit.score,
       evaluation_score: audit.score,
       logic_score: audit.score,
-      score_delta: null,
       delta_summary: audit.delta_summary,
       audit_summary: audit.ai_summary,
       ai_summary: audit.ai_summary,

@@ -16,7 +16,7 @@ import {
   getMotivationalBannerClassName,
   getMotivationalMessage,
 } from '@/lib/audit-motivation';
-import { normalizeAuditReport, type AuditFinding, type AuditSeverity } from '@/lib/audit-report-normalizer';
+import { normalizeAuditReport, type AuditFinding } from '@/lib/audit-report-normalizer';
 import { AUTH_LOGIN_STATUS_KEY } from '@/lib/auth-session-routing';
 import { fetchSpectateProfileResponse, getSpectateProfileErrorMessage } from '@/lib/spectate-profile';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
@@ -32,12 +32,6 @@ type VaultAuditReport = {
   architecturalVulnerabilities: string[];
   findings: AuditFinding[];
   directives: AuditFinding[];
-};
-
-const severityPillClassNames: Record<AuditSeverity, string> = {
-  CRITICAL: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
-  WARNING: 'border-amber-400/40 bg-amber-500/10 text-amber-100',
-  OPTIMIZATION: 'border-sky-400/40 bg-sky-500/10 text-sky-100',
 };
 
 type VaultToastState = {
@@ -613,10 +607,7 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
       recommendations: parsed.directives,
       audit_findings: parsed.findingImpacts ?? project.audit_findings,
     });
-    const findings = normalizedFindings.findings.weaknesses.map((finding) => ({
-      ...finding,
-      severity: finding.severity ?? 'WARNING' as const,
-    }));
+    const findings = normalizedFindings.findings.weaknesses;
     const directives = normalizedFindings.findings.recommendations.map((directive) => ({
       ...directive,
       impactArea: directive.impactArea ?? 'maintainability' as const,
@@ -648,10 +639,7 @@ function parseVaultAuditReport(project: ProjectRow): VaultAuditReport {
       ai_summary: payload,
       audit_findings: project.audit_findings,
     });
-    const findings = normalizedFindings.findings.weaknesses.map((finding) => ({
-      ...finding,
-      severity: finding.severity ?? 'WARNING' as const,
-    }));
+    const findings = normalizedFindings.findings.weaknesses;
     const directives = normalizedFindings.findings.recommendations.map((directive) => ({
       ...directive,
       impactArea: directive.impactArea ?? 'maintainability' as const,
@@ -970,7 +958,7 @@ function AuditReportModal({
 
                 <div className="rounded-xl border border-rose-400/20 bg-rose-500/[0.04] p-4">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-rose-300">
-                    {'// Architectural Vulnerabilities'}
+                    {'// Areas for Improvement'}
                   </p>
                   <ul className="mt-3 space-y-2 text-xs leading-5 text-zinc-300">
                     {architecturalVulnerabilities.map((item) => (
@@ -987,22 +975,11 @@ function AuditReportModal({
                 <section className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">Areas for Improvement</p>
                   <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
-                    {report.findings.map((finding) => {
-                      const severity = finding.severity ?? 'WARNING';
-                      return (
-                        <li key={finding.findingId ?? finding.text} className="flex items-start gap-3">
-                          <span className="min-w-0 flex-1">{finding.text}</span>
-                          <span
-                            className={cn(
-                              'mt-0.5 ml-auto shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold',
-                              severityPillClassNames[severity]
-                            )}
-                          >
-                            [{severity}]
-                          </span>
-                        </li>
-                      );
-                    })}
+                    {report.findings.map((finding) => (
+                      <li key={finding.findingId ?? finding.text} className="flex items-start gap-3">
+                        <span className="min-w-0 flex-1">{finding.text}</span>
+                      </li>
+                    ))}
                   </ul>
                 </section>
               ) : null}

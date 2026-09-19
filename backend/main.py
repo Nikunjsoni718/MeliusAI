@@ -145,6 +145,7 @@ AUDIT_OVERLOAD_MESSAGE = (
     "Server is currently under heavy load. Please try analyzing this repository again in a few seconds."
 )
 AUDIT_SCORE_FLOOR = 15
+AUDIT_SCORE_SOFT_FLOOR = 25
 AUDIT_SCORE_CEILING = 98
 AUDIT_SCORE_FAILURE_FALLBACK = 50
 
@@ -174,6 +175,8 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
 - **Stack-Agnostic Ecosystems:** Evaluate the actual tech stack present. Do not penalize backend code for missing UI layers, and do not penalize frontend code for missing database layers.
 - **Explicit Anchoring:** Anchor every strength and weakness to a specific file path and function/component (e.g., "In `services/user.ts:fetchUser`...").
 - **Systemic Focus:** Ignore trivial variable naming, basic formatting, or missing READMEs. Focus on the engineering skeleton.
+- **Contextual Triage:** Establish whether code is production-reachable before reporting it. Do not emit a finding or directive for test fixtures, mocks, dummy data, examples, or build-only scripts when they have no production execution path. Never infer exploitability from a suspicious-looking literal alone.
+- **Root-Cause Consolidation:** Before responding, merge equivalent symptoms into one finding for the underlying cause. When that cause spans boundaries, make the evidence label state its scope (for example, `Across frontend and API routes:`) and cite representative locations. Do not duplicate the same XSS, leak, authorization gap, or validation failure per file.
 
 ### 4. Evidence-first severity classification
 - Classify each verified weakness from its own evidence before any score is considered. Never choose a severity to target a score.
@@ -181,12 +184,16 @@ Evaluate the codebase holistically across these four areas. Do not let a flaw in
   risk, or severe correctness failure. `WARNING` is a material security, reliability, performance, or
   maintainability risk without immediate critical impact. `OPTIMIZATION` is a non-blocking improvement
   with no confirmed security, correctness, or reliability failure.
+- A `CRITICAL` or `WARNING` must prove its production-reachable mechanism. For data-flow risks, name the concrete source variable or input, sink function or API, and file. For other risks, name the exact failing mechanism and location. If that proof is unavailable, omit the claim.
+- `isCatastrophic` may be true only for a `CRITICAL` finding with evidence that the application is fully compromised, fully insecure, or cannot recoverably operate. It is not a score target.
+- Severity is internal metadata only. Never include severity names or labels (for example, `[CRITICAL]`) in any finding text, directive, or customer-facing summary.
 - `pros` are qualitative highlights: `{ "text": "Evidence label: concise fragment" }`.
 - `cons` are evidence-based engineering findings: `{ "findingId": "F1", "text": "Evidence label: concise fragment",
-  "severity": "CRITICAL|WARNING|OPTIMIZATION" }`.
+  "severity": "CRITICAL|WARNING|OPTIMIZATION", "isCatastrophic": false }`.
 - `recommendations` are engineering directives: `{ "findingId": "F1", "text": "Evidence label: concise fragment",
   "impactArea": "security|reliability|performance|maintainability|operability" }`. Each directive must
-  reference one current finding and state its primary engineering impact.
+  reference one current finding and state its primary engineering impact. Directives must be drop-in, jargon-free
+  code edits that name the symbol, call, or location to change; never give abstract security advice.
 - Do not emit a score, score delta, point values, deductions, or recovery values. The backend summarizes
   the completed severity profile separately; that summary never changes a finding's severity.
 
@@ -210,29 +217,29 @@ fewer. Do not write full sentences or essays.
 AUDIT_PROMPT_SCHEMA_BINDINGS = {
     "file": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using exactly
 `description`, `delta_summary`, `pros`, `cons`, and `recommendations`. Return only verified findings;
-do not pad the lists. Use `{text}` pros, `{findingId, text, severity}` cons, and
+do not pad the lists. Use `{text}` pros, `{findingId, text, severity, isCatastrophic}` cons, and
 `{findingId, text, impactArea}` directives. Do not emit a score, score delta, or point metadata.""",
     "workspace": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using exactly
 `executive_summary`, `delta_summary`, `pros`, `cons`, and `recommendations`. Return only verified
-findings. Use `{text}` pros, `{findingId, text, severity}` cons, and
+findings. Use `{text}` pros, `{findingId, text, severity, isCatastrophic}` cons, and
 `{findingId, text, impactArea}` directives. Do not emit a score, score delta, or point metadata.""",
     "standalone": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
 exactly `executive_summary`, `goods_and_strengths`, `bads_and_flaws`,
 `strategic_recommendations`, and `findings`. The list keys represent Strengths, Engineering Findings,
 and Engineering Directives respectively. Return only verified concise `evidence label: concise fragment` items,
 with every fragment after its label limited to ten words. `findings` contains
-`{findingId, text, severity}` items; the backend computes the assessment after response validation.""",
+`{findingId, text, severity, isCatastrophic}` items; the backend computes the assessment after response validation.""",
     "incremental": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
  exactly `file_impacts`, `new_vulnerabilities`, `resolved_issues`, `updated_architecture_summary`,
  `pros`, `cons`, and `recommendations`.
  `pros`, `cons`, and `recommendations` must be complete merged current-state lists, not
- diff-only lists. Use `{text}` pros, `{findingId, text, severity}` cons, and
+ diff-only lists. Use `{text}` pros, `{findingId, text, severity, isCatastrophic}` cons, and
  `{findingId, text, impactArea}` directives. Keep every changed finding tied to the supplied diff
  and use `updated_architecture_summary` as the AI Executive Summary. Do not emit scores, score
  deltas, or point metadata.""",
     "dashboard": """SCHEMA BINDING (mandatory): Emit one raw JSON object and no Markdown using
 exactly `ai_summary`, `strengths`, `weaknesses`, and `recommendations`. Return only verified findings:
-`{text}` strengths, `{findingId, text, severity}` weaknesses, and
+`{text}` strengths, `{findingId, text, severity, isCatastrophic}` weaknesses, and
 `{findingId, text, impactArea}` directives. Do not emit scores, score deltas, point metadata, or
 `score_reasoning`; the backend calculates the assessment summary.""",
 }
@@ -4683,6 +4690,7 @@ class AuditFinding(BaseModel):
     findingId: str = Field(..., min_length=1, max_length=64)
     text: str = Field(..., min_length=1)
     severity: AuditSeverity
+    isCatastrophic: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -4690,6 +4698,12 @@ class AuditFinding(BaseModel):
         if isinstance(value, dict) and any(key in value for key in ("impactScore", "impact_score", "deductionId", "deduction_id")):
             raise ValueError("Engineering findings must not include point or deduction metadata.")
         return value
+
+    @model_validator(mode="after")
+    def require_critical_catastrophe(self) -> "AuditFinding":
+        if self.isCatastrophic and self.severity != AuditSeverity.CRITICAL:
+            raise ValueError("Only a critical finding can be marked catastrophic.")
+        return self
 
 
 class AuditDirective(BaseModel):
@@ -4924,7 +4938,7 @@ def normalize_audit_strengths(value: Any, *, allow_legacy: bool = False) -> List
 
 
 def severity_from_legacy_impact(value: Any) -> AuditSeverity | None:
-    """Map persisted numeric legacy impacts to display-only severity labels."""
+    """Map persisted numeric legacy impacts to internal-only severity labels."""
     if not isinstance(value, int) or isinstance(value, bool) or value >= 0:
         return None
     if value <= -15:
@@ -4934,36 +4948,79 @@ def severity_from_legacy_impact(value: Any) -> AuditSeverity | None:
     return AuditSeverity.OPTIMIZATION
 
 
-def normalize_audit_findings(value: Any, *, allow_legacy: bool = False) -> List[Dict[str, Any]]:
-    """Validate evidence-based findings without using numeric scoring metadata."""
+def _audit_text_identity(text: str) -> str:
+    """Produce a safe exact-match identity without attempting semantic inference."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _normalize_audit_findings_with_aliases(
+    value: Any,
+    *,
+    allow_legacy: bool = False,
+) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """Validate and collapse exact duplicate root-cause findings."""
     if not isinstance(value, list):
         raise ValueError("Engineering findings must be a list.")
 
     findings: List[Dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    seen_texts: set[str] = set()
+    canonical_id_by_text: Dict[str, str] = {}
+    text_by_id: Dict[str, str] = {}
+    finding_id_aliases: Dict[str, str] = {}
     for index, item in enumerate(value, start=1):
         candidate = _audit_finding_dict(item)
         text = str(candidate.get("text") or "").strip()
         finding_id = str(candidate.get("findingId") or candidate.get("finding_id") or "").strip()
         severity_value = candidate.get("severity")
         severity = AuditSeverity(severity_value.strip().upper()) if isinstance(severity_value, str) and severity_value.strip().upper() in AuditSeverity._value2member_map_ else None
+        is_catastrophic = candidate.get("isCatastrophic", candidate.get("is_catastrophic", False))
         if allow_legacy:
             finding_id = finding_id or str(candidate.get("deductionId") or candidate.get("deduction_id") or f"legacy-finding-{index}").strip()
             severity = severity or severity_from_legacy_impact(candidate.get("impactScore") if "impactScore" in candidate else candidate.get("impact_score"))
         elif any(key in candidate for key in ("impactScore", "impact_score", "deductionId", "deduction_id")):
             raise ValueError("Engineering findings must not include point or deduction metadata.")
-        if not text or not finding_id or severity is None:
-            raise ValueError("Each engineering finding requires text, findingId, and severity.")
-        if finding_id in seen_ids or text in seen_texts:
-            raise ValueError("Engineering findings must use unique IDs and text.")
-        seen_ids.add(finding_id)
-        seen_texts.add(text)
-        findings.append({"findingId": finding_id, "text": text, "severity": severity.value})
+        if not text or not finding_id or severity is None or not isinstance(is_catastrophic, bool):
+            raise ValueError("Each engineering finding requires text, findingId, severity, and boolean isCatastrophic.")
+        if is_catastrophic and severity != AuditSeverity.CRITICAL:
+            raise ValueError("Only a critical finding can be marked catastrophic.")
+
+        text_identity = _audit_text_identity(text)
+        existing_text_for_id = text_by_id.get(finding_id)
+        if existing_text_for_id is not None:
+            if existing_text_for_id != text_identity:
+                raise ValueError("Engineering findings cannot reuse an ID for different root causes.")
+            continue
+
+        canonical_id = canonical_id_by_text.get(text_identity)
+        if canonical_id is not None:
+            finding_id_aliases[finding_id] = canonical_id
+            text_by_id[finding_id] = text_identity
+            continue
+
+        canonical_id_by_text[text_identity] = finding_id
+        text_by_id[finding_id] = text_identity
+        finding_id_aliases[finding_id] = finding_id
+        findings.append({
+            "findingId": finding_id,
+            "text": text,
+            "severity": severity.value,
+            "isCatastrophic": is_catastrophic,
+        })
+    return findings, finding_id_aliases
+
+
+def normalize_audit_findings(value: Any, *, allow_legacy: bool = False) -> List[Dict[str, Any]]:
+    """Validate evidence-based findings without using numeric scoring metadata."""
+    findings, _ = _normalize_audit_findings_with_aliases(value, allow_legacy=allow_legacy)
     return findings
 
 
-def normalize_audit_directives(value: Any, finding_ids: set[str], *, allow_legacy: bool = False) -> List[Dict[str, Any]]:
+def normalize_audit_directives(
+    value: Any,
+    finding_ids: set[str],
+    *,
+    allow_legacy: bool = False,
+    finding_id_aliases: Dict[str, str] | None = None,
+) -> List[Dict[str, Any]]:
     """Validate remediation directives and their primary engineering impact."""
     if not isinstance(value, list):
         raise ValueError("Engineering directives must be a list.")
@@ -4982,6 +5039,8 @@ def normalize_audit_directives(value: Any, finding_ids: set[str], *, allow_legac
             impact_area = impact_area or AuditImpactArea.MAINTAINABILITY
         elif any(key in candidate for key in ("impactScore", "impact_score", "deductionId", "deduction_id")):
             raise ValueError("Engineering directives must not include point or deduction metadata.")
+        if finding_id_aliases:
+            finding_id = finding_id_aliases.get(finding_id, finding_id)
         if not text:
             raise ValueError("Each engineering directive requires text.")
         if not finding_id or impact_area is None:
@@ -4989,7 +5048,7 @@ def normalize_audit_directives(value: Any, finding_ids: set[str], *, allow_legac
         if finding_id not in finding_ids:
             raise ValueError("Each engineering directive must reference a current finding.")
         if finding_id in seen_finding_ids:
-            raise ValueError("Each engineering finding can have only one directive.")
+            continue
         if text in seen_texts:
             continue
         seen_texts.add(text)
@@ -5010,7 +5069,7 @@ def build_finding_impacts(
     allow_legacy: bool = False,
 ) -> Dict[str, List[Dict[str, Any]]]:
     normalized_pros = normalize_audit_strengths(pros, allow_legacy=allow_legacy)
-    normalized_cons = normalize_audit_findings(cons, allow_legacy=allow_legacy)
+    normalized_cons, finding_id_aliases = _normalize_audit_findings_with_aliases(cons, allow_legacy=allow_legacy)
     return {
         "pros": normalized_pros,
         "cons": normalized_cons,
@@ -5018,6 +5077,7 @@ def build_finding_impacts(
             recommendations,
             {finding["findingId"] for finding in normalized_cons},
             allow_legacy=allow_legacy,
+            finding_id_aliases=finding_id_aliases,
         ),
     }
 
@@ -5025,27 +5085,32 @@ def build_finding_impacts(
 def calculate_audit_score(finding_impacts: Dict[str, List[Dict[str, Any]]]) -> int:
     """Summarize an already-classified evidence-based severity profile."""
     findings = finding_impacts.get("cons", [])
-    critical_count = sum(finding.get("severity") == AuditSeverity.CRITICAL.value for finding in findings)
-    warning_count = sum(finding.get("severity") == AuditSeverity.WARNING.value for finding in findings)
-    optimization_count = sum(finding.get("severity") == AuditSeverity.OPTIMIZATION.value for finding in findings)
+    unique_findings: List[Dict[str, Any]] = []
+    seen_identities: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        identity = _audit_text_identity(str(finding.get("text") or "")) or str(finding.get("findingId") or "").strip()
+        if not identity or identity in seen_identities:
+            continue
+        seen_identities.add(identity)
+        unique_findings.append(finding)
 
-    if critical_count >= 3:
-        return AUDIT_SCORE_FLOOR
-    if critical_count >= 2 or (critical_count == 1 and warning_count > 0):
-        return 40
-    if critical_count == 1:
-        return 55
-    if warning_count >= 3:
-        return 68
-    if warning_count == 2:
-        return 76
-    if warning_count == 1:
-        return 84
-    if optimization_count >= 3:
-        return 96
-    if optimization_count == 2:
-        return 97
-    return AUDIT_SCORE_CEILING
+    deductions = sum(
+        12 if finding.get("severity") == AuditSeverity.CRITICAL.value
+        else 5 if finding.get("severity") == AuditSeverity.WARNING.value
+        else 1 if finding.get("severity") == AuditSeverity.OPTIMIZATION.value
+        else 0
+        for finding in unique_findings
+    )
+    score = AUDIT_SCORE_CEILING - deductions
+    has_catastrophe = any(
+        finding.get("severity") == AuditSeverity.CRITICAL.value and finding.get("isCatastrophic") is True
+        for finding in unique_findings
+    )
+    if has_catastrophe:
+        return max(AUDIT_SCORE_FLOOR, min(AUDIT_SCORE_SOFT_FLOOR - 1, score))
+    return max(AUDIT_SCORE_SOFT_FLOOR, min(AUDIT_SCORE_CEILING, score))
 
 
 def has_structured_finding_impacts(report: Any) -> bool:
@@ -6311,10 +6376,8 @@ async def review_portfolio_asset(
             "Organize the response into exactly these sections in this order:\n\n"
             "Executive Summary: [Briefly describe the reviewed artifact and the evidence available.]\n\n"
             "Verified Strengths: [Bulleted, concrete strengths grounded in the supplied artifact.]\n\n"
-            "Engineering Findings: [Bulleted findings labeled [CRITICAL], [WARNING], or [OPTIMIZATION]. "
-            "CRITICAL requires a confirmed exploit, authorization bypass, data loss/corruption, outage risk, or severe correctness failure. "
-            "WARNING requires a material non-critical risk. OPTIMIZATION is non-blocking.]\n\n"
-            "Engineering Directives: [Bulleted remediation steps that identify security, reliability, performance, maintainability, or operability impact.]\n\n"
+            "Areas for Improvement: [Bulleted, production-reachable findings with concrete source-to-sink proof or an exact failure mechanism and location. Do not show internal severity labels.]\n\n"
+            "Actionable Steps: [Bulleted, jargon-free mechanical code edits that name the symbol, call, or location to change. Do not show impact labels.]\n\n"
             "Do not provide scores, numeric impacts, points, deductions, or recovery values. Do not use gamified language or emojis."
         )
 
@@ -6662,6 +6725,7 @@ def _serialize_previous_audit_for_incremental_review(value: str | dict[str, Any]
                     "findingId": f"legacy-finding-{index}",
                     "text": text,
                     "severity": AuditSeverity.WARNING.value,
+                    "isCatastrophic": False,
                 }
                 for index, text in enumerate(legacy_cons, start=1)
             ],
@@ -6726,7 +6790,7 @@ State-merging procedure — follow this exact order:
 1. COPY FIRST: Begin by copying every existing strength (`pros`), weakness (`cons`), and
    recommendation from `previous_report` into your new response before evaluating the diff.
    Preserve each copied finding's exact `text`, but emit strengths as un-scored `{{text}}` items,
-   weaknesses as `{{findingId, text, severity}}` engineering findings, and recommendations as
+   weaknesses as `{{findingId, text, severity, isCatastrophic}}` engineering findings, and recommendations as
    `{{findingId, text, impactArea}}` directives linked to their current finding. Historical point
    metadata is display-only legacy data and must not be copied.
 2. EVALUATE THE DELTA: Analyze `cumulative_git_diff` for concrete regressions, risks, fixes, and
@@ -8020,7 +8084,6 @@ def build_project_file_update_payload(
     return {
         "evaluation_score": score,
         "score": score,
-        "score_delta": None,
         "delta_summary": delta_summary,
         "audit_summary": format_file_audit_for_storage(file_audit),
         "ai_summary": summary,
@@ -8730,7 +8793,6 @@ async def run_project_baseline_audit(
         }
         db_payload = {
             "evaluation_score": llm_data.get("score"),
-            "score_delta": None,
             "delta_summary": llm_data.get("delta_summary"),
             "executive_summary": llm_data.get("executive_summary"),
             "pros": llm_data.get("pros", []),
@@ -10938,7 +11000,6 @@ SOURCE CONTENT:
                 }
                 db_payload = {
                     "evaluation_score": llm_data.get("score"),
-                    "score_delta": None,
                     "delta_summary": llm_data.get("delta_summary"),
                     "executive_summary": llm_data.get("executive_summary"),
                     "pros": llm_data.get("pros", []),
