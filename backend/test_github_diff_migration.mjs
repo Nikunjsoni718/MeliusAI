@@ -23,7 +23,7 @@ try {
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     grant usage on schema auth, public to anon, authenticated, service_role;
     create table public.profiles(id uuid primary key);
-    create table public.projects(id uuid primary key, score integer, evaluation_score integer, logic_score integer);
+    create table public.projects(id uuid primary key, user_id uuid references profiles(id), score integer, evaluation_score integer, logic_score integer);
     create table public.project_folders(id uuid primary key, user_id uuid references profiles(id), score integer, evaluation_score integer,
       score_delta integer, delta_summary text, executive_summary text, pros text[], cons text[], recommendations text[], audit_findings jsonb, has_been_audited boolean);
     create table public.audit_snapshots(id uuid primary key, workspace_id uuid, commit_sha text, score integer, score_delta integer not null default 0, delta_summary text);
@@ -33,6 +33,18 @@ try {
   `);
   await db.exec(baselineMigration);
   await db.exec(severityMigration);
+  const snapshotColumns = await db.query(`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'audit_snapshots'
+    order by column_name
+  `);
+  check(
+    ['id', 'workspace_id', 'project_id', 'score', 'score_delta', 'report', 'created_at', 'updated_at']
+      .every((column) => snapshotColumns.rows.some((row) => row.column_name === column)),
+    true,
+  );
   await db.exec('set role service_role');
   let state = await rpc('initialize_repository_baseline', [workspace, user, 'owner/repo', 'main', base]);
   check(state.baseline_version, 0);
