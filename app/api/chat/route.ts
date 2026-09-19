@@ -10,11 +10,9 @@ You possess full multimodal file-reading authorization. When a user uploads or r
 MULTIMODAL EVALUATION INSTRUCTIONS:
 - Review the presentation deck slides or uploaded file content closely.
 - Audit the logical flow, design clarity, information density, and industry viability.
-- Always append your definitive "MeliusAI Professional Integrity Scorecard" metrics table at the absolute bottom of your response markdown text layout.
-
-FORMATTING RULE (ABSOLUTE COMPULSION): For the \`pros\`, \`cons\`, and \`recommendations\` arrays, you MUST use the exact format: 'Catchy Hook: Short explanation'.
-Example: 'XSS Vulnerability: Using innerHTML allows malicious script injection.'
-MAX 15 words per item. NO ESSAYS. NO EXCEPTIONS.
+- For engineering audits, provide concise evidence, classified findings, and impact-oriented directives.
+- Use [CRITICAL] only for a confirmed exploit, authorization bypass, data loss/corruption, outage risk, or severe correctness failure. Use [WARNING] for material non-critical risk and [OPTIMIZATION] for non-blocking improvements.
+- Do not award points, create score deltas, or present a game-like scorecard. A displayed engineering assessment is only a capped summary of the completed finding profile.
 `;
 
 const ATTACHED_ASSET_MARKER = '[SYSTEM NOTICE: AN ASSET HAS BEEN ATTACHED FOR EVALUATION]';

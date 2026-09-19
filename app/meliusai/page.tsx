@@ -353,7 +353,7 @@ function renderFormattedMarkdown(text: string) {
     }
 
     if (
-      /^(executive summary|technical flaws(?: & issues)?|strategic improvement roadmap|strategic roadmap|global integrity scorecard|meliusai professional integrity scorecard|meliusai integrity rating):?$/i.test(
+      /^(executive summary|engineering findings|engineering directives|assessment context|technical flaws(?: & issues)?|strategic improvement roadmap|strategic roadmap|global integrity scorecard|meliusai professional integrity scorecard|meliusai integrity rating):?$/i.test(
         trimmedLine
       )
     ) {
@@ -655,7 +655,7 @@ Technology Stack / Industry Tags: ${getProjectTechStack(linkedProject)}
 Project Analysis History Content:
 ${getProjectDescription(linkedProject)}
 
-[USER QUESTION/COMMAND]: ${currentTypedText || 'Provide a review with a mentor score.'}`;
+[USER QUESTION/COMMAND]: ${currentTypedText || 'Provide an evidence-first engineering review.'}`;
     }
 
     const requestHistory = [

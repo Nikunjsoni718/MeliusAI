@@ -78,7 +78,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "dashboard": ("ai_summary", "strengths", "weaknesses", "recommendations"),
         }
 
-        self.assertIn("System Design & Architecture (30%)", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+        self.assertIn("System Design & Architecture:", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Classify each verified weakness from its own evidence", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("Never choose a severity to target a score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
         self.assertIn("CRITICAL", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
@@ -91,10 +91,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(contract=contract):
                 prompt = main.build_meliusai_security_audit_prompt(contract)
                 self.assertTrue(prompt.startswith(main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT))
-                self.assertIn("System Design & Architecture (30%)", prompt)
+                self.assertIn("System Design & Architecture:", prompt)
                 self.assertIn("Evidence-first severity classification", prompt)
-                self.assertIn("fragment after its hook is ten words or", prompt)
-                self.assertIn("Catchy Hook: Short fragment", prompt)
+                self.assertIn("fragment after its label is ten words or", prompt)
+                self.assertIn("concise, precise, evidence-led", prompt)
                 self.assertIn("exactly 2 or 3 complete sentences", prompt)
                 self.assertIn("SCHEMA BINDING", prompt)
                 for key in keys:
@@ -139,6 +139,37 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "Fallback summary.",
         )
         self.assertEqual(finding_normalized["evaluated_score"], 84)
+
+    def test_incremental_prompt_receives_legacy_evidence_without_numeric_score_metadata(self):
+        payload = main._serialize_previous_audit_for_incremental_review(
+            {
+                "score": 12,
+                "score_delta": -15,
+                "executive_summary": "The prior review confirmed an authorization bypass.",
+                "finding_impacts": {
+                    "pros": [],
+                    "cons": [
+                        {
+                            "deductionId": "legacy-1",
+                            "text": "Authorization Gap: Mutation lacks ownership checks.",
+                            "impactScore": -15,
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "deductionId": "legacy-1",
+                            "text": "Enforce Ownership: Verify the caller before mutation.",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertNotIn('"score"', payload)
+        self.assertNotIn("score_delta", payload)
+        self.assertNotIn("impactScore", payload)
+        self.assertIn('"severity": "CRITICAL"', payload)
+        self.assertIn('"impactArea": "maintainability"', payload)
 
     async def test_file_audit_classifies_native_security_findings_before_scoring(self):
         balanced_response = main.FileAuditResponse(
@@ -310,7 +341,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("SCHEMA BINDING", captured_incremental_request["contents"])
         self.assertIn("+ unsafe authorization change", captured_incremental_request["contents"])
-        self.assertIn('"score": 76', captured_incremental_request["contents"])
+        self.assertNotIn('"score": 76', captured_incremental_request["contents"])
         prompt = captured_incremental_request["contents"]
         self.assertIn("Your task is to UPDATE", prompt)
         self.assertIn("1. COPY FIRST", prompt)
