@@ -34,14 +34,6 @@ type VaultAuditReport = {
   directives: AuditFinding[];
 };
 
-const severityOrder: AuditSeverity[] = ['CRITICAL', 'WARNING', 'OPTIMIZATION'];
-
-const severityLabels: Record<AuditSeverity, string> = {
-  CRITICAL: 'Critical Findings',
-  WARNING: 'Warnings',
-  OPTIMIZATION: 'Optimizations',
-};
-
 const severityPillClassNames: Record<AuditSeverity, string> = {
   CRITICAL: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
   WARNING: 'border-amber-400/40 bg-amber-500/10 text-amber-100',
@@ -898,11 +890,6 @@ function AuditReportModal({
     report && report.architecturalVulnerabilities.length > 0
       ? report.architecturalVulnerabilities
       : ['This audit payload did not include a structured architectural vulnerability stream.'];
-  const categorizedFindings = severityOrder.map((severity) => ({
-    severity,
-    findings: report?.findings.filter((finding) => finding.severity === severity) ?? [],
-  }));
-
   return (
     <AnimatePresence>
       {project && report ? (
@@ -996,49 +983,36 @@ function AuditReportModal({
                 </div>
               </div>
 
-              {categorizedFindings.some(({ findings }) => findings.length > 0) ? (
-                <div className="space-y-3">
-                  {categorizedFindings.map(({ severity, findings }) =>
-                    findings.length > 0 ? (
-                      <section
-                        key={severity}
-                        className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
-                      >
-                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">
-                          {severityLabels[severity]}
-                        </p>
-                        <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
-                          {findings.map((finding) => (
-                            <li key={finding.findingId ?? finding.text} className="flex items-start gap-3">
-                              <span
-                                className={cn(
-                                  'mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold',
-                                  severityPillClassNames[severity]
-                                )}
-                              >
-                                [{severity}]
-                              </span>
-                              <span>{finding.text}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    ) : null
-                  )}
-                </div>
+              {report && report.findings.length > 0 ? (
+                <section className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">Areas for Improvement</p>
+                  <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
+                    {report.findings.map((finding) => {
+                      const severity = finding.severity ?? 'WARNING';
+                      return (
+                        <li key={finding.findingId ?? finding.text} className="flex items-start gap-3">
+                          <span className="min-w-0 flex-1">{finding.text}</span>
+                          <span
+                            className={cn(
+                              'mt-0.5 ml-auto shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold',
+                              severityPillClassNames[severity]
+                            )}
+                          >
+                            [{severity}]
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
               ) : null}
 
               {report && report.directives.length > 0 ? (
                 <section className="rounded-xl border border-cyan-400/20 bg-cyan-500/[0.03] p-4">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-cyan-200">Engineering Directives</p>
-                  <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-200">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-cyan-200">Actionable Steps</p>
+                  <ul className="mt-3 list-disc space-y-2 pl-4 text-xs leading-5 text-slate-200 marker:text-cyan-300">
                     {report.directives.map((directive) => (
-                      <li key={directive.findingId ?? directive.text} className="flex items-start gap-3">
-                        <span className="mt-0.5 shrink-0 rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
-                          {(directive.impactArea ?? 'maintainability').replace(/^./, (character) => character.toUpperCase())} impact
-                        </span>
-                        <span>{directive.text}</span>
-                      </li>
+                      <li key={directive.findingId ?? directive.text}>{directive.text}</li>
                     ))}
                   </ul>
                 </section>

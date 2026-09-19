@@ -331,54 +331,29 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
   );
 }
 
-const severityPresentation: Record<AuditSeverity, { title: string; badge: string; panel: string }> = {
-  CRITICAL: {
-    title: 'Critical Findings',
-    badge: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
-    panel: 'border-rose-500/20 bg-rose-500/[0.045]',
-  },
-  WARNING: {
-    title: 'Warnings',
-    badge: 'border-amber-400/30 bg-amber-400/10 text-amber-100',
-    panel: 'border-amber-500/20 bg-amber-500/[0.045]',
-  },
-  OPTIMIZATION: {
-    title: 'Optimizations',
-    badge: 'border-sky-400/30 bg-sky-400/10 text-sky-100',
-    panel: 'border-sky-500/20 bg-sky-500/[0.045]',
-  },
+const severityPillClassNames: Record<AuditSeverity, string> = {
+  CRITICAL: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
+  WARNING: 'border-amber-400/30 bg-amber-400/10 text-amber-100',
+  OPTIMIZATION: 'border-sky-400/30 bg-sky-400/10 text-sky-100',
 };
 
 function EngineeringFindings({ items }: { items: AuditFinding[] }) {
-  const grouped = (['CRITICAL', 'WARNING', 'OPTIMIZATION'] as const).map((severity) => ({
-    severity,
-    items: items.filter((item) => (item.severity ?? 'WARNING') === severity),
-  }));
-
   return (
     <section className="rounded-xl border border-slate-700/80 bg-slate-950/40 p-4">
-      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">Engineering Findings</h4>
-      <div className="mt-3 space-y-3">
-        {grouped.some((group) => group.items.length > 0) ? grouped.map((group) => {
-          if (group.items.length === 0) return null;
-          const presentation = severityPresentation[group.severity];
+      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">Areas for Improvement</h4>
+      <ul className="mt-3 space-y-2">
+        {items.length > 0 ? items.map((item, index) => {
+          const severity = item.severity ?? 'WARNING';
           return (
-            <div key={group.severity} className={`rounded-lg border p-3 ${presentation.panel}`}>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">{presentation.title}</p>
-              <ul className="mt-2 space-y-2">
-                {group.items.map((item, index) => (
-                  <li key={`${group.severity}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-200">
-                    <span className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${presentation.badge}`}>
-                      [{group.severity}]
-                    </span>
-                    <span>{item.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <li key={`${severity}-${item.text}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-zinc-200">
+              <span className="min-w-0 flex-1">{item.text}</span>
+              <span className={`mt-0.5 ml-auto shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${severityPillClassNames[severity]}`}>
+                [{severity}]
+              </span>
+            </li>
           );
-        }) : <p className="text-xs italic text-slate-500">No verified findings were generated.</p>}
-      </div>
+        }) : <li className="text-xs italic text-slate-500">No verified findings were generated.</li>}
+      </ul>
     </section>
   );
 }
@@ -386,15 +361,10 @@ function EngineeringFindings({ items }: { items: AuditFinding[] }) {
 function EngineeringDirectives({ items }: { items: AuditFinding[] }) {
   return (
     <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4">
-      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">Engineering Directives</h4>
-      <ul className="mt-3 space-y-2">
+      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">Actionable Steps</h4>
+      <ul className="mt-3 list-disc space-y-2 pl-4 marker:text-cyan-300">
         {items.length > 0 ? items.map((item, index) => (
-          <li key={`directive-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-200">
-            <span className="mt-0.5 shrink-0 rounded border border-cyan-400/25 bg-cyan-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase text-cyan-100">
-              {item.impactArea ?? 'maintainability'} impact
-            </span>
-            <span>{item.text}</span>
-          </li>
+          <li key={`directive-${item.text}-${index}`} className="text-xs leading-relaxed text-zinc-200">{item.text}</li>
         )) : <li className="text-xs italic text-slate-500">No directives generated yet.</li>}
       </ul>
     </section>
