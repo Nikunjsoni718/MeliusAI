@@ -70,20 +70,30 @@ class GitHubConnectionTokenTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(main, "get_supabase_service_client", return_value=service_client):
             self.assertIsNone(await main.get_persisted_github_connection_token("owner"))
-MODEL_REPORT = {
-    "file_impacts": [],
-    "new_vulnerabilities": [],
-    "resolved_issues": [],
-    "updated_architecture_summary": "Improved architecture.",
-    "pros": [
-        {"text": "Existing Strength: Input validation is consistent."},
-        {"text": "New Strength: Cache invalidation is added."},
+MODEL_TELEMETRY = {
+    "auditSummary": "The current production implementation retains one verified cache invalidation risk.",
+    "strengths": [
+        "In app/api/cache/route.ts: input validation remains isolated at the request boundary.",
+        "In lib/cache.ts: cache ownership stays within one module.",
     ],
-    "cons": [{"findingId": "F1", "text": "Existing Weakness: Cache invalidation is incomplete.", "severity": "WARNING", "isCatastrophic": False}],
-    "recommendations": [
-        {"findingId": "F1", "text": "Existing Recommendation: Add cache invalidation tests.", "impactArea": "reliability"},
-    ],
+    "findings": [{
+        "findingId": "F1",
+        "text": "In cache invalidation: request.body.key is passed to invalidateCache without a stale-entry branch.",
+        "severity": "WARNING",
+        "scope": "In cache invalidation: request mutation flow",
+        "location": "lib/cache.ts: invalidateCache",
+        "isCatastrophic": False,
+    }],
+    "directives": [{
+        "directiveId": "D1",
+        "findingId": "F1",
+        "text": "Add a stale-entry branch before invalidateCache in lib/cache.ts",
+    }],
 }
+MODEL_REPORT = main.adapt_telemetry_to_incremental_report(
+    main.AuditTelemetryResponse.model_validate(MODEL_TELEMETRY),
+    [],
+).model_dump()
 
 
 class GeminiDeltaTests(unittest.TestCase):
@@ -91,7 +101,7 @@ class GeminiDeltaTests(unittest.TestCase):
         return SimpleNamespace(models=SimpleNamespace(
             get=Mock(return_value=SimpleNamespace(input_token_limit=limit)),
             count_tokens=Mock(return_value=SimpleNamespace(total_tokens=count)),
-            generate_content=Mock(return_value=SimpleNamespace(parsed=MODEL_REPORT, candidates=[]))), close=Mock())
+            generate_content=Mock(return_value=SimpleNamespace(parsed=MODEL_TELEMETRY, candidates=[]))), close=Mock())
 
     def test_entire_large_delta_and_previous_report_in_single_request(self):
         literal = "@@ -1 +1 @@\n-old\n+" + "whole architecture; " * 10000 + "END_SENTINEL"
@@ -105,7 +115,7 @@ class GeminiDeltaTests(unittest.TestCase):
         self.assertGreater(len(prompt), 28000)
         self.assertIn("END_SENTINEL", prompt)
         self.assertIn(main.json.dumps(payload, ensure_ascii=False, sort_keys=True), prompt)
-        self.assertIn(main.json.dumps(REPORT, ensure_ascii=False, sort_keys=True), prompt)
+        self.assertIn(main._serialize_previous_audit_for_incremental_review(REPORT), prompt)
         self.assertNotIn("{diff_payload}", prompt)
         self.assertEqual(client.models.count_tokens.call_args.kwargs["contents"], prompt)
 
@@ -202,14 +212,14 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         files = [{"filename": "new.py", "insertions": 1, "deletions": 0, "patch": "+new", "status": "added"}]
         with self.assertLogs(main.logger, level="INFO") as logs:
             result, save, finalize, _, ai = await self.exercise(files=files)
-        self.assertEqual(result["folder_score"], 92)
+        self.assertEqual(result["folder_score"], 93)
         self.assertEqual(ai.call_args.args[0]["files"], files)
         self.assertEqual(ai.call_args.args[1], REPORT)
         self.assertEqual(save.call_args.args[2], HEAD)
         self.assertEqual(finalize.call_args.args[1]["baseline_version"], 7)
         output = "\n".join(logs.output)
         self.assertIn("GEMINI RESPONSE: Extracted highlights: 2, Improvements: 1", output)
-        self.assertIn("DATABASE UPDATE: Successfully saved score 92 for workspace. workspace_id=folder", output)
+        self.assertIn("DATABASE UPDATE: Successfully saved score 93 for workspace. workspace_id=folder", output)
 
     async def test_failed_ai_preserves_saved_delta_without_finalizing(self):
         result, save, finalize, failed, _ = await self.exercise(files=[{"filename": "x"}], provider_error=DiffServiceError("GEMINI_RATE_LIMITED", "Retry", 429))

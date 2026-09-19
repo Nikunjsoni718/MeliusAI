@@ -16,6 +16,8 @@ export type AuditFinding = {
   text: string;
   findingId?: string;
   severity?: AuditSeverity;
+  scope?: string;
+  location?: string;
   isCatastrophic?: boolean;
   impactArea?: AuditImpactArea;
 };
@@ -288,6 +290,8 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     ? rawFindingId.trim()
     : undefined;
   const severity = normalizeSeverity(record.severity) ?? severityFromLegacyImpact(record.impactScore ?? record.impact_score);
+  const scope = typeof record.scope === 'string' && record.scope.trim() ? record.scope.trim() : undefined;
+  const location = typeof record.location === 'string' && record.location.trim() ? record.location.trim() : undefined;
   const isCatastrophic = normalizeCatastrophic(record.isCatastrophic ?? record.is_catastrophic);
   const impactArea = normalizeImpactArea(record.impactArea ?? record.impact_area);
   const text = cleanListLine(record.text);
@@ -300,6 +304,8 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     text,
     ...(findingId !== undefined ? { findingId } : {}),
     ...(severity !== undefined ? { severity } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(location !== undefined ? { location } : {}),
     ...(isCatastrophic !== undefined ? { isCatastrophic } : {}),
     ...(impactArea !== undefined ? { impactArea } : {}),
   };

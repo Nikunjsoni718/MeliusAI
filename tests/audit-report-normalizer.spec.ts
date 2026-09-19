@@ -60,6 +60,30 @@ test('preserves internal catastrophe metadata and collapses exact normalized dup
   ]);
 });
 
+test('retains canonical scope and location telemetry without exposing severity labels in text', () => {
+  expect(
+    normalizeAuditFindings([
+      {
+        findingId: 'F1',
+        text: 'Across API endpoints: request.body.email reaches createUser without validation.',
+        severity: 'WARNING',
+        scope: 'Across API endpoints: user provisioning',
+        location: 'app/api/users/route.ts: createUser',
+        isCatastrophic: false,
+      },
+    ])
+  ).toEqual([
+    {
+      findingId: 'F1',
+      text: 'Across API endpoints: request.body.email reaches createUser without validation.',
+      severity: 'WARNING',
+      scope: 'Across API endpoints: user provisioning',
+      location: 'app/api/users/route.ts: createUser',
+      isCatastrophic: false,
+    },
+  ]);
+});
+
 test('keeps internal severity metadata while removing leaked display labels', () => {
   expect(
     normalizeAuditFindings([

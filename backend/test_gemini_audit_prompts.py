@@ -1,12 +1,12 @@
-import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+import json
 import sys
-from types import ModuleType
+import unittest
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 def install_google_genai_test_stub():
-    """Allow prompt-contract tests to run when only the optional Gemini SDK is absent."""
+    """Allow contract tests to load when the optional Gemini SDK is absent."""
     google_module = ModuleType("google")
     genai_module = ModuleType("google.genai")
     types_module = ModuleType("google.genai.types")
@@ -27,6 +27,7 @@ def install_google_genai_test_stub():
     sys.modules["google"] = google_module
     sys.modules["google.genai"] = genai_module
     sys.modules["google.genai.types"] = types_module
+
 
 try:
     from backend import main
@@ -49,339 +50,175 @@ else:
 
 @unittest.skipIf(main is None, f"Backend dependencies are unavailable: {BACKEND_IMPORT_ERROR}")
 class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
-    def test_shared_persona_and_schema_bindings_cover_every_audit_contract(self):
-        expected_keys = {
-            "file": ("description", "delta_summary", "pros", "cons", "recommendations"),
-            "workspace": (
-                "executive_summary",
-                "delta_summary",
-                "pros",
-                "cons",
-                "recommendations",
-            ),
-            "standalone": (
-                "executive_summary",
-                "goods_and_strengths",
-                "bads_and_flaws",
-                "strategic_recommendations",
-                "findings",
-            ),
-            "incremental": (
-                "file_impacts",
-                "new_vulnerabilities",
-                "resolved_issues",
-                "updated_architecture_summary",
-                "pros",
-                "cons",
-                "recommendations",
-            ),
-            "dashboard": ("ai_summary", "strengths", "weaknesses", "recommendations"),
+    @staticmethod
+    def telemetry_payload(*, finding_id="F1", duplicate=False, catastrophic=False):
+        finding = {
+            "findingId": finding_id,
+            "text": "In API route: request.body.email is passed to createUser without validation.",
+            "severity": "CRITICAL" if catastrophic else "WARNING",
+            "scope": "In API route: user provisioning",
+            "location": "app/api/users/route.ts: createUser",
+            "isCatastrophic": catastrophic,
+        }
+        directive = {
+            "directiveId": "D1",
+            "findingId": finding_id,
+            "text": "Add userSchema.parse(request.body) before createUser in app/api/users/route.ts",
+        }
+        findings = [finding]
+        directives = [directive]
+        if duplicate:
+            findings.append({**finding, "findingId": "F2", "text": f" {finding['text']} "})
+            directives.append({**directive, "directiveId": "D2", "findingId": "F2"})
+        return {
+            "auditSummary": "The production route has a verified validation gap while its service boundary remains isolated.",
+            "strengths": ["In app/api/users/route.ts: persistence is delegated through one service boundary."],
+            "findings": findings,
+            "directives": directives,
         }
 
-        self.assertIn("System Design & Architecture:", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("Classify each verified weakness from its own evidence", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("Never choose a severity to target a score.", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("Contextual Triage", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("source variable or input, sink function or API, and file", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("drop-in, jargon-free", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("isCatastrophic", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("CRITICAL", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("impactArea", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("exactly 2 or 3 complete sentences", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("Sentence 1 briefly explains what the project actually is", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
-        self.assertIn("main strengths and its most critical vulnerabilities", main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
+    def test_all_model_contracts_use_canonical_telemetry_only(self):
+        prompt = main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT
+        self.assertIn("objective, evidence-driven Staff Software Engineer", prompt)
+        self.assertIn("Hard omission", prompt)
+        self.assertIn("source), the file path, and the terminal execution point (sink)", prompt)
+        self.assertIn("one finding per unique root cause", prompt)
+        self.assertIn("total system compromise or unrecoverable application failure", prompt)
+        self.assertIn("exactly `auditSummary`, `strengths`, `findings`, and `directives`", prompt)
+        self.assertNotIn("impactArea", prompt)
 
-        for contract, keys in expected_keys.items():
+        for contract in ("file", "workspace", "standalone", "incremental", "dashboard"):
             with self.subTest(contract=contract):
-                prompt = main.build_meliusai_security_audit_prompt(contract)
-                self.assertTrue(prompt.startswith(main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT))
-                self.assertIn("System Design & Architecture:", prompt)
-                self.assertIn("Evidence-first severity classification", prompt)
-                self.assertIn("fragment after its label is ten words or", prompt)
-                self.assertIn("concise, precise, evidence-led", prompt)
-                self.assertIn("exactly 2 or 3 complete sentences", prompt)
-                self.assertIn("SCHEMA BINDING", prompt)
-                for key in keys:
-                    self.assertIn(f"`{key}`", prompt)
+                rendered = main.build_meliusai_security_audit_prompt(contract)
+                self.assertTrue(rendered.startswith(prompt))
+                self.assertIn("SCHEMA BINDING", rendered)
+                self.assertIn("`auditSummary`", rendered)
+                self.assertNotIn("`score_delta`", rendered)
+                self.assertNotIn("`impactArea`", rendered)
 
-    def test_score_ceiling_and_severity_profile_are_server_authoritative(self):
-        self.assertEqual(main.coerce_audit_score(0), 15)
-        self.assertEqual(main.coerce_audit_score("9"), 15)
-        self.assertEqual(main.coerce_audit_score(101), 98)
-        self.assertEqual(main.coerce_audit_score(None), 0)
+    def test_canonical_telemetry_validates_evidence_and_adapts_legacy_fields(self):
+        telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
+        adapted = main.adapt_audit_telemetry(telemetry)
+
+        self.assertEqual(adapted["summary"], telemetry.auditSummary)
+        self.assertEqual(adapted["pros"], [{"text": telemetry.strengths[0]}])
+        self.assertEqual(adapted["cons"][0]["scope"], "In API route: user provisioning")
+        self.assertEqual(adapted["cons"][0]["location"], "app/api/users/route.ts: createUser")
+        self.assertEqual(adapted["recommendations"][0]["directiveId"], "D1")
+        self.assertNotIn("impactArea", adapted["recommendations"][0])
+
+    def test_canonical_telemetry_rejects_generic_or_unlinked_output(self):
+        generic = self.telemetry_payload()
+        generic["findings"][0]["text"] = "Sanitize inputs"
+        with self.assertRaises(main.ValidationError):
+            main.AuditTelemetryResponse.model_validate(generic)
+
+        generic_directive = self.telemetry_payload()
+        generic_directive["directives"][0]["text"] = "Use best practices"
+        with self.assertRaises(main.ValidationError):
+            main.AuditTelemetryResponse.model_validate(generic_directive)
+
+        missing_directive = self.telemetry_payload()
+        missing_directive["directives"] = []
+        with self.assertRaises(main.ValidationError):
+            main.AuditTelemetryResponse.model_validate(missing_directive)
+
+        orphan_directive = self.telemetry_payload()
+        orphan_directive["directives"][0]["findingId"] = "missing"
+        with self.assertRaises(main.ValidationError):
+            main.AuditTelemetryResponse.model_validate(orphan_directive)
+
+    def test_exact_duplicate_root_causes_collapse_before_scoring(self):
+        telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload(duplicate=True))
+        self.assertEqual(len(telemetry.findings), 1)
+        self.assertEqual(len(telemetry.directives), 1)
+        self.assertEqual(telemetry.directives[0].findingId, "F1")
+        adapted = main.adapt_audit_telemetry(telemetry)
+        impacts = main.build_finding_impacts(adapted["pros"], adapted["cons"], adapted["recommendations"])
+        self.assertEqual(main.calculate_audit_score(impacts), 93)
+
+    def test_scores_follow_98_12_5_1_with_the_soft_floor_and_catastrophic_gate(self):
+        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": [], "recommendations": []}), 98)
         self.assertEqual(
-            main.calculate_audit_score(
-                {
-                    "pros": [],
-                    "cons": [
-                        {"findingId": "F1", "text": "Critical One: First severe weakness.", "severity": "CRITICAL"},
-                        {"findingId": "F2", "text": "Critical Two: Second severe weakness.", "severity": "CRITICAL"},
-                        {"findingId": "F3", "text": "Critical Three: Third severe weakness.", "severity": "CRITICAL"},
-                    ],
-                }
-            ),
-            62,
+            main.calculate_audit_score({
+                "pros": [],
+                "cons": [{"findingId": "F1", "text": "In cache layer: redundant cache refresh runs.", "severity": "OPTIMIZATION"}],
+                "recommendations": [],
+            }),
+            97,
         )
-        self.assertEqual(main.calculate_audit_score({"pros": [{"text": "Passed: Typed boundary is present."}], "cons": []}), 98)
         self.assertEqual(
-            main.calculate_audit_score({"pros": [], "cons": [{"findingId": "F1", "text": "Input Gap: Validation is missing.", "severity": "WARNING"}]}),
+            main.calculate_audit_score({
+                "pros": [],
+                "cons": [{"findingId": "F1", "text": "In API route: request.body.email is passed to createUser without validation.", "severity": "WARNING"}],
+                "recommendations": [],
+            }),
             93,
         )
-        self.assertEqual(
-            main.calculate_audit_score(
-                {"pros": [], "cons": [{"findingId": "F1", "text": "Full compromise: Any caller can mint an admin account.", "severity": "CRITICAL", "isCatastrophic": True}]}
-            ),
-            24,
-        )
-        self.assertEqual(
-            main.calculate_audit_score(
-                {"pros": [], "cons": [{"findingId": f"W{index}", "text": f"Warning {index}: Production boundary needs proof.", "severity": "WARNING"} for index in range(20)]}
-            ),
-            25,
-        )
-        normalized = main.normalize_agentic_audit_report(
-            {"score": 7, "executive_summary": "The code parses but needs fundamental remediation."},
-            "Fallback summary.",
-        )
-        self.assertEqual(normalized["evaluated_score"], 15)
-        finding_normalized = main.normalize_agentic_audit_report(
-            {
-                "score": 7,
-                "executive_summary": "The code has one confirmed validation issue.",
-                "findings": [
-                    {"findingId": "F1", "text": "Input Gap: Validation is missing.", "severity": "WARNING"}
-                ],
-            },
-            "Fallback summary.",
-        )
-        self.assertEqual(finding_normalized["evaluated_score"], 93)
+        ordinary_critical = [{
+            "findingId": f"F{index}",
+            "text": f"In API route: request.body.value is passed to handler {index} without validation.",
+            "severity": "CRITICAL",
+            "isCatastrophic": True,
+        } for index in range(20)]
+        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": ordinary_critical, "recommendations": []}), 25)
+        catastrophic = [{
+            "findingId": "F1",
+            "text": "Total system compromise: production accepts arbitrary administrator creation.",
+            "severity": "CRITICAL",
+            "isCatastrophic": True,
+        }]
+        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": catastrophic, "recommendations": []}), 24)
 
-    def test_incremental_prompt_receives_legacy_evidence_without_numeric_score_metadata(self):
-        payload = main._serialize_previous_audit_for_incremental_review(
-            {
-                "score": 12,
-                "score_delta": -15,
-                "executive_summary": "The prior review confirmed an authorization bypass.",
-                "finding_impacts": {
-                    "pros": [],
-                    "cons": [
-                        {
-                            "deductionId": "legacy-1",
-                            "text": "Authorization Gap: Mutation lacks ownership checks.",
-                            "impactScore": -15,
-                        }
-                    ],
-                    "recommendations": [
-                        {
-                            "deductionId": "legacy-1",
-                            "text": "Enforce Ownership: Verify the caller before mutation.",
-                        }
-                    ],
-                },
-            }
-        )
-
-        self.assertNotIn('"score"', payload)
-        self.assertNotIn("score_delta", payload)
-        self.assertNotIn("impactScore", payload)
-        self.assertIn('"severity": "CRITICAL"', payload)
-        self.assertIn('"impactArea": "maintainability"', payload)
-
-    async def test_file_audit_classifies_native_security_findings_before_scoring(self):
-        balanced_response = main.FileAuditResponse(
-            description="The component has clean boundaries with one exposed credential to remediate.",
-            delta_summary="The architecture and state boundaries improved despite the remaining credential exposure.",
-            pros=[{"text": "Clear Boundary: Typed API service isolates access."}],
-            cons=[{"findingId": "F1", "text": "Secret Exposure: client contains a hardcoded credential.", "severity": "CRITICAL", "isCatastrophic": False}],
-            recommendations=[{"findingId": "F1", "text": "Move Secret: Read credentials from server-side environment.", "impactArea": "security"}],
-        )
-        native_analysis = {
-            "imports_or_dependencies": [],
-            "detected_functions": [],
-            "hardcoded_secrets_detected": True,
-            "lines_of_code": 12,
-        }
-
-        with (
-            patch.object(main.NativeCodeParser, "parse", return_value=native_analysis),
-            patch.object(
-                main,
-                "generate_gemini_structured_audit",
-                AsyncMock(return_value=balanced_response),
-            ) as generate_audit,
+    async def test_test_assets_are_omitted_before_native_or_model_audit(self):
+        generate_audit = AsyncMock()
+        with patch.object(main.NativeCodeParser, "parse") as native_parse, patch.object(
+            main, "generate_gemini_structured_audit", generate_audit
         ):
             result = await main.perform_ai_file_audit(
-                filename="components/account.tsx",
-                content='const token = "secret"; element.innerHTML = userContent;',
+                filename="src/auth.spec.ts",
+                content='const password = "dummy-secret";',
                 detected_language="TypeScript",
-                previous_score=75,
             )
 
-        self.assertEqual(result["evaluated_score"], 86)
-        self.assertNotIn("score_delta", result)
-        self.assertEqual(result["cons"], ["Secret Exposure: client contains a hardcoded credential."])
-        self.assertEqual(result["finding_impacts"]["pros"], [{"text": "Clear Boundary: Typed API service isolates access."}])
-        self.assertEqual(result["finding_impacts"]["recommendations"][0]["findingId"], "F1")
-        rendered_prompt = generate_audit.await_args.args[1]
-        self.assertIn("Classify findings from verified evidence alone.", rendered_prompt)
-        self.assertNotIn("starts the new audit at 100", rendered_prompt)
+        native_parse.assert_not_called()
+        generate_audit.assert_not_awaited()
+        self.assertEqual(result["evaluated_score"], 98)
+        self.assertEqual(result["cons"], [])
+        self.assertEqual(result["recommendations"], [])
+        self.assertNotIn("dummy-secret", json.dumps(result))
 
-    def test_backend_rejects_point_metadata_and_invalid_directive_links(self):
-        with self.assertRaises(ValueError):
-            main.build_finding_impacts(
-                [{"text": "Invalid Strength: Highlights cannot carry points.", "impactScore": 1}],
-                [],
-                [],
+    async def test_file_audit_adapts_canonical_model_response_before_scoring(self):
+        telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
+        with patch.object(main.NativeCodeParser, "parse", return_value={
+            "imports_or_dependencies": [],
+            "detected_functions": [],
+            "hardcoded_secrets_detected": False,
+            "lines_of_code": 3,
+        }), patch.object(
+            main, "generate_gemini_structured_audit", AsyncMock(return_value=telemetry)
+        ) as generate_audit:
+            result = await main.perform_ai_file_audit(
+                filename="app/api/users/route.ts",
+                content="export async function POST() {}",
+                detected_language="TypeScript",
             )
 
-        with self.assertRaises(ValueError):
-            main.build_finding_impacts(
-                [],
-                [{"findingId": "F1", "text": "Invalid Finding: Points are not allowed.", "impactScore": 1}],
-                [{"findingId": "F1", "text": "Fix It: Remove point metadata.", "impactArea": "maintainability"}],
-            )
+        self.assertEqual(result["evaluated_score"], 93)
+        self.assertEqual(result["cons"], [telemetry.findings[0].text])
+        self.assertEqual(result["finding_impacts"]["recommendations"][0]["directiveId"], "D1")
+        self.assertIn("auditSummary", generate_audit.await_args.args[1])
 
-        with self.assertRaises(ValueError):
-            main.build_finding_impacts(
-                [],
-                [{"findingId": "F1", "text": "Input Gap: Validation is missing.", "severity": "WARNING"}],
-                [{"findingId": "F1", "text": "Validate Input: Reject malformed values.", "impactArea": "security", "impactScore": 5}],
-            )
-
-        with self.assertRaises(ValueError):
-            main.build_finding_impacts(
-                [],
-                [{"findingId": "F1", "text": "Input Gap: Validation is missing.", "severity": "WARNING"}],
-                [{"findingId": "F2", "text": "Validate Input: Reject malformed values.", "impactArea": "security"}],
-            )
-
-    async def test_mocked_gemini_responses_validate_existing_structured_contracts(self):
-        payloads = (
-            (
-                main.FileAuditResponse,
-                {
-                    "description": "The file has a clear boundary but needs stronger input validation.",
-                    "delta_summary": "Input validation improved without changing the overall architecture.",
-                    "pros": [{"text": "Clear Boundary: Parsing is isolated from persistence."}],
-                    "cons": [{"findingId": "F1", "text": "Validation Gap: External input remains insufficiently constrained.", "severity": "WARNING", "isCatastrophic": False}],
-                    "recommendations": [{"findingId": "F1", "text": "Validate Inputs: Reject malformed values before processing.", "impactArea": "security"}],
-                },
-                "file",
-            ),
-            (
-                main.FolderAuditResponse,
-                {
-                    "delta_summary": "The workspace now separates API ownership checks from presentation logic.",
-                    "executive_summary": "The workspace is close to production-ready with targeted security work remaining.",
-                    "pros": [{"text": "Clean Boundaries: API and UI responsibilities are separated."}],
-                    "cons": [{"findingId": "F1", "text": "Rate Limit Gap: Public mutations lack throttling.", "severity": "WARNING", "isCatastrophic": False}],
-                    "recommendations": [{"findingId": "F1", "text": "Add Limits: Apply route-level quotas before deployment.", "impactArea": "reliability"}],
-                },
-                "workspace",
-            ),
-            (
-                main.AnalyzeCodeResponse,
-                {
-                    "executive_summary": "The TypeScript asset has a readable data flow and a few validation gaps.",
-                    "goods_and_strengths": ["Typed Boundary: Request data is normalized before use."],
-                    "bads_and_flaws": ["Input Gap: Caller-supplied URLs are not constrained."],
-                    "strategic_recommendations": ["Validate URLs: Restrict outbound targets to trusted hosts."],
-                    "findings": [{"findingId": "F1", "text": "Input Gap: Caller-supplied URLs are not constrained.", "severity": "WARNING", "isCatastrophic": False}],
-                },
-                "standalone",
-            ),
+    def test_incremental_adapter_derives_changed_file_counts_without_model_impacts(self):
+        telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
+        report = main.adapt_telemetry_to_incremental_report(
+            telemetry,
+            ["app/api/users/route.ts", "lib/users.ts"],
         )
-
-        for response_schema, payload, contract in payloads:
-            with self.subTest(contract=contract):
-                fake_models = SimpleNamespace(
-                    generate_content=self._mock_generate_content(payload)
-                )
-                fake_client = SimpleNamespace(aio=SimpleNamespace(models=fake_models))
-                with patch.object(main, "gemini_client", fake_client):
-                    result = await main.generate_gemini_structured_audit(
-                        response_schema,
-                        main.build_meliusai_security_audit_prompt(contract),
-                    )
-
-                self.assertIsInstance(result, response_schema)
-                self.assertEqual(result.model_dump(), payload)
-
-        incremental_payload = {
-            "file_impacts": [
-                {
-                    "file_path": "backend/main.py",
-                    "verdict": "DEGRADED",
-                    "summary": "An authorization check was removed from a mutation path.",
-                }
-            ],
-            "new_vulnerabilities": ["Authorization regression in the mutation path."],
-            "resolved_issues": [],
-            "updated_architecture_summary": "The change introduces an authorization regression.",
-            "pros": [{"text": "Existing Strength: Input validation remains intact."}],
-            "cons": [{"findingId": "F1", "text": "Authorization Regression: Mutation path lacks an authorization check.", "severity": "CRITICAL", "isCatastrophic": False}],
-            "recommendations": [{"findingId": "F1", "text": "Restore Authorization: Check ownership before mutation.", "impactArea": "security"}],
-        }
-        captured_incremental_request = {}
-
-        def generate_incremental_content(**kwargs):
-            captured_incremental_request.update(kwargs)
-            return SimpleNamespace(parsed=incremental_payload, text="")
-
-        fake_incremental_client = SimpleNamespace(
-            models=SimpleNamespace(generate_content=generate_incremental_content),
-            close=lambda: None,
-        )
-        with patch.object(main.genai, "Client", return_value=fake_incremental_client):
-            incremental = main.run_incremental_audit(
-                {"backend/main.py": "+ unsafe authorization change"},
-                {
-                    "score": 76,
-                    "pros": ["Existing Strength: Input validation remains intact."],
-                    "cons": ["Existing Weakness: Cache invalidation is incomplete."],
-                    "recommendations": ["Existing Recommendation: Add cache invalidation tests."],
-                    "finding_impacts": {
-                        "pros": [{"text": "Existing Strength: Input validation remains intact."}],
-                        "cons": [{"findingId": "F1", "text": "Existing Weakness: Cache invalidation is incomplete.", "severity": "WARNING", "isCatastrophic": False}],
-                        "recommendations": [{"findingId": "F1", "text": "Existing Recommendation: Add cache invalidation tests.", "impactArea": "reliability"}],
-                    },
-                },
-                "test-api-key",
-            )
-
-        self.assertEqual(incremental.model_dump(), incremental_payload)
-        self.assertTrue(
-            captured_incremental_request["contents"].startswith(
-                main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT
-            )
-        )
-        self.assertIn("SCHEMA BINDING", captured_incremental_request["contents"])
-        self.assertIn("+ unsafe authorization change", captured_incremental_request["contents"])
-        self.assertNotIn('"score": 76', captured_incremental_request["contents"])
-        prompt = captured_incremental_request["contents"]
-        self.assertIn("Your task is to UPDATE", prompt)
-        self.assertIn("1. COPY FIRST", prompt)
-        self.assertIn("2. EVALUATE THE DELTA", prompt)
-        self.assertIn("3. REMOVE/MODIFY", prompt)
-        self.assertIn("4. APPEND", prompt)
-        self.assertIn("5. HOLISTIC SUMMARY", prompt)
-        self.assertLess(prompt.index("1. COPY FIRST"), prompt.index("2. EVALUATE THE DELTA"))
-        self.assertLess(prompt.index("2. EVALUATE THE DELTA"), prompt.index("3. REMOVE/MODIFY"))
-        self.assertLess(prompt.index("3. REMOVE/MODIFY"), prompt.index("4. APPEND"))
-        self.assertLess(prompt.index("4. APPEND"), prompt.index("5. HOLISTIC SUMMARY"))
-        self.assertIn("Do not drop historical items", prompt)
-        self.assertIn("because they are absent from the narrow diff.", prompt)
-        self.assertIn("must evaluate the ENTIRE repository's", prompt)
-        self.assertIn("Existing Strength: Input validation remains intact.", captured_incremental_request["contents"])
-        self.assertNotIn("{diff_payload}", captured_incremental_request["contents"])
-        self.assertNotIn("{previous_report_payload}", captured_incremental_request["contents"])
-
-    @staticmethod
-    def _mock_generate_content(payload):
-        async def generate_content(**_kwargs):
-            return SimpleNamespace(parsed=payload, text="")
-
-        return generate_content
+        self.assertEqual([item.file_path for item in report.file_impacts], ["app/api/users/route.ts", "lib/users.ts"])
+        self.assertEqual([item.verdict.value for item in report.file_impacts], ["NEUTRAL", "NEUTRAL"])
+        self.assertEqual(report.new_vulnerabilities, [])
+        self.assertEqual(report.resolved_issues, [])
 
 
 if __name__ == "__main__":

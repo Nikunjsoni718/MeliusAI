@@ -34,12 +34,16 @@ type AuditPayload = {
       findingId: string;
       text: string;
       severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION';
+      scope?: string;
+      location?: string;
       isCatastrophic: boolean;
     }>;
     recommendations: Array<{
+      directiveId?: string;
       findingId: string;
       text: string;
-      impactArea: 'security' | 'reliability' | 'performance' | 'maintainability' | 'operability';
+      // A legacy reader may still have this server-side-only adapter field.
+      impactArea?: 'security' | 'reliability' | 'performance' | 'maintainability' | 'operability';
     }>;
   };
 };
