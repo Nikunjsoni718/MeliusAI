@@ -24,6 +24,13 @@ test('repository prompts require production proof and mechanical remediation', (
   expect(prompt).toContain('source variable/input, file path, and terminal sink');
   expect(prompt).toContain('one root-cause finding');
   expect(prompt).toContain('one short mechanical edit');
+  expect(prompt).toContain('all four pillars');
+  expect(prompt).toContain('Security (injections, traversal, broken access control');
+  expect(prompt).toContain('Reliability and resilience');
+  expect(prompt).toContain('Performance and optimization');
+  expect(prompt).toContain('Code quality and maintainability');
+  expect(prompt).toContain('five strongest verified architectural strengths');
+  expect(prompt).toContain('five highest-priority unique findings');
   expect(prompt).toContain('"auditSummary"');
   expect(prompt).not.toContain('impactArea');
 });
@@ -187,6 +194,71 @@ test('asset verification collapses exact duplicate root causes and linked direct
   expect(result.findingImpacts.cons).toEqual([firstFinding]);
   expect(result.findingImpacts.recommendations).toEqual([providerPayload.directives[0]]);
   expect(result.score).toBe(93);
+});
+
+test('asset verification keeps five ranked findings with their linked directives', async () => {
+  const providerPayload = {
+    auditSummary: 'The supplied production code has verified authorization, validation, and cache-efficiency evidence across its service boundaries.',
+    strengths: Array.from(
+      { length: 6 },
+      (_, index) => `In app/service${index}.ts: service ${index} maintains one verified ownership boundary.`
+    ),
+    findings: [
+      {
+        ...finding('F1', 'In cache layer: redundant refreshLoop performs duplicate work.', 'OPTIMIZATION'),
+        scope: 'In cache layer: refresh scheduling',
+        location: 'app/cache.ts: refreshLoop',
+      },
+      {
+        ...finding('F2', 'In API route: request.body.token is passed to verifyToken without a missing-token branch.', 'WARNING'),
+        scope: 'In API route: token validation',
+        location: 'app/token.ts: verifyToken',
+      },
+      {
+        ...finding('F3', 'In billing route: request.body.accountId is passed to chargeAccount without an ownership branch.', 'CRITICAL'),
+        scope: 'In billing route: account authorization',
+        location: 'app/billing.ts: chargeAccount',
+      },
+      {
+        ...finding('F4', 'Across cache workers: redundant cache refresh runs after every request.', 'OPTIMIZATION'),
+        scope: 'Across cache workers: refresh scheduling',
+        location: 'app/cache-worker.ts: refreshCache',
+      },
+      {
+        ...finding('F5', 'Across API endpoints: request.body.email is passed to createUser without validation.', 'WARNING'),
+        scope: 'Across API endpoints: request validation',
+        location: 'app/users.ts: createUser',
+      },
+      {
+        ...finding('F6', 'Across API endpoints: request.body.userId is passed to deleteAccount without an ownership branch.', 'CRITICAL'),
+        scope: 'Across API endpoints: account authorization',
+        location: 'app/accounts.ts: deleteAccount',
+      },
+    ],
+    directives: Array.from({ length: 6 }, (_, index) => ({
+      directiveId: `D${index + 1}`,
+      findingId: `F${index + 1}`,
+      text: `Add guard${index + 1}(request.body) in app/finding${index + 1}.ts`,
+    })),
+  };
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(providerPayload) }] } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )) as typeof fetch;
+
+  const result = await verifyMeliusAsset({
+    assetName: 'app/api/users/route.ts',
+    content: 'export async function POST() {}',
+    apiKey: 'test-key',
+    fetchImpl,
+  });
+
+  expect(result.strengths).toHaveLength(5);
+  expect(result.findingImpacts.cons.map((item) => item.findingId)).toEqual(['F6', 'F3', 'F5', 'F2', 'F4']);
+  expect(result.findingImpacts.recommendations.map((item) => item.findingId).sort()).toEqual(['F2', 'F3', 'F4', 'F5', 'F6']);
+  expect(result.findingImpacts.recommendations).toHaveLength(5);
+  expect(result.score).toBe(63);
 });
 
 test('metadata-only fallback does not create unproven findings or deductions', async () => {

@@ -84,6 +84,13 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source), the file path, and the terminal execution point (sink)", prompt)
         self.assertIn("one finding per unique root cause", prompt)
         self.assertIn("total system compromise or unrecoverable application failure", prompt)
+        self.assertIn("all four pillars", prompt)
+        self.assertIn("Security", prompt)
+        self.assertIn("Reliability and resilience", prompt)
+        self.assertIn("Performance and optimization", prompt)
+        self.assertIn("Code quality and maintainability", prompt)
+        self.assertIn("five strongest verified architectural strengths", prompt)
+        self.assertIn("five highest-priority unique findings", prompt)
         self.assertIn("exactly `auditSummary`, `strengths`, `findings`, and `directives`", prompt)
         self.assertNotIn("impactArea", prompt)
 
@@ -95,6 +102,21 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("`auditSummary`", rendered)
                 self.assertNotIn("`score_delta`", rendered)
                 self.assertNotIn("`impactArea`", rendered)
+
+        file_prompt = main.generate_single_file_audit_prompt(
+            asset_name="app/api/users/route.ts",
+            asset_text_content="export async function POST() {}",
+            asset_classification={
+                "detectedType": "code",
+                "language": "TypeScript",
+                "reviewMode": "engineering",
+                "complexityLevel": "standard",
+                "projectDepth": "single-file",
+                "recruiterReadiness": "not-assessed",
+            },
+            user_context_description="",
+        )
+        self.assertIn("five strongest strengths and five highest-priority", file_prompt)
 
     def test_canonical_telemetry_validates_evidence_and_adapts_legacy_fields(self):
         telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
@@ -136,6 +158,83 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         adapted = main.adapt_audit_telemetry(telemetry)
         impacts = main.build_finding_impacts(adapted["pros"], adapted["cons"], adapted["recommendations"])
         self.assertEqual(main.calculate_audit_score(impacts), 93)
+
+    def test_telemetry_keeps_five_ranked_findings_and_only_their_directives(self):
+        payload = self.telemetry_payload()
+        payload["strengths"] = [
+            f"In app/service{index}.ts: service {index} uses one verified boundary."
+            for index in range(6)
+        ]
+        payload["findings"] = [
+            {
+                "findingId": "F1",
+                "text": "In cache layer: redundant refreshLoop performs duplicate work.",
+                "severity": "OPTIMIZATION",
+                "scope": "In cache layer: refresh scheduling",
+                "location": "app/cache.ts: refreshLoop",
+                "isCatastrophic": False,
+            },
+            {
+                "findingId": "F2",
+                "text": "In API route: request.body.token reaches verifyToken without a missing-token branch.",
+                "severity": "WARNING",
+                "scope": "In API route: token validation",
+                "location": "app/token.ts: verifyToken",
+                "isCatastrophic": False,
+            },
+            {
+                "findingId": "F3",
+                "text": "In billing route: request.body.accountId reaches chargeAccount without an ownership branch.",
+                "severity": "CRITICAL",
+                "scope": "In billing route: account authorization",
+                "location": "app/billing.ts: chargeAccount",
+                "isCatastrophic": False,
+            },
+            {
+                "findingId": "F4",
+                "text": "Across cache workers: redundant cache refresh runs after every request.",
+                "severity": "OPTIMIZATION",
+                "scope": "Across cache workers: refresh scheduling",
+                "location": "app/cache-worker.ts: refreshCache",
+                "isCatastrophic": False,
+            },
+            {
+                "findingId": "F5",
+                "text": "Across API endpoints: request.body.email reaches createUser without validation.",
+                "severity": "WARNING",
+                "scope": "Across API endpoints: request validation",
+                "location": "app/users.ts: createUser",
+                "isCatastrophic": False,
+            },
+            {
+                "findingId": "F6",
+                "text": "Across API endpoints: request.body.userId reaches deleteAccount without an ownership branch.",
+                "severity": "CRITICAL",
+                "scope": "Across API endpoints: account authorization",
+                "location": "app/accounts.ts: deleteAccount",
+                "isCatastrophic": False,
+            },
+        ]
+        payload["directives"] = [
+            {
+                "directiveId": f"D{index}",
+                "findingId": f"F{index}",
+                "text": f"Add guard{index}(request.body) in app/finding{index}.ts",
+            }
+            for index in range(1, 7)
+        ]
+
+        telemetry = main.AuditTelemetryResponse.model_validate(payload)
+
+        self.assertEqual(len(telemetry.strengths), 5)
+        self.assertEqual(
+            [finding.findingId for finding in telemetry.findings],
+            ["F6", "F3", "F5", "F2", "F4"],
+        )
+        self.assertEqual(
+            {directive.findingId for directive in telemetry.directives},
+            {"F2", "F3", "F4", "F5", "F6"},
+        )
 
     def test_scores_follow_98_12_5_1_with_the_soft_floor_and_catastrophic_gate(self):
         self.assertEqual(main.calculate_audit_score({"pros": [], "cons": [], "recommendations": []}), 98)

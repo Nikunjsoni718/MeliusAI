@@ -12,13 +12,17 @@ const GEMINI_ASSET_AUDIT_MODEL = process.env.GEMINI_AUDIT_MODEL?.trim() || "gemi
 const AUDIT_SCORE_FLOOR = 15;
 const AUDIT_SCORE_SOFT_FLOOR = 25;
 const AUDIT_SCORE_CEILING = 98;
+const MAX_AUDIT_TELEMETRY_ITEMS = 5;
 const EVIDENCE_PROVEN_AUDIT_INSTRUCTIONS = [
   "- act as an objective, evidence-driven Staff Software Engineer; omit any claim that lacks concrete production code proof",
   "- hard omit test files, mocks, dummy data, test fixtures, examples, and build-only code; never mention their credentials, findings, or directives",
+  "- exhaustively evaluate every eligible production path across all four pillars before selecting output: Security (injections, traversal, broken access control, hardcoded secrets, unsafe data flows); Reliability and resilience (unhandled promises, missing error boundaries, races, memory leaks, missing error handling, unmanaged edge cases); Performance and optimization (redundant network calls, expensive loops, inefficient database queries, N+1 patterns, algorithmic bottlenecks); and Code quality and maintainability (dead code, inconsistent naming, duplicated logic, poor modularity, and concrete formatting or API-pattern maintenance costs)",
+  "- do not suppress a verified warning or optimization because a critical issue exists; report quality or style only when a concrete production pattern and location prove a maintenance cost, never from aesthetics alone",
   "- every injection, authentication, or input finding names the source variable/input, file path, and terminal sink; every reliability finding names the exact unhandled branch, missing cleanup hook, or unmanaged async operation",
   "- consolidate duplicate symptoms into one root-cause finding; scope begins with a spatial phrase such as 'Across API endpoints' or 'In authentication middleware'",
   "- isCatastrophic may be true only for a CRITICAL finding whose text proves total system compromise or unrecoverable application failure; standard SSRF and unhandled promises are not catastrophic",
   "- every directive is one short mechanical edit naming a code symbol, API call, library method, or configuration change; never provide theory or abstract advice",
+  "- return the five strongest verified architectural strengths in architectural-value order, then the five highest-priority unique findings in CRITICAL, WARNING, OPTIMIZATION severity order; prefer broader 'Across ...' scope over 'In ...' scope and retain review order for ties; return only the directive linked to each retained finding",
   "- severity is internal metadata only; never include a severity name or label such as [CRITICAL] in finding text, directives, or customer-facing summaries",
   "- return only auditSummary, strengths, findings, and directives; never return scores, points, deductions, deltas, impacts, or extra keys",
 ].join("\n");
@@ -175,7 +179,7 @@ function normalizeMeliusStrengths(value: unknown): MeliusAuditStrength[] {
   }
 
   const seen = new Set<string>();
-  return value.flatMap((value) => {
+  const strengths = value.flatMap((value) => {
     if (typeof value !== "string") {
       throw new Error("Gemini returned an invalid strength finding.");
     }
@@ -190,15 +194,38 @@ function normalizeMeliusStrengths(value: unknown): MeliusAuditStrength[] {
     seen.add(identity);
     return [{ text }];
   });
+  return strengths.slice(0, MAX_AUDIT_TELEMETRY_ITEMS);
 }
 
 type NormalizedMeliusFindings = {
   findings: MeliusAuditFinding[];
+  allFindings: MeliusAuditFinding[];
   findingIdAliases: Map<string, string>;
 };
 
 function findingTextIdentity(text: string) {
   return text.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function selectTopMeliusFindings(findings: MeliusAuditFinding[]): MeliusAuditFinding[] {
+  const severityPriority: Record<MeliusAuditSeverity, number> = {
+    CRITICAL: 0,
+    WARNING: 1,
+    OPTIMIZATION: 2,
+  };
+  return findings
+    .map((finding, index) => ({ finding, index }))
+    .sort(({ finding: left, index: leftIndex }, { finding: right, index: rightIndex }) => {
+      const severityDifference = severityPriority[left.severity] - severityPriority[right.severity];
+      if (severityDifference !== 0) return severityDifference;
+      const scopePriority = (scope: string) => (
+        /^Across\s/i.test(scope) ? 0 : /^In\s/i.test(scope) ? 1 : 2
+      );
+      const scopeDifference = scopePriority(left.scope) - scopePriority(right.scope);
+      return scopeDifference !== 0 ? scopeDifference : leftIndex - rightIndex;
+    })
+    .slice(0, MAX_AUDIT_TELEMETRY_ITEMS)
+    .map(({ finding }) => finding);
 }
 
 const NON_PRODUCTION_PATH_SEGMENTS = new Set([
@@ -255,7 +282,7 @@ function normalizeMeliusFindings(value: unknown): NormalizedMeliusFindings {
     throw new Error("Gemini did not return engineering findings.");
   }
 
-  const findings: MeliusAuditFinding[] = [];
+  const allFindings: MeliusAuditFinding[] = [];
   const textById = new Map<string, string>();
   const canonicalIdByText = new Map<string, string>();
   const findingIdAliases = new Map<string, string>();
@@ -317,7 +344,7 @@ function normalizeMeliusFindings(value: unknown): NormalizedMeliusFindings {
     }
     canonicalIdByText.set(textIdentity, findingId);
     findingIdAliases.set(findingId, findingId);
-    findings.push({
+    allFindings.push({
       findingId,
       text,
       severity: severity as MeliusAuditSeverity,
@@ -326,7 +353,11 @@ function normalizeMeliusFindings(value: unknown): NormalizedMeliusFindings {
       isCatastrophic: isCatastrophic && hasVerifiedCatastrophicEvidence({ text, severity: severity as MeliusAuditSeverity }),
     });
   }
-  return { findings, findingIdAliases };
+  return {
+    findings: selectTopMeliusFindings(allFindings),
+    allFindings,
+    findingIdAliases,
+  };
 }
 
 function normalizeMeliusDirectives(
@@ -484,10 +515,13 @@ export async function verifyMeliusAsset(input: MeliusAssetAuditInput): Promise<M
   const strengths = normalizeMeliusStrengths(payload.strengths);
   const normalizedWeaknesses = normalizeMeliusFindings(payload.findings);
   const weaknesses = normalizedWeaknesses.findings;
-  const recommendations = normalizeMeliusDirectives(
+  const allRecommendations = normalizeMeliusDirectives(
     payload.directives,
-    new Set(weaknesses.map((finding) => finding.findingId)),
+    new Set(normalizedWeaknesses.allFindings.map((finding) => finding.findingId)),
     normalizedWeaknesses.findingIdAliases
+  );
+  const recommendations = allRecommendations.filter((directive) =>
+    weaknesses.some((finding) => finding.findingId === directive.findingId)
   );
   const score = calculateMeliusAuditScore(weaknesses);
 
@@ -687,7 +721,7 @@ export async function analyzeRepo(input: RepoAnalysisInput): Promise<RepoAnalysi
         generationConfig: {
           temperature: 0.2,
           topP: 0.8,
-          maxOutputTokens: 512,
+          maxOutputTokens: 1024,
         },
       }),
     }
@@ -744,7 +778,7 @@ export async function analyzeVaultProject(
         generationConfig: {
           temperature: 0.25,
           topP: 0.8,
-          maxOutputTokens: 420,
+          maxOutputTokens: 1024,
         },
       }),
     }
@@ -989,10 +1023,13 @@ function parseVaultProjectPayload(rawText: string): VaultProjectAudit {
   const strengths = normalizeMeliusStrengths(payload.strengths);
   const normalizedFindings = normalizeMeliusFindings(payload.findings);
   const findings = normalizedFindings.findings;
-  const directives = normalizeMeliusDirectives(
+  const allDirectives = normalizeMeliusDirectives(
     payload.directives,
-    new Set(findings.map((finding) => finding.findingId)),
+    new Set(normalizedFindings.allFindings.map((finding) => finding.findingId)),
     normalizedFindings.findingIdAliases
+  );
+  const directives = allDirectives.filter((directive) =>
+    findings.some((finding) => finding.findingId === directive.findingId)
   );
   const score = calculateMeliusAuditScore(findings);
 
@@ -1276,10 +1313,13 @@ function parseAnalysisPayload(rawText: string): RepoAnalysisResult {
   normalizeMeliusStrengths(payload.strengths);
   const normalizedFindings = normalizeMeliusFindings(payload.findings);
   const findings = normalizedFindings.findings;
-  const directives = normalizeMeliusDirectives(
+  const allDirectives = normalizeMeliusDirectives(
     payload.directives,
-    new Set(findings.map((finding) => finding.findingId)),
+    new Set(normalizedFindings.allFindings.map((finding) => finding.findingId)),
     normalizedFindings.findingIdAliases
+  );
+  const directives = allDirectives.filter((directive) =>
+    findings.some((finding) => finding.findingId === directive.findingId)
   );
   const score = calculateMeliusAuditScore(findings);
   const directiveTexts = directives.map((directive) => directive.text);
