@@ -94,6 +94,11 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("five highest-priority unique findings", prompt)
         self.assertIn("Assign exactly one integer `penalty`", prompt)
         self.assertIn("one or two short sentences", prompt)
+        self.assertIn("Never begin with filler articles: `The`, `This`, `A`, or `An`", prompt)
+        self.assertIn("Lead with the concrete technical mechanism", prompt)
+        self.assertIn("directive must begin with an imperative action verb", prompt)
+        self.assertIn("cross-check every candidate against all findings", prompt)
+        self.assertIn("praise must be universally true across the reviewed context", prompt)
         self.assertIn("exactly `auditSummary`, `strengths`, `findings`, and `directives`", prompt)
         self.assertNotIn("impactArea", prompt)
 
@@ -124,6 +129,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             user_context_description="",
         )
         self.assertIn("five strongest strengths and five highest-priority", file_prompt)
+        self.assertIn("numeric impact other than the required `penalty` field", file_prompt)
 
     def test_canonical_telemetry_validates_evidence_and_adapts_legacy_fields(self):
         telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())

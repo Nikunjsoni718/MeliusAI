@@ -189,6 +189,12 @@ MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT = """You are MeliusAI, an objective, evide
 - Examples: `Return clearInterval(timer) from usePolling cleanup.` or `Pass values through client.query(sql, [values]).`
 - Never provide textbook definitions, background theory, or abstract advice such as `sanitize inputs` or `write cleaner code`.
 
+### Telegraphic output and consistency review
+- Write every finding and strength entry as a telegraphic, punchy fragment. Never begin with filler articles: `The`, `This`, `A`, or `An`.
+- Lead with the concrete technical mechanism. Example: write `Untrusted id parameter concatenated directly into SQL string, enabling injection.` instead of `The profile endpoint concatenates the untrusted id parameter into SQL.`
+- Every directive must begin with an imperative action verb and name the code target. Example: `Refactor query to use parameterized inputs.` or `Move app.use() call before route registration.`
+- Before returning `strengths`, cross-check every candidate against all findings. Never praise a security, reliability, or architecture mechanism that a finding flags anywhere in the supplied context. For example, do not praise parameterized queries if any evaluated file has a SQL-injection finding; praise must be universally true across the reviewed context.
+
 ### Output contract
 - Return one JSON object and no Markdown with exactly `auditSummary`, `strengths`, `findings`, and `directives`.
 - `auditSummary` is a concise two- or three-sentence technical assessment. `strengths` contains only verified architectural patterns.
@@ -8173,7 +8179,7 @@ def generate_single_file_audit_prompt(
 
 Use the metadata only as context. Review the artifact by its intended scope, not by raw
 file size or line count. Classify each weakness only from concrete current-code evidence.
-Do not emit a score, score reasoning, score delta, point metadata, numeric impact, or extra fields.
+Do not emit an aggregate score, score reasoning, score delta, point metadata, or numeric impact other than the required `penalty` field.
 Return only the canonical telemetry JSON: auditSummary, strengths, findings, and directives.
 Every finding must include source-to-sink or equivalent mechanism evidence, spatial scope, and a
 file-plus-symbol location. Every finding must have one mechanical directive. Review every eligible
@@ -11528,7 +11534,7 @@ async def verify_asset(
             strict_audit_prompt = f"""Audit the supplied asset as part of its workspace. Return only the
 canonical telemetry object: auditSummary, strengths, findings, and directives. Each finding needs
 production evidence, spatial scope, a file-plus-symbol location, and exactly one mechanical directive.
-Do not emit delta summaries, scores, points, impacts, or any route-specific fields.
+Do not emit delta summaries, aggregate scores, point values, numeric impacts other than the required `penalty`, or route-specific fields.
 
 Asset name: {asset_name}
 Detected type: {asset_classification["detectedType"]}

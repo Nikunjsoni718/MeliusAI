@@ -32,6 +32,11 @@ test('repository prompts require production proof and mechanical remediation', (
   expect(prompt).toContain('Code quality and maintainability');
   expect(prompt).toContain('CRITICAL uses 11-13');
   expect(prompt).toContain('one or two short sentences');
+  expect(prompt).toContain('never begin with filler articles: The, This, A, or An');
+  expect(prompt).toContain("lead with the technical mechanism");
+  expect(prompt).toContain('every directive starts with an imperative action verb');
+  expect(prompt).toContain('cross-check every candidate against all findings');
+  expect(prompt).toContain('never praise a security, reliability, or architecture mechanism');
   expect(prompt).toContain('five strongest verified architectural strengths');
   expect(prompt).toContain('five highest-priority unique findings');
   expect(prompt).toContain('"auditSummary"');
