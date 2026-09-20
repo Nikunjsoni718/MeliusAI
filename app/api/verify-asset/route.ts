@@ -34,6 +34,7 @@ type AuditPayload = {
       findingId: string;
       text: string;
       severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION';
+      penalty: number;
       scope?: string;
       location?: string;
       isCatastrophic: boolean;

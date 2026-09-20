@@ -56,6 +56,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "findingId": finding_id,
             "text": "In API route: request.body.email is passed to createUser without validation.",
             "severity": "CRITICAL" if catastrophic else "WARNING",
+            "penalty": 12 if catastrophic else 5,
             "scope": "In API route: user provisioning",
             "location": "app/api/users/route.ts: createUser",
             "isCatastrophic": catastrophic,
@@ -91,8 +92,14 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Code quality and maintainability", prompt)
         self.assertIn("five strongest verified architectural strengths", prompt)
         self.assertIn("five highest-priority unique findings", prompt)
+        self.assertIn("Assign exactly one integer `penalty`", prompt)
+        self.assertIn("one or two short sentences", prompt)
         self.assertIn("exactly `auditSummary`, `strengths`, `findings`, and `directives`", prompt)
         self.assertNotIn("impactArea", prompt)
+
+        finding_schema = main.AuditTelemetryResponse.model_json_schema()["$defs"]["AuditTelemetryFinding"]
+        self.assertIn("penalty", finding_schema["properties"])
+        self.assertIn("penalty", finding_schema["required"])
 
         for contract in ("file", "workspace", "standalone", "incremental", "dashboard"):
             with self.subTest(contract=contract):
@@ -126,6 +133,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapted["pros"], [{"text": telemetry.strengths[0]}])
         self.assertEqual(adapted["cons"][0]["scope"], "In API route: user provisioning")
         self.assertEqual(adapted["cons"][0]["location"], "app/api/users/route.ts: createUser")
+        self.assertEqual(adapted["cons"][0]["penalty"], 5)
         self.assertEqual(adapted["recommendations"][0]["directiveId"], "D1")
         self.assertNotIn("impactArea", adapted["recommendations"][0])
 
@@ -151,6 +159,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.findings[0].findingId, "finding-1")
         self.assertEqual(telemetry.findings[0].location, "users route")
         self.assertGreater(len(telemetry.findings[0].text), 10)
+        self.assertEqual(telemetry.findings[0].penalty, 5)
         self.assertEqual(telemetry.directives[0].findingId, "finding-1")
         self.assertIn("validation helper", telemetry.directives[0].text)
 
@@ -253,7 +262,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {"F2", "F3", "F4", "F5", "F6"},
         )
 
-    def test_scores_follow_98_12_5_1_with_the_soft_floor_and_catastrophic_gate(self):
+    def test_penalties_drive_scores_with_the_soft_floor_and_catastrophic_gate(self):
         self.assertEqual(main.calculate_audit_score({"pros": [], "cons": [], "recommendations": []}), 98)
         self.assertEqual(
             main.calculate_audit_score({
@@ -285,6 +294,33 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "isCatastrophic": True,
         }]
         self.assertEqual(main.calculate_audit_score({"pros": [], "cons": catastrophic, "recommendations": []}), 24)
+
+    def test_penalties_clamp_to_their_evidence_severity_ranges(self):
+        def telemetry_finding(severity, penalty):
+            payload = self.telemetry_payload()
+            payload["findings"][0]["severity"] = severity
+            payload["findings"][0]["penalty"] = penalty
+            return main.AuditTelemetryResponse.model_validate(payload).findings[0].penalty
+
+        self.assertEqual(telemetry_finding("CRITICAL", 0), 11)
+        self.assertEqual(telemetry_finding("CRITICAL", 40), 13)
+        self.assertEqual(telemetry_finding("WARNING", -4), 4)
+        self.assertEqual(telemetry_finding("WARNING", 99), 6)
+        self.assertEqual(telemetry_finding("OPTIMIZATION", -4), 0)
+        self.assertEqual(telemetry_finding("OPTIMIZATION", 99), 2)
+
+        self.assertEqual(
+            main.calculate_audit_score({
+                "pros": [],
+                "cons": [
+                    {"findingId": "F1", "text": "In billing: accountId reaches chargeAccount without ownership validation.", "severity": "CRITICAL", "penalty": 99},
+                    {"findingId": "F2", "text": "In API route: request.body.email reaches createUser without validation.", "severity": "WARNING", "penalty": -4},
+                    {"findingId": "F3", "text": "In cache: refreshLoop repeats a redundant request.", "severity": "OPTIMIZATION", "penalty": -4},
+                ],
+                "recommendations": [],
+            }),
+            81,
+        )
 
     async def test_test_assets_are_omitted_before_native_or_model_audit(self):
         generate_audit = AsyncMock()

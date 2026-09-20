@@ -16,6 +16,7 @@ export type AuditFinding = {
   text: string;
   findingId?: string;
   severity?: AuditSeverity;
+  penalty?: number;
   scope?: string;
   location?: string;
   isCatastrophic?: boolean;
@@ -215,6 +216,24 @@ function normalizeSeverity(value: unknown): AuditSeverity | undefined {
     : undefined;
 }
 
+const AUDIT_PENALTY_RANGES: Record<AuditSeverity, readonly [number, number]> = {
+  CRITICAL: [11, 13],
+  WARNING: [4, 6],
+  OPTIMIZATION: [0, 2],
+};
+const AUDIT_DEFAULT_PENALTIES: Record<AuditSeverity, number> = {
+  CRITICAL: 12,
+  WARNING: 5,
+  OPTIMIZATION: 1,
+};
+
+function normalizePenalty(value: unknown, severity: AuditSeverity): number {
+  const fallback = AUDIT_DEFAULT_PENALTIES[severity];
+  const penalty = typeof value === 'number' && Number.isInteger(value) ? value : fallback;
+  const [minimum, maximum] = AUDIT_PENALTY_RANGES[severity];
+  return Math.max(minimum, Math.min(maximum, penalty));
+}
+
 function normalizeImpactArea(value: unknown): AuditImpactArea | undefined {
   const impactArea = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return impactArea === 'security' ||
@@ -290,6 +309,7 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     ? rawFindingId.trim()
     : undefined;
   const severity = normalizeSeverity(record.severity) ?? severityFromLegacyImpact(record.impactScore ?? record.impact_score);
+  const penalty = severity ? normalizePenalty(record.penalty, severity) : undefined;
   const scope = typeof record.scope === 'string' && record.scope.trim() ? record.scope.trim() : undefined;
   const location = typeof record.location === 'string' && record.location.trim() ? record.location.trim() : undefined;
   const isCatastrophic = normalizeCatastrophic(record.isCatastrophic ?? record.is_catastrophic);
@@ -304,6 +324,7 @@ function normalizeAuditFinding(value: unknown): AuditFinding | null {
     text,
     ...(findingId !== undefined ? { findingId } : {}),
     ...(severity !== undefined ? { severity } : {}),
+    ...(penalty !== undefined ? { penalty } : {}),
     ...(scope !== undefined ? { scope } : {}),
     ...(location !== undefined ? { location } : {}),
     ...(isCatastrophic !== undefined ? { isCatastrophic } : {}),

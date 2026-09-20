@@ -9,9 +9,10 @@ function finding(
   findingId: string,
   text: string,
   severity: 'CRITICAL' | 'WARNING' | 'OPTIMIZATION',
-  isCatastrophic = false
+  isCatastrophic = false,
+  penalty = severity === 'CRITICAL' ? 12 : severity === 'WARNING' ? 5 : 1
 ) {
-  return { findingId, text, severity, scope: productionScope, location: productionLocation, isCatastrophic };
+  return { findingId, text, severity, penalty, scope: productionScope, location: productionLocation, isCatastrophic };
 }
 
 test('repository prompts require production proof and mechanical remediation', () => {
@@ -29,10 +30,26 @@ test('repository prompts require production proof and mechanical remediation', (
   expect(prompt).toContain('Reliability and resilience');
   expect(prompt).toContain('Performance and optimization');
   expect(prompt).toContain('Code quality and maintainability');
+  expect(prompt).toContain('CRITICAL uses 11-13');
+  expect(prompt).toContain('one or two short sentences');
   expect(prompt).toContain('five strongest verified architectural strengths');
   expect(prompt).toContain('five highest-priority unique findings');
   expect(prompt).toContain('"auditSummary"');
   expect(prompt).not.toContain('impactArea');
+});
+
+test('impact penalties clamp by severity before calculating the score', () => {
+  expect(calculateMeliusAuditScore([
+    finding('F1', 'In billing route: request.body.accountId reaches chargeAccount without ownership validation.', 'CRITICAL', false, 40),
+    finding('F2', 'In API route: request.body.email reaches createUser without validation.', 'WARNING', false, -10),
+    finding('F3', 'In cache layer: refreshLoop repeats a redundant request.', 'OPTIMIZATION', false, -10),
+  ])).toBe(81);
+
+  expect(calculateMeliusAuditScore([
+    finding('F1', 'In billing route: request.body.accountId reaches chargeAccount without ownership validation.', 'CRITICAL', false, 0),
+    finding('F2', 'In API route: request.body.email reaches createUser without validation.', 'WARNING', false, 99),
+    finding('F3', 'In cache layer: refreshLoop repeats a redundant request.', 'OPTIMIZATION', false, 99),
+  ])).toBe(79);
 });
 
 test('unique evidence profiles determine the proportional capped engineering assessment', () => {
@@ -165,6 +182,7 @@ test('asset verification collapses exact duplicate root causes and linked direct
     findingId: 'F1',
     text: 'Across frontend: searchTerm is passed to dangerouslySetInnerHTML in app/preview.tsx.',
     severity: 'WARNING' as const,
+    penalty: 5,
     scope: 'Across frontend: preview rendering',
     location: 'app/preview.tsx: dangerouslySetInnerHTML',
     isCatastrophic: false,
