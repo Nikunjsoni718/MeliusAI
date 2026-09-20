@@ -251,6 +251,32 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(main._should_suppress_notification_batch({"audit_alerts_enabled": True}, []))
         self.assertFalse(main._should_suppress_notification_batch({"audit_alerts_enabled": True}, eligible))
 
+    async def test_resend_unverified_domain_skips_without_raising(self):
+        class UnverifiedResendClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def post(self, *_args, **_kwargs):
+                return SimpleNamespace(status_code=403, is_success=False, text="Domain is not verified")
+
+        with (
+            patch.dict(os.environ, {"RESEND_API_KEY": "key", "RESEND_FROM_EMAIL": "audit@example.com"}, clear=True),
+            patch.object(main.httpx, "AsyncClient", return_value=UnverifiedResendClient()),
+            self.assertLogs(main.logger, level="WARNING") as logs,
+        ):
+            result = await main._send_resend_email(
+                recipient="developer@example.com",
+                subject="Updates pending",
+                text_body="Run your audit.",
+                idempotency_key="batch-id",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(logs.output, ["WARNING:backend.main:Resend domain unverified, skipping notification"])
+
     def test_web_push_payload_keeps_workspace_details_and_safe_route(self):
         payload = main._web_push_payload(
             title="Audit complete",

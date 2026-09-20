@@ -80,6 +80,48 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(asset["workspace_context"] is workspace_context for asset in created_assets))
         self.assertNotIn("testing_2", {asset["file_path"] for asset in created_assets})
 
+    async def test_test_and_fixture_paths_are_skipped_before_webhook_downloads(self):
+        workspace_context = main.GitHubWorkspaceContext(user_id="user-testing-2", is_public=True)
+        changes = main.GitHubPushChanges(
+            added=frozenset({
+                "src/index.ts",
+                "src/index.test.js",
+                "src/validation.spec.ts",
+                "__tests__/route.ts",
+                "fixtures/user.ts",
+            }),
+            modified=frozenset(),
+            removed=frozenset(),
+        )
+        downloaded_paths: list[str] = []
+
+        async def download_one_file(*_args, file_path, **_kwargs):
+            downloaded_paths.append(file_path)
+            return b"export default {};", "text/plain"
+
+        with (
+            patch.object(main, "get_github_repository_full_name", return_value="octo/testing_2"),
+            patch.object(main, "get_github_after_sha", return_value="a" * 40),
+            patch.object(main, "extract_github_push_changes", return_value=changes),
+            patch.object(main, "_get_workspace_assets_table_name", return_value="projects"),
+            patch.object(main, "_get_storage_bucket_name", return_value="vault"),
+            patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/testing_2"),
+            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])),
+            patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)),
+            patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"src/index.ts": "folder-src"})),
+            patch.object(main, "download_github_raw_file", new=download_one_file),
+            patch.object(main, "_create_workspace_asset", new=AsyncMock(return_value=1)),
+            patch.object(main, "_get_github_access_token", return_value=None),
+        ):
+            result = await main.process_github_push_event(
+                {}, supabase_client=object(), http_client=object()
+            )
+
+        self.assertEqual(downloaded_paths, ["src/index.ts"])
+        self.assertEqual(result.trackable_files, 1)
+        self.assertEqual(result.skipped_files, 4)
+        self.assertEqual(result.created_records, 1)
+
     async def test_syncs_changed_files_one_at_a_time_with_delay_and_logs(self):
         workspace_context = main.GitHubWorkspaceContext(
             user_id="user-testing-2",

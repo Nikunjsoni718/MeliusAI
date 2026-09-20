@@ -93,6 +93,46 @@ function getProjectVaultStoragePaths(project: DeletableProjectRow, userId: strin
   );
 }
 
+type ProjectDeletionManifest = {
+  storage_paths?: unknown;
+};
+
+type ProjectDeletionManifestClient = {
+  rpc(
+    functionName: string,
+    parameters: Record<string, string>
+  ): PromiseLike<{ data: ProjectDeletionManifest | ProjectDeletionManifest[] | null; error: { message?: string } | null }>;
+};
+
+async function getProjectDeletionManifestStoragePaths(
+  supabase: unknown,
+  userId: string,
+  projectId: string
+) {
+  const manifestClient = supabase as ProjectDeletionManifestClient;
+  const { data, error } = await manifestClient.rpc('get_project_deletion_storage_manifest', {
+    p_user_id: userId,
+    p_project_id: projectId,
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Unable to prepare project cleanup.');
+  }
+
+  const manifest = Array.isArray(data) ? data[0] : data;
+  const storagePathCandidates = Array.isArray(manifest?.storage_paths)
+    ? manifest.storage_paths
+    : [];
+
+  return Array.from(
+    new Set(
+      storagePathCandidates
+        .map((path) => extractVaultStoragePath(path, userId))
+        .filter((path): path is string => Boolean(path))
+    )
+  );
+}
+
 export async function GET(_: NextRequest, context: { params: { id: string } | Promise<{ id: string }> }) {
   try {
     const { id } = await Promise.resolve(context.params);
@@ -191,7 +231,6 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
     const { id } = await Promise.resolve(context.params);
     const supabase = await createSupabaseServerClient();
     const adminSupabase = createOptionalAdminClient();
-    const privilegedSupabase = adminSupabase ?? supabase;
     const { data: sessionData, error: sessionError } = await supabase.auth.getUser();
 
     if (sessionError) {
@@ -201,6 +240,17 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
     if (!sessionData.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Cleanup needs the service role: the manifest may include normalized
+    // file-record paths that a user-scoped client is not allowed to enumerate.
+    // Refuse the delete instead of creating a partial/orphaned cleanup.
+    if (!adminSupabase) {
+      return NextResponse.json(
+        { error: 'Project cleanup is temporarily unavailable. Please try again shortly.' },
+        { status: 503 }
+      );
+    }
+    const privilegedSupabase = adminSupabase;
 
     const { data: projectData, error: projectError } = await privilegedSupabase
       .from('projects')
@@ -224,7 +274,17 @@ export async function DELETE(_: NextRequest, context: { params: { id: string } |
       return NextResponse.json({ error: 'Forbidden: you can only delete your own assets.' }, { status: 403 });
     }
 
-    const storagePaths = getProjectVaultStoragePaths(project, sessionData.user.id);
+    const manifestStoragePaths = await getProjectDeletionManifestStoragePaths(
+      privilegedSupabase,
+      sessionData.user.id,
+      id
+    );
+    const storagePaths = Array.from(
+      new Set([
+        ...getProjectVaultStoragePaths(project, sessionData.user.id),
+        ...manifestStoragePaths,
+      ])
+    );
 
     if (storagePaths.length > 0) {
       const { error: storageDeleteError } = await privilegedSupabase.storage

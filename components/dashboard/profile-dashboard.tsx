@@ -253,6 +253,23 @@ const GITHUB_IGNORED_DIRECTORIES = new Set([
   'build',
 ]);
 
+const GITHUB_NON_PRODUCTION_DIRECTORIES = new Set([
+  'test',
+  'tests',
+  '__tests__',
+  'spec',
+  'specs',
+  '__mocks__',
+  'mock',
+  'mocks',
+  'fixture',
+  'fixtures',
+]);
+
+const GITHUB_TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec|mock)\.[^.]+$/i;
+const GITHUB_NON_PRODUCTION_DIRECTORY_PATTERN =
+  /^(?:__)?(?:tests?|specs?|mocks?|fixtures?)(?:__)?(?:[-_.].*)?$/i;
+
 function isBlockedStagedFile(sourceFileName: string) {
   const fileName = sourceFileName.split('/').pop()?.toLowerCase() || "";
   const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) =>
@@ -261,6 +278,28 @@ function isBlockedStagedFile(sourceFileName: string) {
   const isBlockedFile = BLOCKED_FILES.includes(fileName);
 
   return isBlockedExtension || isBlockedFile;
+}
+
+function isNonProductionGitHubPath(sourcePath: string) {
+  const pathParts = sourcePath
+    .replaceAll('\\', '/')
+    .split('/')
+    .filter(Boolean)
+    .map((part) => part.toLowerCase());
+  const fileName = pathParts.at(-1) ?? '';
+
+  return (
+    pathParts.some(
+      (part) =>
+        GITHUB_NON_PRODUCTION_DIRECTORIES.has(part) ||
+        GITHUB_NON_PRODUCTION_DIRECTORY_PATTERN.test(part)
+    ) ||
+    GITHUB_TEST_FILE_PATTERN.test(fileName)
+  );
+}
+
+function isImportableGitHubFile(sourcePath: string) {
+  return !isBlockedStagedFile(sourcePath) && !isNonProductionGitHubPath(sourcePath);
 }
 
 function buildGitHubTree(entries: GitHubTreeEntry[]) {
@@ -338,7 +377,7 @@ function buildGitHubTree(entries: GitHubTreeEntry[]) {
 
 function getGitHubDescendantFilePaths(node: GitHubTreeNode): string[] {
   if (node.type === 'file') {
-    return isBlockedStagedFile(node.path) ? [] : [node.path];
+    return isImportableGitHubFile(node.path) ? [node.path] : [];
   }
 
   return node.children.flatMap(getGitHubDescendantFilePaths);
@@ -4787,6 +4826,11 @@ export function ProfileDashboard({
       throw new Error('Vault sync is not ready.');
     }
 
+    const { data: authData, error: authError } = await supabase.auth.getSession();
+    if (authError || authData.session?.user.id !== userId) {
+      throw new Error('Your session has expired. Please sign in again.');
+    }
+
     setUploadState({
       fileName: file.name,
       progress: 20,
@@ -4794,14 +4838,28 @@ export function ProfileDashboard({
     });
 
     const path = `${userId}/${getStorageFileName(file.name)}`;
-    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET_NAME).upload(path, file, {
-      upsert: true,
-      contentType: getUploadContentType(file),
-    });
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(STORAGE_BUCKET_NAME)
+        .upload(path, file, {
+          upsert: true,
+          contentType: getUploadContentType(file),
+        });
 
-    if (uploadError) {
-      console.log('Storage Error:', uploadError.message);
-      throw uploadError;
+      if (uploadError) {
+        throw uploadError;
+      }
+    } catch (error) {
+      setUploadState({
+        fileName: file.name,
+        progress: 100,
+        status: 'failed',
+        error: 'Vault upload failed. Check your connection and permissions, then try again.',
+      });
+      showBioToast('Vault upload failed. Check your connection and permissions, then try again.');
+      throw new Error(
+        `Vault upload failed: ${error instanceof Error ? error.message : 'The file could not be stored.'}`
+      );
     }
 
     setUploadState({
@@ -4985,8 +5043,26 @@ export function ProfileDashboard({
           return false;
         }
 
-        const pathParts = entry.path.split('/');
-        return !pathParts.some((part) => GITHUB_IGNORED_DIRECTORIES.has(part));
+        const pathParts = entry.path.split('/').map((part) => part.toLowerCase());
+        return (
+          !pathParts.some((part) => GITHUB_IGNORED_DIRECTORIES.has(part)) &&
+          isImportableGitHubFile(entry.path)
+        );
+      });
+
+      // A prior selection can outlive a refreshed repository tree. Remove test
+      // and fixture paths here as a second boundary before it reaches staging.
+      setSelectedGithubFiles((current) => {
+        const selectedPaths = current[repository.full_name] ?? [];
+        const importablePaths = selectedPaths.filter(isImportableGitHubFile);
+        if (importablePaths.length === selectedPaths.length) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [repository.full_name]: importablePaths,
+        };
       });
 
       setGithubRepositoryTrees((currentTrees) => ({
@@ -5043,7 +5119,7 @@ export function ProfileDashboard({
         [repository.full_name]: shouldSelect
           ? entries
               .filter(
-                (entry) => entry.type === 'blob' && !isBlockedStagedFile(entry.path)
+                (entry) => entry.type === 'blob' && isImportableGitHubFile(entry.path)
               )
               .map((entry) => entry.path)
           : [],
@@ -5070,9 +5146,13 @@ export function ProfileDashboard({
     shouldSelect: boolean
   ) {
     setSelectedGithubFiles((current) => {
-      const selectedPaths = new Set(current[repositoryFullName] ?? []);
+      const selectedPaths = new Set(
+        (current[repositoryFullName] ?? []).filter(isImportableGitHubFile)
+      );
       paths.forEach((path) => {
-        if (shouldSelect) {
+        if (!isImportableGitHubFile(path)) {
+          selectedPaths.delete(path);
+        } else if (shouldSelect) {
           selectedPaths.add(path);
         } else {
           selectedPaths.delete(path);
@@ -5088,10 +5168,17 @@ export function ProfileDashboard({
 
   async function handleStageSelectedGitHubFiles() {
     const selectedItems = githubRepositories.flatMap((repository) => {
-      const selectedPaths = new Set(selectedGithubFiles[repository.full_name] ?? []);
+      const selectedPaths = new Set(
+        (selectedGithubFiles[repository.full_name] ?? []).filter(isImportableGitHubFile)
+      );
       const entries = githubRepositoryTrees[repository.full_name]?.entries ?? [];
       return entries
-        .filter((entry) => entry.type === 'blob' && selectedPaths.has(entry.path))
+        .filter(
+          (entry) =>
+            entry.type === 'blob' &&
+            isImportableGitHubFile(entry.path) &&
+            selectedPaths.has(entry.path)
+        )
         .map((entry) => ({ repository, entry }));
     });
 
@@ -5358,8 +5445,10 @@ export function ProfileDashboard({
 
       const isBlockedExtension = BLOCKED_EXTENSIONS.some((extension) => fileName.endsWith(extension));
       const isBlockedFile = BLOCKED_FILES.includes(fileName);
+      const isNonProductionGitHubFile =
+        Boolean(file.githubRepository) && isNonProductionGitHubPath(file.path);
 
-      return !isBlockedExtension && !isBlockedFile;
+      return !isBlockedExtension && !isBlockedFile && !isNonProductionGitHubFile;
     });
 
     if (safeFilesToUpload.length === 0) {
@@ -5432,15 +5521,23 @@ export function ProfileDashboard({
                 (file.sourceFile ? file.sourceFile.type : 'text/plain; charset=utf-8') ||
                 'application/octet-stream';
 
-              const { error: storageError } = await supabase.storage
-                .from(STORAGE_BUCKET_NAME)
-                .upload(filePath, uploadBody, {
-                  upsert: true,
-                  contentType,
-                });
+              try {
+                const { error: storageError } = await supabase.storage
+                  .from(STORAGE_BUCKET_NAME)
+                  .upload(filePath, uploadBody, {
+                    upsert: true,
+                    contentType,
+                  });
 
-              if (storageError) {
-                throw storageError;
+                if (storageError) {
+                  throw storageError;
+                }
+              } catch (error) {
+                throw new Error(
+                  `Vault upload failed for ${file.name}: ${
+                    error instanceof Error ? error.message : 'The file could not be stored.'
+                  }`
+                );
               }
 
               const { data: publicUrlData } = supabase.storage
@@ -5576,9 +5673,8 @@ export function ProfileDashboard({
         }))
       );
       return true;
-    } catch (error: any) {
-      console.error("Upload Error:", error);
-      alert(`Upload failed: ${error.message}`);
+    } catch (error) {
+      showBioToast('Vault upload failed. Check your connection and permissions, then try again.');
       resumeProductTour(8);
       return false;
     } finally {
@@ -6400,6 +6496,9 @@ export function ProfileDashboard({
       setActivePreviewName(null);
       setActivePreviewUrl(null);
     }
+    pendingProjectAuditUpdatesRef.current.delete(projectId);
+    requestAuditProfileRevalidation();
+    router.refresh();
   }
 
   async function handleDeleteProject(projectId: string) {
@@ -6611,7 +6710,15 @@ export function ProfileDashboard({
         const conflict = await response.clone().json().catch(() => null) as { code?: string } | null;
         if (conflict?.code === 'BASELINE_REQUIRED' || conflict?.code === 'GEMINI_CONTEXT_OVERFLOW') {
           response = await fetch(FOLDER_BASELINE_AUDIT_ENDPOINT, auditRequest);
+        } else {
+          showBioToast('Audit already in progress. Please wait for the current audit to finish.');
+          return;
         }
+      }
+
+      if (response.status === 409) {
+        showBioToast('Audit already in progress. Please wait for the current audit to finish.');
+        return;
       }
 
       if (!response.ok) {
@@ -6710,9 +6817,18 @@ export function ProfileDashboard({
       throw new Error(payload?.detail ?? 'Unable to delete this project folder.');
     }
 
+    const deletedProjectIds = new Set(
+      [...projects, ...profileAssets]
+        .filter((project) => project.folder_id === folderId)
+        .map((project) => project.id)
+    );
     setProjectFolders((prev) => prev.filter((folder) => folder.id !== folderId));
     setProjects((prev) => prev.filter((project) => project.folder_id !== folderId));
     setProfileAssets((prev) => prev.filter((project) => project.folder_id !== folderId));
+    pendingFolderAuditUpdatesRef.current.delete(folderId);
+    deletedProjectIds.forEach((projectId) => {
+      pendingProjectAuditUpdatesRef.current.delete(projectId);
+    });
     if (editingFolderId === folderId) {
       setEditingFolderId(null);
       setEditFolderName('');
@@ -6726,6 +6842,8 @@ export function ProfileDashboard({
       setActivePreviewName(null);
       setActivePreviewUrl(null);
     }
+    requestAuditProfileRevalidation();
+    router.refresh();
   }
 
   const handleDeleteFolder = async (folderId: string) => {
@@ -6771,7 +6889,7 @@ export function ProfileDashboard({
   }
 
   const selectedGitHubFileCount = Object.values(selectedGithubFiles).reduce(
-    (total, paths) => total + paths.length,
+    (total, paths) => total + paths.filter(isImportableGitHubFile).length,
     0
   );
 
@@ -6867,7 +6985,7 @@ export function ProfileDashboard({
       }
 
       const isSelected = selectedPaths.has(node.path);
-      const isBlocked = isBlockedStagedFile(node.path);
+      const isBlocked = !isImportableGitHubFile(node.path);
       return (
         <label
           key={`${repository.full_name}:${node.path}`}
@@ -8099,7 +8217,7 @@ export function ProfileDashboard({
                           treeState?.entries
                             .filter(
                               (entry) =>
-                                entry.type === 'blob' && !isBlockedStagedFile(entry.path)
+                                entry.type === 'blob' && isImportableGitHubFile(entry.path)
                             )
                             .map((entry) => entry.path) ?? [];
                         const selectedPaths = new Set(

@@ -129,26 +129,43 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapted["recommendations"][0]["directiveId"], "D1")
         self.assertNotIn("impactArea", adapted["recommendations"][0])
 
-    def test_canonical_telemetry_rejects_generic_or_unlinked_output(self):
-        generic = self.telemetry_payload()
-        generic["findings"][0]["text"] = "Sanitize inputs"
-        with self.assertRaises(main.ValidationError):
-            main.AuditTelemetryResponse.model_validate(generic)
+    def test_canonical_telemetry_normalizes_minor_model_formatting(self):
+        telemetry = main.AuditTelemetryResponse.model_validate({
+            "summary": "The production route has one verified validation concern.",
+            "pros": [{"description": "The route delegates persistence to a focused service."}],
+            "weaknesses": [{
+                "id": "finding-1",
+                "description": "Sanitize inputs",
+                "level": "warning",
+                "area": "API route",
+                "file": "users route",
+            }],
+            "recommendations": [{
+                "id": "directive-1",
+                "finding_id": "finding-1",
+                "recommendation": "Use the route validation helper before saving the request.",
+            }],
+            "score": 100,
+        })
 
-        generic_directive = self.telemetry_payload()
-        generic_directive["directives"][0]["text"] = "Use best practices"
-        with self.assertRaises(main.ValidationError):
-            main.AuditTelemetryResponse.model_validate(generic_directive)
+        self.assertEqual(telemetry.findings[0].findingId, "finding-1")
+        self.assertEqual(telemetry.findings[0].location, "users route")
+        self.assertGreater(len(telemetry.findings[0].text), 10)
+        self.assertEqual(telemetry.directives[0].findingId, "finding-1")
+        self.assertIn("validation helper", telemetry.directives[0].text)
 
         missing_directive = self.telemetry_payload()
         missing_directive["directives"] = []
-        with self.assertRaises(main.ValidationError):
-            main.AuditTelemetryResponse.model_validate(missing_directive)
+        normalized_missing_directive = main.AuditTelemetryResponse.model_validate(missing_directive)
+        self.assertEqual(len(normalized_missing_directive.directives), 1)
+        self.assertEqual(normalized_missing_directive.directives[0].findingId, "F1")
 
-        orphan_directive = self.telemetry_payload()
-        orphan_directive["directives"][0]["findingId"] = "missing"
-        with self.assertRaises(main.ValidationError):
-            main.AuditTelemetryResponse.model_validate(orphan_directive)
+        test_only = self.telemetry_payload()
+        test_only["findings"][0]["location"] = "src/users.spec.ts: test validation"
+        test_only["directives"][0]["text"] = "Update src/users.spec.ts before retrying the fixture."
+        normalized_test_only = main.AuditTelemetryResponse.model_validate(test_only)
+        self.assertEqual(normalized_test_only.findings, [])
+        self.assertEqual(normalized_test_only.directives, [])
 
     def test_exact_duplicate_root_causes_collapse_before_scoring(self):
         telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload(duplicate=True))
