@@ -1,6 +1,27 @@
 import { expect, test } from '@playwright/test';
 
-import { normalizeAuditFindings } from '../lib/audit-report-normalizer';
+import { normalizeAuditFindings, resolveAuditDirective } from '../lib/audit-report-normalizer';
+
+test('resolves directives by ID before using the legacy index fallback', () => {
+  const findings = [
+    { findingId: 'F1', text: 'First finding.' },
+    { findingId: 'F2', text: 'Second finding.' },
+    { findingId: 'F3', text: 'Unmatched canonical finding.' },
+    { text: 'Legacy finding.' },
+  ];
+  const directives = [
+    { findingId: 'F2', text: 'Second refactor.' },
+    { findingId: 'F1', text: 'First refactor.' },
+    { findingId: 'F4', text: 'Unrelated refactor.' },
+    { text: 'Legacy refactor.' },
+  ];
+
+  expect(resolveAuditDirective(findings[0], 0, directives)).toEqual(directives[1]);
+  expect(resolveAuditDirective(findings[1], 1, directives)).toEqual(directives[0]);
+  expect(resolveAuditDirective(findings[2], 2, directives)).toBeUndefined();
+  expect(resolveAuditDirective(findings[3], 3, directives)).toEqual(directives[3]);
+  expect(resolveAuditDirective(findings[3], 4, directives)).toBeUndefined();
+});
 
 test('maps legacy numeric finding impacts to non-numeric severity labels', () => {
   expect(

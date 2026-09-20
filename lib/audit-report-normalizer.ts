@@ -23,6 +23,31 @@ export type AuditFinding = {
   impactArea?: AuditImpactArea;
 };
 
+/**
+ * Links canonical directives to findings without making older persisted reports
+ * lose their index-based recommendation pairing. Canonical finding IDs always
+ * win; index matching is reserved for directive records without an ID.
+ */
+export function resolveAuditDirective(
+  finding: AuditFinding,
+  index: number,
+  directives: readonly AuditFinding[]
+): AuditFinding | undefined {
+  const findingId = finding.findingId?.trim();
+
+  if (findingId) {
+    const linkedDirective = directives.find((directive) => directive.findingId?.trim() === findingId);
+    if (linkedDirective) {
+      return linkedDirective;
+    }
+
+    const indexedDirective = directives[index];
+    return indexedDirective && !indexedDirective.findingId?.trim() ? indexedDirective : undefined;
+  }
+
+  return directives[index];
+}
+
 export type NormalizedAuditFindings = {
   strengths: AuditFinding[];
   weaknesses: AuditFinding[];

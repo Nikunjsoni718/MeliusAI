@@ -5,14 +5,15 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ChevronDown } from 'lucide-react';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
 import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
-import { normalizeAuditReport, type AuditFinding } from '@/lib/audit-report-normalizer';
 import {
-  getMotivationalBannerClassName,
-  getMotivationalMessage,
-} from '@/lib/audit-motivation';
+  normalizeAuditReport,
+  resolveAuditDirective,
+  type AuditFinding,
+} from '@/lib/audit-report-normalizer';
 import {
   AUDIT_CAPTURE_TARGET_ID,
   downloadFullAuditReport,
@@ -313,10 +314,10 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
   return (
     <div className={`rounded-xl border p-4 ${toneClasses.card}`}>
       <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses.heading}`}>{title}</h4>
-      <ul className="mt-3 space-y-2">
+      <ul className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
         {items.length > 0 ? (
           items.map((item, index) => (
-            <li key={`${title}-${item.text}-${index}`} className="flex items-start gap-2 text-xs leading-relaxed text-zinc-300">
+            <li key={`${title}-${item.text}-${index}`} className="flex min-w-0 items-start gap-2 text-xs leading-relaxed text-zinc-300">
               <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses.marker}`}>
                 ✓
               </span>
@@ -331,30 +332,57 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
   );
 }
 
-function EngineeringFindings({ items }: { items: AuditFinding[] }) {
+function EngineeringFindings({
+  items,
+  directives,
+  expandAllForExport = false,
+}: {
+  items: AuditFinding[];
+  directives: AuditFinding[];
+  expandAllForExport?: boolean;
+}) {
+  const [openFindingKey, setOpenFindingKey] = useState<string | null>(null);
+
   return (
     <section className="rounded-xl border border-slate-700/80 bg-slate-950/40 p-4">
       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">Areas for Improvement</h4>
-      <ul className="mt-3 space-y-2">
-        {items.length > 0 ? items.map((item, index) => (
-          <li key={`${item.findingId ?? item.text}-${index}`} className="flex items-start gap-3 text-xs leading-relaxed text-zinc-200">
-            <span className="min-w-0 flex-1">{item.text}</span>
-          </li>
-        )) : <li className="text-xs italic text-slate-500">No verified findings were generated.</li>}
-      </ul>
-    </section>
-  );
-}
+      <div className="mt-3 space-y-3">
+        {items.length > 0 ? items.map((item, index) => {
+          const findingKey = `${item.findingId ?? item.text}-${index}`;
+          const directive = resolveAuditDirective(item, index, directives);
+          const directiveRegionId = `audit-directive-${findingKey}`;
+          const isExpanded = expandAllForExport || openFindingKey === findingKey;
 
-function EngineeringDirectives({ items }: { items: AuditFinding[] }) {
-  return (
-    <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4">
-      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">Actionable Steps</h4>
-      <ul className="mt-3 list-disc space-y-2 pl-4 marker:text-cyan-300">
-        {items.length > 0 ? items.map((item, index) => (
-          <li key={`directive-${item.text}-${index}`} className="text-xs leading-relaxed text-zinc-200">{item.text}</li>
-        )) : <li className="text-xs italic text-slate-500">No directives generated yet.</li>}
-      </ul>
+          return (
+            <article key={findingKey} className="rounded-lg border border-slate-800 bg-slate-900/35 px-4 py-3.5">
+              <p className="text-sm leading-6 text-zinc-200">{item.text}</p>
+              {directive ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setOpenFindingKey((currentKey) => currentKey === findingKey ? null : findingKey)}
+                    aria-expanded={isExpanded}
+                    aria-controls={directiveRegionId}
+                    data-image-export-ignore="true"
+                    className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-cyan-300 transition hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  >
+                    <span>{isExpanded ? 'Hide recommended refactor' : 'View recommended refactor'}</span>
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {isExpanded ? (
+                    <div id={directiveRegionId} role="region" className="mt-3 border-t border-slate-800 pt-3">
+                      <p className="text-sm leading-6 text-slate-300">{directive.text}</p>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </article>
+          );
+        }) : <p className="text-xs italic text-slate-500">No verified findings were generated.</p>}
+      </div>
     </section>
   );
 }
@@ -375,6 +403,7 @@ export function AssetPreviewModal({
   const [isExpandedViewer, setIsExpandedViewer] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [isCapturingFullReport, setIsCapturingFullReport] = useState(false);
   const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
   const onProjectUpdatedRef = useRef(onProjectUpdated);
@@ -420,10 +449,13 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  const deltaSummary = liveProject?.delta_summary?.trim() || null;
   const pros = normalizedAudit.findings.strengths;
   const cons = normalizedAudit.findings.weaknesses;
   const recommendations = normalizedAudit.findings.recommendations;
+  const findingsReportKey = [
+    ...cons.map((finding, index) => `finding:${finding.findingId ?? index}:${finding.text}`),
+    ...recommendations.map((directive, index) => `directive:${directive.findingId ?? index}:${directive.text}`),
+  ].join('\u0001');
   const hasWorkspaceAuditReport =
     isFolder &&
     liveProject?.has_been_audited === true &&
@@ -438,11 +470,7 @@ export function AssetPreviewModal({
   const isWorkspaceAuditEmptyState = isFolder && !hasWorkspaceAuditReport;
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const verificationInProgress = isVerifying || isReAuditing;
-  const executiveSummaryMarkdown =
-    normalizedAudit.summary ||
-    (isFolder
-      ? "This workspace is awaiting verification. Click 'Verify with MeliusAI' to generate an aggregate executive summary."
-      : "This project asset is awaiting verification. Click 'Verify with MeliusAI' to generate an intelligent executive summary.");
+  const executiveSummaryMarkdown = normalizedAudit.summary;
 
   useEffect(() => {
     setIsPortalMounted(true);
@@ -618,15 +646,22 @@ export function AssetPreviewModal({
     }
 
     setIsDownloadingReport(true);
+    setIsCapturingFullReport(true);
     setDownloadFeedback(null);
 
     try {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => resolve());
+        });
+      });
       await downloadFullAuditReport(auditCaptureRef.current, liveProject?.title ?? previewName);
       setDownloadFeedback('Full audit report downloaded.');
     } catch (error) {
       console.error('Full audit report download failed:', error);
       setDownloadFeedback('The full report could not be downloaded. Please try again.');
     } finally {
+      setIsCapturingFullReport(false);
       setIsDownloadingReport(false);
     }
   }
@@ -844,25 +879,7 @@ export function AssetPreviewModal({
             ) : null}
           </div>
 
-          <div
-            role="status"
-            className={`rounded-xl border px-4 py-3.5 ${getMotivationalBannerClassName(score)}`}
-          >
-            <p className="text-sm font-medium leading-6">
-              {getMotivationalMessage(score)}
-            </p>
-          </div>
-
-          {deltaSummary ? (
-            <section className="rounded-xl border border-cyan-400/25 bg-gradient-to-r from-cyan-500/10 via-blue-500/[0.07] to-transparent p-4 shadow-[0_0_28px_rgba(34,211,238,0.08)]">
-              <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
-                Audit Change Summary
-              </h3>
-              <p className="mt-3 text-sm leading-relaxed text-slate-200">{deltaSummary}</p>
-            </section>
-          ) : null}
-
-          {!isWorkspaceAuditEmptyState ? (
+          {executiveSummaryMarkdown ? (
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-400">Audit Summary</p>
               <div className="prose prose-invert prose-sm mt-3 max-w-none text-gray-300 leading-relaxed prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-slate-100 prose-h2:text-base prose-h2:font-semibold prose-p:my-2 prose-strong:text-slate-100 prose-ul:my-2 prose-li:my-1 prose-li:marker:text-cyan-300">
@@ -974,38 +991,43 @@ export function AssetPreviewModal({
               </section>
             </div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
-              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-                <div className="relative flex h-32 w-32 items-center justify-center">
-                  <div
-                    data-audit-score-arc="css"
-                    data-score={score}
-                    className="absolute inset-0 rounded-full border border-slate-800"
-                    style={{
-                      animation: 'none',
-                      background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
-                      opacity: 1,
-                      transition: 'none',
-                      visibility: 'visible',
-                    }}
-                  />
-                  <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
-                    <span className="text-3xl font-bold text-white">{score}</span>
-                    <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+            <div className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                  <div className="relative flex h-32 w-32 items-center justify-center">
+                    <div
+                      data-audit-score-arc="css"
+                      data-score={score}
+                      className="absolute inset-0 rounded-full border border-slate-800"
+                      style={{
+                        animation: 'none',
+                        background: `conic-gradient(from 90deg, rgba(34,211,238,0.9) ${score * 3.6}deg, rgba(15,23,42,0.95) 0deg)`,
+                        opacity: 1,
+                        transition: 'none',
+                        visibility: 'visible',
+                      }}
+                    />
+                    <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-800 bg-slate-950">
+                      <span className="text-3xl font-bold text-white">{score}</span>
+                      <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
+                    </div>
                   </div>
+                  {score >= 96 ? (
+                    <p className="text-center text-[10px] leading-4 text-slate-400">
+                      Baseline engineering standards met. Continued architectural review is recommended.
+                    </p>
+                  ) : null}
                 </div>
-                {score >= 96 ? (
-                  <p className="text-center text-[10px] leading-4 text-slate-400">
-                    Baseline engineering standards met. Continued architectural review is recommended.
-                  </p>
-                ) : null}
+
+                <MetricList title="Verified Strengths" items={pros} />
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
-                <MetricList title="Verified Strengths" items={pros} />
-                <EngineeringFindings items={cons} />
-                <EngineeringDirectives items={recommendations} />
-              </div>
+              <EngineeringFindings
+                key={findingsReportKey}
+                items={cons}
+                directives={recommendations}
+                expandAllForExport={isCapturingFullReport}
+              />
             </div>
           )}
         </div>
