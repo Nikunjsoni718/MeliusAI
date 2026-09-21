@@ -2946,6 +2946,29 @@ export function ProfileDashboard({
 
   useEffect(() => {
     let isActive = true;
+    const userId = user?.id ?? null;
+
+    if (loading) {
+      setIsGitHubConnectionHydrated(false);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    if (!userId) {
+      setHasPersistedGitHubConnection(false);
+      setIsGitHubConnectionExpired(false);
+      setIsGitHubConnectionHydrated(true);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    // A different authenticated account must never inherit the previous
+    // account's optimistic connection state while its record is loading.
+    setHasPersistedGitHubConnection(false);
+    setIsGitHubConnectionExpired(false);
+    setIsGitHubConnectionHydrated(false);
 
     const loadPersistedGitHubConnection = async () => {
       try {
@@ -2992,7 +3015,7 @@ export function ProfileDashboard({
     return () => {
       isActive = false;
     };
-  }, [user?.id]);
+  }, [loading, user?.id]);
 
   useEffect(() => {
     let isActive = true;
@@ -7433,7 +7456,19 @@ export function ProfileDashboard({
                               </div>
                             </div>
                         ) : null}
-                        {isGithubConnected ? (
+                        {!isGitHubConnectionHydrated ? (
+                          <div
+                            role="status"
+                            aria-live="polite"
+                            className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-300"
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-cyan-300"
+                            />
+                            Checking GitHub…
+                          </div>
+                        ) : isGithubConnected ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -8084,7 +8119,11 @@ export function ProfileDashboard({
                           className="ingestion-btn"
                           id="btn-github"
                           type="button"
+                          disabled={!isGitHubConnectionHydrated}
                           onClick={() => {
+                            if (!isGitHubConnectionHydrated) {
+                              return;
+                            }
                             setIsIngestionModalOpen(false);
                             if (isGithubConnected) {
                               setIsGithubModalOpen(true);
@@ -8099,7 +8138,9 @@ export function ProfileDashboard({
                             </svg>
                           </div>
                           <span className="btn-label">
-                            {isGithubConnected
+                            {!isGitHubConnectionHydrated
+                              ? 'Checking GitHub…'
+                              : isGithubConnected
                               ? 'GitHub Account'
                               : hasActiveGitHubIdentity
                                 ? 'Reconnect GitHub'
