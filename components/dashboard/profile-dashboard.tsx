@@ -33,6 +33,7 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { clearPersistedAuthState } from '@/lib/auth-session-routing';
+import { isGitHubReconnectErrorCode } from '@/lib/github-error-codes';
 import {
   fetchSpectateProfileResponse,
   getSpectateProfileErrorMessage,
@@ -2592,6 +2593,7 @@ function getGitHubUsernameFromAuth(authUser: User | null | undefined) {
 
 type GitHubRequestError = Error & {
   status?: number;
+  code?: unknown;
 };
 
 function getGitHubRequestStatus(error: unknown) {
@@ -2600,18 +2602,14 @@ function getGitHubRequestStatus(error: unknown) {
     : undefined;
 }
 
-function isGitHubConnectionError(error: unknown) {
-  const status = getGitHubRequestStatus(error);
-  if (status === 401 || status === 403) {
-    return true;
-  }
+function getGitHubRequestCode(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? (error as GitHubRequestError).code
+    : undefined;
+}
 
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
-  return (
-    message.includes('github connection has expired') ||
-    message.includes('github connection token is missing') ||
-    message.includes('linked github identity was found')
-  );
+function isGitHubConnectionError(error: unknown) {
+  return isGitHubReconnectErrorCode(getGitHubRequestCode(error));
 }
 
 type GitHubConnectionProfile = {
@@ -2844,6 +2842,14 @@ export function ProfileDashboard({
     },
     [clearGitHubImportState]
   );
+  const openGitHubImporter = useCallback(() => {
+    if (!isGitHubConnectionHydrated || !isGithubConnected) {
+      return;
+    }
+
+    setIsIngestionModalOpen(false);
+    setIsGithubModalOpen(true);
+  }, [isGitHubConnectionHydrated, isGithubConnected]);
   const syncGitHubUsernameToProfile = useCallback(
     async (authUser: User | null | undefined) => {
       const userId = user?.id ?? authUser?.id ?? null;
@@ -4992,21 +4998,27 @@ export function ProfileDashboard({
         credentials: 'include',
       });
       const repositoryPayload = (await repositoryResponse.json().catch(() => null)) as {
+        code?: string;
         error?: string;
         repositories?: GitHubRepository[];
       } | null;
 
       if (!repositoryResponse.ok || !Array.isArray(repositoryPayload?.repositories)) {
         const requestError = new Error(
-          repositoryPayload?.error || 'Unable to load live GitHub repositories. Reconnect GitHub and try again.'
+          repositoryPayload?.error || 'Unable to load live GitHub repositories.'
         ) as GitHubRequestError;
         requestError.status = repositoryResponse.status;
+        requestError.code = repositoryPayload?.code;
         throw requestError;
       }
 
       setGithubRepositories(repositoryPayload.repositories);
     } catch (error) {
-      console.error('GitHub repository list error:', error);
+      console.error('GitHub repository list error:', {
+        code: getGitHubRequestCode(error),
+        message: error instanceof Error ? error.message : 'Unknown error',
+        status: getGitHubRequestStatus(error),
+      });
       if (isGitHubConnectionError(error)) {
         markGitHubConnectionExpired(
           error instanceof Error
@@ -5048,6 +5060,7 @@ export function ProfileDashboard({
       treeUrl.searchParams.set('ref', repository.default_branch);
       const treeResponse = await fetch(treeUrl, { cache: 'no-store', credentials: 'include' });
       const treeData = (await treeResponse.json().catch(() => null)) as {
+        code?: string;
         error?: string;
         commitSha?: string;
         tree?: GitHubTreeEntry[];
@@ -5058,6 +5071,7 @@ export function ProfileDashboard({
           treeData?.error || 'Unable to load repository files.'
         ) as GitHubRequestError;
         requestError.status = treeResponse.status;
+        requestError.code = treeData?.code;
         throw requestError;
       }
 
@@ -5102,6 +5116,11 @@ export function ProfileDashboard({
       return entries;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load repository files.';
+      console.error('GitHub repository tree error:', {
+        code: getGitHubRequestCode(error),
+        message,
+        status: getGitHubRequestStatus(error),
+      });
       if (isGitHubConnectionError(error)) {
         markGitHubConnectionExpired(message);
         throw error;
@@ -5226,6 +5245,7 @@ export function ProfileDashboard({
               credentials: 'include',
             });
             const blobData = (await blobResponse.json().catch(() => null)) as {
+              code?: string;
               content?: string;
               encoding?: string;
               error?: string;
@@ -5235,6 +5255,7 @@ export function ProfileDashboard({
                 blobData?.error || `Unable to load ${entry.path}.`
               ) as GitHubRequestError;
               requestError.status = blobResponse.status;
+              requestError.code = blobData?.code;
               throw requestError;
             }
 
@@ -5289,7 +5310,18 @@ export function ProfileDashboard({
         setIsGithubModalOpen(false);
       }
     } catch (error) {
-      console.error('GitHub file staging error:', error);
+      console.error('GitHub file staging error:', {
+        code: getGitHubRequestCode(error),
+        message: error instanceof Error ? error.message : 'Unknown error',
+        status: getGitHubRequestStatus(error),
+      });
+      if (isGitHubConnectionError(error)) {
+        markGitHubConnectionExpired(
+          error instanceof Error
+            ? error.message
+            : 'Your GitHub connection is no longer valid. Reconnect GitHub and try again.'
+        );
+      }
       alert(
         `GitHub Import Failed: ${
           error instanceof Error ? error.message : 'Unable to download the selected files.'
@@ -7471,10 +7503,7 @@ export function ProfileDashboard({
                         ) : isGithubConnected ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              setIsIngestionModalOpen(false);
-                              setIsGithubModalOpen(true);
-                            }}
+                            onClick={openGitHubImporter}
                             className="flex items-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-500/20 hover:text-white"
                           >
                             <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -8124,11 +8153,11 @@ export function ProfileDashboard({
                             if (!isGitHubConnectionHydrated) {
                               return;
                             }
-                            setIsIngestionModalOpen(false);
                             if (isGithubConnected) {
-                              setIsGithubModalOpen(true);
+                              openGitHubImporter();
                               return;
                             }
+                            setIsIngestionModalOpen(false);
                             void (hasActiveGitHubIdentity ? handleReconnectGithub : handleLinkGithub)();
                           }}
                         >

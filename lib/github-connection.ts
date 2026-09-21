@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 
 const ENCRYPTION_KEY_ENV = 'GITHUB_CONNECTION_ENCRYPTION_KEY';
 const CIPHER_VERSION = 'v1';
@@ -12,7 +13,7 @@ type GitHubConnectionRecord = {
 };
 
 export class GitHubConnectionStorageError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(message: string, options?: ErrorOptions, readonly code?: GitHubErrorCode) {
     super(message, options);
     this.name = 'GitHubConnectionStorageError';
   }
@@ -56,7 +57,7 @@ function decodeSegment(value: string) {
   } catch (error) {
     throw new GitHubConnectionStorageError('Stored GitHub connection ciphertext is invalid.', {
       cause: error,
-    });
+    }, GITHUB_ERROR_CODES.CONNECTION_UNREADABLE);
   }
 }
 
@@ -83,7 +84,11 @@ export function decryptGitHubConnectionToken(userId: string, ciphertext: string)
     !encodedCiphertext ||
     unexpectedSegments.length > 0
   ) {
-    throw new GitHubConnectionStorageError('Stored GitHub connection ciphertext is invalid.');
+    throw new GitHubConnectionStorageError(
+      'Stored GitHub connection ciphertext is invalid.',
+      undefined,
+      GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+    );
   }
 
   try {
@@ -100,7 +105,11 @@ export function decryptGitHubConnectionToken(userId: string, ciphertext: string)
     ]).toString('utf8');
 
     if (!token.trim()) {
-      throw new GitHubConnectionStorageError('Stored GitHub connection token is empty.');
+      throw new GitHubConnectionStorageError(
+        'Stored GitHub connection token is empty.',
+        undefined,
+        GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+      );
     }
 
     return token;
@@ -110,7 +119,7 @@ export function decryptGitHubConnectionToken(userId: string, ciphertext: string)
     }
     throw new GitHubConnectionStorageError('Stored GitHub connection could not be decrypted.', {
       cause: error,
-    });
+    }, GITHUB_ERROR_CODES.CONNECTION_UNREADABLE);
   }
 }
 

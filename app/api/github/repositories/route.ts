@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 import {
   deleteGitHubConnection,
   getGitHubConnectionToken,
@@ -40,14 +41,18 @@ type GitHubRepository = {
 class RouteError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly code: GitHubErrorCode
   ) {
     super(message);
   }
 }
 
-function jsonError(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status, headers: NO_STORE_HEADERS });
+function jsonError(message: string, status: number, code?: GitHubErrorCode) {
+  return NextResponse.json(
+    { error: message, ...(code ? { code } : {}) },
+    { status, headers: NO_STORE_HEADERS }
+  );
 }
 
 function isGitHubRepository(value: unknown): value is GitHubRepository {
@@ -74,15 +79,53 @@ function isGitHubRepository(value: unknown): value is GitHubRepository {
 }
 
 function getGitHubFailure(response: Response, message: string) {
-  if (response.status === 401 || response.status === 403) {
-    return new RouteError('Your GitHub connection has expired. Reconnect GitHub and try again.', 403);
+  const requestId = response.headers.get('x-github-request-id');
+
+  if (response.status === 401) {
+    console.warn('GitHub repository token was rejected.', {
+      code: GITHUB_ERROR_CODES.TOKEN_INVALID,
+      status: response.status,
+      requestId,
+    });
+    return new RouteError(
+      'Your GitHub connection is no longer valid. Reconnect GitHub and try again.',
+      401,
+      GITHUB_ERROR_CODES.TOKEN_INVALID
+    );
+  }
+
+  if (response.status === 403) {
+    console.warn('GitHub repository access was denied.', {
+      code: GITHUB_ERROR_CODES.ACCESS_FORBIDDEN,
+      status: response.status,
+      requestId,
+    });
+    return new RouteError(
+      'GitHub denied repository access. Check the account permissions and try again.',
+      403,
+      GITHUB_ERROR_CODES.ACCESS_FORBIDDEN
+    );
   }
 
   if (response.status === 429) {
-    return new RouteError('GitHub rate limit reached. Please try again shortly.', 429);
+    console.warn('GitHub repository rate limit reached.', {
+      code: GITHUB_ERROR_CODES.RATE_LIMITED,
+      status: response.status,
+      requestId,
+    });
+    return new RouteError(
+      'GitHub rate limit reached. Please try again shortly.',
+      429,
+      GITHUB_ERROR_CODES.RATE_LIMITED
+    );
   }
 
-  return new RouteError(message, 502);
+  console.warn('GitHub repository request failed.', {
+    code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE,
+    status: response.status,
+    requestId,
+  });
+  return new RouteError(message, 502, GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE);
 }
 
 async function fetchLiveGitHubRepositories(providerToken: string) {
@@ -108,7 +151,11 @@ async function fetchLiveGitHubRepositories(providerToken: string) {
         },
       });
     } catch {
-      throw new RouteError('Unable to reach GitHub. Please try again.', 502);
+      throw new RouteError(
+        'Unable to reach GitHub. Please try again.',
+        502,
+        GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
+      );
     }
 
     if (!response.ok) {
@@ -119,11 +166,19 @@ async function fetchLiveGitHubRepositories(providerToken: string) {
     try {
       pageRepositories = await response.json();
     } catch {
-      throw new RouteError('GitHub returned an invalid repository response.', 502);
+      throw new RouteError(
+        'GitHub returned an invalid repository response.',
+        502,
+        GITHUB_ERROR_CODES.RESPONSE_INVALID
+      );
     }
 
     if (!Array.isArray(pageRepositories) || !pageRepositories.every(isGitHubRepository)) {
-      throw new RouteError('GitHub returned an invalid repository response.', 502);
+      throw new RouteError(
+        'GitHub returned an invalid repository response.',
+        502,
+        GITHUB_ERROR_CODES.RESPONSE_INVALID
+      );
     }
 
     repositories.push(...pageRepositories);
@@ -133,7 +188,11 @@ async function fetchLiveGitHubRepositories(providerToken: string) {
     }
   }
 
-  throw new RouteError('GitHub returned too many repository pages to synchronize safely.', 502);
+  throw new RouteError(
+    'GitHub returned too many repository pages to synchronize safely.',
+    502,
+    GITHUB_ERROR_CODES.RESPONSE_INVALID
+  );
 }
 
 async function removeMissingPendingImports(userId: string, repositories: GitHubRepository[]) {
@@ -145,7 +204,11 @@ async function removeMissingPendingImports(userId: string, repositories: GitHubR
     .eq('provider', 'github');
 
   if (pendingImportsError) {
-    throw new RouteError('Unable to synchronize deleted GitHub repositories.', 502);
+    throw new RouteError(
+      'Unable to synchronize deleted GitHub repositories.',
+      502,
+      GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
+    );
   }
 
   const liveRepositoryIds = new Set(repositories.map((repository) => String(repository.id)));
@@ -165,7 +228,11 @@ async function removeMissingPendingImports(userId: string, repositories: GitHubR
     .in('id', stalePendingImportIds);
 
   if (deleteError) {
-    throw new RouteError('Unable to synchronize deleted GitHub repositories.', 502);
+    throw new RouteError(
+      'Unable to synchronize deleted GitHub repositories.',
+      502,
+      GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
+    );
   }
 
   return stalePendingImportIds.length;
@@ -185,16 +252,26 @@ export async function GET() {
 
     const providerToken = await getGitHubConnectionToken(user.id);
     if (!providerToken) {
-      return jsonError('Your GitHub connection has expired. Reconnect GitHub and try again.', 401);
+      return jsonError(
+        'Your GitHub connection is missing. Reconnect GitHub and try again.',
+        401,
+        GITHUB_ERROR_CODES.AUTH_REQUIRED
+      );
     }
 
     let repositories: GitHubRepository[];
     try {
       repositories = await fetchLiveGitHubRepositories(providerToken);
     } catch (error) {
-      if (error instanceof RouteError && error.status === 403) {
-        await deleteGitHubConnection(user.id);
-        return jsonError(error.message, 401);
+      if (error instanceof RouteError) {
+        if (error.code === GITHUB_ERROR_CODES.TOKEN_INVALID) {
+          try {
+            await deleteGitHubConnection(user.id);
+          } catch (deleteError) {
+            console.error('Unable to remove an invalid GitHub connection:', deleteError);
+          }
+        }
+        return jsonError(error.message, error.status, error.code);
       }
       throw error;
     }
@@ -215,15 +292,28 @@ export async function GET() {
     );
   } catch (error) {
     if (error instanceof RouteError) {
-      return jsonError(error.message, error.status);
+      return jsonError(error.message, error.status, error.code);
     }
 
     if (error instanceof GitHubConnectionStorageError) {
       console.error('Unable to resolve GitHub connection:', error);
-      return jsonError('GitHub connection storage is unavailable.', 502);
+      const code = error.code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+        ? GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+        : GITHUB_ERROR_CODES.CONNECTION_STORAGE_UNAVAILABLE;
+      return jsonError(
+        code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+          ? 'Your stored GitHub connection needs to be reconnected.'
+          : 'GitHub connection storage is unavailable.',
+        code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE ? 401 : 502,
+        code
+      );
     }
 
     console.error('Unable to synchronize GitHub repositories:', error);
-    return jsonError('Unable to synchronize GitHub repositories.', 502);
+    return jsonError(
+      'Unable to synchronize GitHub repositories.',
+      502,
+      GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
+    );
   }
 }

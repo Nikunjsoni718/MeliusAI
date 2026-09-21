@@ -6,6 +6,7 @@ import {
   GitHubConnectionStorageError,
   upsertGitHubConnection,
 } from '@/lib/github-connection';
+import { GITHUB_ERROR_CODES } from '@/lib/github-error-codes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -39,18 +40,28 @@ export async function GET() {
       return response({ connected: false, error: 'Unauthorized' }, 401);
     }
 
-    return response({ connected: Boolean(await getGitHubConnectionToken(user.id)) });
+    const token = await getGitHubConnectionToken(user.id);
+    if (!token) {
+      return response({ connected: false, code: GITHUB_ERROR_CODES.AUTH_REQUIRED });
+    }
+
+    return response({ connected: true });
   } catch (error) {
     console.error('Unable to read GitHub connection status:', error);
+    const code = error instanceof GitHubConnectionStorageError &&
+      error.code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+      ? GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+      : GITHUB_ERROR_CODES.CONNECTION_STORAGE_UNAVAILABLE;
     return response(
       {
         connected: false,
         error:
-          error instanceof GitHubConnectionStorageError
-            ? 'GitHub connection storage is unavailable.'
-            : 'Unable to read GitHub connection status.',
+          code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+            ? 'Your stored GitHub connection needs to be reconnected.'
+            : 'GitHub connection storage is unavailable.',
+        code,
       },
-      502
+      code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE ? 401 : 502
     );
   }
 }

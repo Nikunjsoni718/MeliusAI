@@ -5,6 +5,7 @@ import {
   getGitHubConnectionToken,
   GitHubConnectionStorageError,
 } from '@/lib/github-connection';
+import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -22,6 +23,70 @@ const NO_STORE_HEADERS = {
 
 function response(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, { status, headers: NO_STORE_HEADERS });
+}
+
+type GitHubApiFailure = {
+  error: string;
+  status: number;
+  code: GitHubErrorCode;
+};
+
+function getGitHubApiFailure(githubResponse: Response, fallback: string): GitHubApiFailure {
+  const requestId = githubResponse.headers.get('x-github-request-id');
+
+  if (githubResponse.status === 401) {
+    console.warn('GitHub repository blob token was rejected.', {
+      code: GITHUB_ERROR_CODES.TOKEN_INVALID,
+      status: githubResponse.status,
+      requestId,
+    });
+    return {
+      error: 'Your GitHub connection is no longer valid. Reconnect GitHub and try again.',
+      status: 401,
+      code: GITHUB_ERROR_CODES.TOKEN_INVALID,
+    };
+  }
+
+  if (githubResponse.status === 403) {
+    console.warn('GitHub repository blob access was denied.', {
+      code: GITHUB_ERROR_CODES.ACCESS_FORBIDDEN,
+      status: githubResponse.status,
+      requestId,
+    });
+    return {
+      error: 'GitHub denied access to this repository file. Check permissions and try again.',
+      status: 403,
+      code: GITHUB_ERROR_CODES.ACCESS_FORBIDDEN,
+    };
+  }
+
+  if (githubResponse.status === 429) {
+    console.warn('GitHub repository blob rate limit reached.', {
+      code: GITHUB_ERROR_CODES.RATE_LIMITED,
+      status: githubResponse.status,
+      requestId,
+    });
+    return {
+      error: 'GitHub rate limit reached. Please try again shortly.',
+      status: 429,
+      code: GITHUB_ERROR_CODES.RATE_LIMITED,
+    };
+  }
+
+  console.warn('GitHub repository blob request failed.', {
+    code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE,
+    status: githubResponse.status,
+    requestId,
+  });
+  return { error: fallback, status: 502, code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE };
+}
+
+async function removeInvalidGitHubConnection(userId: string) {
+  try {
+    await deleteGitHubConnection(userId);
+  } catch (error) {
+    console.error('Unable to remove an invalid GitHub connection:', error);
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -43,44 +108,71 @@ export async function GET(request: NextRequest) {
 
     const token = await getGitHubConnectionToken(user.id);
     if (!token) {
-      return response({ error: 'Your GitHub connection has expired. Reconnect GitHub and try again.' }, 401);
+      return response(
+        {
+          error: 'Your GitHub connection is missing. Reconnect GitHub and try again.',
+          code: GITHUB_ERROR_CODES.AUTH_REQUIRED,
+        },
+        401
+      );
     }
 
     const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
-    const githubResponse = await fetch(
-      `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/git/blobs/${encodeURIComponent(sha)}`,
-      {
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${token}`,
-          'X-GitHub-Api-Version': '2026-03-10',
-        },
-      }
-    );
-    if (githubResponse.status === 401 || githubResponse.status === 403) {
-      await deleteGitHubConnection(user.id);
-      return response({ error: 'Your GitHub connection has expired. Reconnect GitHub and try again.' }, 401);
+    let githubResponse: Response;
+    try {
+      githubResponse = await fetch(
+        `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/git/blobs/${encodeURIComponent(sha)}`,
+        {
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2026-03-10',
+          },
+        }
+      );
+    } catch (error) {
+      console.error('Unable to reach GitHub for repository blob:', error);
+      return response(
+        { error: 'Unable to reach GitHub. Please try again.', code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE },
+        502
+      );
     }
     if (!githubResponse.ok) {
-      return response({ error: 'GitHub could not load this repository file.' }, 502);
+      const failure = getGitHubApiFailure(githubResponse, 'GitHub could not load this repository file.');
+      if (failure.code === GITHUB_ERROR_CODES.TOKEN_INVALID) {
+        await removeInvalidGitHubConnection(user.id);
+      }
+      return response(failure, failure.status);
     }
 
     const blob = (await githubResponse.json()) as { content?: unknown; encoding?: unknown };
     if (typeof blob.content !== 'string' || typeof blob.encoding !== 'string') {
-      return response({ error: 'GitHub returned an invalid repository file.' }, 502);
+      return response(
+        { error: 'GitHub returned an invalid repository file.', code: GITHUB_ERROR_CODES.RESPONSE_INVALID },
+        502
+      );
     }
 
     return response({ content: blob.content, encoding: blob.encoding });
   } catch (error) {
     console.error('Unable to load GitHub repository file:', error);
+    if (error instanceof GitHubConnectionStorageError) {
+      const code = error.code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+        ? GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+        : GITHUB_ERROR_CODES.CONNECTION_STORAGE_UNAVAILABLE;
+      return response(
+        {
+          error: code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE
+            ? 'Your stored GitHub connection needs to be reconnected.'
+            : 'GitHub connection storage is unavailable.',
+          code,
+        },
+        code === GITHUB_ERROR_CODES.CONNECTION_UNREADABLE ? 401 : 502
+      );
+    }
     return response(
-      {
-        error:
-          error instanceof GitHubConnectionStorageError
-            ? 'GitHub connection storage is unavailable.'
-            : 'Unable to load GitHub repository file.',
-      },
+      { error: 'Unable to load GitHub repository file.', code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE },
       502
     );
   }
