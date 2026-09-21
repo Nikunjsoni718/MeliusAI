@@ -376,8 +376,12 @@ function EngineeringFindings({
                     />
                   </button>
                   {isExpanded ? (
-                    <div id={directiveRegionId} role="region" className="mt-2 border-t border-rose-500/10 pt-2">
-                      <p className="text-sm leading-relaxed text-gray-200">{directive.text}</p>
+                    <div
+                      id={directiveRegionId}
+                      role="region"
+                      className="mt-3 rounded-r-md border-l-2 border-cyan-500/50 bg-black/40 p-3.5"
+                    >
+                      <p className="text-sm leading-relaxed text-gray-300">{directive.text}</p>
                     </div>
                   ) : null}
                 </>
