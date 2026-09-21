@@ -314,10 +314,13 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
   return (
     <div className={`rounded-xl border p-4 ${toneClasses.card}`}>
       <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] ${toneClasses.heading}`}>{title}</h4>
-      <ul className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+      <ul className="mt-3 grid gap-3 sm:grid-cols-2">
         {items.length > 0 ? (
           items.map((item, index) => (
-            <li key={`${title}-${item.text}-${index}`} className="flex min-w-0 items-start gap-2 text-xs leading-relaxed text-zinc-300">
+            <li
+              key={`${title}-${item.text}-${index}`}
+              className="flex min-w-0 items-start gap-2 rounded-md border border-emerald-400/15 bg-emerald-500/[0.05] p-3 text-sm leading-relaxed text-emerald-100"
+            >
               <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses.marker}`}>
                 ✓
               </span>
@@ -354,8 +357,8 @@ function EngineeringFindings({
           const isExpanded = expandAllForExport || openFindingKey === findingKey;
 
           return (
-            <article key={findingKey} className="rounded-lg border border-slate-800 bg-slate-900/35 px-4 py-3.5">
-              <p className="text-sm leading-6 text-zinc-200">{item.text}</p>
+            <article key={findingKey} className="rounded-lg border border-slate-800 bg-slate-900/35 p-3">
+              <p className="text-sm leading-relaxed text-zinc-200">{item.text}</p>
               {directive ? (
                 <>
                   <button
@@ -364,7 +367,7 @@ function EngineeringFindings({
                     aria-expanded={isExpanded}
                     aria-controls={directiveRegionId}
                     data-image-export-ignore="true"
-                    className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-cyan-300 transition hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-cyan-300 transition hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   >
                     <span>{isExpanded ? 'Hide recommended refactor' : 'View recommended refactor'}</span>
                     <ChevronDown
@@ -373,8 +376,8 @@ function EngineeringFindings({
                     />
                   </button>
                   {isExpanded ? (
-                    <div id={directiveRegionId} role="region" className="mt-3 border-t border-slate-800 pt-3">
-                      <p className="text-sm leading-6 text-slate-300">{directive.text}</p>
+                    <div id={directiveRegionId} role="region" className="mt-2 border-t border-slate-800 pt-2">
+                      <p className="text-sm leading-relaxed text-slate-300">{directive.text}</p>
                     </div>
                   ) : null}
                 </>
