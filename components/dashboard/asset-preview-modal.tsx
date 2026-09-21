@@ -306,7 +306,7 @@ function getProjectAssetText(project: PreviewProject | null | undefined, preview
 
 function MetricList({ title, items }: { title: string; items: AuditFinding[] }) {
   const toneClasses = {
-    card: 'border-emerald-400/10 bg-emerald-500/[0.025]',
+    card: 'border-emerald-500/10 bg-emerald-500/[0.02]',
     heading: 'text-emerald-200',
     marker: 'text-emerald-300',
   };
@@ -319,7 +319,7 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
           items.map((item, index) => (
             <li
               key={`${title}-${item.text}-${index}`}
-              className="flex min-w-0 items-start gap-2 rounded-md border border-emerald-400/10 bg-emerald-500/[0.025] p-3 text-sm font-medium leading-relaxed text-emerald-100"
+              className="flex min-w-0 items-start gap-2 rounded-md border border-emerald-500/10 bg-emerald-500/[0.02] p-3 text-sm font-medium leading-relaxed text-white/90"
             >
               <span aria-hidden="true" className={`mt-0.5 shrink-0 text-sm leading-none ${toneClasses.marker}`}>
                 ✓
@@ -347,7 +347,7 @@ function EngineeringFindings({
   const [openFindingKey, setOpenFindingKey] = useState<string | null>(null);
 
   return (
-    <section className="rounded-xl border border-rose-500/25 bg-rose-950/25 p-4">
+    <section className="rounded-xl border border-rose-500/10 bg-rose-500/[0.02] p-4">
       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-200">Areas for Improvement</h4>
       <div className="mt-3 space-y-3">
         {items.length > 0 ? items.map((item, index) => {
@@ -357,8 +357,8 @@ function EngineeringFindings({
           const isExpanded = expandAllForExport || openFindingKey === findingKey;
 
           return (
-            <article key={findingKey} className="rounded-lg border border-rose-500/20 bg-rose-950/35 p-3">
-              <p className="text-sm leading-relaxed text-rose-50">{item.text}</p>
+            <article key={findingKey} className="rounded-lg border border-rose-500/10 bg-rose-500/[0.025] p-3">
+              <p className="text-sm leading-relaxed text-white/90">{item.text}</p>
               {directive ? (
                 <>
                   <button
@@ -367,17 +367,17 @@ function EngineeringFindings({
                     aria-expanded={isExpanded}
                     aria-controls={directiveRegionId}
                     data-image-export-ignore="true"
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-rose-200 transition hover:text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-400 transition hover:bg-cyan-500/15 hover:text-cyan-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   >
-                    <span>{isExpanded ? 'Hide recommended refactor' : 'View recommended refactor'}</span>
+                    <span>{isExpanded ? 'Hide recommendation' : 'View recommendation'}</span>
                     <ChevronDown
                       aria-hidden="true"
                       className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                     />
                   </button>
                   {isExpanded ? (
-                    <div id={directiveRegionId} role="region" className="mt-2 border-t border-rose-500/15 pt-2">
-                      <p className="text-sm leading-relaxed text-rose-100">{directive.text}</p>
+                    <div id={directiveRegionId} role="region" className="mt-2 border-t border-rose-500/10 pt-2">
+                      <p className="text-sm leading-relaxed text-gray-200">{directive.text}</p>
                     </div>
                   ) : null}
                 </>
