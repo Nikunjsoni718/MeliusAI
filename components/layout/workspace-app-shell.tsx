@@ -109,7 +109,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
       ) : null}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] flex-col justify-between overflow-visible border-r border-white/10 bg-[#0A0F1C]/70 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] flex-col justify-between overflow-visible border-r border-white/10 bg-[#0A0F1C]/70 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-50 md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >

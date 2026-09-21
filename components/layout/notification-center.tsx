@@ -205,7 +205,7 @@ export function NotificationCenter({ userId }: { userId: string }) {
   }
 
   return (
-    <div ref={containerRef} className="relative px-3 pb-3">
+    <div ref={containerRef} className="relative z-50 px-3 pb-3">
       <button
         type="button"
         aria-label={unreadCount ? `${unreadCount} unread notifications` : 'Notifications'}
@@ -226,7 +226,7 @@ export function NotificationCenter({ userId }: { userId: string }) {
         <section
           role="dialog"
           aria-label="Notifications"
-          className="absolute bottom-0 left-full z-[70] ml-4 flex max-h-96 w-80 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md"
+          className="absolute bottom-0 left-full z-[70] ml-4 flex max-h-96 w-80 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md max-md:bottom-full max-md:left-3 max-md:mb-3 max-md:ml-0 max-md:w-[calc(100vw-2rem)]"
         >
           <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
           <div className="relative flex items-center justify-between border-b border-white/10 px-4 py-3">
