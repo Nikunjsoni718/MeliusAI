@@ -7,6 +7,15 @@ import { useRouter } from 'next/navigation';
 import { useNotifications, type WorkspaceNotification } from '@/hooks/use-notifications';
 import { cn } from '@/lib/utils';
 
+const UUID_EXACT_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const UUID_PATTERN = /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi;
+
+type NotificationCopy = {
+  before: string;
+  highlightedValue?: string;
+  after?: string;
+};
+
 function relativeTime(value: string) {
   const milliseconds = new Date(value).getTime();
   if (!Number.isFinite(milliseconds)) return 'Recently';
@@ -28,31 +37,117 @@ function dateLabel(value: string) {
   return notificationDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function cleanRepositoryName(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const normalized = value
+    .trim()
+    .replace(/^https?:\/\/(?:www\.)?github\.com\//i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
+  if (!normalized || UUID_EXACT_PATTERN.test(normalized)) return null;
+  return normalized.split('/').filter(Boolean).at(-1) ?? null;
+}
+
 function repositoryLabel(notification: WorkspaceNotification) {
-  const repoName = notification.metadata?.repo_name;
-  return typeof repoName === 'string' && repoName.trim() ? repoName : notification.project_id;
+  return cleanRepositoryName(notification.metadata?.repo_name) ?? cleanRepositoryName(notification.project_id);
+}
+
+function notificationTitle(notification: WorkspaceNotification, lifecycleTitle?: string) {
+  const titleByType: Partial<Record<WorkspaceNotification['type'], string>> = {
+    session_cooldown_re_audit: 'New Code Shipped',
+    audit_completed: 'Audit Complete',
+    stale_project_nudge: 'Project Update Due',
+    system_security: 'Security Update',
+  };
+  if (lifecycleTitle) return lifecycleTitle;
+  if (titleByType[notification.type]) return titleByType[notification.type];
+
+  return notification.title
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => {
+      const normalized = word.toLowerCase();
+      if (normalized === 'github') return 'GitHub';
+      if (normalized === 'meliusai') return 'MeliusAI';
+      if (normalized === 'api') return 'API';
+      if (normalized === 'ai') return 'AI';
+      return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+    })
+    .join(' ') || 'Workspace Update';
+}
+
+function changedLines(notification: WorkspaceNotification) {
+  const value = notification.metadata?.lines_changed;
+  const lines = typeof value === 'number' ? value : Number(value);
+  return Number.isSafeInteger(lines) && lines > 0 ? lines : null;
+}
+
+function cleanNotificationMessage(message: string) {
+  return message
+    .replace(UUID_PATTERN, 'this project')
+    .replace(/\b[A-Za-z0-9._-]+\/([A-Za-z0-9._-]+)\b/g, '$1');
+}
+
+function notificationCopy(
+  notification: WorkspaceNotification,
+  project: string | null,
+  lifecycle: ReturnType<typeof lifecyclePresentation>
+): NotificationCopy {
+  const lines = changedLines(notification);
+  if (notification.type === 'session_cooldown_re_audit' && project && lines) {
+    return {
+      before: `Shipped ${lines} new ${lines === 1 ? 'line' : 'lines'} of code to `,
+      highlightedValue: project,
+      after: '. Run a fresh audit to update your scorecard.',
+    };
+  }
+  if (notification.type === 'audit_completed' && project) {
+    return {
+      before: 'A fresh audit for ',
+      highlightedValue: project,
+      after: ' is ready to review in your scorecard.',
+    };
+  }
+  if (notification.type === 'stale_project_nudge' && project) {
+    return {
+      before: 'No recent commits were detected in ',
+      highlightedValue: project,
+      after: '. Run a fresh audit when you are ready to update your scorecard.',
+    };
+  }
+  if (lifecycle && project) {
+    return notification.type === 'project_created'
+      ? { before: 'Added ', highlightedValue: project, after: ' to your workspace.' }
+      : { before: 'Removed ', highlightedValue: project, after: ' from your workspace.' };
+  }
+  if (lifecycle) {
+    return notification.type === 'project_created'
+      ? { before: 'A new project was added to your workspace.' }
+      : { before: 'A project was removed from your workspace.' };
+  }
+  return { before: cleanNotificationMessage(notification.message) };
 }
 
 function safeActionUrl(value: string) {
   return value.startsWith('/') && !value.startsWith('//') ? value : '/vault';
 }
 
-function lifecyclePresentation(notification: WorkspaceNotification, projectName: string | null) {
-  const name = projectName?.trim() || 'Project';
+function lifecyclePresentation(notification: WorkspaceNotification) {
   if (notification.type === 'project_created') {
     return {
       icon: FolderPlus as LucideIcon,
       iconClassName: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200',
-      title: 'Project created',
-      message: `Project '${name}' was successfully created.`,
+      title: 'Project Created',
     };
   }
   if (notification.type === 'project_deleted') {
     return {
       icon: Trash2 as LucideIcon,
       iconClassName: 'border-rose-300/25 bg-rose-400/10 text-rose-200',
-      title: 'Project deleted',
-      message: `Project '${name}' has been deleted.`,
+      title: 'Project Deleted',
     };
   }
   return null;
@@ -131,7 +226,7 @@ export function NotificationCenter({ userId }: { userId: string }) {
         <section
           role="dialog"
           aria-label="Notifications"
-          className="fixed top-6 left-1/2 z-[70] w-[min(25rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl border border-cyan-400/30 bg-[#0B1221]/90 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl"
+          className="absolute bottom-0 left-full z-[70] ml-4 flex max-h-96 w-80 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md"
         >
           <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
           <div className="relative flex items-center justify-between border-b border-white/10 px-4 py-3">
@@ -154,13 +249,14 @@ export function NotificationCenter({ userId }: { userId: string }) {
               Mark all read
             </button>
           </div>
-          <div className="max-h-[28rem] overflow-y-auto p-2">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {groupedNotifications.length ? groupedNotifications.map(([label, group]) => (
               <div key={label} className="mb-3 last:mb-0">
                 <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
                 {group.map((notification) => {
                   const project = repositoryLabel(notification);
-                  const lifecycle = lifecyclePresentation(notification, project);
+                  const lifecycle = lifecyclePresentation(notification);
+                  const copy = notificationCopy(notification, project, lifecycle);
                   const LifecycleIcon = lifecycle?.icon;
                   return (
                     <button
@@ -180,11 +276,14 @@ export function NotificationCenter({ userId }: { userId: string }) {
                         ) : null}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
-                            <p className="text-sm font-medium text-slate-100">{lifecycle?.title ?? notification.title}</p>
+                            <p className="text-sm font-medium text-slate-100">{notificationTitle(notification, lifecycle?.title)}</p>
                             <time className="shrink-0 text-[10px] text-slate-500">{relativeTime(notification.created_at)}</time>
                           </div>
-                          {project ? <span className="mt-1 inline-flex rounded border border-cyan-400/15 bg-slate-800/80 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">{project}</span> : null}
-                          <p className="mt-1.5 text-xs leading-5 text-slate-400">{lifecycle?.message ?? notification.message}</p>
+                          <p className="mt-1.5 text-xs leading-5 text-slate-400">
+                            {copy.before}
+                            {copy.highlightedValue ? <span className="font-medium text-white">{copy.highlightedValue}</span> : null}
+                            {copy.after}
+                          </p>
                         </div>
                       </div>
                     </button>
