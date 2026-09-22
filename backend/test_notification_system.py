@@ -115,7 +115,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(main, "_notification_timestamp", return_value=now),
             patch.object(main, "_run_supabase", new=AsyncMock(return_value=SimpleNamespace(data=[cooldown]))),
-            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[])),
+            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[{"id": "project-id"}])),
             patch.object(main, "_insert_notification", new=AsyncMock(return_value=notification)),
             patch.object(main, "_ensure_notification_email_batch", new=AsyncMock()),
             patch.object(main, "_dispatch_notification_web_push", new=AsyncMock(return_value=1)),
@@ -143,7 +143,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(main, "_notification_timestamp", return_value=now),
             patch.object(main, "_run_supabase", new=AsyncMock(return_value=SimpleNamespace(data=[cooldown]))),
-            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[])),
+            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[{"id": "project-id"}])),
             patch.object(main, "_insert_notification", new=AsyncMock(return_value=notification)),
             patch.object(main, "_ensure_notification_email_batch", new=AsyncMock()),
             patch.object(main, "_dispatch_notification_web_push", new=AsyncMock(return_value=0)),
@@ -155,12 +155,49 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"created": 1, "suppressed": 0})
         captured_logger.info.assert_not_called()
 
+    async def test_untracked_repository_cooldown_is_deleted_without_an_alert(self):
+        now = datetime(2026, 9, 17, 12, 25, tzinfo=timezone.utc)
+        cooldown = {
+            "user_id": "user-a",
+            "repository": "owner/unimported-repository",
+            "lines_changed": 20,
+            "last_qualifying_commit_at": "2026-09-17T12:00:00+00:00",
+            "scheduled_at": "2026-09-17T12:25:00+00:00",
+        }
+        insert = AsyncMock()
+        delete = AsyncMock()
+        client = object()
+        with (
+            patch.object(main, "_notification_timestamp", return_value=now),
+            patch.object(main, "_run_supabase", new=AsyncMock(return_value=SimpleNamespace(data=[cooldown]))),
+            patch.object(main, "_repository_tracking_rows", new=AsyncMock(return_value=[])),
+            patch.object(main, "_insert_notification", new=insert),
+            patch.object(main, "_delete_repository_cooldown", new=delete),
+        ):
+            result = await main._process_due_notification_cooldowns(client)
+
+        self.assertEqual(result, {"created": 0, "suppressed": 1})
+        insert.assert_not_awaited()
+        delete.assert_awaited_once_with(
+            client,
+            user_id="user-a",
+            repository="owner/unimported-repository",
+        )
+
     def test_github_signature_requires_the_exact_signed_body(self):
         body = b'{"repository":"owner/repo"}'
         signature = "sha256=5373d5834d1abb98f867e9e741f91b4733c1054135679d4eec0b04fc84b3315e"
         self.assertTrue(main.verify_github_webhook_signature(body, signature, "webhook-secret"))
         self.assertFalse(main.verify_github_webhook_signature(body + b" ", signature, "webhook-secret"))
         self.assertFalse(main.verify_github_webhook_signature(body, None, "webhook-secret"))
+
+    def test_github_push_webhook_acknowledges_ignored_work_with_200(self):
+        webhook_route = next(
+            route
+            for route in main.app.routes
+            if getattr(route, "path", None) == "/api/webhooks/github"
+        )
+        self.assertEqual(webhook_route.status_code, 200)
 
     def test_notification_file_filter_excludes_docs_and_gitignore(self):
         self.assertTrue(main.is_notification_eligible_code_file("src/app.ts"))

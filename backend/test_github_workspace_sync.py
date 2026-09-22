@@ -17,6 +17,31 @@ REAL_ASYNCIO_SLEEP = asyncio.sleep
 
 @unittest.skipIf(main is None, f"Backend dependencies are unavailable: {BACKEND_IMPORT_ERROR}")
 class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unimported_repository_never_schedules_a_notification(self):
+        workspace_context = main.GitHubWorkspaceContext(user_id="user-testing-2", is_public=True)
+        notifications = AsyncMock()
+        changes = main.GitHubPushChanges(
+            added=frozenset(),
+            modified=frozenset(),
+            removed=frozenset(),
+        )
+
+        with (
+            patch.object(main, "get_github_repository_full_name", return_value="octo/unimported"),
+            patch.object(main, "get_github_after_sha", return_value="a" * 40),
+            patch.object(main, "extract_github_push_changes", return_value=changes),
+            patch.object(main, "_get_workspace_assets_table_name", return_value="projects"),
+            patch.object(main, "_get_storage_bucket_name", return_value="vault"),
+            patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/unimported"),
+            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])),
+            patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)),
+            patch.object(main, "_record_push_notification_activity", new=notifications),
+            patch.object(main, "_get_github_access_token", return_value=None),
+        ):
+            await main.process_github_push_event({}, supabase_client=object())
+
+        notifications.assert_not_awaited()
+
     async def test_first_import_creates_only_real_files_for_testing_2(self):
         created_assets: list[dict[str, object]] = []
         workspace_context = main.GitHubWorkspaceContext(

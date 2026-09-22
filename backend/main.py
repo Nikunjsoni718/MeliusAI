@@ -2028,6 +2028,17 @@ async def _process_due_notification_cooldowns(
                 user_id=user_id,
                 repository=repository,
             )
+            # Cooldowns may have been created before repository tracking was
+            # enforced, or after an imported repository was removed. Never
+            # turn either case into a user-facing notification.
+            if not rows:
+                suppressed += 1
+                await _delete_repository_cooldown(
+                    supabase_client,
+                    user_id=user_id,
+                    repository=repository,
+                )
+                continue
             latest_audit = _latest_notification_timestamp(rows, "last_audit_at")
             if latest_audit is not None and latest_audit >= qualifying_commit_at:
                 suppressed += 1
@@ -3331,7 +3342,12 @@ async def process_github_push_event(
         repository=repository,
         repository_url=repository_url,
     )
-    workspace_contexts = _build_workspace_contexts(repository_rows)
+    # `projects.github_repository` is the persisted proof that a repository
+    # was explicitly imported into a MeliusAI workspace. A GitHub App event
+    # can still identify its owner, but ownership alone must never schedule a
+    # cooldown or create an alert.
+    imported_workspace_contexts = _build_workspace_contexts(repository_rows)
+    workspace_contexts = dict(imported_workspace_contexts)
     if not workspace_contexts:
         workspace_context = await _resolve_repository_workspace_context(
             supabase_client,
@@ -3368,17 +3384,18 @@ async def process_github_push_event(
         workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
     access_token = _get_github_access_token()
-    try:
-        await _record_push_notification_activity(
-            supabase_client,
-            payload=payload,
-            repository=repository,
-            user_ids=set(workspace_contexts.keys()),
-            access_token=access_token,
-        )
-    except Exception:
-        # Notification tracking must never block the existing repository sync.
-        logger.exception("GitHub notification tracking failed for %s", repository)
+    if imported_workspace_contexts:
+        try:
+            await _record_push_notification_activity(
+                supabase_client,
+                payload=payload,
+                repository=repository,
+                user_ids=set(imported_workspace_contexts.keys()),
+                access_token=access_token,
+            )
+        except Exception:
+            # Notification tracking must never block the existing repository sync.
+            logger.exception("GitHub notification tracking failed for %s", repository)
     owns_http_client = http_client is None
     active_http_client = http_client or httpx.AsyncClient(
         follow_redirects=True,
@@ -3633,7 +3650,7 @@ async def process_github_repository_created_in_background(
         )
 
 
-@app.post("/api/webhooks/github", status_code=202)
+@app.post("/api/webhooks/github", status_code=200)
 async def handle_github_webhook(request: Request):
     secret_key = os.environ.get("GITHUB_WEBHOOK_SECRET")
     sig_header = request.headers.get("x-hub-signature-256")
@@ -3767,7 +3784,10 @@ async def handle_github_webhook(request: Request):
     )
 
     return JSONResponse(
-        status_code=202,
+        # A skipped push is intentional. A 200 prevents GitHub retrying or
+        # disabling the webhook while the background worker applies its
+        # imported-repository notification gate.
+        status_code=200,
         background=background_tasks,
         content={
             "accepted": True,
