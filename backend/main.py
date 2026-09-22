@@ -642,6 +642,10 @@ MAX_GITHUB_FILE_BYTES = 5 * 1024 * 1024
 GITHUB_CONNECTION_ENCRYPTION_KEY_ENV = "GITHUB_CONNECTION_ENCRYPTION_KEY"
 GITHUB_CONNECTION_CIPHER_VERSION = "v1"
 GITHUB_CONNECTION_CIPHER_AAD_PREFIX = "meliusai:github-connection:"
+GITHUB_OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+GITHUB_APP_ACCESS_TOKEN_DEFAULT_TTL_SECONDS = 8 * 60 * 60
+GITHUB_APP_REFRESH_TOKEN_DEFAULT_TTL_SECONDS = 180 * 24 * 60 * 60
+GITHUB_ACCESS_TOKEN_REFRESH_WINDOW = timedelta(minutes=5)
 
 TRACKABLE_GITHUB_ASSET_EXTENSIONS = {
     ".c",
@@ -1000,15 +1004,65 @@ def decrypt_github_connection_token(user_id: str, ciphertext: str) -> str:
     return token.strip()
 
 
-async def get_persisted_github_connection_token(user_id: str) -> str | None:
-    service_client = get_supabase_service_client()
-    if service_client is None:
-        raise RuntimeError("Supabase service credentials are required to read GitHub connections.")
+def encrypt_github_connection_token(user_id: str, token: str) -> str:
+    normalized_token = str(token or "").strip()
+    if not user_id or not normalized_token:
+        raise RuntimeError("A user ID and GitHub access token are required.")
 
+    iv = os.urandom(12)
+    encrypted = AESGCM(_decode_github_connection_key()).encrypt(
+        iv,
+        normalized_token.encode("utf-8"),
+        f"{GITHUB_CONNECTION_CIPHER_AAD_PREFIX}{user_id}".encode("utf-8"),
+    )
+    ciphertext, tag = encrypted[:-16], encrypted[-16:]
+    return ".".join(
+        (
+            GITHUB_CONNECTION_CIPHER_VERSION,
+            base64.urlsafe_b64encode(iv).decode("ascii").rstrip("="),
+            base64.urlsafe_b64encode(tag).decode("ascii").rstrip("="),
+            base64.urlsafe_b64encode(ciphertext).decode("ascii").rstrip("="),
+        )
+    )
+
+
+def _github_connection_needs_refresh(token_expires_at: Any) -> bool:
+    if not isinstance(token_expires_at, str) or not token_expires_at.strip():
+        # Rows created before GitHub App refresh support may contain legacy,
+        # non-expiring OAuth tokens. A rejected legacy token still prompts a
+        # one-time reconnect because there is no refresh credential to rotate.
+        return False
+
+    try:
+        expires_at = datetime.fromisoformat(
+            token_expires_at.strip().replace("Z", "+00:00")
+        )
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+
+    return expires_at <= datetime.now(timezone.utc) + GITHUB_ACCESS_TOKEN_REFRESH_WINDOW
+
+
+def _get_github_oauth_client_credentials() -> tuple[str, str]:
+    client_id = str(os.getenv("GITHUB_CLIENT_ID") or "").strip()
+    client_secret = str(os.getenv("GITHUB_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GitHub App OAuth refresh is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET."
+        )
+    return client_id, client_secret
+
+
+async def _read_persisted_github_connection(
+    service_client: Client,
+    user_id: str,
+) -> dict[str, Any] | None:
     try:
         response = await asyncio.to_thread(
             lambda: service_client.table("github_connections")
-            .select("token_ciphertext")
+            .select("token_ciphertext, refresh_token, token_expires_at, refresh_token_expires_at")
             .eq("user_id", user_id)
             .limit(1)
             .execute()
@@ -1020,9 +1074,151 @@ async def get_persisted_github_connection_token(user_id: str) -> str | None:
     if not isinstance(rows, list) or not rows:
         return None
 
-    ciphertext = rows[0].get("token_ciphertext") if isinstance(rows[0], dict) else None
+    record = rows[0]
+    if not isinstance(record, dict):
+        raise RuntimeError("Stored GitHub connection ciphertext is invalid.")
+    return record
+
+
+async def _refresh_persisted_github_connection_token(
+    service_client: Client,
+    user_id: str,
+    record: dict[str, Any],
+) -> str:
+    encrypted_refresh_token = record.get("refresh_token")
+    if not isinstance(encrypted_refresh_token, str) or not encrypted_refresh_token.strip():
+        raise RuntimeError("Your stored GitHub connection needs to be reconnected.")
+
+    refresh_token = decrypt_github_connection_token(user_id, encrypted_refresh_token)
+    client_id, client_secret = _get_github_oauth_client_credentials()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as http_client:
+            response = await http_client.post(
+                GITHUB_OAUTH_TOKEN_URL,
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+                headers={"Accept": "application/json"},
+            )
+    except httpx.HTTPError as error:
+        raise RuntimeError("Unable to refresh the GitHub connection.") from error
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(
+            "Your GitHub connection has expired or been revoked. Reconnect GitHub and try again."
+        )
+
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("GitHub returned an invalid token refresh response.") from error
+
+    access_token = str(payload.get("access_token") or "").strip() if isinstance(payload, dict) else ""
+    next_refresh_token = str(payload.get("refresh_token") or "").strip() if isinstance(payload, dict) else ""
+    try:
+        expires_in_seconds = float(payload.get("expires_in")) if isinstance(payload, dict) else 0
+    except (TypeError, ValueError):
+        expires_in_seconds = 0
+    if not access_token or not next_refresh_token or expires_in_seconds <= 0:
+        raise RuntimeError("GitHub returned an incomplete token refresh response.")
+    try:
+        refresh_token_expires_in_seconds = (
+            float(payload.get("refresh_token_expires_in")) if isinstance(payload, dict) else 0
+        )
+    except (TypeError, ValueError):
+        refresh_token_expires_in_seconds = 0
+
+    token_ciphertext = encrypt_github_connection_token(user_id, access_token)
+    refresh_ciphertext = encrypt_github_connection_token(user_id, next_refresh_token)
+    token_expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+    ).isoformat()
+    refresh_token_expires_at = (
+        datetime.now(timezone.utc)
+        + timedelta(
+            seconds=(
+                refresh_token_expires_in_seconds
+                if refresh_token_expires_in_seconds > 0
+                else GITHUB_APP_REFRESH_TOKEN_DEFAULT_TTL_SECONDS
+            )
+        )
+    ).isoformat()
+    previous_token_ciphertext = record.get("token_ciphertext")
+
+    try:
+        update_response = await asyncio.to_thread(
+            lambda: service_client.table("github_connections")
+            .update(
+                {
+                    "token_ciphertext": token_ciphertext,
+                    "refresh_token": refresh_ciphertext,
+                    "token_expires_at": token_expires_at,
+                    "refresh_token_expires_at": refresh_token_expires_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("user_id", user_id)
+            .eq("token_ciphertext", previous_token_ciphertext)
+            .eq("refresh_token", encrypted_refresh_token)
+            .select("token_ciphertext")
+            .execute()
+        )
+    except Exception as error:
+        raise RuntimeError("Unable to save the refreshed GitHub connection.") from error
+
+    updated_rows = getattr(update_response, "data", None)
+    if isinstance(updated_rows, list) and updated_rows:
+        return access_token
+
+    # Rotating refresh tokens are single use. A parallel request may have
+    # persisted its replacement first, so consume that row instead of exposing
+    # a spurious 401 to the user.
+    latest_record = await _read_persisted_github_connection(service_client, user_id)
+    if (
+        latest_record
+        and latest_record.get("token_ciphertext")
+        and not _github_connection_needs_refresh(latest_record.get("token_expires_at"))
+    ):
+        return decrypt_github_connection_token(user_id, latest_record["token_ciphertext"])
+
+    raise RuntimeError("GitHub connection refresh did not persist. Please try again.")
+
+
+async def get_persisted_github_connection_token(user_id: str) -> str | None:
+    service_client = get_supabase_service_client()
+    if service_client is None:
+        raise RuntimeError("Supabase service credentials are required to read GitHub connections.")
+
+    record = await _read_persisted_github_connection(service_client, user_id)
+    if record is None:
+        return None
+
+    ciphertext = record.get("token_ciphertext")
     if not isinstance(ciphertext, str) or not ciphertext.strip():
         raise RuntimeError("Stored GitHub connection ciphertext is invalid.")
+
+    if _github_connection_needs_refresh(record.get("token_expires_at")):
+        try:
+            return await _refresh_persisted_github_connection_token(
+                service_client,
+                user_id,
+                record,
+            )
+        except RuntimeError:
+            # A different server instance can win the rotation race. If it did,
+            # return its valid replacement; otherwise preserve the real error.
+            latest_record = await _read_persisted_github_connection(service_client, user_id)
+            if (
+                latest_record
+                and latest_record.get("token_ciphertext")
+                and latest_record.get("refresh_token") != record.get("refresh_token")
+                and not _github_connection_needs_refresh(latest_record.get("token_expires_at"))
+            ):
+                return decrypt_github_connection_token(user_id, latest_record["token_ciphertext"])
+            raise
 
     return decrypt_github_connection_token(user_id, ciphertext)
 

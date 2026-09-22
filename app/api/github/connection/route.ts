@@ -73,11 +73,16 @@ export async function POST(request: NextRequest) {
       return response({ error: 'Unauthorized' }, 401);
     }
 
-    const payload = (await request.json().catch(() => null)) as { providerToken?: unknown } | null;
+    const payload = (await request.json().catch(() => null)) as {
+      providerToken?: unknown;
+      providerRefreshToken?: unknown;
+    } | null;
     const providerToken =
       typeof payload?.providerToken === 'string' ? payload.providerToken.trim() : '';
-    if (!providerToken) {
-      return response({ error: 'GitHub provider token is required.' }, 400);
+    const providerRefreshToken =
+      typeof payload?.providerRefreshToken === 'string' ? payload.providerRefreshToken.trim() : '';
+    if (!providerToken || !providerRefreshToken) {
+      return response({ error: 'GitHub access and refresh tokens are required.' }, 400);
     }
 
     const hasGitHubIdentity =
@@ -90,7 +95,10 @@ export async function POST(request: NextRequest) {
       return response({ error: 'A linked GitHub identity is required.' }, 409);
     }
 
-    await upsertGitHubConnection(user.id, providerToken);
+    await upsertGitHubConnection(user.id, {
+      accessToken: providerToken,
+      refreshToken: providerRefreshToken,
+    });
     return response({ connected: true });
   } catch (error) {
     console.error('Unable to save GitHub connection:', error);

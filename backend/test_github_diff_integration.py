@@ -70,6 +70,72 @@ class GitHubConnectionTokenTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(main, "get_supabase_service_client", return_value=service_client):
             self.assertIsNone(await main.get_persisted_github_connection_token("owner"))
+
+    async def test_expiring_connection_refreshes_and_persists_rotated_tokens(self):
+        class RefreshResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "access_token": "rotated-access-token",
+                    "refresh_token": "rotated-refresh-token",
+                    "expires_in": 28800,
+                }
+
+        class RefreshClient:
+            def __init__(self):
+                self.request = None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def post(self, url, **kwargs):
+                self.request = (url, kwargs)
+                return RefreshResponse()
+
+        user_id = "d0d2aaf1-4878-4c3f-85cc-4bb1d9027db2"
+        key = bytes(range(32))
+        with patch.dict(
+            main.os.environ,
+            {
+                main.GITHUB_CONNECTION_ENCRYPTION_KEY_ENV: key.hex(),
+                "GITHUB_CLIENT_ID": "client-id",
+                "GITHUB_CLIENT_SECRET": "client-secret",
+            },
+            clear=False,
+        ):
+            record = {
+                "token_ciphertext": main.encrypt_github_connection_token(user_id, "expired-access-token"),
+                "refresh_token": main.encrypt_github_connection_token(user_id, "refresh-token"),
+                "token_expires_at": (main.datetime.now(main.timezone.utc) - main.timedelta(minutes=1)).isoformat(),
+            }
+            service_client = Mock()
+            query = service_client.table.return_value
+            for method in ("select", "eq", "limit", "update"):
+                getattr(query, method).return_value = query
+            query.execute.side_effect = [
+                SimpleNamespace(data=[record]),
+                SimpleNamespace(data=[{"token_ciphertext": "stored-rotated-token"}]),
+            ]
+            refresh_client = RefreshClient()
+
+            with patch.object(main, "get_supabase_service_client", return_value=service_client), patch.object(
+                main.httpx, "AsyncClient", return_value=refresh_client
+            ):
+                token = await main.get_persisted_github_connection_token(user_id)
+
+        self.assertEqual(token, "rotated-access-token")
+        self.assertEqual(refresh_client.request[0], main.GITHUB_OAUTH_TOKEN_URL)
+        self.assertEqual(refresh_client.request[1]["data"]["grant_type"], "refresh_token")
+        self.assertEqual(refresh_client.request[1]["data"]["refresh_token"], "refresh-token")
+        update_payload = query.update.call_args.args[0]
+        self.assertNotEqual(update_payload["token_ciphertext"], "rotated-access-token")
+        self.assertNotEqual(update_payload["refresh_token"], "rotated-refresh-token")
+        self.assertIn("token_expires_at", update_payload)
 MODEL_TELEMETRY = {
     "auditSummary": "The current production implementation retains one verified cache invalidation risk.",
     "strengths": [

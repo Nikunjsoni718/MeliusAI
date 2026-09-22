@@ -235,6 +235,9 @@ export type PendingImportRow = {
 export type GitHubConnectionRow = {
   user_id: string;
   token_ciphertext: string;
+  refresh_token: string | null;
+  token_expires_at: string | null;
+  refresh_token_expires_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -328,8 +331,8 @@ export interface Database {
       github_connections: {
         Row: GitHubConnectionRow;
         Insert: Pick<GitHubConnectionRow, 'user_id' | 'token_ciphertext'> &
-          Partial<Pick<GitHubConnectionRow, 'created_at' | 'updated_at'>>;
-        Update: Partial<Pick<GitHubConnectionRow, 'token_ciphertext' | 'updated_at'>>;
+          Partial<Pick<GitHubConnectionRow, 'refresh_token' | 'token_expires_at' | 'refresh_token_expires_at' | 'created_at' | 'updated_at'>>;
+        Update: Partial<Pick<GitHubConnectionRow, 'token_ciphertext' | 'refresh_token' | 'token_expires_at' | 'refresh_token_expires_at' | 'updated_at'>>;
         Relationships: [];
       };
       jobs: {

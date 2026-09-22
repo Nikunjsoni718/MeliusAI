@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 import {
   deleteGitHubConnection,
+  fetchWithGitHubConnectionToken,
   getGitHubConnectionToken,
   GitHubConnectionStorageError,
 } from '@/lib/github-connection';
@@ -113,8 +114,8 @@ export async function GET(request: NextRequest) {
       return response({ error: 'Unauthorized' }, 401);
     }
 
-    const token = await getGitHubConnectionToken(user.id);
-    if (!token) {
+    const connectionToken = await getGitHubConnectionToken(user.id);
+    if (!connectionToken) {
       return response(
         {
           error: 'Your GitHub connection is missing. Reconnect GitHub and try again.',
@@ -127,11 +128,17 @@ export async function GET(request: NextRequest) {
     const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
     let commitResponse: Response;
     try {
-      commitResponse = await fetch(
-        `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/commits/${encodeURIComponent(ref)}`,
-        { cache: 'no-store', headers: githubHeaders(token) }
+      commitResponse = await fetchWithGitHubConnectionToken(
+        user.id,
+        (accessToken) => fetch(
+          `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/commits/${encodeURIComponent(ref)}`,
+          { cache: 'no-store', headers: githubHeaders(accessToken) }
+        )
       );
     } catch (error) {
+      if (error instanceof GitHubConnectionStorageError) {
+        throw error;
+      }
       console.error('Unable to reach GitHub for repository tree:', error);
       return response(
         { error: 'Unable to reach GitHub. Please try again.', code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE },
@@ -160,8 +167,14 @@ export async function GET(request: NextRequest) {
     treeUrl.searchParams.set('recursive', '1');
     let treeResponse: Response;
     try {
-      treeResponse = await fetch(treeUrl, { cache: 'no-store', headers: githubHeaders(token) });
+      treeResponse = await fetchWithGitHubConnectionToken(
+        user.id,
+        (accessToken) => fetch(treeUrl, { cache: 'no-store', headers: githubHeaders(accessToken) })
+      );
     } catch (error) {
+      if (error instanceof GitHubConnectionStorageError) {
+        throw error;
+      }
       console.error('Unable to reach GitHub for repository tree:', error);
       return response(
         { error: 'Unable to reach GitHub. Please try again.', code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE },

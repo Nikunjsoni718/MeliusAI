@@ -104,8 +104,9 @@ export default function GitHubAppSetupPage() {
         }
 
         const providerToken = authResult.data.session?.provider_token?.trim();
-        if (!providerToken) {
-          throw new Error('GitHub OAuth completed without an access token. Please reconnect GitHub.');
+        const providerRefreshToken = authResult.data.session?.provider_refresh_token?.trim();
+        if (!providerToken || !providerRefreshToken) {
+          throw new Error('GitHub OAuth completed without refreshable credentials. Please reconnect GitHub.');
         }
 
         const connectionResponse = await fetch('/api/github/connection', {
@@ -113,7 +114,7 @@ export default function GitHubAppSetupPage() {
           credentials: 'include',
           cache: 'no-store',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providerToken }),
+          body: JSON.stringify({ providerToken, providerRefreshToken }),
         });
         if (!connectionResponse.ok) {
           const payload = (await connectionResponse.json().catch(() => null)) as {

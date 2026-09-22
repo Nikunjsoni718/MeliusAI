@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import {
   deleteGitHubConnection,
+  fetchWithGitHubConnectionToken,
   getGitHubConnectionToken,
   GitHubConnectionStorageError,
 } from '@/lib/github-connection';
@@ -106,8 +107,8 @@ export async function GET(request: NextRequest) {
       return response({ error: 'Unauthorized' }, 401);
     }
 
-    const token = await getGitHubConnectionToken(user.id);
-    if (!token) {
+    const connectionToken = await getGitHubConnectionToken(user.id);
+    if (!connectionToken) {
       return response(
         {
           error: 'Your GitHub connection is missing. Reconnect GitHub and try again.',
@@ -120,18 +121,24 @@ export async function GET(request: NextRequest) {
     const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
     let githubResponse: Response;
     try {
-      githubResponse = await fetch(
-        `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/git/blobs/${encodeURIComponent(sha)}`,
-        {
-          cache: 'no-store',
-          headers: {
-            Accept: 'application/vnd.github+json',
-            Authorization: `Bearer ${token}`,
-            'X-GitHub-Api-Version': '2026-03-10',
-          },
-        }
+      githubResponse = await fetchWithGitHubConnectionToken(
+        user.id,
+        (accessToken) => fetch(
+          `${GITHUB_API_BASE_URL}/repos/${encodedRepository}/git/blobs/${encodeURIComponent(sha)}`,
+          {
+            cache: 'no-store',
+            headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: `Bearer ${accessToken}`,
+              'X-GitHub-Api-Version': '2026-03-10',
+            },
+          }
+        )
       );
     } catch (error) {
+      if (error instanceof GitHubConnectionStorageError) {
+        throw error;
+      }
       console.error('Unable to reach GitHub for repository blob:', error);
       return response(
         { error: 'Unable to reach GitHub. Please try again.', code: GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE },

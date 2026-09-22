@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 import {
   deleteGitHubConnection,
+  fetchWithGitHubConnectionToken,
   getGitHubConnectionToken,
   GitHubConnectionStorageError,
 } from '@/lib/github-connection';
@@ -128,7 +129,7 @@ function getGitHubFailure(response: Response, message: string) {
   return new RouteError(message, 502, GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE);
 }
 
-async function fetchLiveGitHubRepositories(providerToken: string) {
+async function fetchLiveGitHubRepositories(userId: string) {
   const repositories: GitHubRepository[] = [];
 
   for (let page = 1; page <= MAX_GITHUB_REPOSITORY_PAGES; page += 1) {
@@ -142,15 +143,20 @@ async function fetchLiveGitHubRepositories(providerToken: string) {
 
     let response: Response;
     try {
-      response = await fetch(url, {
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${providerToken}`,
-          'X-GitHub-Api-Version': '2026-03-10',
-        },
-      });
-    } catch {
+      response = await fetchWithGitHubConnectionToken(userId, (accessToken) =>
+        fetch(url, {
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${accessToken}`,
+            'X-GitHub-Api-Version': '2026-03-10',
+          },
+        })
+      );
+    } catch (error) {
+      if (error instanceof GitHubConnectionStorageError) {
+        throw error;
+      }
       throw new RouteError(
         'Unable to reach GitHub. Please try again.',
         502,
@@ -261,7 +267,7 @@ export async function GET() {
 
     let repositories: GitHubRepository[];
     try {
-      repositories = await fetchLiveGitHubRepositories(providerToken);
+      repositories = await fetchLiveGitHubRepositories(user.id);
     } catch (error) {
       if (error instanceof RouteError) {
         if (error.code === GITHUB_ERROR_CODES.TOKEN_INVALID) {

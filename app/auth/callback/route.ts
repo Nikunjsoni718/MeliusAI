@@ -243,10 +243,12 @@ export async function GET(request: NextRequest) {
 
     const isGitHubOAuthCallback = hasGitHubOAuthIdentity(user);
     const providerToken = authData.session?.provider_token?.trim() || null;
+    const providerRefreshToken = authData.session?.provider_refresh_token?.trim() || null;
     if (isGitHubOAuthCallback) {
       console.log('GitHub OAuth provider token received.', {
-        userId: user.id,
-        received: Boolean(providerToken),
+          userId: user.id,
+          received: Boolean(providerToken),
+          refreshTokenReceived: Boolean(providerRefreshToken),
       });
     }
 
@@ -326,16 +328,21 @@ export async function GET(request: NextRequest) {
 
     const githubIdentity = getGitHubIdentityDetails(user);
     if (isGitHubOAuthCallback) {
-      if (!providerToken) {
-        console.error('GitHub OAuth callback completed without a provider token.', {
+      if (!providerToken || !providerRefreshToken) {
+        console.error('GitHub OAuth callback completed without refreshable provider credentials.', {
           userId: user.id,
+          receivedAccessToken: Boolean(providerToken),
+          receivedRefreshToken: Boolean(providerRefreshToken),
         });
-        throw new Error('GitHub OAuth did not return an access token. Please reconnect GitHub.');
+        throw new Error('GitHub OAuth did not return refreshable credentials. Please reconnect GitHub.');
       }
 
       try {
         await withOAuthCallbackTimeout(
-          upsertGitHubConnection(user.id, providerToken),
+          upsertGitHubConnection(user.id, {
+            accessToken: providerToken,
+            refreshToken: providerRefreshToken,
+          }),
           'GitHub connection storage'
         );
         console.info('GitHub OAuth connection saved.', { userId: user.id });
