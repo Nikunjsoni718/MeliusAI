@@ -482,6 +482,10 @@ export function AssetPreviewModal({
   const fileTypeBadge = extension ? `${extension.toUpperCase()} File` : 'Asset File';
   const verificationInProgress = isVerifying || isReAuditing;
   const executiveSummaryMarkdown = normalizedAudit.summary;
+  const publicProjectShareUrl =
+    typeof window !== 'undefined' && liveProject?.id && publicProfileUsername
+      ? `${window.location.origin}/profile/${publicProfileUsername}?projectId=${liveProject.id}`
+      : '';
 
   useEffect(() => {
     setIsPortalMounted(true);
@@ -531,19 +535,12 @@ export function AssetPreviewModal({
   }, []);
 
   async function handleCopyProjectLink() {
-    if (typeof window === 'undefined' || !liveProject?.id || !publicProfileUsername) {
+    if (!publicProjectShareUrl) {
       return;
     }
 
-    const projectLink =
-      window.location.origin +
-      '/profile/' +
-      publicProfileUsername +
-      '?projectId=' +
-      liveProject.id;
-
     try {
-      await navigator.clipboard.writeText(projectLink);
+      await navigator.clipboard.writeText(publicProjectShareUrl);
     } catch {
       return;
     }
@@ -963,7 +960,7 @@ export function AssetPreviewModal({
                 pauseProductTour(11);
                 setIsShareModalOpen(true);
               }}
-              disabled={!liveProject?.id}
+              disabled={!publicProjectShareUrl}
               data-tour="share-score"
               className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={`Share your ${score} out of 100 MeliusAI engineering audit`}
@@ -1093,9 +1090,10 @@ export function AssetPreviewModal({
         )}
       </div>
 
-      {isShareModalOpen && liveProject?.id ? (
+      {isShareModalOpen && publicProjectShareUrl ? (
         <ShareScoreModal
           score={score}
+          shareUrl={publicProjectShareUrl}
           onClose={() => {
             setIsShareModalOpen(false);
             advanceProductTour(11, 12);

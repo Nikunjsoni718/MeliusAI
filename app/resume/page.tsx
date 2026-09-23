@@ -918,6 +918,12 @@ function DashboardResumePageContent() {
     (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '') ||
     user?.id ||
     '';
+  const publicProfileUsername =
+    targetUsername ||
+    resumeIdentity?.resume.username?.trim() ||
+    profile?.username?.trim() ||
+    (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '') ||
+    null;
   const displayedProfileHref = targetUsername
     ? `/profile/${encodeURIComponent(targetUsername)}`
     : viewerProfileHandle
@@ -1741,6 +1747,7 @@ function DashboardResumePageContent() {
         hideAudit={false}
         canVerify={Boolean(activeFeaturedPreview?.kind === 'file' && isOwner)}
         onClose={() => setActiveFeaturedPreview(null)}
+        publicProfileUsername={publicProfileUsername}
       />
     </main>
   );
