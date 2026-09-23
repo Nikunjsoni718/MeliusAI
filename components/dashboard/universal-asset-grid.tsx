@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
@@ -933,6 +933,8 @@ export function UniversalAssetGrid({
   publicProfileUsername = null,
   sortOption = 'newest',
 }: UniversalAssetGridProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [activePreviewTarget, setActivePreviewTarget] = useState<PreviewTarget | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -1111,15 +1113,19 @@ export function UniversalAssetGrid({
   }
 
   function syncProjectDeepLink(projectId: string | null) {
-    if (typeof window === 'undefined' || !publicProfileUsername) {
+    if (!publicProfileUsername) {
       return;
     }
 
-    window.history.pushState(
-      null,
-      '',
-      projectId ? `?projectId=${projectId}` : window.location.pathname
-    );
+    const params = new URLSearchParams(searchParams.toString());
+    if (projectId) {
+      params.set('projectId', projectId);
+    } else {
+      params.delete('projectId');
+    }
+
+    const nextSearch = params.toString();
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname, { scroll: false });
   }
 
   useEffect(() => {

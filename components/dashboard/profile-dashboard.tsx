@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, usePathname, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
 import useSWR from 'swr';
@@ -2608,6 +2608,7 @@ export function ProfileDashboard({
 }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const routeParams = useParams<{ username?: string | string[] }>();
   const targetUsername = useMemo(() => {
     const routeUsername = Array.isArray(routeParams?.username)
@@ -4925,15 +4926,15 @@ export function ProfileDashboard({
   }
 
   function syncProjectDeepLink(projectId: string | null) {
-    if (typeof window === 'undefined') {
-      return;
+    const params = new URLSearchParams(searchParams.toString());
+    if (projectId) {
+      params.set('projectId', projectId);
+    } else {
+      params.delete('projectId');
     }
 
-    window.history.pushState(
-      null,
-      '',
-      projectId ? `?projectId=${projectId}` : window.location.pathname
-    );
+    const nextSearch = params.toString();
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname, { scroll: false });
   }
 
   function handleOpenProjectPreview(asset: AuditModalAsset) {
