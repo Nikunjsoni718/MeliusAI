@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, usePathname, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
 import useSWR from 'swr';
@@ -2608,6 +2608,7 @@ export function ProfileDashboard({
 }: ProfileDashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const routeParams = useParams<{ username?: string | string[] }>();
   const targetUsername = useMemo(() => {
     const routeUsername = Array.isArray(routeParams?.username)
@@ -3477,6 +3478,20 @@ export function ProfileDashboard({
       }),
     [projectFolders]
   );
+  const projectDeepLinkAssets = useMemo(() => {
+    const assetsById = new Map<string, ProjectRow>();
+
+    sortedProjectFolders.forEach((folder) => {
+      getFolderNestedProjects(folder as ProjectFolderWithNestedProjects).forEach((asset) => {
+        assetsById.set(asset.id, asset);
+      });
+    });
+    sortedProfileAssets.forEach((asset) => {
+      assetsById.set(asset.id, asset);
+    });
+
+    return Array.from(assetsById.values());
+  }, [sortedProfileAssets, sortedProjectFolders]);
   const allProjects = sortedProjects;
   const standaloneProjects = useMemo(
     () => allProjects.filter((project) => !project.folder_id),
@@ -4910,6 +4925,18 @@ export function ProfileDashboard({
     return mapProjectRowToProjectItem(data);
   }
 
+  function syncProjectDeepLink(projectId: string | null) {
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    if (projectId) {
+      nextSearchParams.set('projectId', projectId);
+    } else {
+      nextSearchParams.delete('projectId');
+    }
+
+    const nextSearch = nextSearchParams.toString();
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname, { scroll: false });
+  }
+
   function handleOpenProjectPreview(asset: AuditModalAsset) {
     if (isProjectAuditAsset(asset)) {
       const previewUrl = getProjectDownloadHref(asset) ?? getAuditReportDataUrl(asset);
@@ -4926,6 +4953,7 @@ export function ProfileDashboard({
       setActivePreviewProjectId(asset.id);
       setActivePreviewName(previewFileName);
       setActivePreviewUrl(previewUrl);
+      syncProjectDeepLink(asset.id);
       advanceProductTour(10, 11, asset.id);
       return;
     }
@@ -7762,6 +7790,8 @@ export function ProfileDashboard({
                         isSpectator
                         isWorkspaceFile
                         deletingAssetId={deletingProjectId}
+                        projectDeepLinkAssets={projectDeepLinkAssets}
+                        publicProfileUsername={profileHandle}
                         verifyingAssetId={verifyingAssetId}
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                       />
@@ -7810,6 +7840,8 @@ export function ProfileDashboard({
                         folders={projectFolders}
                         isSpectator
                         deletingAssetId={deletingProjectId}
+                        projectDeepLinkAssets={projectDeepLinkAssets}
+                        publicProfileUsername={profileHandle}
                         verifyingAssetId={verifyingAssetId}
                       />
                     ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
@@ -7819,6 +7851,8 @@ export function ProfileDashboard({
                         deletingAssetId={deletingProjectId}
                         editFolderName={editFolderName}
                         editingFolderId={editingFolderId}
+                        projectDeepLinkAssets={projectDeepLinkAssets}
+                        publicProfileUsername={profileHandle}
                         verifyingFolderIds={Object.keys(auditingFolders).filter(
                           (folderId) => auditingFolders[folderId]
                         )}
@@ -8196,7 +8230,9 @@ export function ProfileDashboard({
                 setActivePreviewFolderId(null);
                 setActivePreviewName(null);
                 setActivePreviewUrl(null);
+                syncProjectDeepLink(null);
               }}
+              publicProfileUsername={profileHandle}
             />
           </main>
 

@@ -130,6 +130,7 @@ type AssetPreviewModalProps = {
   onAuditCommitted?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<PreviewProject>) => void;
   onClose: () => void;
+  publicProfileUsername?: string | null;
 };
 
 type VerifyAssetResponse = {
@@ -403,6 +404,7 @@ export function AssetPreviewModal({
   onAuditCommitted,
   onProjectUpdated,
   onClose,
+  publicProfileUsername,
 }: AssetPreviewModalProps) {
   const [isPortalMounted, setIsPortalMounted] = useState(false);
   const [liveProject, setLiveProject] = useState<PreviewProject | null>(asset ?? null);
@@ -412,7 +414,9 @@ export function AssetPreviewModal({
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
   const [isCapturingFullReport, setIsCapturingFullReport] = useState(false);
   const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
+  const [isProjectLinkCopied, setIsProjectLinkCopied] = useState(false);
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
+  const projectLinkCopiedTimeoutRef = useRef<number | null>(null);
   const onProjectUpdatedRef = useRef(onProjectUpdated);
   const projectRefreshRevisionRef = useRef(0);
   const pendingAuditUpdateRef = useRef<PendingAuditUpdate | null>(null);
@@ -515,7 +519,44 @@ export function AssetPreviewModal({
     setIsShareModalOpen(false);
     setIsDownloadingReport(false);
     setDownloadFeedback(null);
+    setIsProjectLinkCopied(false);
   }, [asset?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (projectLinkCopiedTimeoutRef.current !== null) {
+        window.clearTimeout(projectLinkCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  async function handleCopyProjectLink() {
+    if (typeof window === 'undefined' || !liveProject?.id || !publicProfileUsername) {
+      return;
+    }
+
+    const projectLink =
+      window.location.origin +
+      '/profile/' +
+      publicProfileUsername +
+      '?projectId=' +
+      liveProject.id;
+
+    try {
+      await navigator.clipboard.writeText(projectLink);
+    } catch {
+      return;
+    }
+
+    setIsProjectLinkCopied(true);
+    if (projectLinkCopiedTimeoutRef.current !== null) {
+      window.clearTimeout(projectLinkCopiedTimeoutRef.current);
+    }
+    projectLinkCopiedTimeoutRef.current = window.setTimeout(() => {
+      setIsProjectLinkCopied(false);
+      projectLinkCopiedTimeoutRef.current = null;
+    }, 2_000);
+  }
 
   useEffect(() => {
     if (!supabase || !asset?.id || isFolder) {
@@ -879,11 +920,22 @@ export function AssetPreviewModal({
                 {isFolder ? 'Workspace Audit' : liveProject?.file_name ?? previewName}
               </p>
             </div>
-            {!isFolder ? (
-              <span className="w-fit rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
-                {fileTypeBadge}
-              </span>
-            ) : null}
+            <div className="flex w-fit flex-wrap items-center gap-2">
+              {!isFolder && liveProject?.id && publicProfileUsername ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopyProjectLink()}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-200 transition hover:border-cyan-400/50 hover:text-cyan-100"
+                >
+                  {isProjectLinkCopied ? 'Copied!' : 'Copy Link'}
+                </button>
+              ) : null}
+              {!isFolder ? (
+                <span className="rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                  {fileTypeBadge}
+                </span>
+              ) : null}
+            </div>
           </div>
 
           {executiveSummaryMarkdown ? (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import { AssetPreviewModal, type AuditPreviewAsset } from '@/components/dashboard/asset-preview-modal';
 import { ProjectFolderCard } from '@/components/dashboard/project-folder-card';
@@ -52,6 +53,8 @@ type UniversalAssetGridProps = {
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
+  projectDeepLinkAssets?: ProjectRow[];
+  publicProfileUsername?: string | null;
 };
 
 type ProjectFolderWithFiles = ProjectFolderRow & {
@@ -926,8 +929,13 @@ export function UniversalAssetGrid({
   onReupload,
   onToggleVisibility,
   onVerify,
+  projectDeepLinkAssets = [],
+  publicProfileUsername = null,
   sortOption = 'newest',
 }: UniversalAssetGridProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [activePreviewTarget, setActivePreviewTarget] = useState<PreviewTarget | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [activeFolderView, setActiveFolderView] = useState<FolderView | null>(null);
@@ -943,6 +951,16 @@ export function UniversalAssetGrid({
         }),
     [assets, localProjectPatches]
   );
+  const deepLinkAssets = useMemo(() => {
+    const assetsById = new Map<string, ProjectRow>();
+
+    [...projectDeepLinkAssets, ...patchedAssets].forEach((asset) => {
+      assetsById.set(asset.id, asset);
+    });
+
+    return Array.from(assetsById.values());
+  }, [patchedAssets, projectDeepLinkAssets]);
+  const requestedProjectId = publicProfileUsername ? searchParams.get('projectId') : null;
   const sortedFolders = useMemo(
     () =>
       [...folders].sort((a, b) => {
@@ -1090,8 +1108,47 @@ export function UniversalAssetGrid({
 
   function openFilePreview(project: ProjectRow, hideAudit: boolean) {
     setActivePreviewTarget({ asset: project, hideAudit, kind: 'file', id: project.id });
+    syncProjectDeepLink(project.id);
     advanceProductTour(10, 11, project.id);
   }
+
+  function syncProjectDeepLink(projectId: string | null) {
+    if (!publicProfileUsername) {
+      return;
+    }
+
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    if (projectId) {
+      nextSearchParams.set('projectId', projectId);
+    } else {
+      nextSearchParams.delete('projectId');
+    }
+
+    const nextSearch = nextSearchParams.toString();
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname, { scroll: false });
+  }
+
+  useEffect(() => {
+    if (!requestedProjectId) {
+      return;
+    }
+
+    const requestedProject = deepLinkAssets.find((asset) => asset.id === requestedProjectId);
+    if (!requestedProject) {
+      return;
+    }
+
+    setActivePreviewTarget((currentTarget) =>
+      currentTarget?.kind === 'file' && currentTarget.id === requestedProject.id
+        ? currentTarget
+        : {
+            asset: requestedProject,
+            hideAudit: isWorkspaceFile,
+            kind: 'file',
+            id: requestedProject.id,
+          }
+    );
+  }, [deepLinkAssets, isWorkspaceFile, requestedProjectId]);
 
   useEffect(() => {
     if (!activePreviewTarget) {
@@ -1283,7 +1340,11 @@ export function UniversalAssetGrid({
         onAuditCommitted={(projectId, projectPatch) =>
           onProjectAuditCommitted?.(projectId, projectPatch as Partial<ProjectRow>)
         }
-        onClose={() => setActivePreviewTarget(null)}
+        onClose={() => {
+          setActivePreviewTarget(null);
+          syncProjectDeepLink(null);
+        }}
+        publicProfileUsername={publicProfileUsername}
       />
     </>
   );
