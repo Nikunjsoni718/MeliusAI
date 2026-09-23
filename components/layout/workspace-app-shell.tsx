@@ -114,21 +114,15 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
         )}
       >
         <div className="p-4">
-          <Link
-            href="/home"
-            prefetch={true}
-            className="mb-8 flex items-center gap-3 px-3 py-2"
-            aria-label="Go to candidate dashboard"
-            onClick={() => setMobileOpen(false)}
-          >
+          <div className="mb-8 flex items-center gap-3 px-3 py-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-950/60 bg-blue-950/60 p-1">
-              <Image src={faviconLogo} alt="MeliusAI Logo" width={36} height={36} className="cursor-pointer object-contain" />
+              <Image src={faviconLogo} alt="MeliusAI Logo" width={36} height={36} className="object-contain" />
             </div>
             <div>
               <p className="text-sm font-semibold text-white">MeliusAI</p>
               <p className="text-[11px] tracking-wide text-slate-500">Workspace</p>
             </div>
-          </Link>
+          </div>
           <nav className="flex flex-col gap-1" aria-label="Workspace navigation">
             {navigation.map((item) => {
               const routeHref = item.href.split('#')[0] || item.href;

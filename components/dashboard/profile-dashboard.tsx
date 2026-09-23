@@ -1652,24 +1652,6 @@ function CameraIcon({ className }: { className?: string }) {
   );
 }
 
-function GearIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path
-        d="M12 15.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M19.2 12a7.5 7.5 0 0 0-.08-1.05l1.55-1.2-1.65-2.86-1.9.72a7.7 7.7 0 0 0-1.82-1.05L15 4.6h-3.3l-.3 1.96c-.64.24-1.26.6-1.82 1.05l-1.9-.72-1.65 2.86 1.55 1.2c-.06.34-.08.7-.08 1.05 0 .36.02.71.08 1.05l-1.55 1.2 1.65 2.86 1.9-.72c.56.45 1.18.8 1.82 1.05l.3 1.96H15l.3-1.96c.64-.24 1.26-.6 1.82-1.05l1.9.72 1.65-2.86-1.55-1.2c.06-.34.08-.69.08-1.05Z"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function SilhouetteIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
@@ -7531,17 +7513,6 @@ export function ProfileDashboard({
                         >
                           {isEditing ? 'Done Editing' : 'Edit Profile'}
                         </button>
-                        {isEditing ? (
-                          <button
-                            id="settings"
-                            type="button"
-                            onClick={() => setSettingsOpen((value) => !value)}
-                            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.02] text-slate-200 transition hover:border-sky-400/40 hover:bg-white/[0.06] hover:text-white"
-                            aria-label="Open settings"
-                          >
-                            <GearIcon className="h-4 w-4" />
-                          </button>
-                        ) : null}
                       </div>
                     )}
                   </div>
