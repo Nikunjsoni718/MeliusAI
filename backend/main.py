@@ -1515,6 +1515,8 @@ async def _repository_tracking_rows(
         .select("id, last_commit_at, last_audit_at")
         .eq("user_id", user_id)
         .eq("github_repository", repository)
+        .neq("status", "archived")
+        .neq("github_sync_status", "deleted")
         .execute()
     )
     return _response_rows(response)
@@ -2556,6 +2558,8 @@ async def _load_repository_assets(
             lambda repository_value=repository_value: supabase_client.table(table_name)
             .select(select_columns)
             .eq("github_repository", repository_value)
+            .neq("status", "archived")
+            .neq("github_sync_status", "deleted")
             .execute()
         )
         for row in _response_rows(response):
@@ -2567,6 +2571,24 @@ async def _load_repository_assets(
             repository_rows.append(row)
 
     return repository_rows
+
+
+async def _repository_is_actively_tracked(
+    supabase_client: Any,
+    *,
+    repository: str,
+) -> bool:
+    """Return whether an imported, non-archived project tracks this repository."""
+    response = await _run_supabase(
+        lambda: supabase_client.table("projects")
+        .select("id")
+        .eq("github_repository", repository)
+        .neq("status", "archived")
+        .neq("github_sync_status", "deleted")
+        .limit(1)
+        .execute()
+    )
+    return bool(_response_rows(response))
 
 
 def _get_github_repository_url(
@@ -3347,20 +3369,16 @@ async def process_github_push_event(
     # can still identify its owner, but ownership alone must never schedule a
     # cooldown or create an alert.
     imported_workspace_contexts = _build_workspace_contexts(repository_rows)
+    if not imported_workspace_contexts:
+        # Re-check in the worker to cover direct callers and a repository that
+        # was removed after the request-side webhook gate ran. In particular,
+        # do not fall back to the webhook sender: that can create lifecycle
+        # notifications for GitHub App repositories the user never imported.
+        result.skipped_files += len(trackable_paths) + len(removed_paths)
+        result.errors.append("Ignored: Repo not imported.")
+        return result
+
     workspace_contexts = dict(imported_workspace_contexts)
-    if not workspace_contexts:
-        workspace_context = await _resolve_repository_workspace_context(
-            supabase_client,
-            payload=payload,
-            repository=repository,
-        )
-        if workspace_context is None:
-            result.skipped_files += len(trackable_paths) + len(removed_paths)
-            result.errors.append(
-                "No MeliusAI user matches the GitHub repository owner or sender."
-            )
-            return result
-        workspace_contexts = {workspace_context.user_id: workspace_context}
 
     rows_by_path: dict[str, list[dict[str, Any]]] = {}
     for row in repository_rows:
@@ -3384,18 +3402,17 @@ async def process_github_push_event(
         workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
     access_token = _get_github_access_token()
-    if imported_workspace_contexts:
-        try:
-            await _record_push_notification_activity(
-                supabase_client,
-                payload=payload,
-                repository=repository,
-                user_ids=set(imported_workspace_contexts.keys()),
-                access_token=access_token,
-            )
-        except Exception:
-            # Notification tracking must never block the existing repository sync.
-            logger.exception("GitHub notification tracking failed for %s", repository)
+    try:
+        await _record_push_notification_activity(
+            supabase_client,
+            payload=payload,
+            repository=repository,
+            user_ids=set(imported_workspace_contexts.keys()),
+            access_token=access_token,
+        )
+    except Exception:
+        # Notification tracking must never block the existing repository sync.
+        logger.exception("GitHub notification tracking failed for %s", repository)
     owns_http_client = http_client is None
     active_http_client = http_client or httpx.AsyncClient(
         follow_redirects=True,
@@ -3771,6 +3788,35 @@ async def handle_github_webhook(request: Request):
         changes = extract_github_push_changes(payload)
     except ValueError as payload_error:
         raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
+
+    # GitHub App deliveries are global. A short, fail-closed tracking lookup
+    # prevents an unimported repository from reaching the worker, where a
+    # folder-lifecycle notification could otherwise be created.
+    try:
+        service_client = get_supabase_service_client()
+        is_imported = bool(service_client) and await asyncio.wait_for(
+            _repository_is_actively_tracked(service_client, repository=repository),
+            timeout=5,
+        )
+    except Exception:
+        logger.exception(
+            "github_webhook.repository_tracking_lookup_failed repository=%s",
+            repository,
+        )
+        is_imported = False
+
+    if not is_imported:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "push",
+                "repository": repository,
+                "ignored": True,
+                "message": "Ignored: Repo not imported",
+            },
+        )
 
     trackable_paths = sorted(
         path for path in changes.upserted if is_trackable_github_asset(path)

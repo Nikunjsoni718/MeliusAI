@@ -1,7 +1,14 @@
 import asyncio
+import hashlib
+import hmac
+import json
+import os
 import unittest
 from contextlib import ExitStack
-from unittest.mock import AsyncMock, call, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, call, patch
+
+from fastapi.testclient import TestClient
 
 try:
     from backend import main
@@ -17,11 +24,12 @@ REAL_ASYNCIO_SLEEP = asyncio.sleep
 
 @unittest.skipIf(main is None, f"Backend dependencies are unavailable: {BACKEND_IMPORT_ERROR}")
 class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_unimported_repository_never_schedules_a_notification(self):
+    async def test_unimported_repository_is_ignored_before_it_can_schedule_a_notification(self):
         workspace_context = main.GitHubWorkspaceContext(user_id="user-testing-2", is_public=True)
         notifications = AsyncMock()
+        resolve_workspace = AsyncMock(return_value=workspace_context)
         changes = main.GitHubPushChanges(
-            added=frozenset(),
+            added=frozenset({"src/index.ts"}),
             modified=frozenset(),
             removed=frozenset(),
         )
@@ -34,13 +42,87 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main, "_get_storage_bucket_name", return_value="vault"),
             patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/unimported"),
             patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])),
-            patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)),
+            patch.object(main, "_resolve_repository_workspace_context", new=resolve_workspace),
             patch.object(main, "_record_push_notification_activity", new=notifications),
             patch.object(main, "_get_github_access_token", return_value=None),
         ):
-            await main.process_github_push_event({}, supabase_client=object())
+            result = await main.process_github_push_event({}, supabase_client=object())
 
         notifications.assert_not_awaited()
+        resolve_workspace.assert_not_awaited()
+        self.assertEqual(result.skipped_files, 1)
+        self.assertEqual(result.errors, ["Ignored: Repo not imported."])
+
+    async def test_repository_tracking_lookup_selects_an_active_project(self):
+        query = Mock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.neq.return_value = query
+        query.limit.return_value = query
+        query.execute.return_value = SimpleNamespace(data=[{"id": "project-id"}])
+        supabase_client = Mock()
+        supabase_client.table.return_value = query
+
+        self.assertTrue(
+            await main._repository_is_actively_tracked(
+                supabase_client,
+                repository="octo/testing_2",
+            )
+        )
+
+        supabase_client.table.assert_called_once_with("projects")
+        self.assertEqual(
+            query.method_calls,
+            [
+                call.select("id"),
+                call.eq("github_repository", "octo/testing_2"),
+                call.neq("status", "archived"),
+                call.neq("github_sync_status", "deleted"),
+                call.limit(1),
+                call.execute(),
+            ],
+        )
+
+    def test_unimported_push_webhook_returns_200_without_queuing_background_work(self):
+        body = json.dumps(
+            {
+                "repository": {"full_name": "octo/unimported"},
+                "after": "a" * 40,
+                "commits": [],
+            }
+        ).encode("utf-8")
+        secret = "webhook-secret"
+        signature = "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        query = Mock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.neq.return_value = query
+        query.limit.return_value = query
+        query.execute.return_value = SimpleNamespace(data=[])
+        supabase_client = Mock()
+        supabase_client.table.return_value = query
+        background_worker = AsyncMock()
+
+        with (
+            patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": secret}),
+            patch.object(main, "get_supabase_service_client", return_value=supabase_client),
+            patch.object(main, "process_github_push_in_background", new=background_worker),
+            TestClient(main.app) as client,
+        ):
+            response = client.post(
+                "/api/webhooks/github",
+                content=body,
+                headers={
+                    "content-type": "application/json",
+                    "x-github-event": "push",
+                    "x-hub-signature-256": signature,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["message"], "Ignored: Repo not imported")
+        self.assertTrue(response.json()["ignored"])
+        background_worker.assert_not_awaited()
 
     async def test_first_import_creates_only_real_files_for_testing_2(self):
         created_assets: list[dict[str, object]] = []
@@ -69,12 +151,13 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
                 "_get_github_repository_url",
                 return_value="https://github.com/octo/testing_2",
             ),
-            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])),
+            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])),
             patch.object(
                 main,
                 "_resolve_repository_workspace_context",
                 new=AsyncMock(return_value=workspace_context),
             ),
+            patch.object(main, "_record_push_notification_activity", new=AsyncMock()),
             patch.object(
                 main,
                 "_build_github_folder_hierarchy",
@@ -102,7 +185,7 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             {"src/index.ts", "lib/worker.py"},
         )
         self.assertTrue(all(asset["folder_id"] for asset in created_assets))
-        self.assertTrue(all(asset["workspace_context"] is workspace_context for asset in created_assets))
+        self.assertTrue(all(asset["workspace_context"].user_id == workspace_context.user_id for asset in created_assets))
         self.assertNotIn("testing_2", {asset["file_path"] for asset in created_assets})
 
     async def test_test_and_fixture_paths_are_skipped_before_webhook_downloads(self):
@@ -131,8 +214,9 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main, "_get_workspace_assets_table_name", return_value="projects"),
             patch.object(main, "_get_storage_bucket_name", return_value="vault"),
             patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/testing_2"),
-            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])),
+            patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])),
             patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)),
+            patch.object(main, "_record_push_notification_activity", new=AsyncMock()),
             patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"src/index.ts": "folder-src"})),
             patch.object(main, "download_github_raw_file", new=download_one_file),
             patch.object(main, "_create_workspace_asset", new=AsyncMock(return_value=1)),
@@ -184,8 +268,9 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(main, "_get_workspace_assets_table_name", return_value="projects"))
             stack.enter_context(patch.object(main, "_get_storage_bucket_name", return_value="vault"))
             stack.enter_context(patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/testing_2"))
-            stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])))
             stack.enter_context(patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)))
+            stack.enter_context(patch.object(main, "_record_push_notification_activity", new=AsyncMock()))
             stack.enter_context(patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"a.py": "folder-a", "b.py": "folder-b"})))
             stack.enter_context(patch.object(main, "download_github_raw_file", new=download_one_file))
             stack.enter_context(patch.object(main, "_create_workspace_asset", new=record_created_asset))
@@ -240,8 +325,9 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(main, "_get_workspace_assets_table_name", return_value="projects"))
             stack.enter_context(patch.object(main, "_get_storage_bucket_name", return_value="vault"))
             stack.enter_context(patch.object(main, "_get_github_repository_url", return_value="https://github.com/octo/testing_2"))
-            stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])))
             stack.enter_context(patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)))
+            stack.enter_context(patch.object(main, "_record_push_notification_activity", new=AsyncMock()))
             stack.enter_context(patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"a.py": "folder-a", "b.py": "folder-b", "c.py": "folder-c"})))
             stack.enter_context(patch.object(main, "download_github_raw_file", new=download_one_file))
             stack.enter_context(patch.object(main, "_create_workspace_asset", new=record_created_asset))
