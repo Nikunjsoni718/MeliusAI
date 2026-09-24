@@ -54,6 +54,7 @@ type UniversalAssetGridProps = {
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
   onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
   projectDeepLinkAssets?: ProjectRow[];
+  projectDeepLinkFolders?: ProjectFolderRow[];
   publicProfileUsername?: string | null;
 };
 
@@ -930,6 +931,7 @@ export function UniversalAssetGrid({
   onToggleVisibility,
   onVerify,
   projectDeepLinkAssets = [],
+  projectDeepLinkFolders = [],
   publicProfileUsername = null,
   sortOption = 'newest',
 }: UniversalAssetGridProps) {
@@ -960,6 +962,15 @@ export function UniversalAssetGrid({
 
     return Array.from(assetsById.values());
   }, [patchedAssets, projectDeepLinkAssets]);
+  const deepLinkFolders = useMemo(() => {
+    const foldersById = new Map<string, ProjectFolderWithFiles>();
+
+    [...projectDeepLinkFolders, ...folders].forEach((folder) => {
+      foldersById.set(folder.id, folder as ProjectFolderWithFiles);
+    });
+
+    return Array.from(foldersById.values());
+  }, [folders, projectDeepLinkFolders]);
   const requestedProjectId = publicProfileUsername ? searchParams.get('projectId') : null;
   const sortedFolders = useMemo(
     () =>
@@ -1012,6 +1023,24 @@ export function UniversalAssetGrid({
 
     return [...explicitFolders, ...syntheticFolders];
   }, [folderAssetsById, localProjectPatches, sortedFolders]);
+  const deepLinkFoldersWithAssets = useMemo<{ folder: ProjectFolderWithFiles; assets: ProjectRow[] }[]>(
+    () =>
+      deepLinkFolders.map((folder) => {
+        const nestedAssets = getNestedFolderAssets(folder).map((asset) => ({
+          ...asset,
+          ...(localProjectPatches[asset.id] ?? {}),
+        }));
+
+        return {
+          folder,
+          assets:
+            nestedAssets.length > 0
+              ? nestedAssets
+              : deepLinkAssets.filter((asset) => asset.folder_id === folder.id),
+        };
+      }),
+    [deepLinkAssets, deepLinkFolders, localProjectPatches]
+  );
   const rootAssets = useMemo(
     () => patchedAssets.filter((asset) => !asset.folder_id),
     [patchedAssets]
@@ -1053,7 +1082,9 @@ export function UniversalAssetGrid({
     : null;
   const activePreviewFolderItem =
     activePreviewTarget?.kind === 'folder'
-      ? foldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ?? null
+      ? foldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ??
+        deepLinkFoldersWithAssets.find(({ folder }) => folder.id === activePreviewTarget.id) ??
+        null
       : null;
   const isWorkspaceFilePreview =
     activePreviewTarget?.kind === 'file' ? activePreviewTarget.hideAudit : false;
@@ -1134,21 +1165,36 @@ export function UniversalAssetGrid({
     }
 
     const requestedProject = deepLinkAssets.find((asset) => asset.id === requestedProjectId);
-    if (!requestedProject) {
+    if (requestedProject) {
+      setActivePreviewTarget((currentTarget) =>
+        currentTarget?.kind === 'file' && currentTarget.id === requestedProject.id
+          ? currentTarget
+          : {
+              asset: requestedProject,
+              hideAudit: isWorkspaceFile,
+              kind: 'file',
+              id: requestedProject.id,
+            }
+      );
+      return;
+    }
+
+    const requestedFolder = deepLinkFoldersWithAssets.find(
+      ({ folder }) => folder.id === requestedProjectId
+    );
+    if (!requestedFolder) {
       return;
     }
 
     setActivePreviewTarget((currentTarget) =>
-      currentTarget?.kind === 'file' && currentTarget.id === requestedProject.id
+      currentTarget?.kind === 'folder' && currentTarget.id === requestedFolder.folder.id
         ? currentTarget
         : {
-            asset: requestedProject,
-            hideAudit: isWorkspaceFile,
-            kind: 'file',
-            id: requestedProject.id,
+            kind: 'folder',
+            id: requestedFolder.folder.id,
           }
     );
-  }, [deepLinkAssets, isWorkspaceFile, requestedProjectId]);
+  }, [deepLinkAssets, deepLinkFoldersWithAssets, isWorkspaceFile, requestedProjectId]);
 
   useEffect(() => {
     if (!activePreviewTarget) {
@@ -1189,6 +1235,7 @@ export function UniversalAssetGrid({
                 setActiveFolderId(null);
                 setActiveFolderView(null);
                 setActivePreviewTarget({ kind: 'folder', id: item.folder.id });
+                syncProjectDeepLink(item.folder.id);
               }}
               onDelete={
                 !isSpectator && onFolderDelete
@@ -1214,6 +1261,7 @@ export function UniversalAssetGrid({
               onWorkspaceClick={() => {
                 setActiveFolderId(null);
                 setActiveFolderView(null);
+                syncProjectDeepLink(item.folder.id);
 
                 if (onFolderOpen) {
                   onFolderOpen(item.folder);
@@ -1253,6 +1301,7 @@ export function UniversalAssetGrid({
           onClick={() => {
             setActiveFolderId(null);
             setActiveFolderView(null);
+            syncProjectDeepLink(null);
           }}
         >
           <div
@@ -1276,6 +1325,7 @@ export function UniversalAssetGrid({
                 onClick={() => {
                   setActiveFolderId(null);
                   setActiveFolderView(null);
+                  syncProjectDeepLink(null);
                 }}
                 className="self-start rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-400/30 hover:text-white sm:self-auto"
               >

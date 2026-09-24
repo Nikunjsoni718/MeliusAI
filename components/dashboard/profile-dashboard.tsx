@@ -4963,6 +4963,7 @@ export function ProfileDashboard({
     setActivePreviewProjectId(asset.id);
     setActivePreviewName(null);
     setActivePreviewUrl(null);
+    syncProjectDeepLink(asset.id);
     advanceProductTour(10, 11, asset.id);
   }
 
@@ -7769,7 +7770,10 @@ export function ProfileDashboard({
                       id="back-to-vault-btn"
                       className="btn subtle"
                       type="button"
-                      onClick={() => setActiveFolderId(null)}
+                      onClick={() => {
+                        setActiveFolderId(null);
+                        syncProjectDeepLink(null);
+                      }}
                     >
                       ← Back to Work Assets
                     </button>
@@ -7791,6 +7795,7 @@ export function ProfileDashboard({
                         isWorkspaceFile
                         deletingAssetId={deletingProjectId}
                         projectDeepLinkAssets={projectDeepLinkAssets}
+                        projectDeepLinkFolders={sortedProjectFolders}
                         publicProfileUsername={profileHandle}
                         verifyingAssetId={verifyingAssetId}
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
@@ -7841,6 +7846,7 @@ export function ProfileDashboard({
                         isSpectator
                         deletingAssetId={deletingProjectId}
                         projectDeepLinkAssets={projectDeepLinkAssets}
+                        projectDeepLinkFolders={sortedProjectFolders}
                         publicProfileUsername={profileHandle}
                         verifyingAssetId={verifyingAssetId}
                       />
@@ -7852,6 +7858,7 @@ export function ProfileDashboard({
                         editFolderName={editFolderName}
                         editingFolderId={editingFolderId}
                         projectDeepLinkAssets={projectDeepLinkAssets}
+                        projectDeepLinkFolders={sortedProjectFolders}
                         publicProfileUsername={profileHandle}
                         verifyingFolderIds={Object.keys(auditingFolders).filter(
                           (folderId) => auditingFolders[folderId]
