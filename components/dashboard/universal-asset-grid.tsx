@@ -39,7 +39,6 @@ type UniversalAssetGridProps = {
   filterType?: string;
   sortOption?: AssetGridSortOption;
   verifyingFolderIds?: string[];
-  verifyingAssetId?: string | null;
   visibilityUpdatingIds?: string[];
   onDelete?: (projectId: string) => void;
   onFolderDelete?: (folderId: string) => void;
@@ -48,11 +47,9 @@ type UniversalAssetGridProps = {
   onFolderOpen?: (folder: ProjectFolderRow) => void;
   onFolderRename?: (folderId: string) => void | Promise<void>;
   onVerifyFolder?: (folderId: string) => void;
-  onProjectAuditCommitted?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onProjectUpdated?: (projectId: string, projectPatch: Partial<ProjectRow>) => void;
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
-  onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
   projectDeepLinkAssets?: ProjectRow[];
   projectDeepLinkFolders?: ProjectFolderRow[];
   publicProfileUsername?: string | null;
@@ -684,7 +681,6 @@ function UniversalAssetCard({
   isWorkspaceFile = false,
   deletingAssetId,
   isVisibilityUpdating,
-  verifyingAssetId,
   onDelete,
   onPreview,
   onReadProtocol,
@@ -697,20 +693,16 @@ function UniversalAssetCard({
   isWorkspaceFile?: boolean;
   deletingAssetId: string | null;
   isVisibilityUpdating: boolean;
-  verifyingAssetId: string | null;
   onDelete?: (projectId: string) => void;
   onPreview: (project: ProjectRow) => void;
   onReadProtocol?: (project: ProjectRow) => void;
   onReupload?: (event: ChangeEvent<HTMLInputElement>, project: ProjectRow) => void | Promise<void>;
   onToggleVisibility?: (projectId: string, currentVisibilityStatus: boolean) => void;
-  onVerify?: (project: ProjectRow, event?: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const reuploadInputRef = useRef<HTMLInputElement | null>(null);
   const assetName = getUniversalAssetName(project);
   const isDeleting = deletingAssetId === project.id;
   const isPublic = project.is_public ?? true;
-  const isVerifying = verifyingAssetId === project.id;
-  const hasCompletedAudit = Boolean(project.has_been_audited);
   const assetUrl = getUniversalAssetUrl(project);
   const score = getAssetScore(project);
   const arePrimaryActionsDisabled = isDeleting;
@@ -815,7 +807,7 @@ function UniversalAssetCard({
                 View File
               </button>
             </div>
-          ) : onReadProtocol || (!isSpectator && (onVerify || onReupload)) ? (
+          ) : onReadProtocol || (!isSpectator && onReupload) ? (
             <div className="mt-auto flex w-full flex-col gap-2 pt-2">
               {onReadProtocol ? (
                 <button
@@ -824,33 +816,11 @@ function UniversalAssetCard({
                     event.preventDefault();
                     event.stopPropagation();
 
-                    if (!hasCompletedAudit && !isSpectator && onVerify) {
-                      onVerify(project, event);
-                      return;
-                    }
-
                     onReadProtocol(project);
                   }}
                   className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white"
                 >
                   Read Full Audit Protocol
-                </button>
-              ) : null}
-
-              {!isSpectator && onVerify ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onVerify(project, event);
-                  }}
-                  disabled={verifyingAssetId !== null || arePrimaryActionsDisabled || !assetUrl}
-                  aria-busy={isVerifying}
-                  data-tour="project-verify"
-                  className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:bg-slate-950/20 disabled:text-slate-700"
-                >
-                  {isVerifying ? 'Auditing Asset...' : hasCompletedAudit ? 'AI Audit Completed' : 'Verify with MeliusAI'}
                 </button>
               ) : null}
 
@@ -871,7 +841,7 @@ function UniversalAssetCard({
                       event.stopPropagation();
                       reuploadInputRef.current?.click();
                     }}
-                    disabled={verifyingAssetId !== null || arePrimaryActionsDisabled}
+                    disabled={arePrimaryActionsDisabled}
                     className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Re-upload Asset
@@ -916,7 +886,6 @@ export function UniversalAssetGrid({
   isSpectator = false,
   isWorkspaceFile = false,
   verifyingFolderIds = [],
-  verifyingAssetId = null,
   visibilityUpdatingIds = [],
   onDelete,
   onFolderDelete,
@@ -925,7 +894,6 @@ export function UniversalAssetGrid({
   onFolderOpen,
   onFolderRename,
   onVerifyFolder,
-  onProjectAuditCommitted,
   onProjectUpdated,
   onReupload,
   onToggleVisibility,
@@ -1280,13 +1248,11 @@ export function UniversalAssetGrid({
               isWorkspaceFile={isWorkspaceFile}
               deletingAssetId={deletingAssetId}
               isVisibilityUpdating={visibilityUpdatingIds.includes(item.asset.id)}
-              verifyingAssetId={verifyingAssetId}
               onDelete={onDelete}
               onPreview={(project) => openFilePreview(project, isWorkspaceFile)}
               onReadProtocol={(project) => openFilePreview(project, isWorkspaceFile)}
               onReupload={onReupload}
               onToggleVisibility={onToggleVisibility}
-              onVerify={onVerify}
             />
           )
         )}
@@ -1344,13 +1310,11 @@ export function UniversalAssetGrid({
                       isWorkspaceFile
                       deletingAssetId={deletingAssetId}
                       isVisibilityUpdating={visibilityUpdatingIds.includes(asset.id)}
-                      verifyingAssetId={verifyingAssetId}
                       onDelete={onDelete}
                       onPreview={(project) => openFilePreview(project, true)}
                       onReadProtocol={(project) => openFilePreview(project, true)}
                       onReupload={onReupload}
                       onToggleVisibility={onToggleVisibility}
-                      onVerify={onVerify}
                     />
                   ))}
                 </div>
@@ -1369,16 +1333,8 @@ export function UniversalAssetGrid({
       <AssetPreviewModal
         asset={activePreviewModalAsset}
         hideAudit={isWorkspaceFilePreview}
-        canVerify={
-          !isWorkspaceFilePreview &&
-          !isSpectator &&
-          (activePreviewModalAsset?.kind === 'folder' ? Boolean(onVerifyFolder) : Boolean(onVerify))
-        }
-        isReAuditing={
-          activePreviewModalAsset?.kind === 'folder'
-            ? verifyingFolderIds.includes(activePreviewModalAsset.id ?? '')
-            : verifyingAssetId === activePreviewModalAsset?.id
-        }
+        canVerify={!isWorkspaceFilePreview && !isSpectator && activePreviewModalAsset?.kind === 'folder' && Boolean(onVerifyFolder)}
+        isReAuditing={activePreviewModalAsset?.kind === 'folder' && verifyingFolderIds.includes(activePreviewModalAsset.id ?? '')}
         onReAudit={
           activePreviewFolderItem && onVerifyFolder
             ? () => onVerifyFolder(activePreviewFolderItem.folder.id)
@@ -1386,9 +1342,6 @@ export function UniversalAssetGrid({
         }
         onProjectUpdated={(projectId, projectPatch) =>
           handleProjectUpdated(projectId, projectPatch as Partial<ProjectRow>)
-        }
-        onAuditCommitted={(projectId, projectPatch) =>
-          onProjectAuditCommitted?.(projectId, projectPatch as Partial<ProjectRow>)
         }
         onClose={() => {
           setActivePreviewTarget(null);

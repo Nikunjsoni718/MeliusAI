@@ -1079,22 +1079,6 @@ function shouldForceUtf8CodeRead(...sources: Array<string | null | undefined>) {
   return sources.some((source) => auditTextFileExtensions.has(getFileExtensionFromSource(source)));
 }
 
-const extractCodeAsText = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => resolve(String(e.target?.result ?? ''));
-    reader.onerror = () => reject(new Error("Failed"));
-    reader.readAsText(file, "UTF-8");
-  });
-
-const readAssetAsDataURL = (asset: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Failed to read asset.'));
-    reader.readAsDataURL(asset);
-  });
-
 function getFetchableResourceUrl(value: string) {
   const resourceUrl = value.trim();
 
@@ -2690,16 +2674,12 @@ export function ProfileDashboard({
   const [selectedGithubFiles, setSelectedGithubFiles] = useState<Record<string, string[]>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [isScorecardPublic, setIsScorecardPublic] = useState(true);
-  const [, setProjectRetryFile] = useState<File | null>(null);
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<LiveOpportunityItem[]>([]);
   const [loadingState, setLoadingState] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isIngestionModalOpen, setIsIngestionModalOpen] = useState(false);
-  const [verifyingAssetId, setVerifyingAssetId] = useState<string | null>(null);
-  const [verifiedAssetId, setVerifiedAssetId] = useState<string | null>(null);
-  const [liveStreamText, setLiveStreamText] = useState('');
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [auditingFolders, setAuditingFolders] = useState<Record<string, boolean>>({});
   const [projectVerifyError, setProjectVerifyError] = useState<string | null>(null);
@@ -2790,11 +2770,9 @@ export function ProfileDashboard({
   });
   const [portfolioSaveState, setPortfolioSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const uploadClearRef = useRef<number | null>(null);
-  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
   const projectFolderInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
-  const verifiedAssetTimerRef = useRef<number | null>(null);
   const hydratedProfileKeyRef = useRef<string | null>(null);
   const activeNewlyAddedProjectRef = useRef<NewlyAddedProject | null>(null);
   const announcedNewProjectIdsRef = useRef<Set<string>>(new Set());
@@ -3481,7 +3459,6 @@ export function ProfileDashboard({
   const isSyncing =
     profileSyncState === 'syncing' ||
     bioSaveState === 'saving' ||
-    verifyingAssetId !== null ||
     deletingProjectId !== null ||
     isProjectUploading ||
     isUploading;
@@ -3741,34 +3718,6 @@ export function ProfileDashboard({
 
     return activeSession?.access_token ?? null;
   }, [supabase]);
-
-  const getProjectAuditHref = useCallback(
-    async (project: ProjectItem) => {
-      const currentHref = getProjectDownloadHref(project);
-      const storagePath =
-        normalizeVaultStoragePath(project.storage_path) ??
-        extractVaultStoragePath(currentHref);
-
-      if (!storagePath) {
-        return currentHref;
-      }
-
-      if (!supabase) {
-        throw new Error('Verification Failed: Project storage is unavailable.');
-      }
-
-      const { data, error } = await supabase.storage
-        .from(STORAGE_BUCKET_NAME)
-        .createSignedUrl(storagePath, 3600);
-
-      if (error || !data?.signedUrl) {
-        throw new Error(error?.message || 'Verification Failed: Unable to authorize the project file.');
-      }
-
-      return data.signedUrl;
-    },
-    [supabase]
-  );
 
   useEffect(() => {
     if (loading) {
@@ -4468,9 +4417,6 @@ export function ProfileDashboard({
       if (verifyErrorTimerRef.current) {
         window.clearTimeout(verifyErrorTimerRef.current);
       }
-      if (verifiedAssetTimerRef.current) {
-        window.clearTimeout(verifiedAssetTimerRef.current);
-      }
       if (bioSavedTimerRef.current) {
         window.clearTimeout(bioSavedTimerRef.current);
       }
@@ -4892,97 +4838,6 @@ export function ProfileDashboard({
       setPortfolioSaveState('idle');
       showBioToast('Link Sync Error: Please check your connection.');
     }
-  }
-
-  async function uploadProjectFile(
-    file: File,
-    description: string,
-    options: { folderId?: string | null; userId?: string; isPublic?: boolean } = {}
-  ) {
-    if (!isOwner) {
-      throw new Error('Only the profile owner can add work assets.');
-    }
-
-    if (!supabase) {
-      throw new Error('Vault sync is not ready.');
-    }
-
-    const userId = options.userId ?? (await getConfirmedUserId());
-    if (!userId) {
-      throw new Error('Vault sync is not ready.');
-    }
-
-    const { data: authData, error: authError } = await supabase.auth.getSession();
-    if (authError || authData.session?.user.id !== userId) {
-      throw new Error('Your session has expired. Please sign in again.');
-    }
-
-    setUploadState({
-      fileName: file.name,
-      progress: 20,
-      status: 'uploading',
-    });
-
-    const path = `${userId}/${getStorageFileName(file.name)}`;
-    try {
-      const { error: uploadError } = await supabase.storage
-        .from(STORAGE_BUCKET_NAME)
-        .upload(path, file, {
-          upsert: true,
-          contentType: getUploadContentType(file),
-        });
-
-      if (uploadError) {
-        throw uploadError;
-      }
-    } catch (error) {
-      setUploadState({
-        fileName: file.name,
-        progress: 100,
-        status: 'failed',
-        error: 'Vault upload failed. Check your connection and permissions, then try again.',
-      });
-      showBioToast('Vault upload failed. Check your connection and permissions, then try again.');
-      throw new Error(
-        `Vault upload failed: ${error instanceof Error ? error.message : 'The file could not be stored.'}`
-      );
-    }
-
-    setUploadState({
-      fileName: file.name,
-      progress: 70,
-      status: 'uploading',
-    });
-
-    const fileUrl = supabase.storage.from(STORAGE_BUCKET_NAME).getPublicUrl(path).data.publicUrl;
-    if (!fileUrl) {
-      throw new Error('Could not create a public file URL.');
-    }
-
-    const fileExtension = getFileExtension(file.name) || 'file';
-    const uploadDescription = description.trim() || null;
-    const { data, error } = await supabase
-      .from('projects')
-      .insert({
-        user_id: userId,
-        folder_id: options.folderId ?? null,
-        name: file.name,
-        file_url: fileUrl,
-        file_type: fileExtension,
-        description: uploadDescription,
-        is_public: options.isPublic ?? isScorecardPublic,
-        has_been_audited: false,
-        status: 'draft',
-      })
-      .select(PROJECT_DASHBOARD_COLUMNS)
-      .single();
-
-    if (error) {
-      console.error('Project DB Error:', error);
-      throw error;
-    }
-
-    return mapProjectRowToProjectItem(data);
   }
 
   function syncProjectDeepLink(projectId: string | null) {
@@ -5846,108 +5701,6 @@ export function ProfileDashboard({
     }
   }
 
-  async function handleProjectFile(
-    file: File,
-    description = projectDescription,
-    options: { folderId?: string | null; userId?: string; isPublic?: boolean } = {}
-  ) {
-    if (!isOwner) {
-      return;
-    }
-
-    pauseProductTour(9);
-
-    if (uploadClearRef.current) {
-      window.clearTimeout(uploadClearRef.current);
-    }
-
-    setProjectRetryFile(null);
-    setUploadState({
-      fileName: file.name,
-      progress: 5,
-      status: 'uploading',
-    });
-
-    try {
-      const assetDataUrl = await readAssetAsDataURL(file);
-      const extractedCodeContent = shouldForceUtf8CodeRead(file.name)
-        ? await extractCodeAsText(file).then((text) => text.trim())
-        : '';
-      const savedProject = await uploadProjectFile(file, description, options);
-      const projectWithExtractedCode = {
-        ...savedProject,
-        asset_data_url: assetDataUrl,
-        ...(extractedCodeContent ? { text_preview: extractedCodeContent } : {}),
-      };
-      setUploadState({
-        fileName: file.name,
-        progress: 100,
-        status: 'done',
-      });
-
-      setProjects((currentProjects) => [
-        projectWithExtractedCode,
-        ...currentProjects.filter((project) => project.id !== projectWithExtractedCode.id),
-      ]);
-      const projectWithExtractedCodeRow = {
-          id: projectWithExtractedCode.id,
-          user_id: projectWithExtractedCode.user_id ?? undefined,
-          folder_id: projectWithExtractedCode.folder_id ?? null,
-          name: projectWithExtractedCode.title,
-          title: projectWithExtractedCode.title,
-          file_url: projectWithExtractedCode.file_url ?? projectWithExtractedCode.preview_url ?? null,
-          file_type: projectWithExtractedCode.mime_type ?? projectWithExtractedCode.file_type ?? null,
-          file_size: null,
-          created_at: projectWithExtractedCode.created_at ?? '',
-          logic_score: projectWithExtractedCode.logic_score ?? null,
-          ai_summary: projectWithExtractedCode.ai_summary ?? null,
-          is_public: projectWithExtractedCode.is_public ?? null,
-          description: projectWithExtractedCode.description ?? null,
-          evaluation_score: projectWithExtractedCode.evaluation_score ?? null,
-          has_been_audited: projectWithExtractedCode.has_been_audited ?? null,
-          score: projectWithExtractedCode.score ?? null,
-          audit_summary: projectWithExtractedCode.audit_summary ?? null,
-          pros: projectWithExtractedCode.pros ?? null,
-          cons: projectWithExtractedCode.cons ?? null,
-          recommendations: projectWithExtractedCode.recommendations ?? null,
-          status: projectWithExtractedCode.status as ProjectRow['status'],
-        } satisfies ProjectRow;
-
-      setProfileAssets((currentAssets) => [
-        projectWithExtractedCodeRow,
-        ...currentAssets.filter((asset) => asset.id !== projectWithExtractedCode.id),
-      ]);
-      setProjectDescriptions((currentDescriptions) => ({
-        ...currentDescriptions,
-        [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
-      }));
-      setProjectDescription('');
-      advanceProductTour(9, 10, projectWithExtractedCode.id);
-      showNewlyAddedProjects([
-        {
-          kind: 'asset',
-          id: projectWithExtractedCode.id,
-          name: projectWithExtractedCode.title,
-          project: projectWithExtractedCode,
-        },
-      ]);
-
-      uploadClearRef.current = window.setTimeout(() => {
-        setUploadState(null);
-        uploadClearRef.current = null;
-      }, 450);
-    } catch (error) {
-      setProjectRetryFile(file);
-      setUploadState({
-        fileName: file.name,
-        progress: 100,
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'We could not save this project.',
-      });
-      resumeProductTour(9);
-    }
-  }
-
   async function handleReUpload(
     event: ChangeEvent<HTMLInputElement>,
     project: ProjectItem
@@ -6212,8 +5965,7 @@ export function ProfileDashboard({
         fileName: file.name,
       });
 
-      currentStep = "audit replacement file";
-      await handleVerifyWithMeliusAI(pendingProject, true);
+      currentStep = "finalize replacement file";
     } catch (error) {
       if (uploadedPath && !projectRowUpdated) {
         console.log("[Re-upload] Rollback cleanup starting.", {
@@ -6389,235 +6141,6 @@ export function ProfileDashboard({
     setActivePreviewProjectOverride((currentProject) =>
       currentProject?.id === projectId ? mergeProject(currentProject) : currentProject
     );
-  }
-
-  async function handleVerifyWithMeliusAI(
-    project: ProjectItem,
-    force = false,
-    event?: MouseEvent<HTMLButtonElement>
-  ) {
-    console.log("Audit button clicked for project:", project.id);
-    event?.preventDefault();
-    event?.stopPropagation();
-
-    if (!isOwner) {
-      console.warn('[Audit] Request blocked because the current viewer is not the project owner.', {
-        projectId: project.id,
-      });
-      return;
-    }
-
-    if (!supabase || verifyingAssetId || deletingProjectId) {
-      console.warn('[Audit] Request blocked because the dashboard is busy or unavailable.', {
-        projectId: project.id,
-        hasSupabaseClient: Boolean(supabase),
-        verifyingAssetId,
-        deletingProjectId,
-      });
-      return;
-    }
-
-    const hasPositiveCachedScore = [
-      project.score,
-      project.evaluation_score,
-      project.logic_score,
-    ].some((score) => typeof score === 'number' && score > 0);
-    const hasCompletedCachedAudit = Boolean(
-      project.has_been_audited && hasPositiveCachedScore
-    );
-
-    if (!force && hasCompletedCachedAudit) {
-      console.log('[Audit] Existing completed audit found; skipping duplicate verification.', {
-        projectId: project.id,
-      });
-      return;
-    }
-
-    pauseProductTour(10);
-    setVerifyingAssetId(project.id);
-    setLiveStreamText('');
-    setProjectVerifyError(null);
-    setVerifiedAssetId(null);
-
-    const userContextDescription = projectDescriptions[project.id] ?? '';
-    const filename = project.file_name || project.title;
-
-    if (verifiedAssetTimerRef.current) {
-      window.clearTimeout(verifiedAssetTimerRef.current);
-      verifiedAssetTimerRef.current = null;
-    }
-
-    if (descriptionSaveTimersRef.current[project.id]) {
-      window.clearTimeout(descriptionSaveTimersRef.current[project.id]);
-      delete descriptionSaveTimersRef.current[project.id];
-    }
-
-    try {
-      const projectSourceHref = await getProjectAuditHref(project);
-      if (!projectSourceHref) {
-        throw new Error('Verification Failed: This asset does not contain a valid file URL.');
-      }
-
-      const isJupyterNotebook = getFileExtensionFromSource(filename) === 'ipynb';
-      const shouldReadAssetAsText = shouldForceUtf8CodeRead(filename) || project.mime_type?.startsWith('text/');
-      let assetTextContent = isJupyterNotebook
-        ? ''
-        : shouldReadAssetAsText
-          ? project.text_preview || ''
-          : project.asset_data_url || '';
-
-      if (!assetTextContent && !isJupyterNotebook) {
-        const assetResponse = await fetch(getFetchableResourceUrl(projectSourceHref));
-
-        if (!assetResponse.ok) {
-          throw new Error('Verification Failed: This asset could not be downloaded for review.');
-        }
-
-        assetTextContent = shouldReadAssetAsText ? await assetResponse.text() : await readAssetAsDataURL(await assetResponse.blob());
-      }
-
-      const response = await fetch('/api/verify-asset', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          projectId: project.id,
-          fileUrl: projectSourceHref,
-          filename,
-          assetName: filename,
-          assetTextContent,
-          userContextDescription,
-        }),
-      });
-
-      const payload = (await response.json()) as {
-        error?: string;
-        grade?: string;
-        ai_summary?: string;
-        user_description?: string;
-        strengths?: string[];
-        weaknesses?: string[];
-        pros?: string[];
-        cons?: string[];
-        recommendations?: string[];
-        finding_impacts?: unknown;
-        last_improved_summary?: string;
-        improvement_summary?: string;
-        previous_score?: number;
-        delta_summary?: string | null;
-        project?: ProjectItem;
-        report?: {
-          calculatedScore?: number;
-          score?: number;
-          ai_summary?: string;
-          user_description?: string;
-          executiveSummary?: string;
-          strengths?: string[];
-          weaknesses?: string[];
-          pros?: string[];
-          cons?: string[];
-          recommendations?: string[];
-          finding_impacts?: unknown;
-          strategicRecommendations?: string[];
-          last_improved_summary?: string;
-        };
-        reportText?: string;
-        description?: string;
-        executive_summary?: string;
-        summary?: string;
-        score?: number;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.error || 'MeliusAI GPT verification failed.');
-      }
-
-      const updatedProject = payload.project;
-      const pythonScore = typeof payload.score === 'number' ? payload.score : null;
-      const executiveSummary =
-        payload.ai_summary?.trim() ||
-        payload.report?.ai_summary?.trim() ||
-        payload.user_description?.trim() ||
-        payload.report?.user_description?.trim() ||
-        payload.report?.executiveSummary?.trim() ||
-        updatedProject?.ai_summary?.trim() ||
-        updatedProject?.user_description?.trim() ||
-        updatedProject?.executive_summary?.trim() ||
-        updatedProject?.summary?.trim() ||
-        updatedProject?.audit_summary?.trim() ||
-        '';
-      const prosList = payload.strengths ?? payload.report?.strengths ?? payload.pros ?? payload.report?.pros ?? [];
-      const consList = payload.weaknesses ?? payload.report?.weaknesses ?? payload.cons ?? payload.report?.cons ?? [];
-      const recommendationList = payload.recommendations ?? payload.report?.recommendations ?? payload.report?.strategicRecommendations ?? [];
-      const generatedReportText = [
-        executiveSummary,
-        prosList.length > 0 ? `Strengths\n${prosList.map((item) => `- ${item}`).join('\n')}` : '',
-        consList.length > 0 ? `Weaknesses\n${consList.map((item) => `- ${item}`).join('\n')}` : '',
-        recommendationList.length > 0
-          ? `Recommendations\n${recommendationList.map((item) => `- ${item}`).join('\n')}`
-          : '',
-        `MeliusAI Engineering Assessment: ${normalizeAuditScore(pythonScore ?? payload.report?.score ?? payload.report?.calculatedScore) ?? 0}/100`,
-      ]
-        .filter((section) => section.trim().length > 0)
-        .join('\n\n');
-      const accumulatedReportText =
-        payload.reportText?.trim() || updatedProject?.description?.trim() || updatedProject?.ai_summary?.trim() || generatedReportText;
-
-      setLiveStreamText(accumulatedReportText);
-      const verifiedProjectPatch: Partial<ProjectItem> = {
-        ...(updatedProject ?? {}),
-        has_been_audited: updatedProject?.has_been_audited ?? true,
-        evaluation_score: updatedProject?.evaluation_score ?? pythonScore,
-        logic_score: updatedProject?.logic_score ?? pythonScore,
-        score: updatedProject?.score ?? pythonScore,
-        ai_summary: payload.ai_summary ?? updatedProject?.ai_summary ?? executiveSummary,
-        user_description: payload.user_description ?? updatedProject?.user_description ?? executiveSummary,
-        audit_summary: executiveSummary || updatedProject?.audit_summary,
-        executive_summary: payload.executive_summary ?? updatedProject?.executive_summary,
-        summary: payload.summary ?? updatedProject?.summary,
-        description: updatedProject?.description ?? executiveSummary,
-        pros: prosList.length > 0 ? prosList : updatedProject?.pros,
-        cons: consList.length > 0 ? consList : updatedProject?.cons,
-        recommendations: recommendationList.length > 0 ? recommendationList : updatedProject?.recommendations,
-        audit_findings:
-          payload.finding_impacts ??
-          payload.report?.finding_impacts ??
-          updatedProject?.audit_findings ??
-          project.audit_findings,
-        last_improved_summary:
-          payload.last_improved_summary ??
-          payload.improvement_summary ??
-          payload.report?.last_improved_summary ??
-          updatedProject?.last_improved_summary,
-        previous_score:
-          payload.previous_score ?? updatedProject?.previous_score ?? project.previous_score,
-        delta_summary:
-          payload.delta_summary !== undefined
-            ? payload.delta_summary
-            : updatedProject?.delta_summary,
-      };
-      applyVerifiedProjectState(project.id, verifiedProjectPatch, accumulatedReportText, {
-        sourceProject: project,
-        userDescription: userContextDescription,
-      });
-      recordProjectAuditMutation(project.id, verifiedProjectPatch);
-      requestAuditProfileRevalidation();
-      setVerifiedAssetId(project.id);
-      advanceProductTour(10, 11, project.id);
-      verifiedAssetTimerRef.current = window.setTimeout(() => {
-        setVerifiedAssetId(null);
-        verifiedAssetTimerRef.current = null;
-      }, 2400);
-    } catch (error) {
-      console.error('Detailed Verification Diagnostic Log:', error);
-      const message = error instanceof Error ? error.message : 'MeliusAI GPT verification failed.';
-      showProjectVerifyError(message);
-      resumeProductTour(10);
-    } finally {
-      setVerifyingAssetId(null);
-    }
   }
 
   async function deleteProjectRecord(projectId: string) {
@@ -7829,28 +7352,6 @@ export function ProfileDashboard({
                           }}
                         >
                           + Create Project Folder
-                        </button>
-                        <input
-                          ref={projectFileInputRef}
-                          type="file"
-                          accept="*/*"
-                          disabled={isProjectUploading}
-                          className="sr-only"
-                          onChange={(event) => {
-                            const file = event.currentTarget.files?.[0];
-                            event.currentTarget.value = '';
-                            if (file) {
-                              void handleProjectFile(file);
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="btn primary"
-                          disabled={isProjectUploading}
-                          onClick={() => projectFileInputRef.current?.click()}
-                        >
-                          + UPLOAD FILE
                         </button>
                       </div>
                     </>
