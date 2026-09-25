@@ -5427,7 +5427,32 @@ export function ProfileDashboard({
     }
   }
 
+  const dismissNewlyAddedProjectsForActiveTour = useCallback(
+    (suppressedProjects: readonly NewlyAddedProject[] = []) => {
+      if (!hasActiveProductTour(user?.id)) {
+        return false;
+      }
+
+      // Project creation advances the tour to "Run the Audit". Treat the
+      // celebratory dialog as acknowledged for onboarding so it cannot cover
+      // the verification control or reappear after the tour finishes.
+      suppressedProjects.forEach((project) => {
+        announcedNewProjectIdsRef.current.add(project.id);
+      });
+      activeNewlyAddedProjectRef.current = null;
+      setNewlyAddedProject(null);
+      setNewlyAddedProjectQueue([]);
+      setNewlyAddedProjectDeleteError(null);
+      return true;
+    },
+    [user?.id]
+  );
+
   const showNewlyAddedProjects = useCallback((nextProjects: NewlyAddedProject[]) => {
+    if (dismissNewlyAddedProjectsForActiveTour(nextProjects)) {
+      return;
+    }
+
     const unseenProjects = nextProjects.filter((project) => {
       if (announcedNewProjectIdsRef.current.has(project.id)) {
         return false;
@@ -5453,7 +5478,20 @@ export function ProfileDashboard({
     activeNewlyAddedProjectRef.current = firstProject;
     setNewlyAddedProject(firstProject);
     setNewlyAddedProjectQueue(queuedProjects);
-  }, []);
+  }, [dismissNewlyAddedProjectsForActiveTour]);
+
+  useEffect(() => {
+    const dismissWhenTourChanges = () => {
+      dismissNewlyAddedProjectsForActiveTour();
+    };
+
+    dismissWhenTourChanges();
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, dismissWhenTourChanges);
+
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, dismissWhenTourChanges);
+    };
+  }, [dismissNewlyAddedProjectsForActiveTour]);
 
   function continueNewlyAddedProjectModal() {
     const [nextProject, ...remainingProjects] = newlyAddedProjectQueue;
