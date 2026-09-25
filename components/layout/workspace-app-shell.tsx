@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   BriefcaseBusiness,
   FileText,
@@ -19,6 +19,12 @@ import { isViewerProfileOwner, useViewerProfile } from '@/lib/viewer-client';
 import { cn } from '@/lib/utils';
 import { NotificationCenter } from '@/components/layout/notification-center';
 import { PushPermissionPrompt } from '@/components/layout/push-permission-prompt';
+import {
+  hasActiveProductTour,
+  hasCompletedProductTour,
+  PRODUCT_TOUR_CHANGE_EVENT_NAME,
+  PRODUCT_TOUR_COMPLETE_EVENT_NAME,
+} from '@/components/onboarding/product-tour';
 
 type NavigationItem = {
   href: string;
@@ -43,6 +49,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { loading, profile, supabase, user } = useViewerProfile();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [tourStateRevision, setTourStateRevision] = useState(0);
   const targetUsername = profileUsernameFromPathname(pathname);
   const viewerUsername =
     profile?.username ??
@@ -61,6 +68,31 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
             targetUsername,
           }))
     );
+
+  useEffect(() => {
+    const refreshTourState = () => {
+      setTourStateRevision((revision) => revision + 1);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, refreshTourState);
+    window.addEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, refreshTourState);
+
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, refreshTourState);
+      window.removeEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, refreshTourState);
+    };
+  }, []);
+
+  const isOnboardingBlocked = useMemo(() => {
+    if (!user?.id || !profile) return true;
+
+    const hasUnfinishedIdentity =
+      (!profile.bio?.trim() || !profile.username?.trim()) &&
+      !hasCompletedProductTour(user.id);
+
+    return hasUnfinishedIdentity || hasActiveProductTour(user.id);
+  }, [profile?.bio, profile?.username, tourStateRevision, user?.id]);
+
   const profileHandle = targetUsername ?? viewerUsername ?? user?.id ?? null;
   const profileHref = profileHandle ? `/profile/${encodeURIComponent(profileHandle)}` : '/home';
 
@@ -177,7 +209,13 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
         </button>
         {children}
       </div>
-      {isOwner ? <PushPermissionPrompt /> : null}
+      {isOwner ? (
+        <PushPermissionPrompt
+          key={user?.id ?? 'anonymous'}
+          userId={user?.id ?? null}
+          onboardingBlocked={isOnboardingBlocked}
+        />
+      ) : null}
     </div>
   );
 }

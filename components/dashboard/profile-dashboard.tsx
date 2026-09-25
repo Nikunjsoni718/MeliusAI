@@ -4740,10 +4740,10 @@ export function ProfileDashboard({
     }
 
     const bioSaved = await saveBio(bioText);
-    await refreshSessionAndRedirectToUpdatedUsername();
     if (bioSaved) {
       advanceProductTour(1, 2);
     }
+    await refreshSessionAndRedirectToUpdatedUsername();
   }
 
   async function handleEditProfileToggle() {
@@ -4762,10 +4762,10 @@ export function ProfileDashboard({
     }
 
     const bioSaved = await saveBio(bioText);
-    await refreshSessionAndRedirectToUpdatedUsername();
     if (bioSaved) {
       advanceProductTour(1, 2);
     }
+    await refreshSessionAndRedirectToUpdatedUsername();
   }
 
   function updateBio(value: string) {

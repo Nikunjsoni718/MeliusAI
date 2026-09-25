@@ -6,19 +6,30 @@ import { AnimatePresence, motion } from 'framer-motion';
 
 import { enableWebPush, getWebPushPreference, syncPreviouslyEnabledWebPush, WEB_PUSH_PREFERENCE_KEY } from '@/lib/web-push';
 
-export function PushPermissionPrompt() {
+type PushPermissionPromptProps = {
+  userId: string | null;
+  onboardingBlocked: boolean;
+};
+
+export function PushPermissionPrompt({ userId, onboardingBlocked }: PushPermissionPromptProps) {
   const [visible, setVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!('Notification' in window)) return;
+    if (!userId || !('Notification' in window)) return;
+
     const preference = getWebPushPreference();
     if (preference === 'enabled' && Notification.permission === 'granted') {
       void syncPreviouslyEnabledWebPush().catch((syncError) => {
         console.warn('Unable to restore the previous Web Push subscription:', syncError);
       });
-      return;
     }
+  }, [userId]);
+
+  useEffect(() => {
+    if (onboardingBlocked || !userId || !('Notification' in window)) return;
+
+    const preference = getWebPushPreference();
     if (preference) return;
     if (Notification.permission === 'denied') {
       window.localStorage.setItem(WEB_PUSH_PREFERENCE_KEY, 'later');
@@ -28,7 +39,7 @@ export function PushPermissionPrompt() {
     // work has completed; React's lint rule flags direct effect updates.
     const timeoutId = window.setTimeout(() => setVisible(true), 0);
     return () => window.clearTimeout(timeoutId);
-  }, []);
+  }, [onboardingBlocked, userId]);
 
   async function enable() {
     setError(null);
@@ -45,9 +56,11 @@ export function PushPermissionPrompt() {
     setVisible(false);
   }
 
+  const promptVisible = visible && Boolean(userId) && !onboardingBlocked;
+
   return (
     <AnimatePresence>
-      {visible ? (
+      {promptVisible ? (
         <motion.aside
           aria-live="polite"
           initial={{ opacity: 0, y: -24, scale: 0.98 }}
