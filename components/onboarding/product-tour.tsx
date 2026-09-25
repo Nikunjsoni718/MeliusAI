@@ -287,7 +287,14 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   const [targetReadyStep, setTargetReadyStep] = useState<ProductTourStep | null>(null);
 
   useEffect(() => {
-    const syncTourState = () => setTourState(readActiveTourState());
+    // App Router navigation unmounts the previous route component. Rehydrate
+    // from localStorage for the authenticated viewer instead of depending on
+    // the prior route's React state.
+    const syncTourState = () => {
+      const activeTourState = readActiveTourState();
+      setTourState(activeTourState?.userId === userId ? activeTourState : null);
+    };
+
     syncTourState();
     window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, syncTourState);
     window.addEventListener('storage', syncTourState);
@@ -296,13 +303,18 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, syncTourState);
       window.removeEventListener('storage', syncTourState);
     };
-  }, []);
+  }, [userId]);
+
+  const hasPersistedActiveTour = Boolean(
+    isAuthenticated && userId && tourState?.userId === userId
+  );
+  const isTourEligible = isNewUser || hasPersistedActiveTour;
 
   useEffect(() => {
     if (
       pathname === '/resume' &&
       isAuthenticated &&
-      isNewUser &&
+      hasPersistedActiveTour &&
       userId &&
       tourState?.userId === userId &&
       tourState.stepIndex === 2
@@ -310,8 +322,8 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       advanceProductTour(2, 3);
     }
   }, [
+    hasPersistedActiveTour,
     isAuthenticated,
-    isNewUser,
     pathname,
     tourState?.stepIndex,
     tourState?.userId,
@@ -534,7 +546,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   useEffect(() => {
     if (
       !isAuthenticated ||
-      !isNewUser ||
+      !isTourEligible ||
       !userId ||
       tourState?.userId !== userId ||
       !tourState.run ||
@@ -559,11 +571,11 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     return () => {
       observer.disconnect();
     };
-  }, [currentStep, isAuthenticated, isNewUser, tourState, userId]);
+  }, [currentStep, isAuthenticated, isTourEligible, tourState, userId]);
 
   const canRunTour = Boolean(
     isAuthenticated &&
-      isNewUser &&
+      isTourEligible &&
       userId &&
       tourState?.userId === userId &&
       tourState.run &&

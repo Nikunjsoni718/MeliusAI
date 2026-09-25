@@ -3749,7 +3749,22 @@ export function ProfileDashboard({
   }, [authEnabled, loading, router, targetUsername, user]);
 
   useEffect(() => {
-    if (!isOwner || !user || profileLoading || !profileData) {
+    if (!isOwner || !user || profileLoading) {
+      setOnboardingCompletionReady(false);
+      return;
+    }
+
+    // The Step 1 save can replace the username route before this page has
+    // finished hydrating profile data. Resume an active persisted tour first
+    // so Step 2 is never gated on that transient loading state.
+    if (hasActiveProductTour(user.id)) {
+      setIsNewUser(true);
+      setOnboardingCompletionReady(false);
+      return;
+    }
+
+    if (!profileData) {
+      setIsNewUser(false);
       setOnboardingCompletionReady(false);
       return;
     }
@@ -3757,8 +3772,7 @@ export function ProfileDashboard({
     const hasEmptyBio = !profileData.bio?.trim();
     const hasEmptyUsername = !profileData.username?.trim();
     const shouldRunTour =
-      ((hasEmptyBio || hasEmptyUsername) && !hasCompletedProductTour(user.id)) ||
-      hasActiveProductTour(user.id);
+      (hasEmptyBio || hasEmptyUsername) && !hasCompletedProductTour(user.id);
 
     setIsNewUser(shouldRunTour);
     setOnboardingCompletionReady(!shouldRunTour);
@@ -4733,17 +4747,23 @@ export function ProfileDashboard({
     }
   }
 
-  async function saveCompleteProfile() {
+  async function saveIdentityOnboardingStep() {
+    // The identity step intentionally accepts a bio on its own. Persist the
+    // handoff before optional profile fields can fail validation or a route
+    // replacement unmounts this page.
+    const advancedFromIdentityStep = advanceProductTour(1, 2);
     const profileSaved = await saveProfileDraft();
-    if (!profileSaved) {
-      return;
+    if (!profileSaved && !advancedFromIdentityStep) {
+      return false;
     }
 
-    const bioSaved = await saveBio(bioText);
-    if (bioSaved) {
-      advanceProductTour(1, 2);
-    }
+    await saveBio(bioText);
     await refreshSessionAndRedirectToUpdatedUsername();
+    return true;
+  }
+
+  async function saveCompleteProfile() {
+    await saveIdentityOnboardingStep();
   }
 
   async function handleEditProfileToggle() {
@@ -4756,16 +4776,7 @@ export function ProfileDashboard({
       return;
     }
 
-    const profileSaved = await saveProfileDraft();
-    if (!profileSaved) {
-      return;
-    }
-
-    const bioSaved = await saveBio(bioText);
-    if (bioSaved) {
-      advanceProductTour(1, 2);
-    }
-    await refreshSessionAndRedirectToUpdatedUsername();
+    await saveIdentityOnboardingStep();
   }
 
   function updateBio(value: string) {

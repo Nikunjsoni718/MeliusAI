@@ -22,6 +22,7 @@ import { PushPermissionPrompt } from '@/components/layout/push-permission-prompt
 import {
   hasActiveProductTour,
   hasCompletedProductTour,
+  pauseProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
 } from '@/components/onboarding/product-tour';
@@ -49,7 +50,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { loading, profile, supabase, user } = useViewerProfile();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [tourStateRevision, setTourStateRevision] = useState(0);
+  const [, forceTourStateRefresh] = useState(0);
   const targetUsername = profileUsernameFromPathname(pathname);
   const viewerUsername =
     profile?.username ??
@@ -71,7 +72,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const refreshTourState = () => {
-      setTourStateRevision((revision) => revision + 1);
+      forceTourStateRefresh((revision) => revision + 1);
     };
 
     window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, refreshTourState);
@@ -83,15 +84,12 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const isOnboardingBlocked = useMemo(() => {
-    if (!user?.id || !profile) return true;
-
-    const hasUnfinishedIdentity =
-      (!profile.bio?.trim() || !profile.username?.trim()) &&
-      !hasCompletedProductTour(user.id);
-
-    return hasUnfinishedIdentity || hasActiveProductTour(user.id);
-  }, [profile?.bio, profile?.username, tourStateRevision, user?.id]);
+  const isOnboardingBlocked =
+    !user?.id || !profile
+      ? true
+      : ((!profile.bio?.trim() || !profile.username?.trim()) &&
+          !hasCompletedProductTour(user.id)) ||
+        hasActiveProductTour(user.id);
 
   const profileHandle = targetUsername ?? viewerUsername ?? user?.id ?? null;
   const profileHref = profileHandle ? `/profile/${encodeURIComponent(profileHandle)}` : '/home';
@@ -171,7 +169,13 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
                   aria-current={active ? 'page' : undefined}
                   onFocus={() => router.prefetch(routeHref)}
                   onMouseEnter={() => router.prefetch(routeHref)}
-                  onClick={() => setMobileOpen(false)}
+                  onClick={() => {
+                    if (item.label === 'Developer Profile') {
+                      pauseProductTour(2);
+                    }
+                    setMobileOpen(false);
+                  }}
+                  data-tour={item.label === 'Developer Profile' ? 'developer-profile-nav' : undefined}
                   className={cn(
                     'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-slate-300 transition-all duration-200 hover:bg-blue-950/30 hover:text-white',
                     active && 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]'
