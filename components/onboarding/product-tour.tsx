@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ACTIONS, EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
+export const PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME = 'meliusai:product-tour:mobile-sidebar';
 const PRODUCT_TOUR_VERSION = 4;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
@@ -325,6 +326,22 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   const pathname = usePathname();
   const [tourState, setTourState] = useState<StoredProductTourState | null>(null);
   const [targetReadyStep, setTargetReadyStep] = useState<ProductTourStep | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 768
+  );
+  const [mobileSidebarReadyStep, setMobileSidebarReadyStep] = useState<ProductTourStep | null>(null);
+  const mobileSidebarOpenedByTourRef = useRef(false);
+
+  useEffect(() => {
+    const syncMobileViewport = () => {
+      setIsMobileViewport(window.innerWidth < 768);
+    };
+
+    window.addEventListener('resize', syncMobileViewport);
+    return () => {
+      window.removeEventListener('resize', syncMobileViewport);
+    };
+  }, []);
 
   useEffect(() => {
     // App Router navigation unmounts the previous route component. Rehydrate
@@ -596,6 +613,44 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   const currentStep = tourState ? steps[tourState.stepIndex] : undefined;
 
   useEffect(() => {
+    const shouldOpenMobileSidebar = Boolean(
+      isMobileViewport &&
+      isAuthenticated &&
+      isTourEligible &&
+      pathname !== '/resume' &&
+      userId &&
+      tourState?.userId === userId &&
+      tourState.run &&
+      tourState.stepIndex === 2
+    );
+
+    if (!shouldOpenMobileSidebar) {
+      if (mobileSidebarOpenedByTourRef.current) {
+        window.dispatchEvent(
+          new CustomEvent(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, { detail: { open: false } })
+        );
+        mobileSidebarOpenedByTourRef.current = false;
+      }
+      return;
+    }
+
+    const openTimer = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, { detail: { open: true } })
+      );
+      mobileSidebarOpenedByTourRef.current = true;
+    }, 0);
+    const readyTimer = window.setTimeout(() => {
+      setMobileSidebarReadyStep(2);
+    }, 320);
+
+    return () => {
+      window.clearTimeout(openTimer);
+      window.clearTimeout(readyTimer);
+    };
+  }, [isAuthenticated, isMobileViewport, isTourEligible, pathname, tourState, userId]);
+
+  useEffect(() => {
     if (
       !isAuthenticated ||
       !isTourEligible ||
@@ -609,7 +664,14 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
 
     const activeStepIndex = tourState.stepIndex;
     const syncTargetReadiness = () => {
-      setTargetReadyStep(resolveTourTarget(currentStep) ? activeStepIndex : null);
+      const target = resolveTourTarget(currentStep);
+      const isMobileSidebarStep = isMobileViewport && activeStepIndex === 2;
+      const sidebarIsOpen =
+        target?.closest<HTMLElement>('[data-tour-mobile-sidebar]')?.dataset.tourMobileSidebar === 'open';
+      const isReady =
+        Boolean(target) &&
+        (!isMobileSidebarStep || (sidebarIsOpen && mobileSidebarReadyStep === activeStepIndex));
+      setTargetReadyStep(isReady ? activeStepIndex : null);
     };
 
     syncTargetReadiness();
@@ -623,7 +685,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     return () => {
       observer.disconnect();
     };
-  }, [currentStep, isAuthenticated, isTourEligible, tourState, userId]);
+  }, [currentStep, isAuthenticated, isMobileViewport, isTourEligible, mobileSidebarReadyStep, tourState, userId]);
 
   const canRunTour = Boolean(
     isAuthenticated &&
@@ -631,6 +693,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       userId &&
       tourState?.userId === userId &&
       tourState.run &&
+      (!isMobileViewport || tourState.stepIndex !== 2 || mobileSidebarReadyStep === 2) &&
       targetReadyStep === tourState.stepIndex
   );
 

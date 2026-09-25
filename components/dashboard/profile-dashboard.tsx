@@ -22,6 +22,7 @@ import {
   ProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
+  PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME,
   resumeProductTour,
   startProductTour,
 } from '@/components/onboarding/product-tour';
@@ -2757,6 +2758,23 @@ export function ProfileDashboard({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [isNewUser, setIsNewUser] = useState(false);
   const [onboardingCompletionReady, setOnboardingCompletionReady] = useState(false);
+
+  useEffect(() => {
+    const setTourMobileSidebar = (event: Event) => {
+      const { open } = (event as CustomEvent<{ open?: unknown }>).detail ?? {};
+      if (typeof open !== 'boolean' || (open && window.innerWidth >= 768)) {
+        return;
+      }
+
+      setIsSidebarOpen(open);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    };
+  }, []);
+
   const [hasImportedGitHubRepository, setHasImportedGitHubRepository] = useState<
     boolean | null
   >(null);
@@ -7236,6 +7254,7 @@ export function ProfileDashboard({
             />
           ) : null}
           <aside
+            data-tour-mobile-sidebar={isSidebarOpen ? 'open' : 'closed'}
             className={cn(
               'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] transform flex-col justify-between overflow-hidden border-r border-white/10 bg-[#0A0F1C]/70 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-auto md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0',
               isSidebarOpen ? 'translate-x-0' : '-translate-x-full'

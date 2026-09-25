@@ -25,6 +25,7 @@ import {
   pauseProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
+  PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME,
 } from '@/components/onboarding/product-tour';
 
 type NavigationItem = {
@@ -69,6 +70,22 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
             targetUsername,
           }))
     );
+
+  useEffect(() => {
+    const setTourMobileSidebar = (event: Event) => {
+      const { open } = (event as CustomEvent<{ open?: unknown }>).detail ?? {};
+      if (typeof open !== 'boolean' || (open && window.innerWidth >= 768)) {
+        return;
+      }
+
+      setMobileOpen(open);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    };
+  }, []);
 
   useEffect(() => {
     const refreshTourState = () => {
@@ -138,6 +155,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
         />
       ) : null}
       <aside
+        data-tour-mobile-sidebar={mobileOpen ? 'open' : 'closed'}
         className={cn(
           'fixed inset-y-0 left-0 z-50 flex w-[min(16rem,85vw)] flex-col justify-between overflow-visible border-r border-white/10 bg-[#0A0F1C]/70 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-50 md:h-full md:w-64 md:flex-shrink-0 md:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full'

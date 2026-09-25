@@ -23,6 +23,7 @@ import {
   hasActiveProductTour,
   pauseProductTour,
   ProductTour,
+  PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME,
   resetProductTourStep,
   type ProductTourStep,
 } from '@/components/onboarding/product-tour';
@@ -933,6 +934,23 @@ function DashboardResumePageContent() {
     ? `/profile/${encodeURIComponent(viewerProfileHandle)}#opportunities`
     : `${displayedProfileHref}#opportunities`;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const setTourMobileSidebar = (event: Event) => {
+      const { open } = (event as CustomEvent<{ open?: unknown }>).detail ?? {};
+      if (typeof open !== 'boolean' || (open && window.innerWidth >= 768)) {
+        return;
+      }
+
+      setIsSidebarOpen(open);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME, setTourMobileSidebar);
+    };
+  }, []);
+
   const visibleNavigationItems = useMemo(
     () =>
       isOwner
@@ -1392,6 +1410,7 @@ function DashboardResumePageContent() {
           />
         ) : null}
         <aside
+          data-tour-mobile-sidebar={isSidebarOpen ? 'open' : 'closed'}
           className={cn(
             'fixed inset-y-0 left-0 z-50 flex w-64 transform flex-col justify-between border-r border-white/10 bg-[#0A0F1C]/70 p-4 backdrop-blur-lg transition-transform duration-300 ease-in-out md:relative md:z-40 md:h-full md:min-w-[16rem] md:translate-x-0',
             isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
