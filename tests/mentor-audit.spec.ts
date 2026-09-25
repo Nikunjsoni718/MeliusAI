@@ -1,9 +1,38 @@
 import { expect, test } from '@playwright/test';
 
-import { analyzeVaultProject, buildRepoAnalysisPrompt, calculateMeliusAuditScore, verifyMeliusAsset } from '../lib/mentor';
+import {
+  analyzeVaultProject,
+  buildRepoAnalysisPrompt,
+  calculateMeliusAuditScore,
+  getGeminiAuditApiKey,
+  verifyMeliusAsset,
+} from '../lib/mentor';
 
 const productionLocation = 'app/api/users/route.ts: POST';
 const productionScope = 'In API route: user provisioning';
+
+test('single-file audit credentials accept the shared GOOGLE_API_KEY fallback', () => {
+  const variableNames = ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'] as const;
+  const previousValues = new Map(
+    variableNames.map((variableName) => [variableName, process.env[variableName]])
+  );
+
+  try {
+    delete process.env.GEMINI_API_KEY;
+    process.env.GOOGLE_API_KEY = ' shared-google-key ';
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+    expect(getGeminiAuditApiKey()).toBe('shared-google-key');
+  } finally {
+    previousValues.forEach((value, variableName) => {
+      if (value === undefined) {
+        delete process.env[variableName];
+      } else {
+        process.env[variableName] = value;
+      }
+    });
+  }
+});
 
 function finding(
   findingId: string,

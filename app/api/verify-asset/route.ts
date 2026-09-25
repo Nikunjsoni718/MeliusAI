@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import JSZip from 'jszip';
 
-import { verifyMeliusAsset } from '@/lib/mentor';
+import { getGeminiAuditApiKey, verifyMeliusAsset } from '@/lib/mentor';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -446,7 +446,8 @@ async function persistAuditResult({
 
 export async function POST(request: Request) {
   try {
-    if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    const geminiApiKey = getGeminiAuditApiKey();
+    if (!geminiApiKey) {
       return NextResponse.json(
         { error: 'GEMINI_API_KEY is not configured.' },
         { status: 500 }
@@ -524,6 +525,7 @@ export async function POST(request: Request) {
     const result = await verifyMeliusAsset({
       assetName,
       content: auditContent,
+      apiKey: geminiApiKey,
       scopeHint: getContextLens(assetName),
       userContextDescription,
       previousScore:

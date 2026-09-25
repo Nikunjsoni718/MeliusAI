@@ -13,6 +13,26 @@ const AUDIT_SCORE_FLOOR = 15;
 const AUDIT_SCORE_SOFT_FLOOR = 25;
 const AUDIT_SCORE_CEILING = 98;
 const MAX_AUDIT_TELEMETRY_ITEMS = 5;
+
+/**
+ * Keep the Next.js audit routes aligned with the FastAPI audit provider.
+ * Deployments may use any of these standard Gemini credential names.
+ */
+export function getGeminiAuditApiKey() {
+  for (const value of [
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  ]) {
+    const apiKey = value?.trim();
+    if (apiKey) {
+      return apiKey;
+    }
+  }
+
+  return undefined;
+}
+
 const EVIDENCE_PROVEN_AUDIT_INSTRUCTIONS = [
   "- act as an objective, evidence-driven Staff Software Engineer; omit any claim that lacks concrete production code proof",
   "- hard omit test files, mocks, dummy data, test fixtures, examples, and build-only code; never mention their credentials, findings, or directives",
@@ -473,7 +493,7 @@ export function calculateMeliusAuditScore(findings: MeliusAuditFinding[]) {
 }
 
 export async function verifyMeliusAsset(input: MeliusAssetAuditInput): Promise<MeliusAssetAuditResult> {
-  const apiKey = input.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const apiKey = input.apiKey?.trim() || getGeminiAuditApiKey();
   const fetchImpl = input.fetchImpl ?? fetch;
   // Test fixtures are deliberately excluded before their content can reach the model.
   if (isNonProductionTestPath(input.assetName)) {
