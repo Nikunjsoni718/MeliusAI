@@ -7398,7 +7398,6 @@ export function ProfileDashboard({
                         projectDeepLinkAssets={projectDeepLinkAssets}
                         projectDeepLinkFolders={sortedProjectFolders}
                         publicProfileUsername={profileHandle}
-                        verifyingAssetId={verifyingAssetId}
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                       />
                     ) : Array.isArray(activeFolderProjects) && activeFolderProjects.length > 0 ? (
@@ -7449,7 +7448,6 @@ export function ProfileDashboard({
                         projectDeepLinkAssets={projectDeepLinkAssets}
                         projectDeepLinkFolders={sortedProjectFolders}
                         publicProfileUsername={profileHandle}
-                        verifyingAssetId={verifyingAssetId}
                       />
                     ) : Array.isArray(visibleWorkItems) && visibleWorkItems.length > 0 ? (
                       <UniversalAssetGrid
@@ -7464,7 +7462,6 @@ export function ProfileDashboard({
                         verifyingFolderIds={Object.keys(auditingFolders).filter(
                           (folderId) => auditingFolders[folderId]
                         )}
-                        verifyingAssetId={verifyingAssetId}
                         onFolderDelete={(folderId) => void handleDeleteFolder(folderId)}
                         onFolderEditNameChange={setEditFolderName}
                         onFolderEditStart={(folder) => {
@@ -7474,9 +7471,6 @@ export function ProfileDashboard({
                         onFolderOpen={(folder) => setActiveFolderId(folder.id)}
                         onFolderRename={(folderId) => handleRenameFolder(folderId)}
                         onVerifyFolder={(folderId) => void handleVerifyFolder(folderId)}
-                        onVerify={(selectedProject, event) =>
-                          void handleVerifyWithMeliusAI(mapProjectRowToProjectItem(selectedProject), false, event)
-                        }
                         onReupload={(event, project) =>
                           handleReUpload(event, mapProjectRowToProjectItem(project))
                         }
