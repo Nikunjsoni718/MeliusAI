@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ACTIONS, EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
-const PRODUCT_TOUR_VERSION = 3;
+const PRODUCT_TOUR_VERSION = 4;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
-export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 
 type ProductTourJoyrideStep = Step & {
   /**
@@ -51,6 +51,10 @@ function emitTourChange() {
   window.dispatchEvent(new CustomEvent(PRODUCT_TOUR_CHANGE_EVENT_NAME));
 }
 
+function shiftForGitHubLinkStep(stepIndex: number) {
+  return stepIndex >= 8 ? stepIndex + 1 : stepIndex;
+}
+
 function readTourStateForUser(userId: string): StoredProductTourState | null {
   try {
     const value = window.localStorage.getItem(getTourStateKey(userId));
@@ -68,16 +72,20 @@ function readTourStateForUser(userId: string): StoredProductTourState | null {
     let migratedStepIndex: number;
     if (parsed.version === PRODUCT_TOUR_VERSION) {
       migratedStepIndex = parsed.stepIndex;
+    } else if (parsed.version === 3) {
+      // Version 4 inserts the GitHub connection action immediately before the
+      // former project-upload step. Preserve every completed prior action.
+      migratedStepIndex = shiftForGitHubLinkStep(parsed.stepIndex);
     } else if (parsed.version === 2) {
-      migratedStepIndex = parsed.stepIndex + 1;
+      migratedStepIndex = shiftForGitHubLinkStep(parsed.stepIndex + 1);
     } else {
       const expandedLegacyStep = parsed.stepIndex < 2
         ? parsed.stepIndex
         : parsed.stepIndex + 5;
-      migratedStepIndex = expandedLegacyStep + 1;
+      migratedStepIndex = shiftForGitHubLinkStep(expandedLegacyStep + 1);
     }
 
-    if (migratedStepIndex < 0 || migratedStepIndex > 12) {
+    if (migratedStepIndex < 0 || migratedStepIndex > 13) {
       return null;
     }
 
@@ -128,6 +136,18 @@ export function hasActiveProductTour(userId: string | null | undefined) {
   return (
     window.localStorage.getItem(ACTIVE_TOUR_USER_KEY) === userId &&
     readTourStateForUser(userId) !== null
+  );
+}
+
+export function isProductTourAtStep(
+  userId: string | null | undefined,
+  expectedStep: ProductTourStep
+) {
+  const currentState = readActiveTourState();
+  return Boolean(
+    currentState &&
+      currentState.userId === userId &&
+      currentState.stepIndex === expectedStep
   );
 }
 
@@ -253,6 +273,26 @@ function ActionInstruction({ children }: { children: string }) {
   );
 }
 
+function GitHubLinkInstruction({ onSkip }: { onSkip: () => void }) {
+  return (
+    <div>
+      <p className="m-0 text-sm leading-6">
+        Link GitHub to connect the codebase you want MeliusAI to analyze.
+      </p>
+      <button
+        type="button"
+        onClick={onSkip}
+        className="mt-3 text-sm font-semibold text-sky-300 underline decoration-sky-300/50 underline-offset-4 transition hover:text-sky-200"
+      >
+        Don&apos;t have GitHub? Skip
+      </button>
+      <p className="mb-0 mt-3 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300">
+        Complete the highlighted action to continue
+      </p>
+    </div>
+  );
+}
+
 function resolveTourTarget(step: Step | undefined) {
   if (!step || typeof document === 'undefined') {
     return null;
@@ -329,6 +369,10 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     tourState?.userId,
     userId,
   ]);
+
+  const skipGitHubLinkStep = useCallback(() => {
+    advanceProductTour(8, 9);
+  }, []);
 
   const steps = useMemo<ProductTourJoyrideStep[]>(
     () => [
@@ -448,6 +492,14 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         buttons: [],
       },
       {
+        id: 'github-link',
+        target: '[data-tour="github-link"]',
+        title: 'Connect Your Codebase',
+        content: <GitHubLinkInstruction onSkip={skipGitHubLinkStep} />,
+        placement: 'bottom-end',
+        buttons: [],
+      },
+      {
         id: 'project-upload',
         target: '[data-tour="project-upload"]',
         title: 'Start an Engineering Audit',
@@ -538,7 +590,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         buttons: ['primary'],
       },
     ],
-    [tourState?.projectId]
+    [skipGitHubLinkStep, tourState?.projectId]
   );
 
   const currentStep = tourState ? steps[tourState.stepIndex] : undefined;
@@ -589,8 +641,8 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         return;
       }
 
-      if (event.index === 12) {
-        finishProductTour(12);
+      if (event.index === 13) {
+        finishProductTour(13);
         return;
       }
     }
@@ -599,7 +651,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       event.type === EVENTS.TOUR_END &&
       (event.status === STATUS.FINISHED || event.status === STATUS.SKIPPED)
     ) {
-      finishProductTour(event.status === STATUS.FINISHED ? 12 : undefined);
+      finishProductTour(event.status === STATUS.FINISHED ? 13 : undefined);
     }
   }
 

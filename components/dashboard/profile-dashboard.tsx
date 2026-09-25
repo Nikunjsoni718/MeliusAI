@@ -17,6 +17,7 @@ import {
   advanceProductTour,
   hasActiveProductTour,
   hasCompletedProductTour,
+  isProductTourAtStep,
   pauseProductTour,
   ProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
@@ -3007,6 +3008,15 @@ export function ProfileDashboard({
   }, [loading, user?.id]);
 
   useEffect(() => {
+    // A previously connected account has no GitHub-link action to complete.
+    // Skip that newly inserted tour card once the persisted connection state
+    // has hydrated, without affecting users at any other onboarding stage.
+    if (isGitHubConnectionHydrated && isGithubConnected) {
+      advanceProductTour(8, 9);
+    }
+  }, [isGitHubConnectionHydrated, isGithubConnected]);
+
+  useEffect(() => {
     let isActive = true;
 
     const syncGitHubConnectionState = async () => {
@@ -3087,6 +3097,9 @@ export function ProfileDashboard({
       }
 
       if (data.url) {
+        // The OAuth navigation unmounts this page. Persist the next action
+        // only after Supabase supplies a usable destination URL.
+        advanceProductTour(8, 9);
         window.location.assign(data.url);
       } else {
         setIsLinkingGitHub(false);
@@ -3134,6 +3147,9 @@ export function ProfileDashboard({
         throw new Error('GitHub OAuth did not return an authorization URL.');
       }
 
+      // See the corresponding link flow above: preserve the next persisted
+      // action immediately before leaving the application for OAuth.
+      advanceProductTour(8, 9);
       window.location.assign(data.url);
     } catch (error) {
       setIsLinkingGitHub(false);
@@ -3281,7 +3297,7 @@ export function ProfileDashboard({
     }
 
     const advanceOpenAssetTour = () => {
-      advanceProductTour(10, 11, activePreviewProjectId);
+      advanceProductTour(11, 12, activePreviewProjectId);
     };
 
     advanceOpenAssetTour();
@@ -3893,9 +3909,16 @@ export function ProfileDashboard({
       return;
     }
 
-    autoOpenedGitHubImportUserRef.current = user.id;
-    setIsIngestionModalOpen(false);
-    setIsGithubModalOpen(true);
+    if (isProductTourAtStep(user.id, 9)) {
+      // OAuth/App-install return is an onboarding transition, not an implicit
+      // import action. Let the project-upload tour card wait for its target.
+      setIsIngestionModalOpen(false);
+      setIsGithubModalOpen(false);
+    } else {
+      autoOpenedGitHubImportUserRef.current = user.id;
+      setIsIngestionModalOpen(false);
+      setIsGithubModalOpen(true);
+    }
   }, [
     hasImportedGitHubRepository,
     isGithubConnected,
@@ -3919,10 +3942,6 @@ export function ProfileDashboard({
       return;
     }
 
-    autoOpenedGitHubImportUserRef.current = user.id;
-    setIsIngestionModalOpen(false);
-    setIsGithubModalOpen(true);
-
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.delete('installation_success');
     window.history.replaceState(
@@ -3930,6 +3949,18 @@ export function ProfileDashboard({
       '',
       `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
     );
+
+    if (isProductTourAtStep(user.id, 9)) {
+      // The redirect returned to the newly inserted GitHub handoff. Do not
+      // auto-open the importer before the project-upload step can render.
+      setIsIngestionModalOpen(false);
+      setIsGithubModalOpen(false);
+      return;
+    }
+
+    autoOpenedGitHubImportUserRef.current = user.id;
+    setIsIngestionModalOpen(false);
+    setIsGithubModalOpen(true);
   }, [isGithubConnected, isOwner, profileLoading, supabase, user]);
 
   useEffect(() => {
@@ -4965,7 +4996,7 @@ export function ProfileDashboard({
       setActivePreviewName(previewFileName);
       setActivePreviewUrl(previewUrl);
       syncProjectDeepLink(asset.id);
-      advanceProductTour(10, 11, asset.id);
+      advanceProductTour(11, 12, asset.id);
       return;
     }
 
@@ -4975,7 +5006,7 @@ export function ProfileDashboard({
     setActivePreviewName(null);
     setActivePreviewUrl(null);
     syncProjectDeepLink(asset.id);
-    advanceProductTour(10, 11, asset.id);
+    advanceProductTour(11, 12, asset.id);
   }
 
   function handleDownloadProject(project: ProjectItem) {
@@ -5739,7 +5770,7 @@ export function ProfileDashboard({
       setActiveFolderId(savedFolders[0]?.id ?? null);
       setProjectDescription('');
       if (savedProjects[0]?.id) {
-        advanceProductTour(8, 9, savedProjects[0].id);
+        advanceProductTour(9, 10, savedProjects[0].id);
       }
       showNewlyAddedProjects(
         savedFolders.map((folder) => ({
@@ -5752,7 +5783,7 @@ export function ProfileDashboard({
       return true;
     } catch (error) {
       showBioToast('Vault upload failed. Check your connection and permissions, then try again.');
-      resumeProductTour(8);
+      resumeProductTour(9);
       return false;
     } finally {
       setIsUploading(false);
@@ -5768,7 +5799,7 @@ export function ProfileDashboard({
       return;
     }
 
-    pauseProductTour(8);
+    pauseProductTour(9);
 
     if (uploadClearRef.current) {
       window.clearTimeout(uploadClearRef.current);
@@ -5835,7 +5866,7 @@ export function ProfileDashboard({
         [projectWithExtractedCode.id]: projectWithExtractedCode.user_description ?? projectWithExtractedCode.description ?? '',
       }));
       setProjectDescription('');
-      advanceProductTour(8, 9, projectWithExtractedCode.id);
+      advanceProductTour(9, 10, projectWithExtractedCode.id);
       showNewlyAddedProjects([
         {
           kind: 'asset',
@@ -5857,7 +5888,7 @@ export function ProfileDashboard({
         status: 'failed',
         error: error instanceof Error ? error.message : 'We could not save this project.',
       });
-      resumeProductTour(8);
+      resumeProductTour(9);
     }
   }
 
@@ -6346,7 +6377,7 @@ export function ProfileDashboard({
       return;
     }
 
-    pauseProductTour(9);
+    pauseProductTour(10);
     setVerifyingAssetId(project.id);
     setLiveStreamText('');
     setProjectVerifyError(null);
@@ -6518,7 +6549,7 @@ export function ProfileDashboard({
       recordProjectAuditMutation(project.id, verifiedProjectPatch);
       requestAuditProfileRevalidation();
       setVerifiedAssetId(project.id);
-      advanceProductTour(9, 10, project.id);
+      advanceProductTour(10, 11, project.id);
       verifiedAssetTimerRef.current = window.setTimeout(() => {
         setVerifiedAssetId(null);
         verifiedAssetTimerRef.current = null;
@@ -6527,7 +6558,7 @@ export function ProfileDashboard({
       console.error('Detailed Verification Diagnostic Log:', error);
       const message = error instanceof Error ? error.message : 'MeliusAI GPT verification failed.';
       showProjectVerifyError(message);
-      resumeProductTour(9);
+      resumeProductTour(10);
     } finally {
       setVerifyingAssetId(null);
     }
@@ -7537,6 +7568,7 @@ export function ProfileDashboard({
                           <button
                             type="button"
                             onClick={hasActiveGitHubIdentity ? handleReconnectGithub : handleLinkGithub}
+                            data-tour="github-link"
                             className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-600 rounded-lg hover:bg-gray-800 transition-colors"
                           >
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -7735,7 +7767,7 @@ export function ProfileDashboard({
                           className="btn primary"
                           type="button"
                           onClick={() => {
-                            pauseProductTour(8);
+                            pauseProductTour(9);
                             setIsIngestionModalOpen(true);
                           }}
                         >
@@ -8143,7 +8175,7 @@ export function ProfileDashboard({
                   onClick={(event) => {
                     if (event.target === event.currentTarget) {
                       setIsIngestionModalOpen(false);
-                      resumeProductTour(8);
+                      resumeProductTour(9);
                     }
                   }}
                 >
@@ -8157,7 +8189,7 @@ export function ProfileDashboard({
                         type="button"
                         onClick={() => {
                           setIsIngestionModalOpen(false);
-                          resumeProductTour(8);
+                          resumeProductTour(9);
                         }}
                       >
                         &times;
@@ -8448,7 +8480,7 @@ export function ProfileDashboard({
                   <button
                     onClick={() => {
                       setIsGithubModalOpen(false);
-                      resumeProductTour(8);
+                      resumeProductTour(9);
                     }}
                     disabled={isPreparingGithubImport || isUploading}
                     className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-400 hover:text-white"

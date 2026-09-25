@@ -665,12 +665,12 @@ export function AssetPreviewModal({
       if (event.key === 'Escape') {
         if (isShareModalOpen) {
           setIsShareModalOpen(false);
-          advanceProductTour(11, 12);
+          advanceProductTour(12, 13);
           return;
         }
 
         setIsExpandedViewer(false);
-        advanceProductTour(11, 12);
+        advanceProductTour(12, 13);
         onClose();
       }
     };
@@ -842,7 +842,7 @@ export function AssetPreviewModal({
             onClick={() => {
               setIsShareModalOpen(false);
               setIsExpandedViewer(false);
-              advanceProductTour(11, 12);
+              advanceProductTour(12, 13);
               onClose();
             }}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
@@ -957,7 +957,7 @@ export function AssetPreviewModal({
             <button
               type="button"
               onClick={() => {
-                pauseProductTour(11);
+                pauseProductTour(12);
                 setIsShareModalOpen(true);
               }}
               disabled={!publicProjectShareUrl}
@@ -1096,7 +1096,7 @@ export function AssetPreviewModal({
           shareUrl={publicProjectShareUrl}
           onClose={() => {
             setIsShareModalOpen(false);
-            advanceProductTour(11, 12);
+            advanceProductTour(12, 13);
           }}
         />
       ) : null}

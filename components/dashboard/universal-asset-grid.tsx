@@ -1140,7 +1140,7 @@ export function UniversalAssetGrid({
   function openFilePreview(project: ProjectRow, hideAudit: boolean) {
     setActivePreviewTarget({ asset: project, hideAudit, kind: 'file', id: project.id });
     syncProjectDeepLink(project.id);
-    advanceProductTour(10, 11, project.id);
+    advanceProductTour(11, 12, project.id);
   }
 
   function syncProjectDeepLink(projectId: string | null) {
@@ -1202,7 +1202,7 @@ export function UniversalAssetGrid({
     }
 
     const advanceOpenAssetTour = () => {
-      advanceProductTour(10, 11, activePreviewTarget.id);
+      advanceProductTour(11, 12, activePreviewTarget.id);
     };
 
     advanceOpenAssetTour();
