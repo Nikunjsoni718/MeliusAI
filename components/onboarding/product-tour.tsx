@@ -17,6 +17,7 @@ export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
 export const PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME = 'meliusai:product-tour:mobile-sidebar';
 const PRODUCT_TOUR_VERSION = 4;
+const PRODUCT_TOUR_FINAL_STEP_INDEX = 13;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
@@ -123,9 +124,13 @@ function readActiveTourState(): StoredProductTourState | null {
   return readTourStateForUser(activeUserId);
 }
 
-function writeTourState(state: StoredProductTourState) {
+function persistTourState(state: StoredProductTourState) {
   window.localStorage.setItem(ACTIVE_TOUR_USER_KEY, state.userId);
   window.localStorage.setItem(getTourStateKey(state.userId), JSON.stringify(state));
+}
+
+function writeTourState(state: StoredProductTourState) {
+  persistTourState(state);
   emitTourChange();
 }
 
@@ -219,6 +224,30 @@ export function advanceProductTour(
   return true;
 }
 
+/**
+ * Persist an OAuth handoff without emitting a React-facing tour change. The
+ * current page can then navigate away without unmounting its OAuth initiator;
+ * the destination rehydrates from localStorage at the next step.
+ */
+export function persistProductTourStep(
+  expectedStep: ProductTourStep,
+  nextStep: ProductTourStep,
+  projectId?: string | null
+) {
+  const currentState = readActiveTourState();
+  if (!currentState || currentState.stepIndex !== expectedStep) {
+    return false;
+  }
+
+  persistTourState({
+    ...currentState,
+    stepIndex: nextStep,
+    run: true,
+    projectId: projectId ?? currentState.projectId,
+  });
+  return true;
+}
+
 export function resetProductTourStep(
   expectedSteps: readonly ProductTourStep[],
   resetStep: ProductTourStep
@@ -268,7 +297,10 @@ function getProjectTourTarget(projectId: string | null, targetName: string) {
     return matchingCard;
   }
 
-  return matchingCard?.querySelector<HTMLElement>(`[data-tour="${targetName}"]`) ?? null;
+  return (
+    matchingCard?.querySelector<HTMLElement>(`[data-tour="${targetName}"]`) ??
+    document.querySelector<HTMLElement>(`[data-tour="${targetName}"]`)
+  );
 }
 
 function ActionInstruction({ children }: { children: string }) {
@@ -305,7 +337,6 @@ function GitHubLinkInstruction({ onSkip }: { onSkip: () => void }) {
 function ProductTourTooltip({
   backProps,
   index,
-  isLastStep,
   primaryProps,
   skipProps,
   step,
@@ -314,6 +345,7 @@ function ProductTourTooltip({
   const { buttons, content, styles, title } = step;
   const showBackButton = buttons.includes('back') && index > 0;
   const showPrimaryButton = buttons.includes('primary');
+  const showSkipButton = index < PRODUCT_TOUR_FINAL_STEP_INDEX;
 
   return (
     <div
@@ -329,19 +361,7 @@ function ProductTourTooltip({
           }
         : { 'aria-label': 'Product tour', 'aria-describedby': 'joyride-tooltip-content' })}
     >
-      {!isLastStep ? (
-        <button
-          type="button"
-          {...skipProps}
-          className="absolute right-3 top-3 z-10 min-h-11 rounded-md px-2 text-xs font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-        />
-      ) : null}
-      <div
-        style={{
-          ...styles.tooltipContainer,
-          ...(isLastStep ? {} : { paddingRight: 84 }),
-        }}
-      >
+      <div style={styles.tooltipContainer}>
         {title ? (
           <h4 id="joyride-tooltip-title" style={styles.tooltipTitle}>
             {title}
@@ -351,9 +371,17 @@ function ProductTourTooltip({
           {content}
         </div>
       </div>
-      {showBackButton || showPrimaryButton ? (
-        <div style={styles.tooltipFooter}>
-          <div style={styles.tooltipFooterSpacer} />
+      {showSkipButton || showBackButton || showPrimaryButton ? (
+        <div className="flex min-h-11 items-center justify-end gap-2" style={styles.tooltipFooter}>
+          {showSkipButton ? (
+            <button
+              type="button"
+              {...skipProps}
+              className="min-h-11 rounded-md bg-transparent px-2 text-sm font-medium text-slate-400 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            >
+              Skip Tour
+            </button>
+          ) : null}
           {showBackButton ? (
             <button type="button" style={styles.buttonBack} {...backProps} />
           ) : null}
@@ -603,7 +631,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       },
       {
         id: 'verification-trigger',
-        target: () => getProjectTourTarget(tourState?.projectId ?? null, 'project-verify'),
+        target: () => getProjectTourTarget(tourState?.projectId ?? null, 'run-workspace-audit'),
         title: 'Run the Audit',
         content: (
           <ActionInstruction>
@@ -816,8 +844,8 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         return;
       }
 
-      if (event.index === 13) {
-        finishProductTour(13);
+      if (event.index === PRODUCT_TOUR_FINAL_STEP_INDEX) {
+        finishProductTour(PRODUCT_TOUR_FINAL_STEP_INDEX);
         return;
       }
     }
@@ -826,7 +854,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       event.type === EVENTS.TOUR_END &&
       (event.status === STATUS.FINISHED || event.status === STATUS.SKIPPED)
     ) {
-      finishProductTour(event.status === STATUS.FINISHED ? 13 : undefined);
+      finishProductTour(event.status === STATUS.FINISHED ? PRODUCT_TOUR_FINAL_STEP_INDEX : undefined);
     }
   }
 
@@ -857,6 +885,8 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       options={{
         arrowColor: '#0f172a',
         backgroundColor: '#0f172a',
+        // Joyride v3's equivalent of `spotlightClicks: true`: leave the
+        // spotlight cutout pointer-transparent so native target clicks win.
         blockTargetInteraction: false,
         disableFocusTrap: true,
         dismissKeyAction: false,

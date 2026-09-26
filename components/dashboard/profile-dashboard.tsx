@@ -19,6 +19,7 @@ import {
   hasCompletedProductTour,
   isProductTourAtStep,
   pauseProductTour,
+  persistProductTourStep,
   ProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
@@ -2629,6 +2630,7 @@ export function ProfileDashboard({
   const [, setGithubUnlinkError] = useState<string | null>(null);
   const [isGitHubSuccessModalOpen, setIsGitHubSuccessModalOpen] = useState(false);
   const githubAppRedirectRef = useRef(false);
+  const isGitHubOAuthStartingRef = useRef(false);
   const currentUser = user;
   const activeAuthUser = session?.user ?? user;
   const hasActiveGitHubIdentity = hasGitHubOAuthIdentity(activeAuthUser);
@@ -3070,16 +3072,17 @@ export function ProfileDashboard({
     setIsGithubModalOpen(true);
   }, []);
 
-  const handleLinkGithub = useCallback(async () => {
-    if (!supabase) {
+  const handleLinkGithub = useCallback(async (event?: MouseEvent<HTMLButtonElement>) => {
+    event?.preventDefault();
+
+    if (!supabase || isGitHubOAuthStartingRef.current) {
       return;
     }
 
-    // Do not let stale repository data or a prior 401/403 influence the OAuth
-    // callback render. The persisted server connection determines future status.
-    clearGitHubImportState();
-    setIsGitHubConnectionExpired(false);
-    setIsLinkingGitHub(true);
+    isGitHubOAuthStartingRef.current = true;
+    // Save the post-OAuth tour step without emitting the tour change event.
+    // Emitting here can unmount this target before the browser redirect starts.
+    const persistedTourStep = persistProductTourStep(8, 9);
 
     try {
       const redirectTo = `${window.location.origin}/profile/setup-app`;
@@ -3096,19 +3099,22 @@ export function ProfileDashboard({
         throw error;
       }
 
-      if (data.url) {
-        // The OAuth navigation unmounts this page. Persist the next action
-        // only after Supabase supplies a usable destination URL.
-        advanceProductTour(8, 9);
-        // PKCE persists its verifier asynchronously. Allow the browser one
-        // short turn to flush that cookie before leaving for GitHub.
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-        window.location.assign(data.url);
-      } else {
-        setIsLinkingGitHub(false);
-        setIsGitHubConnectionExpired(true);
+      if (!data.url) {
+        throw new Error('GitHub OAuth did not return an authorization URL.');
       }
+
+      // PKCE persists its verifier asynchronously. Allow the browser one
+      // short turn to flush that cookie before leaving for GitHub.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+      window.location.assign(data.url);
     } catch (error) {
+      if (persistedTourStep) {
+        // Keep a failed OAuth start on the visible Link GitHub tour step.
+        persistProductTourStep(9, 8);
+      }
+      isGitHubOAuthStartingRef.current = false;
+      // Do not let stale repository data or a prior 401/403 influence a retry.
+      clearGitHubImportState();
       setIsLinkingGitHub(false);
       setIsGitHubConnectionExpired(true);
       console.error('GitHub Auth Error:', error);
@@ -5726,8 +5732,9 @@ export function ProfileDashboard({
       ]);
       setActiveFolderId(savedFolders[0]?.id ?? null);
       setProjectDescription('');
-      if (savedProjects[0]?.id) {
-        advanceProductTour(9, 10, savedProjects[0].id);
+      const importedWorkspaceId = savedFolders[0]?.id ?? savedProjects[0]?.id;
+      if (importedWorkspaceId) {
+        advanceProductTour(9, 10, importedWorkspaceId);
       }
       showNewlyAddedProjects(
         savedFolders.map((folder) => ({
@@ -6511,6 +6518,7 @@ export function ProfileDashboard({
         )
       );
       requestAuditProfileRevalidation();
+      advanceProductTour(10, 11, folderId);
       showBioToast(
         folderScore !== null
           ? `Folder audit completed successfully with an engineering assessment of ${folderScore}/100.`
@@ -7577,8 +7585,8 @@ export function ProfileDashboard({
                             }}
                           />
                           <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border border-blue-950/50 bg-[#050b1b]/80">
-                            <p className="mono text-3xl font-semibold text-white">{normalizedScore}</p>
-                            <p className="text-[11px] text-slate-400">/100</p>
+                            <p className="font-sans text-3xl font-bold text-white">{normalizedScore}</p>
+                            <p className="font-sans text-[11px] font-medium text-slate-400">/100</p>
                           </div>
                         </div>
                       ) : (

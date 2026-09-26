@@ -1224,6 +1224,7 @@ export function UniversalAssetGrid({
           item.type === 'folder' ? (
             <ProjectFolderCard
               key={`folder-${item.folder.id}`}
+              folderId={item.folder.id}
               name={item.folder.name || 'Untitled Folder'}
               fileCount={item.assets.length}
               files={item.assets}

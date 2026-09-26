@@ -11,6 +11,7 @@ type ProjectFolderCardProps = {
   editName?: string;
   fileCount: number;
   files?: ProjectRow[];
+  folderId: string;
   isEditing?: boolean;
   isVerifying?: boolean;
   name: string;
@@ -39,6 +40,7 @@ export function ProjectFolderCard({
   editName = '',
   fileCount,
   files = [],
+  folderId,
   isEditing = false,
   isVerifying = false,
   name,
@@ -56,6 +58,8 @@ export function ProjectFolderCard({
 
   return (
     <Card
+      data-tour-project-id={folderId}
+      data-tour="project-thumbnail"
       role="button"
       tabIndex={0}
       onClick={onAuditClick}
@@ -175,6 +179,7 @@ export function ProjectFolderCard({
                 }}
                 disabled={isVerifying}
                 aria-busy={isVerifying}
+                data-tour="run-workspace-audit"
                 className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:cursor-not-allowed disabled:bg-slate-950/20 disabled:text-slate-700"
               >
                 {isVerifying ? 'Verifying...' : 'Verify with MeliusAI'}
