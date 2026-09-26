@@ -63,7 +63,7 @@ export function Navbar() {
           href="/auth/talent/signup"
           className="rounded-full bg-[#00a3ff] px-6 py-2.5 text-sm font-semibold text-black transition-all hover:bg-opacity-90"
         >
-          Create Talent Account
+          Create Account
         </Link>
       </header>
     </div>

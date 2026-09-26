@@ -29,14 +29,14 @@ export function LandingPage() {
             Introduction
           </Badge>
           <h1 className="max-w-4xl text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
-            The Standard for Verified Talent.
+            The Standard for Code Verification.
           </h1>
           <p className="mt-6 mb-6 max-w-2xl text-lg leading-8 text-slate-300">
-            The private workspace where developers prove their technical depth through line-by-line AI audits, and organizations find the top 1% of hires without the resume guesswork.
+            The private workspace where developers prove their engineering skills through line-by-line AI audits. Benchmark your repositories, generate verified scorecards, and build a portfolio backed by hard data rather than resume guesswork.
           </p>
           <div className="flex flex-row justify-start gap-4 mb-4">
             <Button size="lg" href="/auth/talent/signup">
-              Create Free Talent Account
+              Create Account
             </Button>
             <Button variant="outline" size="lg" href="/how-it-works">
               How it Works
@@ -175,7 +175,7 @@ export function LandingPage() {
             size="lg"
             className="group mt-8 bg-[#00a3ff] px-7 font-semibold text-black hover:bg-[#38bdf8]"
           >
-            Start Free Talent Signup
+            Create Developer Account
             <span className="transition-transform duration-200 group-hover:translate-x-1">→</span>
           </Button>
         </div>
