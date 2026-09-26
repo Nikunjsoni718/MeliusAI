@@ -590,12 +590,12 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         buttons: [],
       },
       {
-        id: 'project-upload',
-        target: '[data-tour="project-upload"]',
-        title: 'Start an Engineering Audit',
+        id: 'import-repository',
+        target: '[data-tour="import-repository"]',
+        title: 'Import Your Codebase',
         content: (
           <ActionInstruction>
-            Add your first repository to run an evidence-based architectural audit with prioritized engineering findings.
+            Click here to select a GitHub repository and run your first architectural audit.
           </ActionInstruction>
         ),
         placement: 'bottom-end',

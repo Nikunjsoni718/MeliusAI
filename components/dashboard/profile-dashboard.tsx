@@ -1726,7 +1726,7 @@ export function DashboardSkeleton({ projectIds = [] }: { projectIds?: string[] }
               <SkeletonBlock className="h-7 w-44 rounded-lg" />
               <SkeletonBlock className="h-4 w-32 rounded-lg" />
             </div>
-            <div data-tour="project-upload">
+            <div>
               <SkeletonBlock className="h-9 w-44 rounded-lg" />
             </div>
           </div>
@@ -2828,6 +2828,9 @@ export function ProfileDashboard({
       return;
     }
 
+    // Keep the import action in the same paused/resume lifecycle as local
+    // folder creation while the repository picker is open.
+    pauseProductTour(9);
     setIsIngestionModalOpen(false);
     setIsGithubModalOpen(true);
   }, [isGitHubConnectionHydrated, isGithubConnected]);
@@ -7180,6 +7183,7 @@ export function ProfileDashboard({
                           <button
                             type="button"
                             onClick={openGitHubImporter}
+                            data-tour="import-repository"
                             className="flex items-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-500/20 hover:text-white"
                           >
                             <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -7384,7 +7388,7 @@ export function ProfileDashboard({
                           Make scorecard public
                         </span>
                       </div>
-                      <div data-tour="project-upload" className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           id="create-project-btn"
                           className="btn primary"

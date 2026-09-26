@@ -622,47 +622,49 @@ function SectionHeader({
   onSave: () => void;
 }) {
   return (
-    <div className="mb-5 flex items-center justify-between gap-3">
-      <h2 className="text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</h2>
-      {isOwner ? (
-        isEditing ? (
-          <div className="flex items-center gap-2">
+    <div className="mb-5 flex min-h-11 items-center justify-between gap-3">
+      <h2 className="min-w-0 text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</h2>
+      <div className="flex min-h-11 min-w-[9.25rem] shrink-0 items-center justify-end">
+        {isOwner ? (
+          isEditing ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={isSaving}
+                className="inline-flex h-9 items-center rounded-lg border border-white/10 bg-white/[0.03] px-3 text-xs font-medium text-slate-400 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={isSaving}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/45 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSaving ? (
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          ) : (
             <button
+              id={editButtonId}
               type="button"
-              onClick={onCancel}
-              disabled={isSaving}
-              className="inline-flex h-9 items-center rounded-lg border border-white/10 bg-white/[0.03] px-3 text-xs font-medium text-slate-400 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onEdit}
+              disabled={editDisabled}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-950/60 bg-[#050b1b]/60 text-slate-500 transition hover:border-cyan-500/35 hover:bg-cyan-500/10 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-35"
+              aria-label={`Edit ${label}`}
+              title={`Edit ${label}`}
             >
-              Cancel
+              <Pencil className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={isSaving}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/45 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSaving ? (
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              ) : (
-                <Save className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        ) : (
-          <button
-            id={editButtonId}
-            type="button"
-            onClick={onEdit}
-            disabled={editDisabled}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-blue-950/60 bg-[#050b1b]/60 text-slate-500 transition hover:border-cyan-500/35 hover:bg-cyan-500/10 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-35"
-            aria-label={`Edit ${label}`}
-            title={`Edit ${label}`}
-          >
-            <Pencil className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-          </button>
-        )
-      ) : null}
+          )
+        ) : null}
+      </div>
     </div>
   );
 }
