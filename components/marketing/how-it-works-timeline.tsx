@@ -63,9 +63,9 @@ function GitHubConnectionMockup() {
 
 function WorkspaceSelectionMockup() {
   const repositories = [
-    { name: 'meliusai-platform', detail: 'Verification workspace', selected: true },
-    { name: 'portfolio-api', detail: 'Ready to select', selected: false },
-    { name: 'design-system', detail: 'Ready to select', selected: false },
+    { name: 'ecommerce-nextjs-frontend', detail: 'Verification workspace', selected: true },
+    { name: 'fastapi-payment-microservice', detail: 'Ready to select', selected: false },
+    { name: 'rust-cli-utility', detail: 'Ready to select', selected: false },
   ];
 
   return (
@@ -107,12 +107,6 @@ function WorkspaceSelectionMockup() {
 }
 
 function AuditScorecardMockup() {
-  const metrics = [
-    { label: 'Architecture', value: '92/100' },
-    { label: 'Reliability', value: '94/100' },
-    { label: 'Security', value: '89/100' },
-  ];
-
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 shadow-[0_24px_80px_rgba(2,6,23,0.36)]">
       <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-5 py-4">
@@ -125,13 +119,14 @@ function AuditScorecardMockup() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 px-5 py-4">
-        {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-center">
-            <p className="text-xs text-slate-500">{metric.label}</p>
-            <p className="mt-2 text-sm font-semibold text-cyan-200">{metric.value}</p>
-          </div>
-        ))}
+      <div className="px-5 py-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Audit Summary</p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            The codebase demonstrates strong separation of concerns and standard Next.js app router
+            conventions, but lacks strict Zod validation on external API payloads.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-3 border-t border-slate-800 px-5 py-4 sm:grid-cols-2">
@@ -140,7 +135,7 @@ function AuditScorecardMockup() {
           <p className="mt-2 text-sm leading-6 text-slate-300">Clean module boundaries and dependable error handling.</p>
         </div>
         <div className="rounded-xl border border-amber-300/15 bg-amber-300/[0.045] p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-200">Improve next</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-200">Actionable step</p>
           <p className="mt-2 text-sm leading-6 text-slate-300">Validate external inputs at every API boundary.</p>
         </div>
       </div>
@@ -152,9 +147,9 @@ export function HowItWorksTimeline() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({
     target: timelineRef,
-    offset: ['start end', 'end start'],
+    offset: ['start center', 'end center'],
   });
-  const progressScale = useTransform(scrollYProgress, [0, 1], [0, 1]);
+  const progressHeight = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
 
   return (
     <div ref={timelineRef} className="relative mx-auto flex max-w-6xl flex-col gap-y-28 py-24 sm:gap-y-32">
@@ -164,8 +159,8 @@ export function HowItWorksTimeline() {
       />
       <motion.div
         aria-hidden="true"
-        className="pointer-events-none absolute left-4 top-0 z-0 h-full w-px origin-top bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] motion-reduce:!scale-y-100 md:left-1/2 md:-translate-x-1/2"
-        style={{ scaleY: progressScale }}
+        className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] motion-reduce:!h-full md:left-1/2 md:-translate-x-1/2"
+        style={{ height: progressHeight }}
       />
 
       <TimelineStep
