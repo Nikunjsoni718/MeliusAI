@@ -20,7 +20,7 @@ function TimelineStep({ heading, description, reversed = false, children }: Time
   return (
     <motion.section
       animate={isFocused ? 'focused' : 'dimmed'}
-      className="relative z-10 grid gap-8 pl-10 motion-reduce:!opacity-100 motion-reduce:!filter-none md:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] md:items-center md:gap-y-0 md:pl-0"
+      className="relative z-10 grid gap-8 pl-10 md:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] md:items-center md:gap-y-0 md:pl-0"
       initial="dimmed"
       transition={{ duration: 0.5, ease: 'easeOut' }}
       variants={{
@@ -176,12 +176,12 @@ export function HowItWorksTimeline() {
       />
       <motion.div
         aria-hidden="true"
-        className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] motion-reduce:!h-full md:left-1/2 md:-translate-x-1/2"
+        className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] md:left-1/2 md:-translate-x-1/2"
         style={{ height: progressHeight }}
       />
       <motion.div
         aria-hidden="true"
-        className="pointer-events-none absolute left-4 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100/80 bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)] motion-reduce:hidden md:left-1/2"
+        className="pointer-events-none absolute left-4 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100/80 bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)] md:left-1/2"
         style={{ top: progressPosition }}
       />
 
