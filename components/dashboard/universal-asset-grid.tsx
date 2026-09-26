@@ -831,9 +831,10 @@ function UniversalAssetCard({
 
                     onReadProtocol(project);
                   }}
+                  data-tour="view-audit-report"
                   className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white"
                 >
-                  Read Full Audit Protocol
+                  View Audit Report
                 </button>
               ) : null}
 

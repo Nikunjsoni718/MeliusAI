@@ -323,6 +323,7 @@ function ProductTourTooltip({
   const showPrimaryButton = buttons.includes('primary');
   const hasNavigationButtons = showBackButton || showPrimaryButton;
   const showSkipButton = index < PRODUCT_TOUR_FINAL_STEP_INDEX;
+  const hideFooter = Boolean((step as ProductTourJoyrideStep).hideFooter);
 
   return (
     <div
@@ -348,7 +349,7 @@ function ProductTourTooltip({
           {content}
         </div>
       </div>
-      {showSkipButton || hasNavigationButtons ? (
+      {!hideFooter && (showSkipButton || hasNavigationButtons) ? (
         <div
           className="flex w-full items-center justify-between gap-4 pt-4"
           style={styles.tooltipFooter}
@@ -627,11 +628,11 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       },
       {
         id: 'report',
-        target: () => getProjectTourTarget(tourState?.projectId ?? null, 'project-thumbnail'),
+        target: () => getProjectTourTarget(tourState?.projectId ?? null, 'view-audit-report'),
         title: 'View your Results',
         content: (
           <ActionInstruction>
-            Click your project thumbnail to open and read your comprehensive audit report.
+            Open your completed audit report to review the findings and engineering directives.
           </ActionInstruction>
         ),
         placement: 'top',
@@ -854,6 +855,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       continuous={true}
       scrollToFirstStep={false}
       tooltipComponent={ProductTourTooltip}
+      portalElement="body"
       floatingOptions={{
         // Floating UI uses these paddings as the viewport boundary for flip
         // and shift, keeping the card fully visible near each screen edge.
@@ -887,7 +889,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         targetWaitTimeout: 15000,
         textColor: '#ffffff',
         width: 380,
-        zIndex: 12000,
+        zIndex: 20000,
       }}
       styles={{
         tooltip: {

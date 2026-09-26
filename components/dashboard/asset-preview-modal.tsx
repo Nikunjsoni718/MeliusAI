@@ -77,6 +77,10 @@ const auditTextFileExtensions = new Set([
 const previewProjectSelect =
   'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
 
+function advanceReportTourToCompletion() {
+  return advanceProductTour(12, 13) || advanceProductTour(11, 13);
+}
+
 export type PreviewProject = {
   id?: string;
   name?: string | null;
@@ -666,12 +670,12 @@ export function AssetPreviewModal({
       if (event.key === 'Escape') {
         if (isShareModalOpen) {
           setIsShareModalOpen(false);
-          advanceProductTour(12, 13);
+          advanceReportTourToCompletion();
           return;
         }
 
         setIsExpandedViewer(false);
-        advanceProductTour(12, 13);
+        advanceReportTourToCompletion();
         onClose();
       }
     };
@@ -844,7 +848,7 @@ export function AssetPreviewModal({
             onClick={() => {
               setIsShareModalOpen(false);
               setIsExpandedViewer(false);
-              advanceProductTour(12, 13);
+              advanceReportTourToCompletion();
               onClose();
             }}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200 max-md:h-11 max-md:w-11"
@@ -1104,7 +1108,7 @@ export function AssetPreviewModal({
           shareUrl={publicProjectShareUrl}
           onClose={() => {
             setIsShareModalOpen(false);
-            advanceProductTour(12, 13);
+            advanceReportTourToCompletion();
           }}
         />
       ) : null}

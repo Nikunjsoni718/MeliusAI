@@ -163,6 +163,18 @@ export function ProjectFolderCard({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                onAuditClick();
+              }}
+              data-tour="view-audit-report"
+              className="w-full cursor-pointer rounded-full border border-sky-500/35 bg-sky-500/10 px-4 py-2 text-center text-[11px] font-medium tracking-wide text-sky-100 transition-all duration-200 hover:border-sky-400/60 hover:bg-sky-500/15"
+            >
+              View Audit Report
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
                 onWorkspaceClick();
               }}
               className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white"
