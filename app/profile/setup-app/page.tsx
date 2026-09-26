@@ -11,6 +11,9 @@ import {
 
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
+const GITHUB_LINK_ERROR_TOAST_KEY = 'meliusai:github-link-error-toast';
+const GITHUB_IDENTITY_ALREADY_LINKED_MESSAGE =
+  'This GitHub account is already linked to another user.';
 
 function getMetadataText(
   metadata: Record<string, unknown> | null | undefined,
@@ -50,6 +53,25 @@ export default function GitHubAppSetupPage() {
     }
     hasStartedRef.current = true;
 
+    const callbackUrl = new URL(window.location.href);
+    if (callbackUrl.searchParams.get('error_code') === 'identity_already_exists') {
+      // Supabase reports this before a code can be exchanged. Hand the profile
+      // dashboard a one-time toast, then replace this callback route so the
+      // user never lands on a terminal OAuth error screen.
+      try {
+        window.sessionStorage.setItem(
+          GITHUB_LINK_ERROR_TOAST_KEY,
+          GITHUB_IDENTITY_ALREADY_LINKED_MESSAGE
+        );
+      } catch {
+        // Storage can be disabled by the browser; the safe profile redirect is
+        // still preferable to leaving the user on the callback page.
+      }
+
+      window.location.replace('/profile');
+      return;
+    }
+
     if (!hasSupabaseBrowserEnv()) {
       setErrorMessage('GitHub setup is unavailable because authentication is not configured.');
       return;
@@ -60,7 +82,6 @@ export default function GitHubAppSetupPage() {
     const completeOAuthAndInstallApp = async () => {
       try {
         const supabase = createSupabaseBrowserClient();
-        const callbackUrl = new URL(window.location.href);
         const code = callbackUrl.searchParams.get('code');
         const authResult = code
           ? await supabase.auth.exchangeCodeForSession(code)

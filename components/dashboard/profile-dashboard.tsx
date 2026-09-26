@@ -579,6 +579,7 @@ const PROJECTS_ENDPOINT = `${PROFILE_SPECTATOR_BASE_URL}/api/projects`;
 const PROFILE_UPDATE_ENDPOINT = '/api/profile/update';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
 const GITHUB_SUCCESS_DISMISSED_KEY = 'github_success_dismissed';
+const GITHUB_LINK_ERROR_TOAST_KEY = 'meliusai:github-link-error-toast';
 const BIO_DRAFT_STORAGE_KEY = 'bioDraft';
 const STORAGE_BUCKET_NAME = 'vault';
 const PROFILE_DASHBOARD_COLUMNS =
@@ -4617,6 +4618,42 @@ export function ProfileDashboard({
       setBioToastMessage(null);
     }, 3200);
   }
+
+  useEffect(() => {
+    let toastMessage: string | null = null;
+
+    try {
+      toastMessage = window.sessionStorage.getItem(GITHUB_LINK_ERROR_TOAST_KEY);
+      if (toastMessage) {
+        window.sessionStorage.removeItem(GITHUB_LINK_ERROR_TOAST_KEY);
+      }
+    } catch {
+      return;
+    }
+
+    if (!toastMessage) {
+      return;
+    }
+
+    const redirectedToastMessage = toastMessage;
+    // Let the redirected profile dashboard mount before displaying the
+    // callback failure as its standard in-app toast.
+    const toastTimer = window.setTimeout(() => {
+      setBioToastMessage(redirectedToastMessage);
+
+      if (bioToastTimerRef.current) {
+        window.clearTimeout(bioToastTimerRef.current);
+      }
+
+      bioToastTimerRef.current = window.setTimeout(() => {
+        setBioToastMessage(null);
+      }, 3200);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(toastTimer);
+    };
+  }, []);
 
   function showBioSavedState() {
     setBioSaveState('saved');
