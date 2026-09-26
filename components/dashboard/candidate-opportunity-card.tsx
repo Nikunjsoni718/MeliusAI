@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Building2, Mail, X } from 'lucide-react';
+import { useState } from 'react';
 
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -126,6 +127,7 @@ export function CandidateOpportunitySkeleton() {
 
 export function CandidateOpportunityCard({ item, displayName, onDismiss }: CandidateOpportunityCardProps) {
   const router = useRouter();
+  const [notice, setNotice] = useState<string | null>(null);
   const matchScore = Math.round(item.match_score);
   const theme = getMatchTheme(matchScore);
 
@@ -142,7 +144,7 @@ export function CandidateOpportunityCard({ item, displayName, onDismiss }: Candi
 
     if (!targetId) {
       console.error('Missing organization ID. Current data:', item);
-      alert('Data syncing. Please refresh your feed.');
+      setNotice('Data is still syncing. Please refresh your feed.');
       return;
     }
 
@@ -161,6 +163,19 @@ export function CandidateOpportunityCard({ item, displayName, onDismiss }: Candi
       <Card className={cn('relative overflow-hidden backdrop-blur-md transition-all duration-300', theme.card)}>
         <div className={cn('pointer-events-none absolute -right-24 -top-24 h-48 w-48 rounded-full blur-3xl', theme.ambientGlow)} />
         <CardContent className="relative flex flex-col gap-6 p-6">
+          {notice ? (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm leading-5 text-amber-100" role="alert">
+              <p>{notice}</p>
+              <button
+                type="button"
+                onClick={() => setNotice(null)}
+                className="-mr-2 -mt-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-amber-100 transition hover:bg-amber-400/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+                aria-label="Dismiss notification"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 flex-1">
               <span className={cn('inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em]', theme.statusBadge)}>

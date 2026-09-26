@@ -1665,7 +1665,7 @@ function VaultPageContent() {
       const missingFileMessage =
         'Verification Failed: This asset does not contain a valid storage file link (file_url is missing).';
       setVaultError(missingFileMessage);
-      window.alert(`❌ ${missingFileMessage}`);
+      setVisibilityToast({ id: Date.now(), message: missingFileMessage });
       return;
     }
 
@@ -1735,12 +1735,15 @@ function VaultPageContent() {
         [project.id]: auditSummary,
       }));
       router.refresh();
-      window.alert(`Verification Complete! ${getVaultAssetName(project)} has been successfully audited.`);
+      setVisibilityToast({
+        id: Date.now(),
+        message: `Verification complete: ${getVaultAssetName(project)} has been successfully audited.`,
+      });
     } catch (error) {
       console.error('Detailed Verification Diagnostic Log:', error);
       const message = error instanceof Error ? error.message : 'FastAPI Agent Reviewer failed.';
       setVaultError(message);
-      window.alert(`Verification Failed: ${message}`);
+      setVisibilityToast({ id: Date.now(), message: `Verification failed: ${message}` });
     } finally {
       setVerifyingAssetId(null);
     }
@@ -1943,10 +1946,10 @@ function VaultPageContent() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -24 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl"
+            className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl max-md:top-auto max-md:bottom-[calc(env(safe-area-inset-bottom)+1rem)] max-md:z-[13000] max-md:w-[calc(100%-2rem)]"
           >
             <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
-            <p className="font-mono text-[11px] tracking-wide text-rose-300">{visibilityToast.message}</p>
+            <p className="font-mono text-[11px] tracking-wide text-rose-300 max-md:text-sm max-md:leading-5" role="status">{visibilityToast.message}</p>
           </motion.div>
         ) : null}
       </AnimatePresence>

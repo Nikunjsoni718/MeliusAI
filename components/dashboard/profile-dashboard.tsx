@@ -5100,7 +5100,7 @@ export function ProfileDashboard({
         }));
       }
     } catch (error) {
-      alert(
+      showBioToast(
         `Unable to select ${repository.name}: ${
           error instanceof Error ? error.message : 'Repository tree could not be loaded.'
         }`
@@ -5151,7 +5151,7 @@ export function ProfileDashboard({
     });
 
     if (selectedItems.length === 0) {
-      alert('Select at least one GitHub file to import.');
+      showBioToast('Select at least one GitHub file to import.');
       return;
     }
 
@@ -5248,7 +5248,7 @@ export function ProfileDashboard({
             : 'Your GitHub connection is no longer valid. Reconnect GitHub and try again.'
         );
       }
-      alert(
+      showBioToast(
         `GitHub Import Failed: ${
           error instanceof Error ? error.message : 'Unable to download the selected files.'
         }`
@@ -5292,7 +5292,7 @@ export function ProfileDashboard({
       setIsIngestionModalOpen(false);
       await handleConfirmUpload(parsedFiles, folderName);
     } catch (error) {
-      alert(`Staging Failed: ${error instanceof Error ? error.message : 'Unable to read selected folder files.'}`);
+      showBioToast(`Staging Failed: ${error instanceof Error ? error.message : 'Unable to read selected folder files.'}`);
     } finally {
       if (projectFolderInputRef.current) {
         projectFolderInputRef.current.value = '';
@@ -5450,12 +5450,12 @@ export function ProfileDashboard({
     }
 
     if (!user || !user.id) {
-      alert('User session missing.');
+      showBioToast('User session missing.');
       return false;
     }
 
     if (!supabase) {
-      alert('Upload Failed: Vault sync is not ready.');
+      showBioToast('Upload Failed: Vault sync is not ready.');
       return false;
     }
 
@@ -5471,7 +5471,7 @@ export function ProfileDashboard({
     });
 
     if (safeFilesToUpload.length === 0) {
-      alert("No valid code files selected to upload.");
+      showBioToast('No valid code files selected to upload.');
       return false;
     }
 
@@ -5642,7 +5642,7 @@ export function ProfileDashboard({
       const savedProjectRows = savedGroups.flatMap((group) => group.projectRows);
       const trackingErrors = savedGroups.flatMap((group) => group.trackingError ? [group.trackingError] : []);
       if (trackingErrors.length > 0) {
-        alert(`Files were imported. Repository baseline setup needs attention: ${trackingErrors.join(' ')}`);
+        showBioToast(`Files were imported. Repository baseline setup needs attention: ${trackingErrors.join(' ')}`);
       }
       const savedProjects = savedProjectRows.map((row) => mapProjectRowToProjectItem(row));
       const savedFolders = savedGroups.map((group) => group.folder);
@@ -6328,7 +6328,7 @@ export function ProfileDashboard({
     }
 
     if (!supabase) {
-      alert('Failed to rename folder: Vault sync is not ready.');
+      showBioToast('Failed to rename folder: Vault sync is not ready.');
       return;
     }
 
@@ -6355,7 +6355,7 @@ export function ProfileDashboard({
       router.refresh();
     } catch (error: any) {
       console.error("Error renaming folder:", error);
-      alert("Failed to rename folder. Please try again.");
+      showBioToast('Failed to rename folder. Please try again.');
     }
   };
 
@@ -6465,7 +6465,7 @@ export function ProfileDashboard({
         )
       );
       requestAuditProfileRevalidation();
-      alert(
+      showBioToast(
         folderScore !== null
           ? `Folder audit completed successfully with an engineering assessment of ${folderScore}/100.`
           : 'Folder audit completed successfully!'
@@ -6477,7 +6477,7 @@ export function ProfileDashboard({
       if (isGitHubConnectionError(error) && /github|provider token/i.test(message)) {
         markGitHubConnectionExpired(message);
       }
-      alert(error instanceof Error ? error.message : 'An error occurred during the AI audit.');
+      showBioToast(error instanceof Error ? error.message : 'An error occurred during the AI audit.');
     } finally {
       setAuditingFolders((prev) => ({ ...prev, [folderId]: false }));
     }
@@ -6546,7 +6546,7 @@ export function ProfileDashboard({
       await deleteProjectFolderRecord(folderId);
     } catch (error: any) {
       console.error("Delete Error:", error);
-      alert(`Failed to delete folder: ${error.message}`);
+      showBioToast(`Failed to delete folder: ${error.message}`);
     }
   };
 
@@ -6899,7 +6899,7 @@ export function ProfileDashboard({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -24, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-rose-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl"
+                  className="fixed top-6 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-rose-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-rose-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.2)] ring-1 ring-cyan-500/15 backdrop-blur-xl max-md:top-auto max-md:bottom-[calc(env(safe-area-inset-bottom)+1rem)] max-md:z-[13000] max-md:w-[calc(100%-2rem)]"
                   role="status"
                 >
                   <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
@@ -6912,7 +6912,7 @@ export function ProfileDashboard({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -24, scale: 0.98 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="fixed top-[5.5rem] left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-sky-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-sky-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl"
+                  className="fixed top-[5.5rem] left-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 overflow-hidden rounded-2xl border border-sky-400/30 bg-[#0B1221]/90 px-4 py-3 text-sm text-sky-100 shadow-[0_0_25px_-5px_rgba(6,182,212,0.25)] ring-1 ring-cyan-500/20 backdrop-blur-xl max-md:top-auto max-md:bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] max-md:z-[13000] max-md:w-[calc(100%-2rem)]"
                   role="status"
                 >
                   <span aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />

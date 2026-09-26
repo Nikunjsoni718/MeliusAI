@@ -1,8 +1,9 @@
 'use client';
 
-import { Bell, CheckCheck, FolderPlus, Trash2, type LucideIcon } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bell, CheckCheck, FolderPlus, Trash2, X, type LucideIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useRouter } from 'next/navigation';
+import { createPortal } from 'react-dom';
 
 import { useNotifications, type WorkspaceNotification } from '@/hooks/use-notifications';
 import { cn } from '@/lib/utils';
@@ -153,11 +154,118 @@ function lifecyclePresentation(notification: WorkspaceNotification) {
   return null;
 }
 
+type MobileNotificationPanelProps = {
+  actionError: string | null;
+  groupedNotifications: Array<[string, WorkspaceNotification[]]>;
+  onClose: () => void;
+  onMarkAllRead: () => void;
+  onOpenNotification: (notification: WorkspaceNotification) => void;
+  panelRef: RefObject<HTMLElement | null>;
+  unreadCount: number;
+};
+
+function MobileNotificationPanel({
+  actionError,
+  groupedNotifications,
+  onClose,
+  onMarkAllRead,
+  onOpenNotification,
+  panelRef,
+  unreadCount,
+}: MobileNotificationPanelProps) {
+  return (
+    <section
+      ref={panelRef}
+      role="dialog"
+      aria-label="Notifications"
+      className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[13000] flex max-h-[min(32rem,calc(100dvh-2rem-env(safe-area-inset-bottom)))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md md:hidden"
+    >
+      <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
+      <div className="relative flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-400/10 text-cyan-200 shadow-[0_0_18px_rgba(6,182,212,0.15)]">
+            <Bell className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-white">Notifications</h2>
+            <p className="mt-0.5 text-sm text-slate-400">Project activity and audit updates</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-800/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
+          aria-label="Close notifications"
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </div>
+      <div className="flex items-center justify-end border-b border-white/10 px-3 py-2">
+        <button
+          type="button"
+          disabled={!unreadCount}
+          onClick={onMarkAllRead}
+          className="inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm text-cyan-300 transition hover:bg-cyan-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <CheckCheck className="h-4 w-4" aria-hidden="true" />
+          Mark all read
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {groupedNotifications.length ? groupedNotifications.map(([label, group]) => (
+          <div key={label} className="mb-3 last:mb-0">
+            <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+            {group.map((notification) => {
+              const project = repositoryLabel(notification);
+              const lifecycle = lifecyclePresentation(notification);
+              const copy = notificationCopy(notification, project, lifecycle);
+              const LifecycleIcon = lifecycle?.icon;
+              return (
+                <button
+                  key={notification.id}
+                  type="button"
+                  onClick={() => onOpenNotification(notification)}
+                  className={cn(
+                    'mb-1 block min-h-11 w-full rounded-xl px-3 py-3 text-left transition hover:bg-slate-800/80 focus:bg-slate-800/80 focus:outline-none',
+                    !notification.is_read && 'bg-cyan-950/20'
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    {LifecycleIcon ? (
+                      <span className={cn('mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-[0_0_16px_rgba(6,182,212,0.12)]', lifecycle?.iconClassName)}>
+                        <LifecycleIcon className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-medium text-slate-100">{notificationTitle(notification, lifecycle?.title)}</p>
+                        <time className="shrink-0 text-[11px] text-slate-500">{relativeTime(notification.created_at)}</time>
+                      </div>
+                      <p className="mt-1.5 text-sm leading-5 text-slate-400">
+                        {copy.before}
+                        {copy.highlightedValue ? <span className="font-medium text-white">{copy.highlightedValue}</span> : null}
+                        {copy.after}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )) : <p className="px-3 py-8 text-center text-sm text-slate-500">You are all caught up.</p>}
+      </div>
+      {actionError ? <p className="border-t border-rose-900/50 px-4 py-3 text-sm text-rose-300" role="alert">{actionError}</p> : null}
+    </section>
+  );
+}
+
 export function NotificationCenter({ userId }: { userId: string }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mobilePanelRef = useRef<HTMLElement | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [portalReady, setPortalReady] = useState(false);
   const { notifications, unreadCount, markRead } = useNotifications(userId);
   const groupedNotifications = useMemo(() => {
     const groups = new Map<string, WorkspaceNotification[]>();
@@ -171,7 +279,10 @@ export function NotificationCenter({ userId }: { userId: string }) {
   useEffect(() => {
     if (!isOpen) return;
     const closeIfOutside = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setIsOpen(false);
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !mobilePanelRef.current?.contains(target)) {
+        setIsOpen(false);
+      }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setIsOpen(false);
@@ -183,6 +294,11 @@ export function NotificationCenter({ userId }: { userId: string }) {
       document.removeEventListener('keydown', closeOnEscape);
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setPortalReady(true), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   async function openNotification(notification: WorkspaceNotification) {
     setActionError(null);
@@ -212,7 +328,7 @@ export function NotificationCenter({ userId }: { userId: string }) {
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         onClick={() => setIsOpen((current) => !current)}
-        className="relative flex h-10 w-full items-center justify-center rounded-lg border border-blue-950/60 bg-[#071329]/60 text-slate-200 transition hover:border-cyan-500/40 hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70"
+        className="relative flex h-10 w-full items-center justify-center rounded-lg border border-blue-950/60 bg-[#071329]/60 text-slate-200 transition hover:border-cyan-500/40 hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70 max-md:h-11 max-md:min-h-11"
       >
         <Bell className="h-4 w-4" aria-hidden="true" />
         {unreadCount ? (
@@ -226,7 +342,7 @@ export function NotificationCenter({ userId }: { userId: string }) {
         <section
           role="dialog"
           aria-label="Notifications"
-          className="absolute bottom-0 left-full z-[70] ml-4 flex max-h-96 w-80 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md max-md:bottom-full max-md:left-3 max-md:mb-3 max-md:ml-0 max-md:w-[calc(100vw-2rem)]"
+          className="absolute bottom-0 left-full z-[70] ml-4 flex max-h-96 w-80 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A]/95 shadow-2xl shadow-cyan-900/10 backdrop-blur-md max-md:hidden"
         >
           <div aria-hidden="true" className="h-px bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent" />
           <div className="relative flex items-center justify-between border-b border-white/10 px-4 py-3">
@@ -295,6 +411,20 @@ export function NotificationCenter({ userId }: { userId: string }) {
           {actionError ? <p className="border-t border-rose-900/50 px-4 py-2 text-xs text-rose-300">{actionError}</p> : null}
         </section>
       ) : null}
+      {portalReady && isOpen
+        ? createPortal(
+            <MobileNotificationPanel
+              actionError={actionError}
+              groupedNotifications={groupedNotifications}
+              onClose={() => setIsOpen(false)}
+              onMarkAllRead={() => void markAllRead()}
+              onOpenNotification={(notification) => void openNotification(notification)}
+              panelRef={mobilePanelRef}
+              unreadCount={unreadCount}
+            />,
+            document.body
+          )
+        : null}
     </div>
   );
 }

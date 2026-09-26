@@ -414,6 +414,7 @@ export function AssetPreviewModal({
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
   const [isCapturingFullReport, setIsCapturingFullReport] = useState(false);
   const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const [isProjectLinkCopied, setIsProjectLinkCopied] = useState(false);
   const auditCaptureRef = useRef<HTMLDivElement | null>(null);
   const projectLinkCopiedTimeoutRef = useRef<number | null>(null);
@@ -720,6 +721,7 @@ export function AssetPreviewModal({
     }
 
     setIsVerifying(true);
+    setVerificationError(null);
 
     try {
       if (!activePreviewUrl) {
@@ -813,14 +815,14 @@ export function AssetPreviewModal({
       setPreviewCacheNonce(Date.now());
     } catch (error) {
       console.error('Preview modal AI verification failed:', error);
-      window.alert(error instanceof Error ? error.message : 'MeliusAI verification failed.');
+      setVerificationError(error instanceof Error ? error.message : 'MeliusAI verification failed.');
     } finally {
       setIsVerifying(false);
     }
   }
 
   const modal = (
-    <div className="fixed inset-0 z-[9999] h-full w-full bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+    <div className="fixed inset-0 z-[9999] h-full w-full bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn max-md:z-[13000]">
       <div
         className={`relative w-full max-w-5xl bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col transition-all duration-300 ${
           isExpandedViewer ? 'max-h-[85vh]' : 'max-h-[90vh] overflow-y-auto'
@@ -831,7 +833,7 @@ export function AssetPreviewModal({
             <button
               type="button"
               onClick={() => setIsExpandedViewer((currentValue) => !currentValue)}
-              className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-cyan-400 bg-slate-900 border border-slate-800 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
+              className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400 shadow-sm transition-all hover:text-cyan-400 max-md:min-h-11 max-md:text-sm"
               aria-pressed={isExpandedViewer}
             >
               {isExpandedViewer ? 'Exit Focus Mode' : 'Full Focus Mode'}
@@ -845,12 +847,18 @@ export function AssetPreviewModal({
               advanceProductTour(12, 13);
               onClose();
             }}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200 max-md:h-11 max-md:w-11"
             aria-label="Close asset preview"
           >
             ×
           </button>
         </div>
+
+        {verificationError ? (
+          <p className="mx-4 mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm leading-5 text-rose-100" role="alert">
+            {verificationError}
+          </p>
+        ) : null}
 
         {!isFolder && viewerSrc && activePreviewUrl ? (
         <div
