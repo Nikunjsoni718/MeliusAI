@@ -701,7 +701,19 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center">
         <div className="mx-auto w-full max-w-5xl">
-          {!isTalentSignup ? (
+          {isTalentSignup ? (
+            <>
+              <div className="flex justify-center">
+                <LogicPrismLogo />
+              </div>
+              {!authEnabled ? (
+                <div className="mx-auto max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
+                  <p className="font-medium text-rose-100">Configuration Error</p>
+                  <p className="mt-1 text-rose-200/90">{AUTH_CONFIGURATION_ERROR}</p>
+                </div>
+              ) : null}
+            </>
+          ) : (
             <div className="text-center">
               <LogicPrismLogo />
               <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">Welcome</Badge>
@@ -718,12 +730,7 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
                 </div>
               ) : null}
             </div>
-          ) : !authEnabled ? (
-            <div className="mx-auto max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
-              <p className="font-medium text-rose-100">Configuration Error</p>
-              <p className="mt-1 text-rose-200/90">{AUTH_CONFIGURATION_ERROR}</p>
-            </div>
-          ) : null}
+          )}
 
           <LayoutGroup id="auth-role-gate">
             <div className={isTalentSignup ? 'mt-0' : 'mt-10'}>
