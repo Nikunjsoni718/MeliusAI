@@ -345,6 +345,7 @@ function ProductTourTooltip({
   const { buttons, content, styles, title } = step;
   const showBackButton = buttons.includes('back') && index > 0;
   const showPrimaryButton = buttons.includes('primary');
+  const hasNavigationButtons = showBackButton || showPrimaryButton;
   const showSkipButton = index < PRODUCT_TOUR_FINAL_STEP_INDEX;
 
   return (
@@ -371,22 +372,29 @@ function ProductTourTooltip({
           {content}
         </div>
       </div>
-      {showSkipButton || showBackButton || showPrimaryButton ? (
-        <div className="flex min-h-11 items-center justify-end gap-2" style={styles.tooltipFooter}>
+      {showSkipButton || hasNavigationButtons ? (
+        <div
+          className="flex w-full items-center justify-between gap-4 pt-4"
+          style={styles.tooltipFooter}
+        >
           {showSkipButton ? (
             <button
               type="button"
               {...skipProps}
-              className="min-h-11 rounded-md bg-transparent px-2 text-sm font-medium text-slate-400 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+              className={`px-4 py-2 text-sm text-red-500 border border-red-500/30 rounded-md bg-transparent hover:bg-red-500/10 hover:border-red-500/50 transition-all duration-200${hasNavigationButtons ? '' : ' ml-auto'}`}
             >
               Skip Tour
             </button>
           ) : null}
-          {showBackButton ? (
-            <button type="button" style={styles.buttonBack} {...backProps} />
-          ) : null}
-          {showPrimaryButton ? (
-            <button type="button" style={styles.buttonPrimary} {...primaryProps} />
+          {hasNavigationButtons ? (
+            <div className="ml-auto flex items-center gap-2">
+              {showBackButton ? (
+                <button type="button" style={styles.buttonBack} {...backProps} />
+              ) : null}
+              {showPrimaryButton ? (
+                <button type="button" style={styles.buttonPrimary} {...primaryProps} />
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -927,7 +935,6 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         tooltipFooter: {
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
           margin: 0,
-          padding: '14px 20px 18px',
         },
         buttonPrimary: {
           backgroundColor: '#0070f3',
