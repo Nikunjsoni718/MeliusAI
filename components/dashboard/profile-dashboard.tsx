@@ -19,7 +19,6 @@ import {
   hasCompletedProductTour,
   isProductTourAtStep,
   pauseProductTour,
-  persistProductTourStep,
   ProductTour,
   PRODUCT_TOUR_CHANGE_EVENT_NAME,
   PRODUCT_TOUR_COMPLETE_EVENT_NAME,
@@ -3072,46 +3071,27 @@ export function ProfileDashboard({
     setIsGithubModalOpen(true);
   }, []);
 
-  const handleLinkGithub = useCallback(async (event?: MouseEvent<HTMLButtonElement>) => {
-    event?.preventDefault();
-
+  const handleLinkGithub = useCallback(async () => {
     if (!supabase || isGitHubOAuthStartingRef.current) {
       return;
     }
 
     isGitHubOAuthStartingRef.current = true;
-    // Save the post-OAuth tour step without emitting the tour change event.
-    // Emitting here can unmount this target before the browser redirect starts.
-    const persistedTourStep = persistProductTourStep(8, 9);
 
     try {
       const redirectTo = `${window.location.origin}/profile/setup-app`;
-      const { data, error } = await supabase.auth.linkIdentity({
+      const { error } = await supabase.auth.linkIdentity({
         provider: 'github',
         options: {
           scopes: 'repo',
           redirectTo,
-          skipBrowserRedirect: true,
         },
       });
 
       if (error) {
         throw error;
       }
-
-      if (!data.url) {
-        throw new Error('GitHub OAuth did not return an authorization URL.');
-      }
-
-      // PKCE persists its verifier asynchronously. Allow the browser one
-      // short turn to flush that cookie before leaving for GitHub.
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-      window.location.assign(data.url);
     } catch (error) {
-      if (persistedTourStep) {
-        // Keep a failed OAuth start on the visible Link GitHub tour step.
-        persistProductTourStep(9, 8);
-      }
       isGitHubOAuthStartingRef.current = false;
       // Do not let stale repository data or a prior 401/403 influence a retry.
       clearGitHubImportState();
@@ -3127,23 +3107,26 @@ export function ProfileDashboard({
       return;
     }
 
+    if (isGitHubOAuthStartingRef.current) {
+      return;
+    }
+
     // Re-authenticate an existing GitHub identity instead of trying to link it
     // again. Re-linking an identity that already belongs to this user makes
     // Supabase reject the OAuth callback with identity_already_exists.
-    clearGitHubImportState();
-    setIsGitHubConnectionExpired(false);
-    setIsLinkingGitHub(true);
+    isGitHubOAuthStartingRef.current = true;
 
     try {
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        window.location.pathname
-      )}`;
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const activeUserId = activeAuthUser?.id ?? user?.id;
+      const isOnboardingReconnect = isProductTourAtStep(activeUserId, 8);
+      const redirectTo = isOnboardingReconnect
+        ? `${window.location.origin}/profile/setup-app?tour=github-reconnect`
+        : `${window.location.origin}/auth/callback?next=${encodeURIComponent(window.location.pathname)}`;
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
           scopes: 'repo read:user user:email',
           redirectTo,
-          skipBrowserRedirect: true,
           queryParams: { prompt: 'consent' },
         },
       });
@@ -3151,19 +3134,9 @@ export function ProfileDashboard({
       if (error) {
         throw error;
       }
-
-      if (!data.url) {
-        throw new Error('GitHub OAuth did not return an authorization URL.');
-      }
-
-      // See the corresponding link flow above: preserve the next persisted
-      // action immediately before leaving the application for OAuth.
-      advanceProductTour(8, 9);
-      // Match the initial link flow so the PKCE verifier is committed before
-      // GitHub redirects back to our callback route.
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-      window.location.assign(data.url);
     } catch (error) {
+      isGitHubOAuthStartingRef.current = false;
+      clearGitHubImportState();
       setIsLinkingGitHub(false);
       setIsGitHubConnectionExpired(true);
       console.error('GitHub reconnection error:', error);
@@ -3173,7 +3146,7 @@ export function ProfileDashboard({
           : 'GitHub reconnection could not start. Please try again.'
       );
     }
-  }, [clearGitHubImportState, showBioToast, supabase]);
+  }, [activeAuthUser?.id, clearGitHubImportState, showBioToast, supabase, user?.id]);
 
   const handleUnlinkGitHub = useCallback(async () => {
     if (!supabase || !user?.id || isUnlinkingGitHub) {

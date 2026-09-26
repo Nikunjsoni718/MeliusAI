@@ -224,30 +224,6 @@ export function advanceProductTour(
   return true;
 }
 
-/**
- * Persist an OAuth handoff without emitting a React-facing tour change. The
- * current page can then navigate away without unmounting its OAuth initiator;
- * the destination rehydrates from localStorage at the next step.
- */
-export function persistProductTourStep(
-  expectedStep: ProductTourStep,
-  nextStep: ProductTourStep,
-  projectId?: string | null
-) {
-  const currentState = readActiveTourState();
-  if (!currentState || currentState.stepIndex !== expectedStep) {
-    return false;
-  }
-
-  persistTourState({
-    ...currentState,
-    stepIndex: nextStep,
-    run: true,
-    projectId: projectId ?? currentState.projectId,
-  });
-  return true;
-}
-
 export function resetProductTourStep(
   expectedSteps: readonly ProductTourStep[],
   resetStep: ProductTourStep

@@ -4,6 +4,7 @@ import type { User } from '@supabase/supabase-js';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { advanceProductTour } from '@/components/onboarding/product-tour';
 import {
   createSupabaseBrowserClient,
   hasSupabaseBrowserEnv,
@@ -11,6 +12,7 @@ import {
 
 const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
 const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
+const GITHUB_RECONNECT_TOUR_VALUE = 'github-reconnect';
 const GITHUB_LINK_ERROR_TOAST_KEY = 'meliusai:github-link-error-toast';
 const GITHUB_IDENTITY_ALREADY_LINKED_MESSAGE =
   'This GitHub account is already linked to another user.';
@@ -78,6 +80,8 @@ export default function GitHubAppSetupPage() {
     }
 
     let isActive = true;
+    const isOnboardingReconnect =
+      callbackUrl.searchParams.get('tour') === GITHUB_RECONNECT_TOUR_VALUE;
 
     const completeOAuthAndInstallApp = async () => {
       try {
@@ -106,6 +110,10 @@ export default function GitHubAppSetupPage() {
         if (!linkedUser || !hasGitHubProvider) {
           throw new Error('GitHub OAuth completed without a linked GitHub provider.');
         }
+
+        // The source page has unmounted by now, so the callback owns the
+        // persisted onboarding transition after PKCE code exchange succeeds.
+        advanceProductTour(8, 9);
 
         const githubUsername = getGitHubUsernameFromUser(linkedUser);
         if (!githubUsername) {
@@ -149,6 +157,11 @@ export default function GitHubAppSetupPage() {
         }
 
         window.history.replaceState({}, document.title, '/profile/setup-app');
+        if (isOnboardingReconnect) {
+          window.location.replace('/profile');
+          return;
+        }
+
         localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
         window.location.href = GITHUB_APP_INSTALLATION_URL;
       } catch (error) {
