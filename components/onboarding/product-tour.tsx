@@ -331,6 +331,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   );
   const [mobileSidebarReadyStep, setMobileSidebarReadyStep] = useState<ProductTourStep | null>(null);
   const mobileSidebarOpenedByTourRef = useRef(false);
+  const centeredScrollRef = useRef<{ step: ProductTourStep; target: HTMLElement } | null>(null);
 
   useEffect(() => {
     const syncMobileViewport = () => {
@@ -687,15 +688,54 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     };
   }, [currentStep, isAuthenticated, isMobileViewport, isTourEligible, mobileSidebarReadyStep, tourState, userId]);
 
+  const activeTourStep = tourState?.stepIndex;
   const canRunTour = Boolean(
     isAuthenticated &&
       isTourEligible &&
       userId &&
       tourState?.userId === userId &&
       tourState.run &&
-      (!isMobileViewport || tourState.stepIndex !== 2 || mobileSidebarReadyStep === 2) &&
-      targetReadyStep === tourState.stepIndex
+      (!isMobileViewport || activeTourStep !== 2 || mobileSidebarReadyStep === 2) &&
+      targetReadyStep === activeTourStep
   );
+
+  useEffect(() => {
+    if (!canRunTour || activeTourStep === undefined || !currentStep) {
+      return;
+    }
+
+    const target = resolveTourTarget(currentStep);
+    // Welcome and completion cards intentionally target the document itself.
+    // Scrolling those would unnecessarily reset the user's position.
+    if (!target || target === document.body) {
+      return;
+    }
+
+    const previousScroll = centeredScrollRef.current;
+    if (previousScroll?.step === activeTourStep && previousScroll.target === target) {
+      return;
+    }
+
+    // react-joyride's built-in scrolling is offset-from-top only. Wait for the
+    // mounted tooltip and then center the highlighted control so its fields and
+    // surrounding context remain visible above and below the tour card.
+    const animationFrame = window.requestAnimationFrame(() => {
+      if (!target.isConnected) {
+        return;
+      }
+
+      target.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+      centeredScrollRef.current = { step: activeTourStep, target };
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [activeTourStep, canRunTour, currentStep]);
 
   function handleTourEvent(event: EventData) {
     if (event.type === EVENTS.STEP_AFTER && event.action === ACTIONS.NEXT) {
@@ -728,7 +768,13 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       stepIndex={tourState?.stepIndex ?? 0}
       steps={steps}
       continuous={true}
-      scrollToFirstStep
+      scrollToFirstStep={false}
+      floatingOptions={{
+        // Floating UI uses these paddings as the viewport boundary for flip
+        // and shift, keeping the card fully visible near each screen edge.
+        flipOptions: { padding: 24 },
+        shiftOptions: { padding: 24 },
+      }}
       onEvent={handleTourEvent}
       locale={{
         next: 'Next',
@@ -745,6 +791,9 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         overlayColor: 'rgba(15, 23, 42, 0.6)',
         primaryColor: '#0070f3',
         showProgress: false,
+        // Centered native scrolling above replaces Joyride's top-aligned
+        // scrollOffset behavior for every actionable tour stage.
+        skipScroll: true,
         skipBeacon: true,
         spotlightPadding: 8,
         spotlightRadius: 12,

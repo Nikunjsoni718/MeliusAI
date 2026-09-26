@@ -3096,6 +3096,9 @@ export function ProfileDashboard({
         // The OAuth navigation unmounts this page. Persist the next action
         // only after Supabase supplies a usable destination URL.
         advanceProductTour(8, 9);
+        // PKCE persists its verifier asynchronously. Allow the browser one
+        // short turn to flush that cookie before leaving for GitHub.
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
         window.location.assign(data.url);
       } else {
         setIsLinkingGitHub(false);
@@ -3146,6 +3149,9 @@ export function ProfileDashboard({
       // See the corresponding link flow above: preserve the next persisted
       // action immediately before leaving the application for OAuth.
       advanceProductTour(8, 9);
+      // Match the initial link flow so the PKCE verifier is committed before
+      // GitHub redirects back to our callback route.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
       window.location.assign(data.url);
     } catch (error) {
       setIsLinkingGitHub(false);
