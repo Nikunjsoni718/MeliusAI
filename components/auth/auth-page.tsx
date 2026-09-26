@@ -701,25 +701,32 @@ export function AuthPage({ initialMode = 'signin' }: AuthPageProps) {
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center">
         <div className="mx-auto w-full max-w-5xl">
-          <div className="text-center">
-            <LogicPrismLogo />
-            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">Welcome</Badge>
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
-              {pageTitle}
-            </h1>
-            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-              {pageDescription}
-            </p>
-            {!authEnabled ? (
-              <div className="mx-auto mt-4 max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
-                <p className="font-medium text-rose-100">Configuration Error</p>
-                <p className="mt-1 text-rose-200/90">{AUTH_CONFIGURATION_ERROR}</p>
-              </div>
-            ) : null}
-          </div>
+          {!isTalentSignup ? (
+            <div className="text-center">
+              <LogicPrismLogo />
+              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">Welcome</Badge>
+              <h1 className="mt-6 text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
+                {pageTitle}
+              </h1>
+              <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
+                {pageDescription}
+              </p>
+              {!authEnabled ? (
+                <div className="mx-auto mt-4 max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
+                  <p className="font-medium text-rose-100">Configuration Error</p>
+                  <p className="mt-1 text-rose-200/90">{AUTH_CONFIGURATION_ERROR}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : !authEnabled ? (
+            <div className="mx-auto max-w-2xl rounded-[1.5rem] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-left text-sm leading-6 text-rose-100">
+              <p className="font-medium text-rose-100">Configuration Error</p>
+              <p className="mt-1 text-rose-200/90">{AUTH_CONFIGURATION_ERROR}</p>
+            </div>
+          ) : null}
 
           <LayoutGroup id="auth-role-gate">
-            <div className="mt-10">
+            <div className={isTalentSignup ? 'mt-0' : 'mt-10'}>
               <AnimatePresence initial={false} mode="wait">
                 {!selectedRole ? (
                   <motion.div

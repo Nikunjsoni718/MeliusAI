@@ -208,6 +208,7 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
   const nextPath = getSafeNextPath(requestUrl.searchParams.get('next')) ?? '/profile';
+  const oauthErrorCode = requestUrl.searchParams.get('error_code');
 
   if (!hasSupabaseServerEnv()) {
     console.error('OAuth callback cannot exchange the code because Supabase is not configured.');
@@ -216,9 +217,22 @@ export async function GET(request: NextRequest) {
 
   if (!code) {
     console.error('OAuth callback did not receive an authorization code.');
-    const missingCodeUrl = new URL(nextPath, requestUrl);
-    missingCodeUrl.searchParams.set('error', 'missing_oauth_code');
-    return NextResponse.redirect(missingCodeUrl);
+    const failedOAuthUrl = new URL(nextPath, requestUrl);
+
+    // Preserve provider errors (notably identity_already_exists) for the
+    // destination page. Otherwise, keep the existing missing-code signal.
+    if (oauthErrorCode) {
+      for (const parameter of ['error', 'error_code', 'error_description']) {
+        const value = requestUrl.searchParams.get(parameter);
+        if (value) {
+          failedOAuthUrl.searchParams.set(parameter, value);
+        }
+      }
+    } else {
+      failedOAuthUrl.searchParams.set('error', 'missing_oauth_code');
+    }
+
+    return NextResponse.redirect(failedOAuthUrl);
   }
 
   let redirectUrl: URL;

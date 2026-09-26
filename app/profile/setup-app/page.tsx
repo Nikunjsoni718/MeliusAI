@@ -1,6 +1,5 @@
 'use client';
 
-import type { User } from '@supabase/supabase-js';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -10,40 +9,9 @@ import {
   hasSupabaseBrowserEnv,
 } from '@/lib/supabase/client';
 
-const GITHUB_APP_INSTALLATION_URL = 'https://github.com/apps/meliusai/installations/new';
-const GITHUB_APP_PROMPTED_KEY = 'github_app_prompted';
-const GITHUB_RECONNECT_TOUR_VALUE = 'github-reconnect';
 const GITHUB_LINK_ERROR_TOAST_KEY = 'meliusai:github-link-error-toast';
 const GITHUB_IDENTITY_ALREADY_LINKED_MESSAGE =
   'This GitHub account is already linked to another user.';
-
-function getMetadataText(
-  metadata: Record<string, unknown> | null | undefined,
-  key: string
-) {
-  const value = metadata?.[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function getGitHubUsernameFromUser(user: User | null | undefined) {
-  const userMetadata = user?.user_metadata as Record<string, unknown> | null | undefined;
-  const githubIdentity = user?.identities?.find((identity) => identity.provider === 'github');
-  const identityData = githubIdentity?.identity_data as
-    | Record<string, unknown>
-    | null
-    | undefined;
-  const candidates = [
-    getMetadataText(userMetadata, 'preferred_username'),
-    getMetadataText(userMetadata, 'user_name'),
-    getMetadataText(userMetadata, 'login'),
-    getMetadataText(userMetadata, 'github_username'),
-    getMetadataText(identityData, 'preferred_username'),
-    getMetadataText(identityData, 'user_name'),
-    getMetadataText(identityData, 'login'),
-  ];
-
-  return candidates.find((candidate): candidate is string => Boolean(candidate)) ?? null;
-}
 
 export default function GitHubAppSetupPage() {
   const hasStartedRef = useRef(false);
@@ -57,9 +25,9 @@ export default function GitHubAppSetupPage() {
 
     const callbackUrl = new URL(window.location.href);
     if (callbackUrl.searchParams.get('error_code') === 'identity_already_exists') {
-      // Supabase reports this before a code can be exchanged. Hand the profile
-      // dashboard a one-time toast, then replace this callback route so the
-      // user never lands on a terminal OAuth error screen.
+      // The server callback preserves provider errors for this destination.
+      // Hand the profile dashboard a one-time toast instead of leaving the
+      // user on a terminal OAuth error screen.
       try {
         window.sessionStorage.setItem(
           GITHUB_LINK_ERROR_TOAST_KEY,
@@ -74,28 +42,31 @@ export default function GitHubAppSetupPage() {
       return;
     }
 
+    if (callbackUrl.searchParams.get('error')) {
+      setErrorMessage(
+        callbackUrl.searchParams.get('error_description') ??
+          'GitHub linking did not finish. Please return to your profile and try again.'
+      );
+      return;
+    }
+
     if (!hasSupabaseBrowserEnv()) {
       setErrorMessage('GitHub setup is unavailable because authentication is not configured.');
       return;
     }
 
     let isActive = true;
-    const isOnboardingReconnect =
-      callbackUrl.searchParams.get('tour') === GITHUB_RECONNECT_TOUR_VALUE;
 
-    const completeOAuthAndInstallApp = async () => {
+    const completePostAuthSetup = async () => {
       try {
         const supabase = createSupabaseBrowserClient();
-        const code = callbackUrl.searchParams.get('code');
-        const authResult = code
-          ? await supabase.auth.exchangeCodeForSession(code)
-          : await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
 
-        if (authResult.error) {
-          throw authResult.error;
+        if (error) {
+          throw error;
         }
 
-        const linkedUser = authResult.data.session?.user;
+        const linkedUser = data.session?.user;
         const providers = linkedUser?.app_metadata?.providers || [];
         const hasGitHubIdentity = linkedUser?.identities?.some(
           (identity) => identity.provider === 'github'
@@ -111,59 +82,15 @@ export default function GitHubAppSetupPage() {
           throw new Error('GitHub OAuth completed without a linked GitHub provider.');
         }
 
-        // The source page has unmounted by now, so the callback owns the
-        // persisted onboarding transition after PKCE code exchange succeeds.
-        advanceProductTour(8, 9);
-
-        const githubUsername = getGitHubUsernameFromUser(linkedUser);
-        if (!githubUsername) {
-          throw new Error('GitHub OAuth completed without a GitHub username.');
-        }
-
-        const { error: profileUpdateError } = await supabase
-          .from('profiles')
-          .update({
-            github_username: githubUsername,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', linkedUser.id);
-
-        if (profileUpdateError) {
-          throw profileUpdateError;
-        }
-
-        const providerToken = authResult.data.session?.provider_token?.trim();
-        const providerRefreshToken = authResult.data.session?.provider_refresh_token?.trim();
-        if (!providerToken || !providerRefreshToken) {
-          throw new Error('GitHub OAuth completed without refreshable credentials. Please reconnect GitHub.');
-        }
-
-        const connectionResponse = await fetch('/api/github/connection', {
-          method: 'POST',
-          credentials: 'include',
-          cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providerToken, providerRefreshToken }),
-        });
-        if (!connectionResponse.ok) {
-          const payload = (await connectionResponse.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(payload?.error ?? 'Unable to save the GitHub connection.');
-        }
-
         if (!isActive) {
           return;
         }
 
+        // `/auth/callback` owns the PKCE exchange, profile synchronization,
+        // and token persistence. This client page only resumes onboarding.
+        advanceProductTour(8, 9);
         window.history.replaceState({}, document.title, '/profile/setup-app');
-        if (isOnboardingReconnect) {
-          window.location.replace('/profile');
-          return;
-        }
-
-        localStorage.setItem(GITHUB_APP_PROMPTED_KEY, 'true');
-        window.location.href = GITHUB_APP_INSTALLATION_URL;
+        window.location.replace('/profile');
       } catch (error) {
         if (!isActive) {
           return;
@@ -178,7 +105,7 @@ export default function GitHubAppSetupPage() {
       }
     };
 
-    void completeOAuthAndInstallApp();
+    void completePostAuthSetup();
 
     return () => {
       isActive = false;
@@ -192,7 +119,7 @@ export default function GitHubAppSetupPage() {
           <LoaderCircle className="h-7 w-7 animate-spin text-sky-400" aria-hidden="true" />
         )}
         <p className={errorMessage ? 'text-sm text-rose-300' : 'text-sm text-slate-300'}>
-          {errorMessage ?? 'GitHub Linked! Redirecting to setup repositories...'}
+          {errorMessage ?? 'GitHub Linked! Redirecting to your Developer Profile...'}
         </p>
       </div>
     </main>

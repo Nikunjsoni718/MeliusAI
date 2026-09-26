@@ -3087,9 +3087,10 @@ export function ProfileDashboard({
     try {
       const activeUserId = activeAuthUser?.id ?? user?.id;
       const isOnboardingReconnect = isProductTourAtStep(activeUserId, 8);
-      const redirectTo = isOnboardingReconnect
-        ? `${window.location.origin}/profile/setup-app?tour=github-reconnect`
-        : `${window.location.origin}/auth/callback?next=${encodeURIComponent(window.location.pathname)}`;
+      const setupDestination = isOnboardingReconnect
+        ? '/profile/setup-app?tour=github-reconnect'
+        : '/profile/setup-app';
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(setupDestination)}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
