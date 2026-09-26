@@ -13,8 +13,8 @@ type TimelineStepProps = {
 function TimelineStep({ heading, description, reversed = false, children }: TimelineStepProps) {
   const focusPointRef = useRef<HTMLDivElement>(null);
   const isFocused = useInView(focusPointRef, {
-    margin: '-40% 0px -40% 0px',
-    amount: 0,
+    margin: '-25% 0px -25% 0px',
+    amount: 'some',
   });
 
   return (
@@ -163,49 +163,66 @@ export function HowItWorksTimeline() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({
     target: timelineRef,
-    offset: ['start center', 'end center'],
+    offset: ['start center', 'end 70%'],
   });
   const progressHeight = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
   const progressPosition = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
 
   return (
-    <div ref={timelineRef} className="relative mx-auto flex max-w-6xl flex-col gap-y-28 py-24 sm:gap-y-32">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 left-4 top-0 z-0 w-px bg-slate-800 md:left-1/2 md:-translate-x-1/2"
-      />
-      <motion.div
-        aria-hidden="true"
-        className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] md:left-1/2 md:-translate-x-1/2"
-        style={{ height: progressHeight }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="pointer-events-none absolute left-4 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100/80 bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)] md:left-1/2"
-        style={{ top: progressPosition }}
-      />
+    <>
+      <div ref={timelineRef} className="relative mx-auto flex max-w-6xl flex-col gap-y-28 py-24 sm:gap-y-32">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-0 left-4 top-0 z-0 w-px bg-slate-800 md:left-1/2 md:-translate-x-1/2"
+        />
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] md:left-1/2 md:-translate-x-1/2"
+          style={{ height: progressHeight }}
+        />
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-4 z-20 -translate-x-1/2 -translate-y-1/2 bg-[#0a0a0a] p-1 text-cyan-400 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)] md:left-1/2"
+          style={{ top: progressPosition }}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
+        </motion.div>
 
-      <TimelineStep
-        heading="1. Connect GitHub"
-        description="Link your identity with secure OAuth. No manual uploads or zipped files—just direct, read-only access to the repositories you want to verify."
-      >
-        <GitHubConnectionMockup />
-      </TimelineStep>
+        <TimelineStep
+          heading="1. Connect GitHub"
+          description="Link your identity with secure OAuth. No manual uploads or zipped files—just direct, read-only access to the repositories you want to verify."
+        >
+          <GitHubConnectionMockup />
+        </TimelineStep>
 
-      <TimelineStep
-        heading="2. Select a Workspace"
-        description="Choose a repository to act as your verification workspace. MeliusAI syncs the architecture directly from the source."
-        reversed
-      >
-        <WorkspaceSelectionMockup />
-      </TimelineStep>
+        <TimelineStep
+          heading="2. Select a Workspace"
+          description="Choose a repository to act as your verification workspace. MeliusAI syncs the architecture directly from the source."
+          reversed
+        >
+          <WorkspaceSelectionMockup />
+        </TimelineStep>
 
-      <TimelineStep
-        heading="3. Get Verified"
-        description="Run the AI engine to generate an instant, line-by-line audit. Get a verified scorecard detailing your strengths, weaknesses, and overall technical depth."
-      >
-        <AuditScorecardMockup />
-      </TimelineStep>
-    </div>
+        <TimelineStep
+          heading="3. Get Verified"
+          description="Run the AI engine to generate an instant, line-by-line audit. Get a verified scorecard detailing your strengths, weaknesses, and overall technical depth."
+        >
+          <AuditScorecardMockup />
+        </TimelineStep>
+      </div>
+      <div aria-hidden="true" className="h-[30vh]" />
+    </>
   );
 }
