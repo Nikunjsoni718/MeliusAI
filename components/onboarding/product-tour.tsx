@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ACTIONS, EVENTS, Joyride, STATUS, type EventData, type Step } from 'react-joyride';
+import {
+  ACTIONS,
+  EVENTS,
+  Joyride,
+  STATUS,
+  type EventData,
+  type Step,
+  type TooltipRenderProps,
+} from 'react-joyride';
 
 const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
@@ -290,6 +298,70 @@ function GitHubLinkInstruction({ onSkip }: { onSkip: () => void }) {
       <p className="mb-0 mt-3 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300">
         Complete the highlighted action to continue
       </p>
+    </div>
+  );
+}
+
+function ProductTourTooltip({
+  backProps,
+  index,
+  isLastStep,
+  primaryProps,
+  skipProps,
+  step,
+  tooltipProps,
+}: TooltipRenderProps) {
+  const { buttons, content, styles, title } = step;
+  const showBackButton = buttons.includes('back') && index > 0;
+  const showPrimaryButton = buttons.includes('primary');
+
+  return (
+    <div
+      className="react-joyride__tooltip"
+      data-joyride-step={index}
+      {...(step.id && { 'data-joyride-id': step.id })}
+      style={{ ...styles.tooltip, position: 'relative' }}
+      {...tooltipProps}
+      {...(title
+        ? {
+            'aria-labelledby': 'joyride-tooltip-title',
+            'aria-describedby': 'joyride-tooltip-content',
+          }
+        : { 'aria-label': 'Product tour', 'aria-describedby': 'joyride-tooltip-content' })}
+    >
+      {!isLastStep ? (
+        <button
+          type="button"
+          {...skipProps}
+          className="absolute right-3 top-3 z-10 min-h-11 rounded-md px-2 text-xs font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        />
+      ) : null}
+      <div
+        style={{
+          ...styles.tooltipContainer,
+          ...(isLastStep ? {} : { paddingRight: 84 }),
+        }}
+      >
+        {title ? (
+          <h4 id="joyride-tooltip-title" style={styles.tooltipTitle}>
+            {title}
+          </h4>
+        ) : null}
+        <div id="joyride-tooltip-content" style={styles.tooltipContent}>
+          {content}
+        </div>
+      </div>
+      {showBackButton || showPrimaryButton ? (
+        <div style={styles.tooltipFooter}>
+          <div style={styles.tooltipFooterSpacer} />
+          {showBackButton ? (
+            <button type="button" style={styles.buttonBack} {...backProps} />
+          ) : null}
+          {showPrimaryButton ? (
+            <button type="button" style={styles.buttonPrimary} {...primaryProps} />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -769,6 +841,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       steps={steps}
       continuous={true}
       scrollToFirstStep={false}
+      tooltipComponent={ProductTourTooltip}
       floatingOptions={{
         // Floating UI uses these paddings as the viewport boundary for flip
         // and shift, keeping the card fully visible near each screen edge.
@@ -779,7 +852,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       locale={{
         next: 'Next',
         last: 'Finish',
-        skip: 'Skip',
+        skip: 'Skip Tour',
       }}
       options={{
         arrowColor: '#0f172a',
