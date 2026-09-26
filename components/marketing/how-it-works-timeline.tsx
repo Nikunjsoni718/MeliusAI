@@ -1,6 +1,6 @@
 'use client';
 
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion, useInView, useScroll, useTransform } from 'framer-motion';
 import { useRef } from 'react';
 
 type TimelineStepProps = {
@@ -11,8 +11,24 @@ type TimelineStepProps = {
 };
 
 function TimelineStep({ heading, description, reversed = false, children }: TimelineStepProps) {
+  const focusPointRef = useRef<HTMLDivElement>(null);
+  const isFocused = useInView(focusPointRef, {
+    margin: '-40% 0px -40% 0px',
+    amount: 0,
+  });
+
   return (
-    <section className="relative z-10 grid gap-8 pl-10 md:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] md:items-center md:gap-y-0 md:pl-0">
+    <motion.section
+      animate={isFocused ? 'focused' : 'dimmed'}
+      className="relative z-10 grid gap-8 pl-10 motion-reduce:!opacity-100 motion-reduce:!filter-none md:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] md:items-center md:gap-y-0 md:pl-0"
+      initial="dimmed"
+      transition={{ duration: 0.5, ease: 'easeOut' }}
+      variants={{
+        dimmed: { opacity: 0.35, filter: 'saturate(0.45) brightness(0.72)' },
+        focused: { opacity: 1, filter: 'saturate(1) brightness(1)' },
+      }}
+    >
+      <div ref={focusPointRef} aria-hidden="true" className="absolute left-1/2 top-1/2 h-px w-px" />
       <div className={reversed ? 'md:col-start-3 md:row-start-1' : 'md:col-start-1'}>
         <h2 className="text-4xl font-bold tracking-tight text-white lg:text-5xl">{heading}</h2>
         <p className="mt-6 text-lg leading-8 text-slate-400">{description}</p>
@@ -26,7 +42,7 @@ function TimelineStep({ heading, description, reversed = false, children }: Time
       >
         {children}
       </div>
-    </section>
+    </motion.section>
   );
 }
 
@@ -150,6 +166,7 @@ export function HowItWorksTimeline() {
     offset: ['start center', 'end center'],
   });
   const progressHeight = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
+  const progressPosition = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
 
   return (
     <div ref={timelineRef} className="relative mx-auto flex max-w-6xl flex-col gap-y-28 py-24 sm:gap-y-32">
@@ -161,6 +178,11 @@ export function HowItWorksTimeline() {
         aria-hidden="true"
         className="pointer-events-none absolute left-4 top-0 z-0 w-px bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)] motion-reduce:!h-full md:left-1/2 md:-translate-x-1/2"
         style={{ height: progressHeight }}
+      />
+      <motion.div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-4 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100/80 bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.95)] motion-reduce:hidden md:left-1/2"
+        style={{ top: progressPosition }}
       />
 
       <TimelineStep
