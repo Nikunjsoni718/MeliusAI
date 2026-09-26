@@ -1,22 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
-const betaMetrics = [
-  { value: '127+', label: 'Projects Audited' },
-  { value: '34+', label: 'Active Beta Builders' },
-  { value: '2,400+', label: 'Structure Reviews Generated' },
-];
-
-const auditStrengths = [
-  ['Clean Architecture', 'Proper structural separation of concerns.'],
-  ['Good API Design', 'Strict RESTful standards followed.'],
-];
-
-const auditWeaknesses = [
-  ['Missing Error Handling', 'Missing catch-block logging routines in /api/v1/auth.'],
-  ['Weak Input Validation', 'Zod schema parameters lack strict boundary constraints on user payloads.'],
-];
-
 export function LandingPage() {
   return (
     <main
@@ -92,94 +76,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="grid gap-3 border-y border-slate-900/80 py-6 sm:grid-cols-3">
-        {betaMetrics.map((metric) => (
-          <div
-            key={metric.label}
-            className="rounded-xl border border-blue-950/60 bg-[#090d1f]/45 px-5 py-5 text-center shadow-[0_0_32px_rgba(14,165,233,0.06)] backdrop-blur-md"
-          >
-            <p className="text-2xl font-semibold tracking-tight text-white drop-shadow-[0_0_18px_rgba(56,189,248,0.18)] sm:text-3xl">{metric.value}</p>
-            <p className="mt-2 text-sm font-medium text-slate-400">{metric.label}</p>
-          </div>
-        ))}
-      </section>
-
-      <section className="py-20">
-        <div className="grid items-center gap-10 lg:grid-cols-[0.85fr_1.15fr]">
-          <div>
-            <Badge variant="outline">Real Audit Preview</Badge>
-            <h2 className="mt-5 max-w-xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              See the exact review signal recruiters and builders can trust.
-            </h2>
-            <p className="mt-4 max-w-xl text-base leading-7 text-slate-400">
-              MeliusAI turns uploaded work into a structured technical audit: strengths, weaknesses, scoring, and practical recommendations without vague resume claims.
-            </p>
-          </div>
-
-          <div className="overflow-hidden rounded-2xl border border-blue-950/60 bg-[#050814]/95 shadow-[0_24px_90px_rgba(2,6,23,0.62)] backdrop-blur-xl">
-            <div className="flex flex-col gap-4 border-b border-blue-950/60 bg-[#071020]/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">repository</p>
-                <p className="mt-1 truncate font-mono text-sm text-slate-200">e-commerce-backend-api</p>
-              </div>
-              <div className="w-fit rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.12)]">
-                89/100
-              </div>
-            </div>
-
-            <div className="grid gap-5 p-5 lg:grid-cols-2">
-              <div className="rounded-xl border border-cyan-400/15 bg-cyan-500/[0.035] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300/80">Strengths</p>
-                <div className="mt-4 space-y-4">
-                  {auditStrengths.map(([title, description]) => (
-                    <div key={title}>
-                      <p className="text-sm font-semibold text-white">✅ {title}</p>
-                      <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200/75">Weaknesses</p>
-                <div className="mt-4 space-y-4">
-                  {auditWeaknesses.map(([title, description]) => (
-                    <div key={title}>
-                      <p className="text-sm font-semibold text-white">❌ {title}</p>
-                      <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-blue-950/60 bg-sky-500/[0.055] px-5 py-5">
-              <p className="text-sm leading-7 text-sky-100">
-                <span className="font-semibold text-white">Recommendation:</span> Strengthen token authentication layer variables and handle specific edge cases in route handlers.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="pb-4 pt-6">
-        <div className="rounded-[2rem] border border-blue-950/60 bg-[linear-gradient(135deg,rgba(9,13,31,0.92),rgba(3,7,18,0.96)_52%,rgba(8,20,38,0.92))] px-6 py-12 text-center shadow-[0_24px_80px_rgba(2,6,23,0.5)] backdrop-blur-xl sm:px-10 sm:py-16">
-          <h2 className="mx-auto max-w-3xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">
-            Ready to back up your resume with real, audited code?
-          </h2>
-          <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-            Join our active beta. Start running instant AI audits and build your verified technical capability profile today.
-          </p>
-          <Button
-            href="/auth/talent/signup"
-            size="lg"
-            className="group mt-8 bg-[#00a3ff] px-7 font-semibold text-black hover:bg-[#38bdf8]"
-          >
-            Create Developer Account
-            <span className="transition-transform duration-200 group-hover:translate-x-1">→</span>
-          </Button>
-        </div>
-      </section>
     </main>
   );
 }
