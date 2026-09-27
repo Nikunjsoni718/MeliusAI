@@ -182,22 +182,10 @@ export function HowItWorksTimeline() {
         />
         <motion.div
           aria-hidden="true"
-          className="pointer-events-none absolute left-4 z-20 -translate-x-1/2 -translate-y-1/2 bg-[#0a0a0a] p-1 text-cyan-400 drop-shadow-[0_0_10px_rgba(6,182,212,0.8)] md:left-1/2"
+          className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center w-6 h-6 rounded-full border-2 border-cyan-400 bg-[#0a0a0a] shadow-[0_0_15px_rgba(6,182,212,0.8)]"
           style={{ top: progressPosition }}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 5v14M19 12l-7 7-7-7" />
-          </svg>
+          <div className="w-2.5 h-2.5 rounded-full bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,1)]" />
         </motion.div>
 
         <TimelineStep
