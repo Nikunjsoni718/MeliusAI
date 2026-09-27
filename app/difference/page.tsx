@@ -3,15 +3,15 @@
 import { useState } from 'react';
 
 const oldWayPoints = [
-  'Keyword-stuffed PDF resumes that hide actual engineering talent.',
-  '10-hour unpaid take-home challenges that cause candidate drop-off.',
-  'Recruiters guessing technical depth based on company logos rather than code.',
+  'Keyword-stuffed PDF resumes that fail to demonstrate actual engineering depth.',
+  'Static GitHub repositories with no objective measure of code quality or architecture.',
+  'Relying on past company logos rather than undeniable proof of your current skills.',
 ];
 
 const meliusWayPoints = [
-  'Line-by-line AI audits mapping pure architectural logic.',
-  'Evidence-based engineering assessments stored securely in a private vault.',
-  'Organizations bypassing interview noise by hiring verified metrics directly.',
+  'Line-by-line AI audits mapping pure architectural logic and best practices.',
+  'Evidence-based engineering assessments that prove your exact technical capabilities.',
+  'A dynamic, secure profile backed by hard data and verified code metrics.',
 ];
 
 export default function Page() {
@@ -23,7 +23,7 @@ export default function Page() {
       <section className="mx-auto max-w-5xl text-center">
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Choose Your Ecosystem.</h1>
         <p className="mt-5 text-base leading-7 text-slate-400">
-          Compare the old way of talent discovery with the Melius layer.
+          Compare the old way of building a resume with undeniable technical proof.
         </p>
       </section>
 
@@ -31,7 +31,7 @@ export default function Page() {
         <div
           className="bg-gray-900 border border-gray-800 p-1 rounded-full flex relative w-72 h-12 cursor-pointer"
           role="group"
-          aria-label="Compare hiring ecosystems"
+          aria-label="Compare developer verification paths"
         >
           <span
             className={`bg-cyan-600 rounded-full h-10 w-[140px] absolute transition-all duration-300 ${
@@ -69,7 +69,7 @@ export default function Page() {
                 : 'text-white'
             }`}
           >
-            {isMeliusWay ? 'The Verified Technical Signal' : 'The Traditional Hiring Friction'}
+            {isMeliusWay ? 'The Verified Scorecard' : 'The Traditional Resume'}
           </h2>
 
           <div className="mt-8 space-y-5">
