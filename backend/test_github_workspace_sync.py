@@ -158,6 +158,8 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=workspace_context),
             ),
             patch.object(main, "_record_push_notification_activity", new=AsyncMock()),
+            patch.object(main, "_update_repository_push_metadata", new=AsyncMock(return_value=0)),
+            patch.object(main, "_get_repository_sync_access_token", new=AsyncMock(return_value=None)),
             patch.object(
                 main,
                 "_build_github_folder_hierarchy",
@@ -217,6 +219,8 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])),
             patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)),
             patch.object(main, "_record_push_notification_activity", new=AsyncMock()),
+            patch.object(main, "_update_repository_push_metadata", new=AsyncMock(return_value=0)),
+            patch.object(main, "_get_repository_sync_access_token", new=AsyncMock(return_value=None)),
             patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"src/index.ts": "folder-src"})),
             patch.object(main, "download_github_raw_file", new=download_one_file),
             patch.object(main, "_create_workspace_asset", new=AsyncMock(return_value=1)),
@@ -271,6 +275,8 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])))
             stack.enter_context(patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)))
             stack.enter_context(patch.object(main, "_record_push_notification_activity", new=AsyncMock()))
+            stack.enter_context(patch.object(main, "_update_repository_push_metadata", new=AsyncMock(return_value=0)))
+            stack.enter_context(patch.object(main, "_get_repository_sync_access_token", new=AsyncMock(return_value=None)))
             stack.enter_context(patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"a.py": "folder-a", "b.py": "folder-b"})))
             stack.enter_context(patch.object(main, "download_github_raw_file", new=download_one_file))
             stack.enter_context(patch.object(main, "_create_workspace_asset", new=record_created_asset))
@@ -291,8 +297,8 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_paths, ["a.py", "b.py"])
         pause.assert_awaited_once_with(1)
         self.assertIn(f"WEBHOOK RECEIVED: Processing commit {'a' * 40}", "\n".join(logs.output))
-        self.assertIn("SEQUENTIAL PROCESSING: Auditing file a.py (1 of 2)", "\n".join(logs.output))
-        self.assertIn("SEQUENTIAL PROCESSING: Auditing file b.py (2 of 2)", "\n".join(logs.output))
+        self.assertIn("SEQUENTIAL PROCESSING: Syncing GitHub file a.py (1 of 2)", "\n".join(logs.output))
+        self.assertIn("SEQUENTIAL PROCESSING: Syncing GitHub file b.py (2 of 2)", "\n".join(logs.output))
 
     async def test_failed_file_does_not_stop_later_sequential_syncs(self):
         workspace_context = main.GitHubWorkspaceContext(
@@ -328,6 +334,8 @@ class GitHubWorkspaceSyncTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(main, "_load_repository_assets", new=AsyncMock(return_value=[{"id": "imported-asset", "user_id": "user-testing-2", "is_public": True}])))
             stack.enter_context(patch.object(main, "_resolve_repository_workspace_context", new=AsyncMock(return_value=workspace_context)))
             stack.enter_context(patch.object(main, "_record_push_notification_activity", new=AsyncMock()))
+            stack.enter_context(patch.object(main, "_update_repository_push_metadata", new=AsyncMock(return_value=0)))
+            stack.enter_context(patch.object(main, "_get_repository_sync_access_token", new=AsyncMock(return_value=None)))
             stack.enter_context(patch.object(main, "_build_github_folder_hierarchy", new=AsyncMock(return_value={"a.py": "folder-a", "b.py": "folder-b", "c.py": "folder-c"})))
             stack.enter_context(patch.object(main, "download_github_raw_file", new=download_one_file))
             stack.enter_context(patch.object(main, "_create_workspace_asset", new=record_created_asset))

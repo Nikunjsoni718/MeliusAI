@@ -868,6 +868,30 @@ def get_github_after_sha(payload: dict[str, Any]) -> str:
     return after_sha.strip().lower()
 
 
+def get_github_push_branch(payload: dict[str, Any]) -> str | None:
+    """Return a branch name from a GitHub push ref, never a tag name."""
+    raw_ref = str(payload.get("ref") or "").strip()
+    branch_prefix = "refs/heads/"
+    if not raw_ref.startswith(branch_prefix):
+        return None
+
+    branch_name = raw_ref[len(branch_prefix) :].strip()
+    return branch_name or None
+
+
+def get_github_default_branch(payload: dict[str, Any]) -> str | None:
+    """Use GitHub's declared default branch, falling back to this push's branch."""
+    repository_payload = payload.get("repository")
+    default_branch = (
+        repository_payload.get("default_branch")
+        if isinstance(repository_payload, dict)
+        else None
+    )
+    if isinstance(default_branch, str) and default_branch.strip():
+        return default_branch.strip()
+    return get_github_push_branch(payload)
+
+
 def _get_positive_int_env(name: str, default: int) -> int:
     raw_value = os.getenv(name)
     if not raw_value:
@@ -2590,6 +2614,72 @@ async def _repository_is_actively_tracked(
     return bool(_response_rows(response))
 
 
+async def _update_repository_push_metadata(
+    supabase_client: Any,
+    *,
+    table_name: str,
+    repository_rows: list[dict[str, Any]],
+    default_branch: str | None,
+    commit_sha: str,
+) -> int:
+    """Persist a push's branch and commit on every existing workspace asset.
+
+    ``projects`` uses ``github_ref`` and ``github_commit_sha`` as its supported
+    branch and latest-commit columns. In particular, this promotes the
+    placeholder created for an empty repository before any source file download
+    begins, so a first push cannot leave the workspace appearing uninitialized.
+    """
+    updated_rows = 0
+    metadata_timestamp = datetime.now(timezone.utc).isoformat()
+    for row in repository_rows:
+        row_id = str(row.get("id") or "").strip()
+        if not row_id:
+            continue
+
+        update_payload: dict[str, Any] = {
+            "github_commit_sha": commit_sha,
+            "github_synced_at": metadata_timestamp,
+            "github_sync_error": None,
+        }
+        existing_ref = str(row.get("github_ref") or "").strip()
+        if not existing_ref and default_branch:
+            update_payload["github_ref"] = default_branch
+
+        response = await _run_supabase(
+            lambda row_id=row_id, update_payload=update_payload: supabase_client.table(table_name)
+            .update(update_payload)
+            .eq("id", row_id)
+            .execute()
+        )
+        updated_rows += len(_response_rows(response)) or 1
+
+    return updated_rows
+
+
+async def _get_repository_sync_access_token(
+    workspace_contexts: dict[str, "GitHubWorkspaceContext"],
+) -> str | None:
+    """Prefer the webhook credential, then an imported owner's stored token."""
+    configured_token = _get_github_access_token()
+    if configured_token:
+        return configured_token
+
+    for user_id in workspace_contexts:
+        try:
+            access_token = await get_persisted_github_connection_token(user_id)
+        except RuntimeError as token_error:
+            logger.warning(
+                "github_webhook.repository_sync_token_unavailable user_id=%s error=%s",
+                user_id,
+                token_error,
+            )
+            continue
+        if access_token:
+            return access_token
+
+    return None
+
+
 def _get_github_repository_url(
     payload: dict[str, Any],
     *,
@@ -2933,10 +3023,13 @@ async def _create_project_folder(
         .insert(insert_payload)
         .execute()
     )
-    rows = _response_rows(response)
-    if not rows:
+    response_data = getattr(response, "data", None)
+    if not isinstance(response_data, list) or not response_data:
         raise RuntimeError(f"Project folder insert returned no record for {folder_name}.")
-    return rows[0]
+    folder = response_data[0]
+    if not isinstance(folder, dict) or not str(folder.get("id") or "").strip():
+        raise RuntimeError(f"Project folder insert returned no ID for {folder_name}.")
+    return folder
 
 
 async def _get_or_create_project_folder(
@@ -3369,10 +3462,19 @@ async def _create_github_repository_placeholder(
 async def process_github_repository_created_event(
     payload: dict[str, Any],
     *,
-    supabase_client: Any,
+    supabase_client: Any | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> GitHubWebhookSyncResult:
-    """Import a newly connected repository directly into its owner's MeliusAI workspace."""
+    """Import a newly connected repository with the service-role Supabase client."""
+    # Webhooks have no authenticated user session. Always resolve the service
+    # client here rather than trusting a caller-supplied (possibly anon/RLS
+    # scoped) client, otherwise PostgREST can return an empty insert result.
+    supabase_client = get_supabase_service_client()
+    if supabase_client is None:
+        raise RuntimeError(
+            "SUPABASE_SERVICE_ROLE_KEY is required for GitHub repository import."
+        )
+
     repository = get_github_repository_full_name(payload)
     repository_payload = payload.get("repository")
     if not isinstance(repository_payload, dict):
@@ -3512,12 +3614,8 @@ async def process_github_repository_created_in_background(
     delivery_id: str | None,
 ) -> None:
     try:
-        service_client = get_supabase_service_client()
-        if service_client is None:
-            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required for GitHub repository import.")
         result = await process_github_repository_created_event(
             payload,
-            supabase_client=service_client,
         )
         logger.info(
             "github_webhook.repository_import_processed delivery_id=%s result=%s",
@@ -3540,7 +3638,8 @@ async def process_github_push_event(
     """Synchronize GitHub push changes into MeliusAI workspace asset records."""
     repository = get_github_repository_full_name(payload)
     commit_sha = get_github_after_sha(payload)
-    ref = str(payload.get("ref") or "").strip()
+    ref = get_github_push_branch(payload) or str(payload.get("ref") or "").strip()
+    default_branch = get_github_default_branch(payload)
     changes = extract_github_push_changes(payload)
     excluded_test_paths = {
         path
@@ -3575,17 +3674,27 @@ async def process_github_push_event(
     )
     # `projects.github_repository` is the persisted proof that a repository
     # was explicitly imported into a MeliusAI workspace. A GitHub App event
-    # can still identify its owner, but ownership alone must never schedule a
-    # cooldown or create an alert.
+    # can identify its owner, but ownership alone must never create a workspace.
     imported_workspace_contexts = _build_workspace_contexts(repository_rows)
     if not imported_workspace_contexts:
         # Re-check in the worker to cover direct callers and a repository that
         # was removed after the request-side webhook gate ran. In particular,
-        # do not fall back to the webhook sender: that can create lifecycle
-        # notifications for GitHub App repositories the user never imported.
+        # do not fall back to the webhook sender: a push must never import an
+        # unselected GitHub App repository.
         result.skipped_files += len(trackable_paths) + len(removed_paths)
         result.errors.append("Ignored: Repo not imported.")
         return result
+
+    # This is metadata and source synchronization only. It intentionally runs
+    # before file downloads so the first push after an empty-repository
+    # placeholder makes the workspace current even if a later file sync fails.
+    result.updated_records += await _update_repository_push_metadata(
+        supabase_client,
+        table_name=table_name,
+        repository_rows=repository_rows,
+        default_branch=default_branch,
+        commit_sha=commit_sha,
+    )
 
     workspace_contexts = dict(imported_workspace_contexts)
 
@@ -3610,18 +3719,10 @@ async def process_github_push_event(
         )
         workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
-    access_token = _get_github_access_token()
-    try:
-        await _record_push_notification_activity(
-            supabase_client,
-            payload=payload,
-            repository=repository,
-            user_ids=set(imported_workspace_contexts.keys()),
-            access_token=access_token,
-        )
-    except Exception:
-        # Notification tracking must never block the existing repository sync.
-        logger.exception("GitHub notification tracking failed for %s", repository)
+    # A push synchronizes repository metadata and source assets only. It never
+    # schedules a cooldown, a debounce job, or an AI audit; verification is
+    # exclusively initiated by the user's explicit Audit action.
+    access_token = await _get_repository_sync_access_token(workspace_contexts)
     owns_http_client = http_client is None
     active_http_client = http_client or httpx.AsyncClient(
         follow_redirects=True,
@@ -3705,7 +3806,7 @@ async def process_github_push_event(
         total_paths = len(trackable_paths)
         for index, file_path in enumerate(trackable_paths, start=1):
             logger.info(
-                "SEQUENTIAL PROCESSING: Auditing file %s (%s of %s)",
+                "SEQUENTIAL PROCESSING: Syncing GitHub file %s (%s of %s)",
                 file_path,
                 index,
                 total_paths,
@@ -4717,14 +4818,21 @@ async def _remove_project_deletion_storage_paths(
 
 
 def _project_lifecycle_result(response: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-    rows = _response_rows(response)
-    result = rows[0] if rows else None
+    response_data = getattr(response, "data", None)
+    if isinstance(response_data, list):
+        result = response_data[0] if response_data else None
+    elif isinstance(response_data, dict):
+        result = response_data
+    else:
+        result = None
     if not isinstance(result, dict):
         raise RuntimeError("Project lifecycle mutation returned no result.")
     notification = result.get("notification")
     resource = result.get("folder") or result.get("project")
     if not isinstance(notification, dict) or not isinstance(resource, dict):
         raise RuntimeError("Project lifecycle mutation returned an invalid result.")
+    if not str(resource.get("id") or "").strip():
+        raise RuntimeError("Project lifecycle mutation returned a resource without an ID.")
     return resource, notification
 
 

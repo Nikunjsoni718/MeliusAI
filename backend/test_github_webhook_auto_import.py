@@ -63,7 +63,10 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_repository_created_imports_tree_without_pending_imports(self):
         context = main.GitHubWorkspaceContext(user_id="user-1", is_public=True)
-        with patch.object(main, "_resolve_repository_workspace_context", AsyncMock(return_value=context)), patch.object(
+        service_client = object()
+        with patch.object(main, "get_supabase_service_client", return_value=service_client), patch.object(
+            main, "_resolve_repository_workspace_context", AsyncMock(return_value=context)
+        ) as resolve_workspace, patch.object(
             main, "_repository_is_actively_tracked", AsyncMock(return_value=False)
         ), patch.object(
             main, "get_persisted_github_connection_token", AsyncMock(return_value="token")
@@ -93,10 +96,13 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.created_records, 2)
         self.assertEqual(create_asset.await_count, 2)
         create_placeholder.assert_not_awaited()
+        self.assertIs(resolve_workspace.await_args.args[0], service_client)
 
     async def test_empty_repository_registers_a_placeholder_workspace(self):
         context = main.GitHubWorkspaceContext(user_id="user-1", is_public=True)
-        with patch.object(main, "_resolve_repository_workspace_context", AsyncMock(return_value=context)), patch.object(
+        with patch.object(main, "get_supabase_service_client", return_value=object()), patch.object(
+            main, "_resolve_repository_workspace_context", AsyncMock(return_value=context)
+        ), patch.object(
             main, "_repository_is_actively_tracked", AsyncMock(return_value=False)
         ), patch.object(
             main, "get_persisted_github_connection_token", AsyncMock(return_value="token")
@@ -116,12 +122,79 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
         create_asset.assert_not_awaited()
         create_placeholder.assert_awaited_once()
 
+    async def test_first_push_updates_placeholder_metadata_without_an_audit(self):
+        commit_sha = "c" * 40
+        placeholder = {
+            "id": "placeholder-1",
+            "user_id": "user-1",
+            "folder_id": "folder-1",
+            "github_ref": None,
+            "github_commit_sha": None,
+        }
+
+        class Query:
+            def update(self, payload):
+                self.payload = payload
+                return self
+
+            def eq(self, *_args):
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data=[{"id": "placeholder-1"}])
+
+        class SupabaseClient:
+            def __init__(self):
+                self.query = Query()
+
+            def table(self, table_name):
+                self.table_name = table_name
+                return self.query
+
+        payload = {
+            **self.repository_payload(),
+            "after": commit_sha,
+            "ref": "refs/heads/main",
+            "commits": [],
+        }
+        client = SupabaseClient()
+        with patch.object(main, "_load_repository_assets", AsyncMock(return_value=[placeholder])), patch.object(
+            main, "_get_repository_sync_access_token", AsyncMock(return_value=None)
+        ), patch.object(main, "_schedule_repository_cooldown", AsyncMock()) as schedule_cooldown, patch.object(
+            main, "run_incremental_audit", AsyncMock()
+        ) as run_incremental_audit:
+            result = await main.process_github_push_event(
+                payload,
+                supabase_client=client,
+            )
+
+        self.assertEqual(result.updated_records, 1)
+        self.assertEqual(client.table_name, "projects")
+        self.assertEqual(client.query.payload["github_ref"], "main")
+        self.assertEqual(client.query.payload["github_commit_sha"], commit_sha)
+        schedule_cooldown.assert_not_awaited()
+        run_incremental_audit.assert_not_awaited()
+
     def test_installation_account_is_an_owner_lookup_candidate(self):
         candidates = main._github_identity_candidates(
             {"installation": {"account": {"id": 77, "login": "installed-owner"}}}
         )
         self.assertEqual(candidates["github_user_id"], ["77"])
         self.assertEqual(candidates["github_username"], ["installed-owner"])
+
+    def test_project_lifecycle_reads_the_first_returned_folder_id(self):
+        folder, notification = main._project_lifecycle_result(
+            SimpleNamespace(
+                data=[
+                    {
+                        "folder": {"id": "folder-1", "name": "new-repository"},
+                        "notification": {"id": "notification-1"},
+                    }
+                ]
+            )
+        )
+        self.assertEqual(folder["id"], "folder-1")
+        self.assertEqual(notification["id"], "notification-1")
 
     def test_webhook_module_has_no_pending_imports_dependency(self):
         with open(main.__file__, encoding="utf-8") as source_file:
