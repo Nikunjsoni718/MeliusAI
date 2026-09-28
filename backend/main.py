@@ -9977,6 +9977,34 @@ def _repository_audit_response(report: dict, *, incremental: bool, no_changes=Fa
             "diff_id": diff_id}
 
 
+_STORED_FILE_FULL_AUDIT_CODES = frozenset({
+    "BASELINE_REQUIRED",
+    "BASELINE_UNAVAILABLE",
+    "INCOMPLETE_DIFF",
+    "INVALID_COMMIT",
+    "INVALID_DIFF",
+})
+
+
+def _tracking_response_code(response: Any) -> str | None:
+    """Extract a structured DiffServiceError code from a route response."""
+    if not isinstance(response, JSONResponse):
+        return None
+
+    try:
+        payload = json.loads(response.body)
+    except (TypeError, ValueError):
+        return None
+
+    code = payload.get("code") if isinstance(payload, dict) else None
+    return code if isinstance(code, str) else None
+
+
+def _should_fallback_to_stored_file_full_audit(response: Any) -> bool:
+    """Return True only for first-time or invalid-diff repository verification failures."""
+    return _tracking_response_code(response) in _STORED_FILE_FULL_AUDIT_CODES
+
+
 async def _run_repository_verification(payload: AuditRequest, request: Request, current_user_id: str, *, baseline=False):
     folder_id = payload.folder_id.strip()
     if not folder_id or payload.user_id.strip() != current_user_id:
@@ -10138,16 +10166,47 @@ async def run_project_baseline_audit(
     if requested_user_id != current_user_id:
         raise HTTPException(status_code=403, detail="You can only audit your own project folder.")
 
-    # GitHub workspaces use the canonical repository state, including empty/deleted workspaces.
+    # A newly imported GitHub workspace may already have rows in `projects`, but
+    # it has no verified repository baseline yet.  Do not attempt a git diff in
+    # that case: audit the current, synced file rows below instead.  This also
+    # gives us a safe recovery path when a provider cannot construct a diff for
+    # a first commit.
     try:
         scoped = get_request_supabase_client(request)
         tracked = await github_diffs.get_repository_state(scoped, folder_id, current_user_id)
-        linked = await run_in_audit_thread(lambda: scoped.table("projects").select("id")
-            .eq("folder_id", folder_id).eq("user_id", current_user_id).not_.is_("github_repository", "null").limit(1).execute())
-        if tracked or _response_rows(linked):
-            return await _run_repository_verification(payload, request, current_user_id, baseline=True)
+        has_verified_baseline = bool(
+            tracked
+            and tracked.get("previous_verified_report")
+            and has_structured_finding_impacts(tracked.get("previous_verified_report"))
+        )
+        if has_verified_baseline:
+            repository_response = await _run_repository_verification(
+                payload,
+                request,
+                current_user_id,
+                baseline=True,
+            )
+            if not _should_fallback_to_stored_file_full_audit(repository_response):
+                return repository_response
+            logger.info(
+                "project_audit.repository_diff_fallback folder_id=%s code=%s",
+                folder_id,
+                _tracking_response_code(repository_response),
+            )
+        else:
+            logger.info(
+                "project_audit.first_time_full_audit folder_id=%s tracked_state=%s",
+                folder_id,
+                bool(tracked),
+            )
     except github_diffs.DiffServiceError as error:
-        return _tracking_error_response(error)
+        if error.code not in _STORED_FILE_FULL_AUDIT_CODES:
+            return _tracking_error_response(error)
+        logger.info(
+            "project_audit.repository_diff_fallback folder_id=%s code=%s",
+            folder_id,
+            error.code,
+        )
 
     audit_slot_acquired = False
     db_response = None
@@ -10158,6 +10217,7 @@ async def run_project_baseline_audit(
     files_to_update = []
     orchestration_result = None
     previous_folder_score = 0
+    folder_row: dict[str, Any] = {}
 
     try:
         try:
@@ -10178,7 +10238,7 @@ async def run_project_baseline_audit(
         try:
             folder_response = await run_in_audit_thread(
                 lambda: supabase_client.table("project_folders")
-                .select("id, evaluation_score")
+                .select("id, evaluation_score, source")
                 .eq("id", folder_id)
                 .eq("user_id", requested_user_id)
                 .maybe_single()
@@ -10207,6 +10267,22 @@ async def run_project_baseline_audit(
             .execute()
         )
         files = db_response.data if isinstance(db_response.data, list) else []
+        is_github_workspace = (
+            folder_row.get("source") == "github"
+            or any(file_record.get("github_repository") for file_record in files)
+        )
+        if is_github_workspace:
+            # GitHub's empty-repository placeholder is not source code.  Audit
+            # exactly the trackable source assets that the webhook has synced
+            # into `projects`, using the repository path to avoid basename
+            # collisions such as api/index.ts and web/index.ts.
+            files = [
+                file_record
+                for file_record in files
+                if is_trackable_github_asset(
+                    str(file_record.get("github_file_path") or "")
+                )
+            ]
 
         if not files:
             raise HTTPException(status_code=404, detail="No files found in this folder.")
@@ -10227,7 +10303,11 @@ async def run_project_baseline_audit(
         loaded_files = [
             {
                 "record": file_record,
-                "file_name": get_audit_file_name(file_record),
+                "file_name": (
+                    str(file_record.get("github_file_path") or "").strip()
+                    if is_github_workspace
+                    else get_audit_file_name(file_record)
+                ) or get_audit_file_name(file_record),
                 "content": file_content,
             }
             for file_record, file_content in zip(files, file_contents)
@@ -10401,7 +10481,20 @@ async def run_project_baseline_audit(
 
 @app.post("/api/audit-project")
 async def run_project_incremental_audit(payload: AuditRequest, request: Request, current_user_id: str = Depends(verify_user)):
-    return await _run_repository_verification(payload, request, current_user_id)
+    response = await _run_repository_verification(payload, request, current_user_id)
+    if not _should_fallback_to_stored_file_full_audit(response):
+        return response
+
+    # The manual Verify action must work for the first pushed commit.  There is
+    # no safe prior SHA to diff in that state, so use the same full audit route
+    # that reads all current `projects` source rows for this `project_folders`
+    # workspace.  This stays entirely user-triggered; webhooks remain sync-only.
+    logger.info(
+        "project_audit.incremental_to_full_fallback folder_id=%s code=%s",
+        payload.folder_id,
+        _tracking_response_code(response),
+    )
+    return await run_project_baseline_audit(payload, request, current_user_id)
 
 
 class MatchTalentRequest(BaseModel):

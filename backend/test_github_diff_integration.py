@@ -301,6 +301,106 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         finalize.assert_not_awaited()
         ai.assert_not_called()
 
+    def test_only_first_time_and_invalid_diff_errors_use_stored_file_full_audit(self):
+        for code in ("BASELINE_REQUIRED", "BASELINE_UNAVAILABLE", "INCOMPLETE_DIFF", "INVALID_COMMIT", "INVALID_DIFF"):
+            response = main._tracking_error_response(DiffServiceError(code, code))
+            self.assertTrue(main._should_fallback_to_stored_file_full_audit(response), code)
+
+        self.assertFalse(
+            main._should_fallback_to_stored_file_full_audit(
+                main._tracking_error_response(DiffServiceError("GITHUB_AUTH_REQUIRED", "Reconnect", 401))
+            )
+        )
+
+    async def test_manual_audit_uses_full_stored_file_path_when_no_baseline_exists(self):
+        class Query:
+            def __init__(self, data):
+                self.data = data
+
+            def select(self, *_args):
+                return self
+
+            def eq(self, *_args):
+                return self
+
+            def neq(self, *_args):
+                return self
+
+            def maybe_single(self):
+                return self
+
+            def update(self, *_args):
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data=self.data)
+
+        project_rows = [{
+            "id": "file-1",
+            "user_id": "owner",
+            "folder_id": "folder",
+            "name": "main.py",
+            "github_repository": "owner/repo",
+            "github_file_path": "src/main.py",
+            "raw_content": "print('synced source')",
+            "status": "draft",
+        }]
+
+        class Client:
+            def table(self, table_name):
+                if table_name == "project_folders":
+                    return Query({"id": "folder", "evaluation_score": 0, "source": "github"})
+                if table_name == "projects":
+                    return Query(project_rows)
+                raise AssertionError(f"Unexpected table: {table_name}")
+
+        file_audit = {
+            "evaluated_score": 82,
+            "delta_summary": "Full audit completed from the current synced files.",
+            "executive_summary": "Source was audited.",
+            "pros": [],
+            "cons": [],
+            "recommendations": [],
+            "finding_impacts": {"pros": [], "cons": [], "recommendations": []},
+        }
+        full_result = {
+            "folder_score": 82,
+            "folder_audit": file_audit,
+            "file_audits": {"src/main.py": file_audit},
+            "partial_failures": [],
+        }
+        client = Client()
+        fallback_response = main._tracking_error_response(
+            DiffServiceError("BASELINE_REQUIRED", "Baseline required.", 409)
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(main, "PROJECT_AUDIT_SEMAPHORE", main.asyncio.Semaphore(2)))
+            stack.enter_context(patch.object(main, "get_request_supabase_client", return_value=client))
+            stack.enter_context(
+                patch.object(main.github_diffs, "get_repository_state", new=AsyncMock(return_value=None))
+            )
+            incremental = stack.enter_context(
+                patch.object(main, "_run_repository_verification", new=AsyncMock(return_value=fallback_response))
+            )
+            orchestrate = stack.enter_context(
+                patch.object(main, "orchestrate_audit", new=AsyncMock(return_value=full_result))
+            )
+            mark_file = stack.enter_context(
+                patch.object(main, "mark_project_file_audited", new=AsyncMock(return_value=True))
+            )
+            result = await main.run_project_incremental_audit(
+                main.AuditRequest(folder_id="folder", user_id="owner"),
+                Mock(),
+                "owner",
+            )
+
+        self.assertEqual(result["folder_score"], 82)
+        incremental.assert_awaited_once()
+        self.assertEqual(orchestrate.await_args.args[0][0]["filename"], "src/main.py")
+        self.assertEqual(orchestrate.await_args.args[0][0]["content"], "print('synced source')")
+        mark_file.assert_awaited_once()
+
     async def test_incomplete_baseline_never_advances(self):
         result, save, finalize, _, _ = await self.exercise(baseline=True, source_error=DiffServiceError("INCOMPLETE_BASELINE", "Missing file"))
         self.assertEqual(main.json.loads(result.body)["code"], "INCOMPLETE_BASELINE")
