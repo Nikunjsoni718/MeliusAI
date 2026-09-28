@@ -1311,6 +1311,41 @@ async def fetch_github_branch_head_commit(
     return _validate_github_commit_sha(payload.get("sha"), label="GitHub branch head")
 
 
+async def fetch_github_repository_tree_paths(
+    http_client: httpx.AsyncClient,
+    *,
+    repository: str,
+    commit_sha: str,
+    access_token: str | None,
+) -> tuple[list[str], bool]:
+    """Return repository file paths at one immutable commit for first-time webhook import."""
+    if not _REPOSITORY_FULL_NAME_PATTERN.fullmatch(repository):
+        raise GitHubCompareError("GitHub repository name is invalid.")
+    sha = _validate_github_commit_sha(commit_sha, label="GitHub repository import commit")
+    request_url = (
+        f"{GITHUB_API_BASE_URL}/repos/{quote(repository, safe='/')}/git/trees/"
+        f"{quote(sha, safe='')}"
+    )
+    response = await http_client.get(
+        request_url,
+        headers=_github_api_headers(access_token),
+        params={"recursive": "1"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("tree"), list):
+        raise GitHubCompareError("GitHub returned an invalid repository tree.")
+
+    paths: list[str] = []
+    for entry in payload["tree"]:
+        if not isinstance(entry, dict) or entry.get("type") != "blob":
+            continue
+        path = normalize_github_file_path(entry.get("path"))
+        if path:
+            paths.append(path)
+    return sorted(dict.fromkeys(paths)), bool(payload.get("truncated"))
+
+
 async def fetch_github_compare_diff(http_client: httpx.AsyncClient, *, repository: str, base_sha: str, head_sha: str, access_token: str | None) -> dict[str, Any]:
     """Compatibility entry point; structured repository deltas have no character cap."""
     return (await github_diffs.calculate_cumulative_diff(repository, base_sha, head_sha,
@@ -2578,12 +2613,18 @@ def _github_identity_candidates(payload: dict[str, Any]) -> dict[str, list[str]]
         if isinstance(repository_payload, dict)
         else None
     )
+    installation_payload = payload.get("installation")
+    installation_account = (
+        installation_payload.get("account")
+        if isinstance(installation_payload, dict)
+        else None
+    )
     sender = payload.get("sender")
     pusher = payload.get("pusher")
 
     actors = [
         actor
-        for actor in (repository_owner, sender, pusher)
+        for actor in (repository_owner, installation_account, sender, pusher)
         if isinstance(actor, dict)
     ]
 
@@ -3286,6 +3327,210 @@ async def _recalculate_workspace_profile_score(
     )
 
 
+async def _create_github_repository_placeholder(
+    supabase_client: Any,
+    *,
+    workspace_context: GitHubWorkspaceContext,
+    folder_id: str,
+    repository: str,
+    repository_url: str,
+    ref: str | None,
+    commit_sha: str | None,
+) -> int:
+    """Register an empty or temporarily unreadable repository without fabricating a source file."""
+    repository_name = _github_repository_folder_name(repository)
+    response = await _run_supabase(
+        lambda: supabase_client.table(_get_workspace_assets_table_name())
+        .insert(
+            {
+                "user_id": workspace_context.user_id,
+                "folder_id": folder_id,
+                "name": repository_name,
+                "title": repository_name,
+                "file_type": "github",
+                "file_url": repository_url,
+                "is_public": workspace_context.is_public,
+                "status": "draft",
+                "github_repository": repository,
+                "github_file_path": None,
+                "github_ref": ref,
+                "github_commit_sha": commit_sha,
+                "github_sync_status": "synced",
+                "github_synced_at": datetime.now(timezone.utc).isoformat(),
+                "github_sync_error": None,
+                "has_been_audited": False,
+            }
+        )
+        .execute()
+    )
+    return len(_response_rows(response)) or 1
+
+
+async def process_github_repository_created_event(
+    payload: dict[str, Any],
+    *,
+    supabase_client: Any,
+    http_client: httpx.AsyncClient | None = None,
+) -> GitHubWebhookSyncResult:
+    """Import a newly connected repository directly into its owner's MeliusAI workspace."""
+    repository = get_github_repository_full_name(payload)
+    repository_payload = payload.get("repository")
+    if not isinstance(repository_payload, dict):
+        raise ValueError("GitHub repository payload is missing.")
+
+    result = GitHubWebhookSyncResult(
+        repository=repository,
+        commit_sha="",
+        trackable_files=0,
+        removed_files=0,
+    )
+    workspace_context = await _resolve_repository_workspace_context(
+        supabase_client,
+        payload=payload,
+        repository=repository,
+    )
+    if workspace_context is None:
+        result.errors.append("Ignored: no connected MeliusAI GitHub owner.")
+        return result
+
+    if await _repository_is_actively_tracked(supabase_client, repository=repository):
+        result.errors.append("Ignored: repository already imported.")
+        return result
+
+    try:
+        access_token = await get_persisted_github_connection_token(workspace_context.user_id)
+    except RuntimeError as token_error:
+        result.errors.append(f"Ignored: GitHub connection unavailable ({token_error}).")
+        return result
+    if not access_token:
+        result.errors.append("Ignored: GitHub account is not connected.")
+        return result
+
+    repository_url = _get_github_repository_url(payload, repository=repository)
+    ref = str(repository_payload.get("default_branch") or "").strip() or None
+    commit_sha: str | None = None
+    trackable_paths: list[str] = []
+    tree_truncated = False
+    owns_http_client = http_client is None
+    active_http_client = http_client or httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(30.0),
+    )
+
+    try:
+        if ref:
+            try:
+                commit_sha = await fetch_github_branch_head_commit(
+                    active_http_client,
+                    repository=repository,
+                    ref=ref,
+                    access_token=access_token,
+                )
+                repository_paths, tree_truncated = await fetch_github_repository_tree_paths(
+                    active_http_client,
+                    repository=repository,
+                    commit_sha=commit_sha,
+                    access_token=access_token,
+                )
+                trackable_paths = [
+                    path
+                    for path in repository_paths
+                    if is_trackable_github_asset(path) and not is_non_production_test_path(path)
+                ]
+                result.skipped_files = len(repository_paths) - len(trackable_paths)
+            except httpx.HTTPStatusError as github_error:
+                # Empty repositories have no branch commit yet. They still receive a visible workspace.
+                status_code = github_error.response.status_code
+                if status_code in {404, 409, 422}:
+                    result.errors.append(f"Repository has no importable branch head yet (GitHub {status_code}).")
+                else:
+                    result.errors.append(f"Initial repository tree could not be read (GitHub {status_code}).")
+            except (GitHubCompareError, httpx.HTTPError, ValueError) as discovery_error:
+                # Registration must not disappear just because GitHub's first tree request is transiently unavailable.
+                result.errors.append(f"Initial repository tree could not be read: {discovery_error}")
+
+        result.commit_sha = commit_sha or ""
+        result.trackable_files = len(trackable_paths)
+        folder_map = await _build_github_folder_hierarchy(
+            supabase_client,
+            user_id=workspace_context.user_id,
+            repository=repository,
+            file_paths=trackable_paths,
+        )
+        root_folder_id = folder_map.get("")
+        if not root_folder_id:
+            raise RuntimeError("GitHub repository workspace folder was created without an ID.")
+
+        for file_path in trackable_paths:
+            try:
+                content, content_type = await download_github_raw_file(
+                    active_http_client,
+                    repository=repository,
+                    commit_sha=commit_sha or "",
+                    file_path=file_path,
+                    access_token=access_token,
+                )
+                folder_id = folder_map.get(file_path) or root_folder_id
+                result.created_records += await _create_workspace_asset(
+                    supabase_client,
+                    table_name=_get_workspace_assets_table_name(),
+                    bucket_name=_get_storage_bucket_name(),
+                    workspace_context=workspace_context,
+                    folder_id=folder_id,
+                    repository=repository,
+                    file_path=file_path,
+                    ref=ref or "",
+                    commit_sha=commit_sha or "",
+                    content=content,
+                    content_type=content_type,
+                )
+            except Exception as file_error:
+                result.failed_files += 1
+                result.errors.append(f"{file_path}: {file_error}")
+
+        if result.created_records == 0:
+            result.created_records += await _create_github_repository_placeholder(
+                supabase_client,
+                workspace_context=workspace_context,
+                folder_id=root_folder_id,
+                repository=repository,
+                repository_url=repository_url,
+                ref=ref,
+                commit_sha=commit_sha,
+            )
+        if tree_truncated:
+            result.errors.append("GitHub truncated the repository tree; subsequent pushes will continue sync.")
+    finally:
+        if owns_http_client:
+            await active_http_client.aclose()
+
+    return result
+
+
+async def process_github_repository_created_in_background(
+    payload: dict[str, Any],
+    delivery_id: str | None,
+) -> None:
+    try:
+        service_client = get_supabase_service_client()
+        if service_client is None:
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required for GitHub repository import.")
+        result = await process_github_repository_created_event(
+            payload,
+            supabase_client=service_client,
+        )
+        logger.info(
+            "github_webhook.repository_import_processed delivery_id=%s result=%s",
+            delivery_id or "unknown",
+            result.to_dict(),
+        )
+    except Exception:
+        logger.exception(
+            "github_webhook.repository_import_failed delivery_id=%s",
+            delivery_id or "unknown",
+        )
+
+
 async def process_github_push_event(
     payload: dict[str, Any],
     *,
@@ -3598,7 +3843,7 @@ async def handle_github_webhook(request: Request):
     delivery_id = (
         (request.headers.get("x-github-delivery") or "").strip() or None
     )
-    if event_name not in {"push", "repository"}:
+    if event_name not in {"push", "repository", "installation_repositories"}:
         return {
             "accepted": True,
             "delivery_id": delivery_id,
@@ -3639,20 +3884,78 @@ async def handle_github_webhook(request: Request):
         except ValueError as payload_error:
             raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
 
-        # The dashboard's importer reads the authenticated user's current
-        # repositories directly from GitHub. A repository-created delivery
-        # therefore needs acknowledgement only; creating a placeholder project
-        # would incorrectly mark the repository as imported and enable push sync
-        # before the user selects files.
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(
+            process_github_repository_created_in_background,
+            payload,
+            delivery_id,
+        )
         return JSONResponse(
             status_code=202,
+            background=background_tasks,
             content={
                 "accepted": True,
                 "delivery_id": delivery_id,
                 "event": "repository",
                 "action": "created",
                 "repository": repository,
-                "queued": False,
+                "queued": True,
+            },
+        )
+
+    if event_name == "installation_repositories":
+        action = str(payload.get("action") or "").strip().lower()
+        repositories_added = payload.get("repositories_added")
+        if action != "added" or not isinstance(repositories_added, list):
+            return {
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "installation_repositories",
+                "action": action or "unknown",
+                "ignored": True,
+            }
+
+        import_payloads: list[dict[str, Any]] = []
+        for repository_payload in repositories_added:
+            if not isinstance(repository_payload, dict):
+                continue
+            repository_event_payload = {**payload, "repository": repository_payload}
+            try:
+                get_github_repository_full_name(repository_event_payload)
+            except ValueError:
+                continue
+            import_payloads.append(repository_event_payload)
+
+        if not import_payloads:
+            return {
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "installation_repositories",
+                "action": "added",
+                "ignored": True,
+                "message": "No valid repositories were supplied.",
+            }
+
+        background_tasks = BackgroundTasks()
+        for repository_event_payload in import_payloads:
+            background_tasks.add_task(
+                process_github_repository_created_in_background,
+                repository_event_payload,
+                delivery_id,
+            )
+        return JSONResponse(
+            status_code=202,
+            background=background_tasks,
+            content={
+                "accepted": True,
+                "delivery_id": delivery_id,
+                "event": "installation_repositories",
+                "action": "added",
+                "repositories": [
+                    get_github_repository_full_name(repository_event_payload)
+                    for repository_event_payload in import_payloads
+                ],
+                "queued": True,
             },
         )
 
