@@ -5373,8 +5373,77 @@ export function ProfileDashboard({
       return;
     }
 
-    const workspaceInsertChannel = supabase
-      .channel(`github-workspace-inserts-${user.id}`)
+    const showWorkspaceSyncToast = (message: string) => {
+      setBioToastMessage(message);
+
+      if (bioToastTimerRef.current) {
+        window.clearTimeout(bioToastTimerRef.current);
+      }
+
+      bioToastTimerRef.current = window.setTimeout(() => {
+        setBioToastMessage(null);
+      }, 3200);
+    };
+
+    const handleWorkspaceSync = (payload: { eventType: string; new: Record<string, unknown> }) => {
+      if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE') {
+        return;
+      }
+
+      const changedFolder = payload.new as ProjectFolderRow;
+      if (!changedFolder.id || changedFolder.user_id !== user.id) {
+        return;
+      }
+
+      // Revalidate the full workspace rather than relying on an event payload:
+      // GitHub writes the root folder before its source files, and this fetch
+      // supplies the completed nested folders/assets to the dashboard.
+      void mutateSpectatorProfile();
+
+      const folderName =
+        typeof changedFolder.name === 'string' ? changedFolder.name.trim() : '';
+      const source =
+        typeof changedFolder.source === 'string'
+          ? changedFolder.source.toLowerCase()
+          : null;
+
+      // GitHub sync creates a repository root plus optional nested source
+      // folders. Only the root represents a repository-level success.
+      if (!folderName || source !== 'github' || changedFolder.parent_id) {
+        return;
+      }
+
+      showWorkspaceSyncToast(`Repository ${folderName} synced successfully.`);
+
+      if (payload.eventType !== 'INSERT') {
+        return;
+      }
+
+      const workspace: ProjectFolderWithNestedProjects = {
+        ...changedFolder,
+        name: folderName,
+        nested_projects: [],
+        assets: [],
+        files: [],
+        file_count: 0,
+      };
+
+      setProjectFolders((currentFolders) => [
+        workspace,
+        ...currentFolders.filter((folder) => folder.id !== workspace.id),
+      ]);
+      showNewlyAddedProjects([
+        {
+          kind: 'folder',
+          id: workspace.id,
+          name: workspace.name,
+          folder: workspace,
+        },
+      ]);
+    };
+
+    const workspaceSyncChannel = supabase
+      .channel(`github-workspace-sync-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -5383,55 +5452,22 @@ export function ProfileDashboard({
           table: 'project_folders',
           filter: `user_id=eq.${user.id}`,
         },
-        (payload) => {
-          const insertedFolder = payload.new as ProjectFolderRow;
-          const folderName =
-            typeof insertedFolder.name === 'string' ? insertedFolder.name.trim() : '';
-          const source =
-            typeof insertedFolder.source === 'string'
-              ? insertedFolder.source.toLowerCase()
-              : null;
-
-          // GitHub sync creates a repository root plus optional nested source
-          // folders. Only the root represents a newly delivered workspace.
-          if (
-            !insertedFolder.id ||
-            insertedFolder.user_id !== user.id ||
-            !folderName ||
-            source !== 'github' ||
-            insertedFolder.parent_id
-          ) {
-            return;
-          }
-
-          const workspace: ProjectFolderWithNestedProjects = {
-            ...insertedFolder,
-            name: folderName,
-            nested_projects: [],
-            assets: [],
-            files: [],
-            file_count: 0,
-          };
-
-          setProjectFolders((currentFolders) => [
-            workspace,
-            ...currentFolders.filter((folder) => folder.id !== workspace.id),
-          ]);
-          void mutateSpectatorProfile();
-          showNewlyAddedProjects([
-            {
-              kind: 'folder',
-              id: workspace.id,
-              name: workspace.name,
-              folder: workspace,
-            },
-          ]);
-        }
+        handleWorkspaceSync
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'project_folders',
+          filter: `user_id=eq.${user.id}`,
+        },
+        handleWorkspaceSync
       )
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(workspaceInsertChannel);
+      void supabase.removeChannel(workspaceSyncChannel);
     };
   }, [isOwner, mutateSpectatorProfile, showNewlyAddedProjects, supabase, targetUsername, user?.id]);
 
