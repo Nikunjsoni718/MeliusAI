@@ -2977,7 +2977,13 @@ async def _find_project_folder(
 
     response = await _run_supabase(query_folder)
     rows = _response_rows(response)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    folder = rows[0]
+    if not str(folder.get("id") or "").strip():
+        logger.error("Supabase raw workspace folder response: %r", response)
+        raise RuntimeError("Project folder lookup returned a record without an ID.")
+    return folder
 
 
 async def _create_project_folder(
@@ -3006,7 +3012,8 @@ async def _create_project_folder(
             ).execute()
         )
         folder, notification = _project_lifecycle_result(response)
-        await _dispatch_project_lifecycle_web_push(supabase_client, notification)
+        if notification:
+            await _dispatch_project_lifecycle_web_push(supabase_client, notification)
         return folder
 
     insert_payload: dict[str, Any] = {
@@ -3021,13 +3028,16 @@ async def _create_project_folder(
     response = await _run_supabase(
         lambda: supabase_client.table("project_folders")
         .insert(insert_payload)
+        .select()
         .execute()
     )
     response_data = getattr(response, "data", None)
     if not isinstance(response_data, list) or not response_data:
+        logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError(f"Project folder insert returned no record for {folder_name}.")
     folder = response_data[0]
     if not isinstance(folder, dict) or not str(folder.get("id") or "").strip():
+        logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError(f"Project folder insert returned no ID for {folder_name}.")
     return folder
 
@@ -3099,6 +3109,7 @@ async def _build_github_folder_hierarchy(
     )
     root_folder_id = str(root_folder.get("id") or "").strip()
     if not root_folder_id:
+        logger.error("Supabase raw workspace folder response: %r", root_folder)
         raise RuntimeError("GitHub repository folder was created without an ID.")
 
     folder_ids_by_path = {"": root_folder_id}
@@ -3561,6 +3572,7 @@ async def process_github_repository_created_event(
         )
         root_folder_id = folder_map.get("")
         if not root_folder_id:
+            logger.error("Supabase raw workspace folder response: %r", folder_map)
             raise RuntimeError("GitHub repository workspace folder was created without an ID.")
 
         for file_path in trackable_paths:
@@ -4823,15 +4835,35 @@ def _project_lifecycle_result(response: Any) -> tuple[dict[str, Any], dict[str, 
         result = response_data[0] if response_data else None
     elif isinstance(response_data, dict):
         result = response_data
+    elif isinstance(response_data, str):
+        raw_value = response_data.strip()
+        try:
+            result = json.loads(raw_value)
+        except json.JSONDecodeError:
+            result = None
+        if not isinstance(result, dict):
+            try:
+                scalar_folder_id = result if isinstance(result, str) else raw_value
+                folder_id = str(UUID(scalar_folder_id))
+            except (ValueError, AttributeError):
+                folder_id = ""
+            result = (
+                {"folder": {"id": folder_id}, "notification": {}}
+                if folder_id
+                else None
+            )
     else:
         result = None
     if not isinstance(result, dict):
+        logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError("Project lifecycle mutation returned no result.")
     notification = result.get("notification")
     resource = result.get("folder") or result.get("project")
     if not isinstance(notification, dict) or not isinstance(resource, dict):
+        logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError("Project lifecycle mutation returned an invalid result.")
     if not str(resource.get("id") or "").strip():
+        logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError("Project lifecycle mutation returned a resource without an ID.")
     return resource, notification
 

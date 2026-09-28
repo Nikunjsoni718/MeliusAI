@@ -196,6 +196,50 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(folder["id"], "folder-1")
         self.assertEqual(notification["id"], "notification-1")
 
+    def test_project_lifecycle_accepts_a_uuid_scalar_rpc_result(self):
+        folder_id = "a6e29c7d-862a-48e8-9ecf-3ba75fc5e5e2"
+        folder, notification = main._project_lifecycle_result(
+            SimpleNamespace(data=folder_id)
+        )
+        self.assertEqual(folder["id"], folder_id)
+        self.assertEqual(notification, {})
+
+    async def test_direct_folder_insert_selects_and_reads_the_first_returned_id(self):
+        class Query:
+            def __init__(self):
+                self.select_called = False
+
+            def insert(self, _payload):
+                return self
+
+            def select(self):
+                self.select_called = True
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data=[{"id": "folder-1", "name": "nested"}])
+
+        class SupabaseClient:
+            def __init__(self):
+                self.query = Query()
+
+            def table(self, table_name):
+                self.table_name = table_name
+                return self.query
+
+        client = SupabaseClient()
+        folder = await main._create_project_folder(
+            client,
+            user_id="user-1",
+            folder_name="nested",
+            parent_id="folder-parent",
+            source_supported=True,
+            parent_id_supported=True,
+        )
+        self.assertEqual(folder["id"], "folder-1")
+        self.assertEqual(client.table_name, "project_folders")
+        self.assertTrue(client.query.select_called)
+
     def test_webhook_module_has_no_pending_imports_dependency(self):
         with open(main.__file__, encoding="utf-8") as source_file:
             self.assertNotIn("pending_imports", source_file.read())
