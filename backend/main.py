@@ -851,48 +851,6 @@ def normalize_github_numeric_id(value: Any) -> str | None:
     return normalized_value
 
 
-def extract_github_repository_created_details(
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    if str(payload.get("action") or "").strip().lower() != "created":
-        raise ValueError("GitHub repository webhook action must be created.")
-
-    repository = payload.get("repository")
-    if not isinstance(repository, dict):
-        raise ValueError("GitHub repository.created payload is missing repository data.")
-
-    repository_owner = repository.get("owner")
-    if not isinstance(repository_owner, dict):
-        raise ValueError("GitHub repository.created payload is missing repository owner data.")
-
-    github_user_id = normalize_github_numeric_id(repository_owner.get("id"))
-    repository_id = normalize_github_numeric_id(repository.get("id"))
-    if not github_user_id or not repository_id:
-        raise ValueError("GitHub repository.created payload is missing stable provider IDs.")
-
-    repository_full_name = get_github_repository_full_name(payload)
-    repository_name = str(repository.get("name") or "").strip()
-    if not repository_name:
-        repository_name = repository_full_name.split("/", 1)[1]
-
-    return {
-        "github_user_id": github_user_id,
-        "provider_repository_id": repository_id,
-        "repository_full_name": repository_full_name,
-        "repository_name": repository_name,
-        "html_url": str(repository.get("html_url") or "").strip() or None,
-        "default_branch": str(repository.get("default_branch") or "").strip() or None,
-        "is_private": bool(repository.get("private")),
-        "repository_payload": {
-            "id": repository_id,
-            "full_name": repository_full_name,
-            "description": repository.get("description"),
-            "language": repository.get("language"),
-            "visibility": repository.get("visibility"),
-        },
-    }
-
-
 def get_github_after_sha(payload: dict[str, Any]) -> str:
     after_sha = payload.get("after")
     if not isinstance(after_sha, str) or not re.fullmatch(
@@ -3580,93 +3538,6 @@ async def process_github_push_in_background(
         )
 
 
-async def process_github_repository_created_event(
-    payload: dict[str, Any],
-    *,
-    supabase_client: Any,
-    delivery_id: str | None = None,
-) -> dict[str, Any]:
-    repository_details = extract_github_repository_created_details(payload)
-    github_user_id = repository_details["github_user_id"]
-
-    profile_response = await _run_supabase(
-        lambda: supabase_client.table("profiles")
-        .select("id")
-        .eq("github_user_id", github_user_id)
-        .limit(1)
-        .execute()
-    )
-    matching_profiles = _response_rows(profile_response)
-    if not matching_profiles:
-        return {
-            "matched": False,
-            "github_user_id": github_user_id,
-            "repository": repository_details["repository_full_name"],
-        }
-
-    user_id = str(matching_profiles[0].get("id") or "").strip()
-    if not user_id:
-        raise RuntimeError("Matched GitHub account is missing its Supabase user ID.")
-
-    pending_import = {
-        "user_id": user_id,
-        "provider": "github",
-        "provider_repository_id": repository_details["provider_repository_id"],
-        "repository_full_name": repository_details["repository_full_name"],
-        "repository_name": repository_details["repository_name"],
-        "html_url": repository_details["html_url"],
-        "default_branch": repository_details["default_branch"],
-        "is_private": repository_details["is_private"],
-        "status": "pending",
-        "webhook_delivery_id": delivery_id,
-        "repository_payload": repository_details["repository_payload"],
-    }
-    await _run_supabase(
-        lambda: supabase_client.table("pending_imports")
-        .upsert(
-            pending_import,
-            on_conflict="user_id,provider,provider_repository_id",
-            ignore_duplicates=True,
-        )
-        .execute()
-    )
-
-    return {
-        "matched": True,
-        "user_id": user_id,
-        "repository": repository_details["repository_full_name"],
-        "pending": True,
-    }
-
-
-async def process_github_repository_created_in_background(
-    payload: dict[str, Any],
-    delivery_id: str | None,
-) -> None:
-    try:
-        service_client = get_supabase_service_client()
-        if service_client is None:
-            raise RuntimeError(
-                "SUPABASE_SERVICE_ROLE_KEY is required for GitHub repository detection."
-            )
-
-        result = await process_github_repository_created_event(
-            payload,
-            supabase_client=service_client,
-            delivery_id=delivery_id,
-        )
-        logger.info(
-            "github_repository.created delivery_id=%s result=%s",
-            delivery_id or "unknown",
-            result,
-        )
-    except Exception:
-        logger.exception(
-            "github_repository.processing_failed delivery_id=%s",
-            delivery_id or "unknown",
-        )
-
-
 @app.post("/api/webhooks/github", status_code=200)
 async def handle_github_webhook(request: Request):
     secret_key = os.environ.get("GITHUB_WEBHOOK_SECRET")
@@ -3758,27 +3629,24 @@ async def handle_github_webhook(request: Request):
             }
 
         try:
-            repository_details = extract_github_repository_created_details(payload)
+            repository = get_github_repository_full_name(payload)
         except ValueError as payload_error:
             raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
 
-        background_tasks = BackgroundTasks()
-        background_tasks.add_task(
-            process_github_repository_created_in_background,
-            payload,
-            delivery_id,
-        )
+        # The dashboard's importer reads the authenticated user's current
+        # repositories directly from GitHub. A repository-created delivery
+        # therefore needs acknowledgement only; creating a placeholder project
+        # would incorrectly mark the repository as imported and enable push sync
+        # before the user selects files.
         return JSONResponse(
             status_code=202,
-            background=background_tasks,
             content={
                 "accepted": True,
                 "delivery_id": delivery_id,
                 "event": "repository",
                 "action": "created",
-                "repository": repository_details["repository_full_name"],
-                "github_user_id": repository_details["github_user_id"],
-                "queued": True,
+                "repository": repository,
+                "queued": False,
             },
         )
 

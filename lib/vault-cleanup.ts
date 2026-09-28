@@ -11,7 +11,6 @@ type StorageListEntry = {
 export type VaultDeletionCounts = {
   projects: number;
   folders: number;
-  pendingImports: number;
   storageObjects: number;
 };
 
@@ -54,7 +53,7 @@ async function listVaultObjects(prefix: string): Promise<string[]> {
   return paths;
 }
 
-async function deleteByUserId(table: 'projects' | 'project_folders' | 'pending_imports', userId: string) {
+async function deleteByUserId(table: 'projects' | 'project_folders', userId: string) {
   const admin = createSupabaseAdminClient();
   const { count, error: countError } = await admin
     .from(table)
@@ -89,7 +88,6 @@ export async function eraseUserVaultData(userId: string): Promise<VaultDeletionC
 
   const projects = await deleteByUserId('projects', userId);
   const folders = await deleteByUserId('project_folders', userId);
-  const pendingImports = await deleteByUserId('pending_imports', userId);
 
-  return { projects, folders, pendingImports, storageObjects: storagePaths.length };
+  return { projects, folders, storageObjects: storagePaths.length };
 }

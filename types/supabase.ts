@@ -4,7 +4,6 @@ export type UserRole = 'talent' | 'recruiter';
 export type ProjectStatus = 'draft' | 'submitted' | 'reviewed' | 'archived';
 export type ScoreSource = 'gemini' | 'manual';
 export type PortfolioSourceKind = 'github' | 'behance' | 'drive' | 'website';
-export type PendingImportStatus = 'pending' | 'imported' | 'dismissed';
 
 export type ProfileRow = {
   id: string;
@@ -213,25 +212,6 @@ export type WorkspaceDiffRow = {
   verified_at: string | null;
 };
 
-export type PendingImportRow = {
-  id: string;
-  user_id: string;
-  provider: 'github';
-  provider_repository_id: string;
-  repository_full_name: string;
-  repository_name: string;
-  html_url: string | null;
-  default_branch: string | null;
-  is_private: boolean;
-  status: PendingImportStatus;
-  webhook_delivery_id: string | null;
-  repository_payload: Json;
-  detected_at: string;
-  resolved_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 export type GitHubConnectionRow = {
   user_id: string;
   token_ciphertext: string;
@@ -298,15 +278,6 @@ export interface Database {
         Insert: Partial<Omit<AuditSnapshotRow, 'id' | 'created_at'>> &
           Pick<AuditSnapshotRow, 'workspace_id' | 'commit_sha' | 'score' | 'score_delta' | 'delta_summary'>;
         Update: Partial<Omit<AuditSnapshotRow, 'id' | 'workspace_id' | 'created_at'>>;
-        Relationships: [];
-      };
-      pending_imports: {
-        Row: PendingImportRow;
-        Insert: Partial<Omit<PendingImportRow, 'id' | 'created_at' | 'updated_at'>> &
-          Pick<PendingImportRow, 'user_id' | 'provider_repository_id' | 'repository_full_name' | 'repository_name'>;
-        Update: Partial<
-          Omit<PendingImportRow, 'id' | 'user_id' | 'provider' | 'provider_repository_id' | 'created_at' | 'updated_at'>
-        >;
         Relationships: [];
       };
       notifications: {

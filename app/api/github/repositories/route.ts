@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { GITHUB_ERROR_CODES, type GitHubErrorCode } from '@/lib/github-error-codes';
 import {
   deleteGitHubConnection,
@@ -201,49 +200,6 @@ async function fetchLiveGitHubRepositories(userId: string) {
   );
 }
 
-async function removeMissingPendingImports(userId: string, repositories: GitHubRepository[]) {
-  const admin = createSupabaseAdminClient();
-  const { data: pendingImports, error: pendingImportsError } = await admin
-    .from('pending_imports')
-    .select('id, provider_repository_id')
-    .eq('user_id', userId)
-    .eq('provider', 'github');
-
-  if (pendingImportsError) {
-    throw new RouteError(
-      'Unable to synchronize deleted GitHub repositories.',
-      502,
-      GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
-    );
-  }
-
-  const liveRepositoryIds = new Set(repositories.map((repository) => String(repository.id)));
-  const stalePendingImportIds = (pendingImports ?? [])
-    .filter((pendingImport) => !liveRepositoryIds.has(pendingImport.provider_repository_id))
-    .map((pendingImport) => pendingImport.id);
-
-  if (stalePendingImportIds.length === 0) {
-    return 0;
-  }
-
-  const { error: deleteError } = await admin
-    .from('pending_imports')
-    .delete()
-    .eq('user_id', userId)
-    .eq('provider', 'github')
-    .in('id', stalePendingImportIds);
-
-  if (deleteError) {
-    throw new RouteError(
-      'Unable to synchronize deleted GitHub repositories.',
-      502,
-      GITHUB_ERROR_CODES.UPSTREAM_UNAVAILABLE
-    );
-  }
-
-  return stalePendingImportIds.length;
-}
-
 export async function GET() {
   try {
     const supabase = await createSupabaseServerClient();
@@ -281,19 +237,10 @@ export async function GET() {
       }
       throw error;
     }
-    let removed = 0;
-
-    try {
-      removed = await removeMissingPendingImports(user.id, repositories);
-    } catch (error) {
-      // Repository discovery is still valid when stale pending-import cleanup
-      // is unavailable. Preserve the live GitHub result and retry cleanup on a
-      // later refresh instead of blocking the importer with a gateway error.
-      console.error('Repo sync failed:', error);
-    }
-
     return NextResponse.json(
-      { repositories, sync: { removed } },
+      // Preserve the response shape consumed by the dashboard while returning
+      // the live GitHub source of truth directly.
+      { repositories, sync: { removed: 0 } },
       { headers: NO_STORE_HEADERS }
     );
   } catch (error) {
