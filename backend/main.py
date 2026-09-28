@@ -2994,6 +2994,7 @@ async def _find_existing_project_folder_after_duplicate_response(
     parent_id: str | None,
     source_supported: bool,
     parent_id_supported: bool,
+    log_when_found: bool = True,
 ) -> dict[str, Any] | None:
     """Recover the folder created by another delivery of the same webhook.
 
@@ -3012,18 +3013,27 @@ async def _find_existing_project_folder_after_duplicate_response(
             parent_id_supported=parent_id_supported,
         )
         if existing_folder is not None:
-            logger.info(
-                "Workspace folder already exists in project_folders, skipping creation. "
-                "user_id=%s folder_name=%s",
-                user_id,
-                folder_name,
-            )
+            if log_when_found:
+                logger.info(
+                    "Workspace folder already exists in project_folders, skipping creation. "
+                    "user_id=%s folder_name=%s",
+                    user_id,
+                    folder_name,
+                )
             return existing_folder
         if attempt < 2:
             # Give the first delivery's transaction a moment to become visible
             # to this duplicate delivery before declaring the create failed.
             await asyncio.sleep(0.05)
     return None
+
+
+class GitHubWorkspaceAlreadyExists(RuntimeError):
+    """Signals that a duplicate repository-created delivery owns this root."""
+
+    def __init__(self, folder_id: str):
+        self.folder_id = folder_id
+        super().__init__(f"GitHub workspace folder already exists: {folder_id}")
 
 
 async def _create_project_folder(
@@ -3035,6 +3045,7 @@ async def _create_project_folder(
     source_supported: bool,
     parent_id_supported: bool,
     notify_on_creation: bool = False,
+    recover_duplicate_response: bool = True,
 ) -> dict[str, Any]:
     # A GitHub repository maps to one root workspace folder. Route only that
     # root through the lifecycle RPC so the folder and its in-app notification
@@ -3052,7 +3063,7 @@ async def _create_project_folder(
             ).execute()
         )
         response_data = getattr(response, "data", None)
-        if response_data in (None, {}, []):
+        if recover_duplicate_response and response_data in (None, {}, []):
             existing_folder = await _find_existing_project_folder_after_duplicate_response(
                 supabase_client,
                 user_id=user_id,
@@ -3066,16 +3077,17 @@ async def _create_project_folder(
         try:
             folder, notification = _project_lifecycle_result(response)
         except RuntimeError:
-            existing_folder = await _find_existing_project_folder_after_duplicate_response(
-                supabase_client,
-                user_id=user_id,
-                folder_name=folder_name,
-                parent_id=parent_id,
-                source_supported=source_supported,
-                parent_id_supported=parent_id_supported,
-            )
-            if existing_folder is not None:
-                return existing_folder
+            if recover_duplicate_response:
+                existing_folder = await _find_existing_project_folder_after_duplicate_response(
+                    supabase_client,
+                    user_id=user_id,
+                    folder_name=folder_name,
+                    parent_id=parent_id,
+                    source_supported=source_supported,
+                    parent_id_supported=parent_id_supported,
+                )
+                if existing_folder is not None:
+                    return existing_folder
             raise
         if notification:
             await _dispatch_project_lifecycle_web_push(supabase_client, notification)
@@ -3098,30 +3110,32 @@ async def _create_project_folder(
     )
     response_data = getattr(response, "data", None)
     if not isinstance(response_data, list) or not response_data:
-        existing_folder = await _find_existing_project_folder_after_duplicate_response(
-            supabase_client,
-            user_id=user_id,
-            folder_name=folder_name,
-            parent_id=parent_id,
-            source_supported=source_supported,
-            parent_id_supported=parent_id_supported,
-        )
-        if existing_folder is not None:
-            return existing_folder
+        if recover_duplicate_response:
+            existing_folder = await _find_existing_project_folder_after_duplicate_response(
+                supabase_client,
+                user_id=user_id,
+                folder_name=folder_name,
+                parent_id=parent_id,
+                source_supported=source_supported,
+                parent_id_supported=parent_id_supported,
+            )
+            if existing_folder is not None:
+                return existing_folder
         logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError(f"Project folder insert returned no record for {folder_name}.")
     folder = response_data[0]
     if not isinstance(folder, dict) or not str(folder.get("id") or "").strip():
-        existing_folder = await _find_existing_project_folder_after_duplicate_response(
-            supabase_client,
-            user_id=user_id,
-            folder_name=folder_name,
-            parent_id=parent_id,
-            source_supported=source_supported,
-            parent_id_supported=parent_id_supported,
-        )
-        if existing_folder is not None:
-            return existing_folder
+        if recover_duplicate_response:
+            existing_folder = await _find_existing_project_folder_after_duplicate_response(
+                supabase_client,
+                user_id=user_id,
+                folder_name=folder_name,
+                parent_id=parent_id,
+                source_supported=source_supported,
+                parent_id_supported=parent_id_supported,
+            )
+            if existing_folder is not None:
+                return existing_folder
         logger.error("Supabase raw workspace folder response: %r", response)
         raise RuntimeError(f"Project folder insert returned no ID for {folder_name}.")
     return folder
@@ -3136,6 +3150,7 @@ async def _get_or_create_project_folder(
     source_supported: bool,
     parent_id_supported: bool,
     notify_on_creation: bool = False,
+    stop_on_existing_folder: bool = False,
 ) -> dict[str, Any]:
     existing_folder = await _find_project_folder(
         supabase_client,
@@ -3146,6 +3161,8 @@ async def _get_or_create_project_folder(
         parent_id_supported=parent_id_supported,
     )
     if existing_folder is not None:
+        if stop_on_existing_folder:
+            raise GitHubWorkspaceAlreadyExists(str(existing_folder["id"]))
         return existing_folder
 
     try:
@@ -3157,6 +3174,7 @@ async def _get_or_create_project_folder(
             source_supported=source_supported,
             parent_id_supported=parent_id_supported,
             notify_on_creation=notify_on_creation,
+            recover_duplicate_response=not stop_on_existing_folder,
         )
     except Exception:
         existing_folder = await _find_existing_project_folder_after_duplicate_response(
@@ -3166,8 +3184,11 @@ async def _get_or_create_project_folder(
             parent_id=parent_id,
             source_supported=source_supported,
             parent_id_supported=parent_id_supported,
+            log_when_found=not stop_on_existing_folder,
         )
         if existing_folder is not None:
+            if stop_on_existing_folder:
+                raise GitHubWorkspaceAlreadyExists(str(existing_folder["id"]))
             return existing_folder
         raise
 
@@ -3178,6 +3199,7 @@ async def _build_github_folder_hierarchy(
     user_id: str,
     repository: str,
     file_paths: list[str],
+    stop_on_existing_root: bool = False,
 ) -> dict[str, str]:
     source_supported, parent_id_supported = await asyncio.gather(
         _project_folder_column_supported(supabase_client, "source"),
@@ -3191,6 +3213,7 @@ async def _build_github_folder_hierarchy(
         source_supported=source_supported,
         parent_id_supported=parent_id_supported,
         notify_on_creation=True,
+        stop_on_existing_folder=stop_on_existing_root,
     )
     root_folder_id = str(root_folder.get("id") or "").strip()
     if not root_folder_id:
@@ -3649,12 +3672,25 @@ async def process_github_repository_created_event(
 
         result.commit_sha = commit_sha or ""
         result.trackable_files = len(trackable_paths)
-        folder_map = await _build_github_folder_hierarchy(
-            supabase_client,
-            user_id=workspace_context.user_id,
-            repository=repository,
-            file_paths=trackable_paths,
-        )
+        try:
+            folder_map = await _build_github_folder_hierarchy(
+                supabase_client,
+                user_id=workspace_context.user_id,
+                repository=repository,
+                file_paths=trackable_paths,
+                stop_on_existing_root=True,
+            )
+        except GitHubWorkspaceAlreadyExists as duplicate_workspace:
+            existing_folder_id = duplicate_workspace.folder_id
+            logger.info(
+                "Workspace folder already exists in project_folders, skipping creation. "
+                "user_id=%s folder_name=%s folder_id=%s",
+                workspace_context.user_id,
+                _github_repository_folder_name(repository),
+                existing_folder_id,
+            )
+            return result
+
         root_folder_id = folder_map.get("") if isinstance(folder_map, dict) else None
         if not root_folder_id:
             source_supported, parent_id_supported = await asyncio.gather(
@@ -3668,10 +3704,18 @@ async def process_github_repository_created_event(
                 parent_id=None,
                 source_supported=source_supported,
                 parent_id_supported=parent_id_supported,
+                log_when_found=False,
             )
             if existing_folder is not None:
-                root_folder_id = str(existing_folder["id"])
-                folder_map = {**(folder_map if isinstance(folder_map, dict) else {}), "": root_folder_id}
+                existing_folder_id = str(existing_folder["id"])
+                logger.info(
+                    "Workspace folder already exists in project_folders, skipping creation. "
+                    "user_id=%s folder_name=%s folder_id=%s",
+                    workspace_context.user_id,
+                    _github_repository_folder_name(repository),
+                    existing_folder_id,
+                )
+                return result
 
         if not root_folder_id:
             logger.error("Supabase raw workspace folder response: %r", folder_map)

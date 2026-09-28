@@ -2777,6 +2777,7 @@ export function ProfileDashboard({
   const hydratedProfileKeyRef = useRef<string | null>(null);
   const activeNewlyAddedProjectRef = useRef<NewlyAddedProject | null>(null);
   const announcedNewProjectIdsRef = useRef<Set<string>>(new Set());
+  const recentlyToastedRepositoryNamesRef = useRef<Set<string>>(new Set());
   const lastSavedProfileRef = useRef<ProfileDraft | null>(null);
   const profileSaveSequenceRef = useRef(0);
   const profileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -5412,6 +5413,15 @@ export function ProfileDashboard({
       if (!folderName || source !== 'github' || changedFolder.parent_id) {
         return;
       }
+
+      const toastKey = `${user.id}:${folderName.toLocaleLowerCase()}`;
+      if (recentlyToastedRepositoryNamesRef.current.has(toastKey)) {
+        return;
+      }
+      recentlyToastedRepositoryNamesRef.current.add(toastKey);
+      window.setTimeout(() => {
+        recentlyToastedRepositoryNamesRef.current.delete(toastKey);
+      }, 3000);
 
       showWorkspaceSyncToast(`Repository ${folderName} synced successfully.`);
 

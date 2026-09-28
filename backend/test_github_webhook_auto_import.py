@@ -122,6 +122,36 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
         create_asset.assert_not_awaited()
         create_placeholder.assert_awaited_once()
 
+    async def test_duplicate_repository_folder_stops_before_assets_or_placeholder(self):
+        context = main.GitHubWorkspaceContext(user_id="user-1", is_public=True)
+        service_client = object()
+        with patch.object(main, "get_supabase_service_client", return_value=service_client), patch.object(
+            main, "_resolve_repository_workspace_context", AsyncMock(return_value=context)
+        ), patch.object(
+            main, "_repository_is_actively_tracked", AsyncMock(return_value=False)
+        ), patch.object(
+            main, "get_persisted_github_connection_token", AsyncMock(return_value="token")
+        ), patch.object(
+            main, "fetch_github_branch_head_commit", AsyncMock(return_value="d" * 40)
+        ), patch.object(
+            main, "fetch_github_repository_tree_paths", AsyncMock(return_value=(["src/app.py"], False))
+        ), patch.object(
+            main,
+            "_build_github_folder_hierarchy",
+            AsyncMock(side_effect=main.GitHubWorkspaceAlreadyExists("folder-existing")),
+        ) as build_hierarchy, patch.object(
+            main, "_create_workspace_asset", AsyncMock(return_value=1)
+        ) as create_asset, patch.object(
+            main, "_create_github_repository_placeholder", AsyncMock(return_value=1)
+        ) as create_placeholder:
+            result = await main.process_github_repository_created_event(self.repository_payload())
+
+        self.assertEqual(result.created_records, 0)
+        self.assertEqual(result.failed_files, 0)
+        create_asset.assert_not_awaited()
+        create_placeholder.assert_not_awaited()
+        self.assertEqual(build_hierarchy.await_args.kwargs["stop_on_existing_root"], True)
+
     async def test_first_push_updates_placeholder_metadata_without_an_audit(self):
         commit_sha = "c" * 40
         placeholder = {
