@@ -2596,6 +2596,100 @@ async def _load_repository_assets(
     return repository_rows
 
 
+async def _load_github_repository_root_folders(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    repository: str,
+) -> list[dict[str, Any]]:
+    """Return the GitHub root workspace for one user/repository delivery.
+
+    Repository workspaces live in ``project_folders``.  File-level GitHub
+    metadata remains in ``projects``, so it cannot be the delivery gate for a
+    first push into a workspace that was created while the repository was
+    empty.
+    """
+    (
+        source_supported,
+        parent_id_supported,
+        github_ref_supported,
+        github_commit_sha_supported,
+    ) = await asyncio.gather(
+        _project_folder_column_supported(supabase_client, "source"),
+        _project_folder_column_supported(supabase_client, "parent_id"),
+        _project_folder_column_supported(supabase_client, "github_ref"),
+        _project_folder_column_supported(supabase_client, "github_commit_sha"),
+    )
+    select_columns = ["id", "user_id", "name", "last_commit_at"]
+    if source_supported:
+        select_columns.append("source")
+    if parent_id_supported:
+        select_columns.append("parent_id")
+    if github_ref_supported:
+        select_columns.append("github_ref")
+    if github_commit_sha_supported:
+        select_columns.append("github_commit_sha")
+
+    def query_root_folders() -> Any:
+        query = (
+            supabase_client.table("project_folders")
+            .select(", ".join(select_columns))
+            .eq("user_id", user_id)
+            .eq("name", _github_repository_folder_name(repository))
+        )
+        if source_supported:
+            query = query.eq("source", "github")
+        if parent_id_supported:
+            query = query.is_("parent_id", "null")
+        return query.execute()
+
+    response = await _run_supabase(query_root_folders)
+    return _response_rows(response)
+
+
+async def _update_github_workspace_folder_push_metadata(
+    supabase_client: Any,
+    *,
+    folders: list[dict[str, Any]],
+    branch: str | None,
+    commit_sha: str,
+) -> int:
+    """Mark GitHub workspace roots current and preserve optional metadata.
+
+    ``last_commit_at`` is the folder-level first-push signal used by the
+    dashboard and its Realtime subscription. Some deployments also expose
+    ``github_ref`` and ``github_commit_sha`` on project_folders; detect those
+    additive fields before writing them so an older schema cannot produce a
+    PostgREST schema-cache error. File-level metadata remains in ``projects``.
+    """
+    github_ref_supported, github_commit_sha_supported = await asyncio.gather(
+        _project_folder_column_supported(supabase_client, "github_ref"),
+        _project_folder_column_supported(supabase_client, "github_commit_sha"),
+    )
+    updated_rows = 0
+    committed_at = datetime.now(timezone.utc).isoformat()
+    for folder in folders:
+        folder_id = str(folder.get("id") or "").strip()
+        user_id = str(folder.get("user_id") or "").strip()
+        if not folder_id or not user_id:
+            continue
+        update_payload: dict[str, Any] = {"last_commit_at": committed_at}
+        if github_commit_sha_supported:
+            update_payload["github_commit_sha"] = commit_sha
+        existing_ref = str(folder.get("github_ref") or "").strip()
+        if github_ref_supported and not existing_ref and branch:
+            update_payload["github_ref"] = branch
+        response = await _run_supabase(
+            lambda folder_id=folder_id, user_id=user_id, update_payload=update_payload: supabase_client.table("project_folders")
+            .update(update_payload)
+            .eq("id", folder_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        updated_rows += len(_response_rows(response)) or 1
+    return updated_rows
+
+
 async def _repository_is_actively_tracked(
     supabase_client: Any,
     *,
@@ -3795,8 +3889,10 @@ async def process_github_push_event(
 ) -> GitHubWebhookSyncResult:
     """Synchronize GitHub push changes into MeliusAI workspace asset records."""
     repository = get_github_repository_full_name(payload)
+    logger.info("Received push event for repository: %s", repository)
     commit_sha = get_github_after_sha(payload)
-    ref = get_github_push_branch(payload) or str(payload.get("ref") or "").strip()
+    pushed_branch = get_github_push_branch(payload)
+    ref = pushed_branch or str(payload.get("ref") or "").strip()
     default_branch = get_github_default_branch(payload)
     changes = extract_github_push_changes(payload)
     excluded_test_paths = {
@@ -3830,31 +3926,51 @@ async def process_github_push_event(
         repository=repository,
         repository_url=repository_url,
     )
-    # `projects.github_repository` is the persisted proof that a repository
-    # was explicitly imported into a MeliusAI workspace. A GitHub App event
-    # can identify its owner, but ownership alone must never create a workspace.
-    imported_workspace_contexts = _build_workspace_contexts(repository_rows)
-    if not imported_workspace_contexts:
-        # Re-check in the worker to cover direct callers and a repository that
-        # was removed after the request-side webhook gate ran. In particular,
-        # do not fall back to the webhook sender: a push must never import an
-        # unselected GitHub App repository.
+    workspace_context = await _resolve_repository_workspace_context(
+        supabase_client,
+        payload=payload,
+        repository=repository,
+    )
+    if workspace_context is None:
+        logger.info("Repository not found in project_folders, ignoring push. repository=%s", repository)
+        result.skipped_files += len(trackable_paths) + len(removed_paths)
+        result.errors.append("Ignored: no connected MeliusAI GitHub owner.")
+        return result
+
+    workspace_folders = await _load_github_repository_root_folders(
+        supabase_client,
+        user_id=workspace_context.user_id,
+        repository=repository,
+    )
+    if not workspace_folders:
+        logger.info("Repository not found in project_folders, ignoring push. repository=%s", repository)
         result.skipped_files += len(trackable_paths) + len(removed_paths)
         result.errors.append("Ignored: Repo not imported.")
         return result
 
+    # Only the authenticated workspace's rows may be updated by this delivery.
+    repository_rows = [
+        row for row in repository_rows if _workspace_user_id(row) == workspace_context.user_id
+    ]
+
     # This is metadata and source synchronization only. It intentionally runs
     # before file downloads so the first push after an empty-repository
     # placeholder makes the workspace current even if a later file sync fails.
+    result.updated_records += await _update_github_workspace_folder_push_metadata(
+        supabase_client,
+        folders=workspace_folders,
+        branch=pushed_branch or default_branch,
+        commit_sha=commit_sha,
+    )
     result.updated_records += await _update_repository_push_metadata(
         supabase_client,
         table_name=table_name,
         repository_rows=repository_rows,
-        default_branch=default_branch,
+        default_branch=pushed_branch or default_branch,
         commit_sha=commit_sha,
     )
 
-    workspace_contexts = dict(imported_workspace_contexts)
+    workspace_contexts = {workspace_context.user_id: workspace_context}
 
     rows_by_path: dict[str, list[dict[str, Any]]] = {}
     for row in repository_rows:
@@ -4124,6 +4240,19 @@ async def handle_github_webhook(request: Request):
             detail="GitHub webhook payload must be a JSON object.",
         )
 
+    if event_name == "push":
+        repository_payload = payload.get("repository")
+        repository_name = (
+            repository_payload.get("full_name")
+            if isinstance(repository_payload, dict)
+            else None
+        )
+        logger.info(
+            "Received push event for repository: %s delivery_id=%s",
+            repository_name or "unknown",
+            delivery_id or "unknown",
+        )
+
     if event_name == "repository":
         # New-repository delivery must come from an organization webhook or a
         # GitHub App webhook; a webhook attached to an existing repository
@@ -4225,23 +4354,45 @@ async def handle_github_webhook(request: Request):
     except ValueError as payload_error:
         raise HTTPException(status_code=422, detail=str(payload_error)) from payload_error
 
-    # GitHub App deliveries are global. A short, fail-closed tracking lookup
-    # prevents an unimported repository from reaching the worker, where a
-    # folder-lifecycle notification could otherwise be created.
+    # GitHub App deliveries are global. A repository-created webhook stores the
+    # workspace root in project_folders before any source-file rows exist, so
+    # the first push must use that folder—not projects—as its delivery gate.
     try:
         service_client = get_supabase_service_client()
-        is_imported = bool(service_client) and await asyncio.wait_for(
-            _repository_is_actively_tracked(service_client, repository=repository),
-            timeout=5,
+        workspace_context = (
+            await asyncio.wait_for(
+                _resolve_repository_workspace_context(
+                    service_client,
+                    payload=payload,
+                    repository=repository,
+                ),
+                timeout=5,
+            )
+            if service_client is not None
+            else None
         )
+        workspace_folders = (
+            await asyncio.wait_for(
+                _load_github_repository_root_folders(
+                    service_client,
+                    user_id=workspace_context.user_id,
+                    repository=repository,
+                ),
+                timeout=5,
+            )
+            if service_client is not None and workspace_context is not None
+            else []
+        )
+        is_imported = bool(workspace_folders)
     except Exception:
         logger.exception(
-            "github_webhook.repository_tracking_lookup_failed repository=%s",
+            "github_webhook.project_folder_lookup_failed repository=%s",
             repository,
         )
         is_imported = False
 
     if not is_imported:
+        logger.info("Repository not found in project_folders, ignoring push. repository=%s", repository)
         return JSONResponse(
             status_code=200,
             content={

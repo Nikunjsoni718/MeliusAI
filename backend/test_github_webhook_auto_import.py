@@ -187,8 +187,18 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
             "ref": "refs/heads/main",
             "commits": [],
         }
+        payload["repository"]["default_branch"] = None
         client = SupabaseClient()
+        workspace_context = main.GitHubWorkspaceContext(user_id="user-1", is_public=True)
         with patch.object(main, "_load_repository_assets", AsyncMock(return_value=[placeholder])), patch.object(
+            main, "_resolve_repository_workspace_context", AsyncMock(return_value=workspace_context)
+        ), patch.object(
+            main,
+            "_load_github_repository_root_folders",
+            AsyncMock(return_value=[{"id": "folder-1", "user_id": "user-1"}]),
+        ), patch.object(
+            main, "_update_github_workspace_folder_push_metadata", AsyncMock(return_value=1)
+        ) as update_folder_metadata, patch.object(
             main, "_get_repository_sync_access_token", AsyncMock(return_value=None)
         ), patch.object(main, "_schedule_repository_cooldown", AsyncMock()) as schedule_cooldown, patch.object(
             main, "run_incremental_audit", AsyncMock()
@@ -198,10 +208,16 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
                 supabase_client=client,
             )
 
-        self.assertEqual(result.updated_records, 1)
+        self.assertEqual(result.updated_records, 2)
         self.assertEqual(client.table_name, "projects")
         self.assertEqual(client.query.payload["github_ref"], "main")
         self.assertEqual(client.query.payload["github_commit_sha"], commit_sha)
+        update_folder_metadata.assert_awaited_once_with(
+            client,
+            folders=[{"id": "folder-1", "user_id": "user-1"}],
+            branch="main",
+            commit_sha=commit_sha,
+        )
         schedule_cooldown.assert_not_awaited()
         run_incremental_audit.assert_not_awaited()
 
