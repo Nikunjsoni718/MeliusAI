@@ -240,6 +240,45 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.table_name, "project_folders")
         self.assertTrue(client.query.select_called)
 
+    async def test_empty_folder_insert_response_reuses_duplicate_project_folder(self):
+        class Query:
+            def insert(self, _payload):
+                return self
+
+            def select(self):
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data={})
+
+        class SupabaseClient:
+            def __init__(self):
+                self.query = Query()
+
+            def table(self, table_name):
+                self.table_name = table_name
+                return self.query
+
+        client = SupabaseClient()
+        existing_folder = {"id": "folder-existing", "name": "new-repository"}
+        with patch.object(
+            main,
+            "_find_existing_project_folder_after_duplicate_response",
+            AsyncMock(return_value=existing_folder),
+        ) as find_existing:
+            folder = await main._create_project_folder(
+                client,
+                user_id="user-1",
+                folder_name="new-repository",
+                parent_id=None,
+                source_supported=True,
+                parent_id_supported=True,
+            )
+
+        self.assertEqual(client.table_name, "project_folders")
+        self.assertEqual(folder, existing_folder)
+        find_existing.assert_awaited_once()
+
     def test_webhook_module_has_no_pending_imports_dependency(self):
         with open(main.__file__, encoding="utf-8") as source_file:
             self.assertNotIn("pending_imports", source_file.read())
