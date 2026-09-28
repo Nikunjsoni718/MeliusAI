@@ -55,7 +55,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         finding = {
             "findingId": finding_id,
             "text": "In API route: request.body.email is passed to createUser without validation.",
-            "severity": "CRITICAL" if catastrophic else "WARNING",
+            "severityTier": "critical" if catastrophic else "medium",
             "penalty": 12 if catastrophic else 5,
             "scope": "In API route: user provisioning",
             "location": "app/api/users/route.ts: createUser",
@@ -90,9 +90,16 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Reliability and resilience", prompt)
         self.assertIn("Performance and optimization", prompt)
         self.assertIn("Code quality and maintainability", prompt)
-        self.assertIn("five strongest verified architectural strengths", prompt)
-        self.assertIn("five highest-priority unique findings", prompt)
-        self.assertIn("Assign exactly one integer `penalty`", prompt)
+        self.assertIn("CRITICAL GENERATION RULES:", prompt)
+        self.assertIn("ZERO QUOTAS", prompt)
+        self.assertIn("STRICT MUTUAL EXCLUSIVITY", prompt)
+        self.assertIn("NO GLOBAL ASSUMPTIONS", prompt)
+        self.assertIn("ACTIONABLE RECOMMENDATIONS", prompt)
+        self.assertIn("NO SCORING", prompt)
+        self.assertIn("severityTier", prompt)
+        self.assertNotIn("five strongest verified architectural strengths", prompt)
+        self.assertNotIn("five highest-priority unique findings", prompt)
+        self.assertNotIn("Assign exactly one integer `penalty`", prompt)
         self.assertIn("one or two short sentences", prompt)
         self.assertIn("Never begin with filler articles: `The`, `This`, `A`, or `An`", prompt)
         self.assertIn("Lead with the concrete technical mechanism", prompt)
@@ -103,8 +110,8 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("impactArea", prompt)
 
         finding_schema = main.AuditTelemetryResponse.model_json_schema()["$defs"]["AuditTelemetryFinding"]
-        self.assertIn("penalty", finding_schema["properties"])
-        self.assertIn("penalty", finding_schema["required"])
+        self.assertIn("severityTier", finding_schema["properties"])
+        self.assertNotIn("severityTier", finding_schema["required"])
 
         for contract in ("file", "workspace", "standalone", "incremental", "dashboard"):
             with self.subTest(contract=contract):
@@ -128,8 +135,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             },
             user_context_description="",
         )
-        self.assertIn("five strongest strengths and five highest-priority", file_prompt)
-        self.assertIn("numeric impact other than the required `penalty` field", file_prompt)
+        self.assertIn("lowercase severityTier of critical, high, medium, or low", file_prompt)
+        self.assertIn("returning every", file_prompt)
+        self.assertNotIn("five strongest strengths and five highest-priority", file_prompt)
+        self.assertNotIn("required `penalty` field", file_prompt)
 
     def test_canonical_telemetry_validates_evidence_and_adapts_legacy_fields(self):
         telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
@@ -139,6 +148,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapted["pros"], [{"text": telemetry.strengths[0]}])
         self.assertEqual(adapted["cons"][0]["scope"], "In API route: user provisioning")
         self.assertEqual(adapted["cons"][0]["location"], "app/api/users/route.ts: createUser")
+        self.assertEqual(adapted["cons"][0]["severityTier"], "medium")
         self.assertEqual(adapted["cons"][0]["penalty"], 5)
         self.assertEqual(adapted["recommendations"][0]["directiveId"], "D1")
         self.assertNotIn("impactArea", adapted["recommendations"][0])
@@ -165,6 +175,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.findings[0].findingId, "finding-1")
         self.assertEqual(telemetry.findings[0].location, "users route")
         self.assertGreater(len(telemetry.findings[0].text), 10)
+        self.assertEqual(telemetry.findings[0].severityTier, "medium")
         self.assertEqual(telemetry.findings[0].penalty, 5)
         self.assertEqual(telemetry.directives[0].findingId, "finding-1")
         self.assertIn("validation helper", telemetry.directives[0].text)
@@ -189,9 +200,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.directives[0].findingId, "F1")
         adapted = main.adapt_audit_telemetry(telemetry)
         impacts = main.build_finding_impacts(adapted["pros"], adapted["cons"], adapted["recommendations"])
-        self.assertEqual(main.calculate_audit_score(impacts), 93)
+        self.assertEqual(main.calculate_audit_score(impacts), 95)
 
-    def test_telemetry_keeps_five_ranked_findings_and_only_their_directives(self):
+    def test_telemetry_preserves_every_ranked_finding_and_directive(self):
         payload = self.telemetry_payload()
         payload["strengths"] = [
             f"In app/service{index}.ts: service {index} uses one verified boundary."
@@ -201,7 +212,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F1",
                 "text": "In cache layer: redundant refreshLoop performs duplicate work.",
-                "severity": "OPTIMIZATION",
+                "severityTier": "low",
                 "scope": "In cache layer: refresh scheduling",
                 "location": "app/cache.ts: refreshLoop",
                 "isCatastrophic": False,
@@ -209,7 +220,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F2",
                 "text": "In API route: request.body.token reaches verifyToken without a missing-token branch.",
-                "severity": "WARNING",
+                "severityTier": "medium",
                 "scope": "In API route: token validation",
                 "location": "app/token.ts: verifyToken",
                 "isCatastrophic": False,
@@ -217,7 +228,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F3",
                 "text": "In billing route: request.body.accountId reaches chargeAccount without an ownership branch.",
-                "severity": "CRITICAL",
+                "severityTier": "critical",
                 "scope": "In billing route: account authorization",
                 "location": "app/billing.ts: chargeAccount",
                 "isCatastrophic": False,
@@ -225,7 +236,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F4",
                 "text": "Across cache workers: redundant cache refresh runs after every request.",
-                "severity": "OPTIMIZATION",
+                "severityTier": "low",
                 "scope": "Across cache workers: refresh scheduling",
                 "location": "app/cache-worker.ts: refreshCache",
                 "isCatastrophic": False,
@@ -233,7 +244,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F5",
                 "text": "Across API endpoints: request.body.email reaches createUser without validation.",
-                "severity": "WARNING",
+                "severityTier": "high",
                 "scope": "Across API endpoints: request validation",
                 "location": "app/users.ts: createUser",
                 "isCatastrophic": False,
@@ -241,7 +252,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {
                 "findingId": "F6",
                 "text": "Across API endpoints: request.body.userId reaches deleteAccount without an ownership branch.",
-                "severity": "CRITICAL",
+                "severityTier": "critical",
                 "scope": "Across API endpoints: account authorization",
                 "location": "app/accounts.ts: deleteAccount",
                 "isCatastrophic": False,
@@ -258,75 +269,37 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
 
         telemetry = main.AuditTelemetryResponse.model_validate(payload)
 
-        self.assertEqual(len(telemetry.strengths), 5)
+        self.assertEqual(len(telemetry.strengths), 6)
         self.assertEqual(
             [finding.findingId for finding in telemetry.findings],
-            ["F6", "F3", "F5", "F2", "F4"],
+            ["F6", "F3", "F5", "F2", "F4", "F1"],
         )
         self.assertEqual(
             {directive.findingId for directive in telemetry.directives},
-            {"F2", "F3", "F4", "F5", "F6"},
+            {"F1", "F2", "F3", "F4", "F5", "F6"},
         )
 
-    def test_penalties_drive_scores_with_the_soft_floor_and_catastrophic_gate(self):
-        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": [], "recommendations": []}), 98)
+    def test_verified_score_uses_only_severity_tiers_and_hard_ceilings(self):
+        self.assertEqual(main.calculate_verified_score([]), 100)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "low"}]), 98)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "medium"}]), 95)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "high"}]), 88)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}]), 55)
         self.assertEqual(
-            main.calculate_audit_score({
-                "pros": [],
-                "cons": [{"findingId": "F1", "text": "In cache layer: redundant cache refresh runs.", "severity": "OPTIMIZATION"}],
-                "recommendations": [],
-            }),
-            97,
+            main.calculate_verified_score([{"severityTier": "critical"}, {"severityTier": "critical"}]),
+            40,
         )
         self.assertEqual(
-            main.calculate_audit_score({
-                "pros": [],
-                "cons": [{"findingId": "F1", "text": "In API route: request.body.email is passed to createUser without validation.", "severity": "WARNING"}],
-                "recommendations": [],
-            }),
-            93,
+            main.calculate_verified_score([{"severityTier": "high"}, {"severityTier": "high"}]),
+            75,
         )
-        ordinary_critical = [{
-            "findingId": f"F{index}",
-            "text": f"In API route: request.body.value is passed to handler {index} without validation.",
-            "severity": "CRITICAL",
-            "isCatastrophic": True,
-        } for index in range(20)]
-        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": ordinary_critical, "recommendations": []}), 25)
-        catastrophic = [{
-            "findingId": "F1",
-            "text": "Total system compromise: production accepts arbitrary administrator creation.",
-            "severity": "CRITICAL",
-            "isCatastrophic": True,
-        }]
-        self.assertEqual(main.calculate_audit_score({"pros": [], "cons": catastrophic, "recommendations": []}), 24)
 
-    def test_penalties_clamp_to_their_evidence_severity_ranges(self):
-        def telemetry_finding(severity, penalty):
-            payload = self.telemetry_payload()
-            payload["findings"][0]["severity"] = severity
-            payload["findings"][0]["penalty"] = penalty
-            return main.AuditTelemetryResponse.model_validate(payload).findings[0].penalty
-
-        self.assertEqual(telemetry_finding("CRITICAL", 0), 11)
-        self.assertEqual(telemetry_finding("CRITICAL", 40), 13)
-        self.assertEqual(telemetry_finding("WARNING", -4), 4)
-        self.assertEqual(telemetry_finding("WARNING", 99), 6)
-        self.assertEqual(telemetry_finding("OPTIMIZATION", -4), 0)
-        self.assertEqual(telemetry_finding("OPTIMIZATION", 99), 2)
-
-        self.assertEqual(
-            main.calculate_audit_score({
-                "pros": [],
-                "cons": [
-                    {"findingId": "F1", "text": "In billing: accountId reaches chargeAccount without ownership validation.", "severity": "CRITICAL", "penalty": 99},
-                    {"findingId": "F2", "text": "In API route: request.body.email reaches createUser without validation.", "severity": "WARNING", "penalty": -4},
-                    {"findingId": "F3", "text": "In cache: refreshLoop repeats a redundant request.", "severity": "OPTIMIZATION", "penalty": -4},
-                ],
-                "recommendations": [],
-            }),
-            81,
-        )
+    def test_model_penalties_cannot_change_verified_score(self):
+        findings = [{"severityTier": "high", "penalty": 0}, {"severityTier": "medium", "penalty": 99}]
+        self.assertEqual(main.calculate_verified_score(findings), 83)
+        findings[0]["penalty"] = 999
+        findings[1]["penalty"] = -999
+        self.assertEqual(main.calculate_verified_score(findings), 83)
 
     async def test_test_assets_are_omitted_before_native_or_model_audit(self):
         generate_audit = AsyncMock()
@@ -341,7 +314,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
 
         native_parse.assert_not_called()
         generate_audit.assert_not_awaited()
-        self.assertEqual(result["evaluated_score"], 98)
+        self.assertEqual(result["evaluated_score"], 100)
         self.assertEqual(result["cons"], [])
         self.assertEqual(result["recommendations"], [])
         self.assertNotIn("dummy-secret", json.dumps(result))
@@ -362,7 +335,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 detected_language="TypeScript",
             )
 
-        self.assertEqual(result["evaluated_score"], 93)
+        self.assertEqual(result["evaluated_score"], 95)
         self.assertEqual(result["cons"], [telemetry.findings[0].text])
         self.assertEqual(result["finding_impacts"]["recommendations"][0]["directiveId"], "D1")
         self.assertIn("auditSummary", generate_audit.await_args.args[1])
