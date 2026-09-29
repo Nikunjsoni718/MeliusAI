@@ -342,29 +342,34 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
 }
 
 function EngineeringFindings({
-  items,
+  weaknesses,
   directives,
   expandAllForExport = false,
 }: {
-  items: AuditFinding[];
+  weaknesses: AuditFinding[];
   directives: AuditFinding[];
   expandAllForExport?: boolean;
 }) {
   const [openFindingKey, setOpenFindingKey] = useState<string | null>(null);
+  const [showAllWeaknesses, setShowAllWeaknesses] = useState(false);
+  const remainingCount = weaknesses.length - AUDIT_REPORT_VISIBLE_ITEMS_LIMIT;
+  const visibleWeaknesses = showAllWeaknesses
+    ? weaknesses
+    : weaknesses.slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
 
   return (
     <section className="rounded-xl border border-rose-500/10 bg-rose-500/[0.02] p-4">
       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-200">Areas for Improvement</h4>
       <div className="mt-3 space-y-3">
-        {items.length > 0 ? items.map((item, index) => {
+        {weaknesses.length > 0 ? visibleWeaknesses.map((item, index) => {
           const findingKey = `${item.findingId ?? item.text}-${index}`;
           const directive = resolveAuditDirective(item, index, directives);
           const directiveRegionId = `audit-directive-${findingKey}`;
           const isExpanded = expandAllForExport || openFindingKey === findingKey;
 
           return (
-            <article key={findingKey} className="rounded-lg border border-rose-500/10 bg-rose-500/[0.025] p-3">
-              <p className="text-sm leading-relaxed text-white/90">{item.text}</p>
+            <article key={findingKey} className="rounded-lg border border-rose-500/10 bg-rose-500/[0.025] p-4">
+              <p className="text-sm leading-relaxed text-white">{item.text}</p>
               {directive ? (
                 <>
                   <button
@@ -385,7 +390,7 @@ function EngineeringFindings({
                     <div
                       id={directiveRegionId}
                       role="region"
-                      className="mt-3 rounded-r-md border-l-2 border-cyan-500/50 bg-black/40 p-3.5"
+                      className="mt-3 rounded-r-md rounded-bl-md border-l-4 border-cyan-500 bg-cyan-900/10 p-4"
                     >
                       <p className="text-sm leading-relaxed text-gray-300">{directive.text}</p>
                     </div>
@@ -395,6 +400,21 @@ function EngineeringFindings({
             </article>
           );
         }) : <p className="text-xs italic text-slate-500">No verified findings were generated.</p>}
+        {weaknesses.length > AUDIT_REPORT_VISIBLE_ITEMS_LIMIT ? (
+          <button
+            type="button"
+            onClick={() => setShowAllWeaknesses((currentValue) => !currentValue)}
+            aria-expanded={showAllWeaknesses}
+            data-image-export-ignore="true"
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/40 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-cyan-500/50 hover:bg-cyan-500/10 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          >
+            <span>{showAllWeaknesses ? 'Show less' : `Show ${remainingCount} more findings`}</span>
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-3.5 w-3.5 transition-transform ${showAllWeaknesses ? 'rotate-180' : ''}`}
+            />
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -466,19 +486,13 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  // Supabase retains the exhaustive audit baseline. Only the dashboard
-  // projection is capped so an audit report stays focused and readable.
+  // Supabase retains the exhaustive audit baseline. Strengths stay compact,
+  // while findings can be expanded on demand below.
   const pros = normalizedAudit.findings.strengths.slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
-  const cons = normalizedAudit.findings.weaknesses.slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
-  const recommendations = normalizedAudit.findings.recommendations
-    .filter((directive) =>
-      cons.some(
-        (finding, index) => resolveAuditDirective(finding, index, normalizedAudit.findings.recommendations) === directive
-      )
-    )
-    .slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
+  const weaknesses = normalizedAudit.findings.weaknesses;
+  const recommendations = normalizedAudit.findings.recommendations;
   const findingsReportKey = [
-    ...cons.map((finding, index) => `finding:${finding.findingId ?? index}:${finding.text}`),
+    ...weaknesses.map((finding, index) => `finding:${finding.findingId ?? index}:${finding.text}`),
     ...recommendations.map((directive, index) => `directive:${directive.findingId ?? index}:${directive.text}`),
   ].join('\u0001');
   const hasWorkspaceAuditReport =
@@ -489,7 +503,7 @@ export function AssetPreviewModal({
         liveProject.audit_summary?.trim() ||
         liveProject.ai_summary?.trim() ||
         pros.length > 0 ||
-        cons.length > 0 ||
+        weaknesses.length > 0 ||
         recommendations.length > 0
     );
   const isWorkspaceAuditEmptyState = isFolder && !hasWorkspaceAuditReport;
@@ -1006,7 +1020,7 @@ export function AssetPreviewModal({
                 disabled={!liveProject?.id || verificationInProgress}
                 className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/50 hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900/40 disabled:text-slate-600"
               >
-                {verificationInProgress ? 'Re-Auditing via GPT Engine...' : 'Re-Audit with MeliusAI'}
+                {verificationInProgress ? 'Re-auditing with MeliusAI...' : 'Re-Audit with MeliusAI'}
               </button>
             ) : null}
           </div>
@@ -1101,7 +1115,7 @@ export function AssetPreviewModal({
 
               <EngineeringFindings
                 key={findingsReportKey}
-                items={cons}
+                weaknesses={weaknesses}
                 directives={recommendations}
                 expandAllForExport={isCapturingFullReport}
               />

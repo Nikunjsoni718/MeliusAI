@@ -573,12 +573,29 @@ export function normalizeAuditReport(value: unknown): NormalizedAuditReport {
       ),
       weaknesses: getFindingItems(
         sources,
-        ['weaknesses', 'cons', 'systemic_weaknesses', 'systemicWeaknesses', 'structural_vulnerabilities'],
+        [
+          'all_cons',
+          'allCons',
+          'all_weaknesses',
+          'allWeaknesses',
+          'weaknesses',
+          'cons',
+          'systemic_weaknesses',
+          'systemicWeaknesses',
+          'structural_vulnerabilities',
+        ],
         weaknesses
       ),
       recommendations: getFindingItems(
         sources,
-        ['recommendations', 'strategicRecommendations', 'strategic_recommendations', 'actionable_recommendations'],
+        [
+          'all_recommendations',
+          'allRecommendations',
+          'recommendations',
+          'strategicRecommendations',
+          'strategic_recommendations',
+          'actionable_recommendations',
+        ],
         normalizedRecommendations
       ),
     },
