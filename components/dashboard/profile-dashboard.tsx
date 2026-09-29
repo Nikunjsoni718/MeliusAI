@@ -3395,12 +3395,18 @@ export function ProfileDashboard({
           label: 'Developer Profile',
           icon: <FileText className="h-5 w-5" strokeWidth={1.8} />,
         },
-        {
-          href: `${profileHref}#opportunities`,
-          label: 'Opportunities',
-          icon: <BriefcaseBusiness className="h-5 w-5" strokeWidth={1.8} />,
-          ownerOnly: true,
-        },
+        // Temporarily hidden from this legacy dashboard sidebar. Keep the item
+        // intact so the Opportunities feature can be restored by changing this guard.
+        ...(false
+          ? [
+              {
+                href: `${profileHref}#opportunities`,
+                label: 'Opportunities',
+                icon: <BriefcaseBusiness className="h-5 w-5" strokeWidth={1.8} />,
+                ownerOnly: true,
+              },
+            ]
+          : []),
         {
           href: '/settings',
           label: 'Settings',
@@ -7701,7 +7707,8 @@ export function ProfileDashboard({
                 )}
               </Suspense>
 
-            {isOwner && (
+            {/* Opportunities is intentionally hidden while its data flow remains available for re-enablement. */}
+            {false && isOwner && (
               <section id="opportunities" className="space-y-4">
               <div>
                 <h2 className="text-2xl font-semibold text-white">Opportunities</h2>
