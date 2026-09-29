@@ -74,6 +74,7 @@ const auditTextFileExtensions = new Set([
   'yaml',
   'yml',
 ]);
+const AUDIT_REPORT_VISIBLE_ITEMS_LIMIT = 5;
 const previewProjectSelect =
   'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
 
@@ -465,9 +466,17 @@ export function AssetPreviewModal({
   const renderedTextPreview = codePreview.url === codeFetchUrl ? code : null;
   const normalizedAudit = useMemo(() => normalizeAuditReport(liveProject), [liveProject]);
   const score = normalizedAudit.score ?? 0;
-  const pros = normalizedAudit.findings.strengths;
-  const cons = normalizedAudit.findings.weaknesses;
-  const recommendations = normalizedAudit.findings.recommendations;
+  // Supabase retains the exhaustive audit baseline. Only the dashboard
+  // projection is capped so an audit report stays focused and readable.
+  const pros = normalizedAudit.findings.strengths.slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
+  const cons = normalizedAudit.findings.weaknesses.slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
+  const recommendations = normalizedAudit.findings.recommendations
+    .filter((directive) =>
+      cons.some(
+        (finding, index) => resolveAuditDirective(finding, index, normalizedAudit.findings.recommendations) === directive
+      )
+    )
+    .slice(0, AUDIT_REPORT_VISIBLE_ITEMS_LIMIT);
   const findingsReportKey = [
     ...cons.map((finding, index) => `finding:${finding.findingId ?? index}:${finding.text}`),
     ...recommendations.map((directive, index) => `directive:${directive.findingId ?? index}:${directive.text}`),

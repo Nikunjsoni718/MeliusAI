@@ -6738,18 +6738,33 @@ def build_audit_report_views(
             ),
         )
     ]
-    visible_weaknesses = ranked_weaknesses[:AUDIT_VISIBLE_ITEMS_LIMIT]
-    visible_finding_ids = {finding["findingId"] for finding in visible_weaknesses}
-    visible_recommendations = [
+    # Severity ranking establishes the "top" order. Once ranked, each
+    # user-facing collection is strictly bounded before it reaches a database
+    # payload; the full arrays below remain the incremental-audit baseline.
+    weaknesses = ranked_weaknesses
+    top_weaknesses = weaknesses[:AUDIT_VISIBLE_ITEMS_LIMIT]
+    top_weakness_titles = {
+        _audit_text_identity(str(finding.get("title") or ""))
+        for finding in top_weaknesses
+        if str(finding.get("title") or "").strip()
+    }
+    title_matched_recommendations = [
         recommendation
         for recommendation in full_finding_impacts["recommendations"]
-        if recommendation.get("findingId") in visible_finding_ids
+        if _audit_text_identity(
+            str(recommendation.get("target_title") or "")
+        ) in top_weakness_titles
     ]
-    visible_pros = full_finding_impacts["pros"][:AUDIT_VISIBLE_ITEMS_LIMIT]
+    top_recommendations = (
+        title_matched_recommendations[:AUDIT_VISIBLE_ITEMS_LIMIT]
+        if title_matched_recommendations
+        else full_finding_impacts["recommendations"][:AUDIT_VISIBLE_ITEMS_LIMIT]
+    )
+    top_pros = full_finding_impacts["pros"][:AUDIT_VISIBLE_ITEMS_LIMIT]
     visible_finding_impacts = {
-        "pros": visible_pros,
-        "cons": visible_weaknesses,
-        "recommendations": visible_recommendations,
+        "pros": top_pros,
+        "cons": top_weaknesses,
+        "recommendations": top_recommendations,
         # Existing UI consumers read the keys above. These additive fields retain
         # the complete baseline for scoring and future incremental audits.
         "all_pros": full_finding_impacts["pros"],
@@ -6761,10 +6776,38 @@ def build_audit_report_views(
         "score": score,
         "full_finding_impacts": full_finding_impacts,
         "finding_impacts": visible_finding_impacts,
-        "pros": audit_finding_texts(visible_pros),
-        "weaknesses": audit_finding_texts(visible_weaknesses),
-        "recommendations": audit_finding_texts(visible_recommendations),
+        "pros": audit_finding_texts(top_pros),
+        "weaknesses": audit_finding_texts(top_weaknesses),
+        "recommendations": audit_finding_texts(top_recommendations),
     }
+
+
+def _get_audit_report_evidence_sources(report: Any) -> tuple[Any, Any, Any]:
+    """Return exhaustive report arrays when present, otherwise the visible source."""
+    source = report if isinstance(report, dict) else {}
+    full_impacts = source.get("full_finding_impacts")
+    if not isinstance(full_impacts, dict):
+        full_impacts = source.get("finding_impacts")
+
+    if isinstance(full_impacts, dict) and any(
+        key.startswith("all_") for key in full_impacts
+    ):
+        return (
+            full_impacts.get("all_pros", []),
+            full_impacts.get("all_cons", []),
+            full_impacts.get("all_recommendations", []),
+        )
+    if isinstance(full_impacts, dict):
+        return (
+            full_impacts.get("pros", []),
+            full_impacts.get("cons", []),
+            full_impacts.get("recommendations", []),
+        )
+    return (
+        source.get("pros", []),
+        source.get("weaknesses", source.get("cons", [])),
+        source.get("recommendations", []),
+    )
 
 
 def build_project_folder_audit_update_payload(
@@ -6773,21 +6816,9 @@ def build_project_folder_audit_update_payload(
     summary: str | None = None,
 ) -> Dict[str, Any]:
     """Create the schema-compatible folder update from full, validated evidence."""
-    full_impacts = report.get("full_finding_impacts") if isinstance(report, dict) else None
-    if not isinstance(full_impacts, dict):
-        full_impacts = report.get("finding_impacts") if isinstance(report, dict) else None
-    if isinstance(full_impacts, dict) and any(key.startswith("all_") for key in full_impacts):
-        source_pros = full_impacts.get("all_pros", [])
-        source_weaknesses = full_impacts.get("all_cons", [])
-        source_recommendations = full_impacts.get("all_recommendations", [])
-    elif isinstance(full_impacts, dict):
-        source_pros = full_impacts.get("pros", [])
-        source_weaknesses = full_impacts.get("cons", [])
-        source_recommendations = full_impacts.get("recommendations", [])
-    else:
-        source_pros = report.get("pros", []) if isinstance(report, dict) else []
-        source_weaknesses = report.get("weaknesses", report.get("cons", [])) if isinstance(report, dict) else []
-        source_recommendations = report.get("recommendations", []) if isinstance(report, dict) else []
+    source_pros, source_weaknesses, source_recommendations = (
+        _get_audit_report_evidence_sources(report)
+    )
 
     views = build_audit_report_views(
         source_pros,
@@ -9816,6 +9847,15 @@ def build_project_file_update_payload(
 ) -> Dict[str, Any]:
     """Build the only schema-approved payload for a project-file audit write."""
     score = coerce_audit_score(file_audit.get("evaluated_score"))
+    source_pros, source_weaknesses, source_recommendations = (
+        _get_audit_report_evidence_sources(file_audit)
+    )
+    views = build_audit_report_views(
+        source_pros,
+        source_weaknesses,
+        source_recommendations,
+        allow_legacy=True,
+    )
     summary = sanitize_audit_summary(
         file_audit.get("executive_summary") or file_audit.get("description")
     ) or "File audit complete."
@@ -9830,10 +9870,12 @@ def build_project_file_update_payload(
         "audit_summary": format_file_audit_for_storage(file_audit),
         "ai_summary": summary,
         "description": summary,
-        "pros": normalize_audit_list(file_audit.get("pros")),
-        "cons": normalize_audit_list(file_audit.get("cons")),
-        "recommendations": normalize_audit_list(file_audit.get("recommendations")),
-        "audit_findings": file_audit.get("finding_impacts") or {"pros": [], "cons": [], "recommendations": []},
+        "pros": views["pros"],
+        "cons": views["weaknesses"],
+        "recommendations": views["recommendations"],
+        # Visible arrays above are capped at five. Keep full validated evidence
+        # here so future incremental audits retain their complete baseline.
+        "audit_findings": views["finding_impacts"],
         "user_description": summary,
         "has_been_audited": True,
         "status": status,

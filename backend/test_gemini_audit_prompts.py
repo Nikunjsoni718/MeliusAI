@@ -336,6 +336,74 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(persisted["cons"]), 5)
         self.assertEqual(len(persisted["audit_findings"]["all_cons"]), 6)
 
+    def test_database_payloads_cap_visible_arrays_and_retain_full_baseline(self):
+        pros = [{"text": f"Verified strength {index}"} for index in range(1, 7)]
+        weaknesses = [
+            {
+                "findingId": f"F{index}",
+                "text": f"Verified weakness {index}.",
+                "title": f"Weakness title {index}",
+                "severityTier": severity,
+                "isCatastrophic": False,
+            }
+            for index, severity in enumerate(
+                ("low", "medium", "critical", "high", "low", "critical"),
+                start=1,
+            )
+        ]
+        recommendations = [
+            {
+                "directiveId": f"D{index}",
+                "findingId": f"F{index}",
+                "text": f"Apply fix {index}.",
+                "target_title": f"Weakness title {index}",
+                "actionable_fix": f"Apply fix {index}.",
+            }
+            for index in range(1, 7)
+        ]
+
+        views = main.build_audit_report_views(pros, weaknesses, recommendations)
+        self.assertEqual(views["score"], main.calculate_verified_score(views["full_finding_impacts"]["cons"]))
+        self.assertEqual(len(views["pros"]), 5)
+        self.assertEqual(len(views["weaknesses"]), 5)
+        self.assertEqual(len(views["recommendations"]), 5)
+        visible_titles = {
+            finding["title"] for finding in views["finding_impacts"]["cons"]
+        }
+        self.assertTrue(all(
+            recommendation["target_title"] in visible_titles
+            for recommendation in views["finding_impacts"]["recommendations"]
+        ))
+
+        report = {
+            "evaluated_score": views["score"],
+            "description": "Evidence-based audit summary.",
+            "full_finding_impacts": views["full_finding_impacts"],
+        }
+        folder_payload = main.build_project_folder_audit_update_payload(report)
+        file_payload = main.build_project_file_update_payload(report, status="reviewed")
+        for payload in (folder_payload, file_payload):
+            self.assertEqual(len(payload["pros"]), 5)
+            self.assertEqual(len(payload["cons"]), 5)
+            self.assertEqual(len(payload["recommendations"]), 5)
+            self.assertEqual(len(payload["audit_findings"]["all_pros"]), 6)
+            self.assertEqual(len(payload["audit_findings"]["all_cons"]), 6)
+            self.assertEqual(len(payload["audit_findings"]["all_recommendations"]), 6)
+
+        unmatched_recommendations = [
+            {**recommendation, "target_title": "Missing title"}
+            for recommendation in recommendations
+        ]
+        fallback_views = main.build_audit_report_views(
+            pros,
+            weaknesses,
+            unmatched_recommendations,
+        )
+        self.assertEqual(
+            [item["text"] for item in fallback_views["finding_impacts"]["recommendations"]],
+            [f"Apply fix {index}." for index in range(1, 6)],
+        )
+
     def test_verified_score_uses_stable_dynamic_severity_penalties(self):
         self.assertEqual(main.calculate_verified_score([]), 100)
         for tier, (minimum, maximum) in main.PENALTY_RANGES.items():
