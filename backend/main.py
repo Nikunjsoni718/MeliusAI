@@ -6630,34 +6630,21 @@ def build_finding_impacts(
     }
 
 
-PENALTY_WEIGHTS = {"critical": 25, "high": 12, "medium": 5, "low": 2}
+PENALTY_WEIGHTS = {"critical": 12, "high": 6, "medium": 2, "low": 1}
 AUDIT_VISIBLE_ITEMS_LIMIT = 5
 
 
 def calculate_verified_score(findings):
     score = 100
-    critical_count = 0
-    high_count = 0
 
     for finding in findings:
         # Fallback to 'medium' if the model forgets the tier
         tier = finding.get("severityTier", finding.get("severity", "medium")).lower()
-        score -= PENALTY_WEIGHTS.get(tier, 5)
+        score -= PENALTY_WEIGHTS.get(tier, PENALTY_WEIGHTS["medium"])
 
-        if tier == "critical": critical_count += 1
-        if tier == "high": high_count += 1
-
-    # Hard ceilings: A repo with severe flaws can never pass
-    if critical_count >= 2:
-        max_score = 40
-    elif critical_count == 1:
-        max_score = 55
-    elif high_count >= 2:
-        max_score = 75
-    else:
-        max_score = 100
-
-    return max(0, min(score, max_score))
+    # A linear model rewards every verified remediation immediately while
+    # retaining a non-zero baseline for a report with many weaknesses.
+    return max(15, score)
 
 
 def calculate_audit_score(finding_impacts: Dict[str, List[Dict[str, Any]]]) -> int:

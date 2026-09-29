@@ -195,7 +195,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.directives[0].findingId, "F1")
         adapted = main.adapt_audit_telemetry(telemetry)
         impacts = main.build_finding_impacts(adapted["pros"], adapted["cons"], adapted["recommendations"])
-        self.assertEqual(main.calculate_audit_score(impacts), 95)
+        self.assertEqual(main.calculate_audit_score(impacts), 98)
 
     def test_telemetry_preserves_every_ranked_finding_and_directive(self):
         payload = self.telemetry_payload()
@@ -300,7 +300,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         }
 
         report = main.parse_folder_audit_response(json.dumps(payload), previous_score=100)
-        self.assertEqual(report["evaluated_score"], 29)
+        self.assertEqual(report["evaluated_score"], 66)
         self.assertEqual(report["executive_summary"], payload["executive_summary"])
         self.assertEqual(len(report["pros"]), 5)
         self.assertEqual(len(report["cons"]), 5)
@@ -320,35 +320,36 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report["finding_impacts"]["all_recommendations"]), 6)
 
         persisted = main.build_project_folder_audit_update_payload(report)
-        self.assertEqual(persisted["score"], 29)
-        self.assertEqual(persisted["evaluation_score"], 29)
+        self.assertEqual(persisted["score"], 66)
+        self.assertEqual(persisted["evaluation_score"], 66)
         self.assertEqual(persisted["executive_summary"], payload["executive_summary"])
         self.assertEqual(persisted["audit_summary"], payload["executive_summary"])
         self.assertEqual(len(persisted["pros"]), 5)
         self.assertEqual(len(persisted["cons"]), 5)
         self.assertEqual(len(persisted["audit_findings"]["all_cons"]), 6)
 
-    def test_verified_score_uses_only_severity_tiers_and_hard_ceilings(self):
+    def test_verified_score_uses_linear_severity_deductions_and_a_floor(self):
         self.assertEqual(main.calculate_verified_score([]), 100)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "low"}]), 98)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "medium"}]), 95)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "high"}]), 88)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}]), 55)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "low"}]), 99)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "medium"}]), 98)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "high"}]), 94)
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}]), 88)
         self.assertEqual(
             main.calculate_verified_score([{"severityTier": "critical"}, {"severityTier": "critical"}]),
-            40,
+            76,
         )
         self.assertEqual(
             main.calculate_verified_score([{"severityTier": "high"}, {"severityTier": "high"}]),
-            75,
+            88,
         )
+        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}] * 8), 10)
 
     def test_model_penalties_cannot_change_verified_score(self):
         findings = [{"severityTier": "high", "penalty": 0}, {"severityTier": "medium", "penalty": 99}]
-        self.assertEqual(main.calculate_verified_score(findings), 83)
+        self.assertEqual(main.calculate_verified_score(findings), 92)
         findings[0]["penalty"] = 999
         findings[1]["penalty"] = -999
-        self.assertEqual(main.calculate_verified_score(findings), 83)
+        self.assertEqual(main.calculate_verified_score(findings), 92)
 
     async def test_test_assets_are_omitted_before_native_or_model_audit(self):
         generate_audit = AsyncMock()
@@ -384,7 +385,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 detected_language="TypeScript",
             )
 
-        self.assertEqual(result["evaluated_score"], 95)
+        self.assertEqual(result["evaluated_score"], 98)
         self.assertEqual(result["cons"], [telemetry.findings[0].text])
         self.assertEqual(result["finding_impacts"]["recommendations"][0]["directiveId"], "D1")
         self.assertEqual(generate_audit.await_args.args[1], main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
