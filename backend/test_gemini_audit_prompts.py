@@ -78,49 +78,37 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             "directives": directives,
         }
 
-    def test_all_model_contracts_use_canonical_telemetry_only(self):
+    def test_all_model_contracts_use_the_exact_security_mentor_instruction(self):
         prompt = main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT
-        self.assertIn("objective, evidence-driven Staff Software Engineer", prompt)
-        self.assertIn("Hard omission", prompt)
-        self.assertIn("source), the file path, and the terminal execution point (sink)", prompt)
-        self.assertIn("one finding per unique root cause", prompt)
-        self.assertIn("total system compromise or unrecoverable application failure", prompt)
-        self.assertIn("all four pillars", prompt)
-        self.assertIn("Security", prompt)
-        self.assertIn("Reliability and resilience", prompt)
-        self.assertIn("Performance and optimization", prompt)
-        self.assertIn("Code quality and maintainability", prompt)
-        self.assertIn("CRITICAL GENERATION RULES:", prompt)
-        self.assertIn("ZERO QUOTAS", prompt)
-        self.assertIn("STRICT MUTUAL EXCLUSIVITY", prompt)
-        self.assertIn("NO GLOBAL ASSUMPTIONS", prompt)
-        self.assertIn("ACTIONABLE RECOMMENDATIONS", prompt)
-        self.assertIn("NO SCORING", prompt)
-        self.assertIn("severityTier", prompt)
-        self.assertNotIn("five strongest verified architectural strengths", prompt)
-        self.assertNotIn("five highest-priority unique findings", prompt)
-        self.assertNotIn("Assign exactly one integer `penalty`", prompt)
-        self.assertIn("one or two short sentences", prompt)
-        self.assertIn("Never begin with filler articles: `The`, `This`, `A`, or `An`", prompt)
-        self.assertIn("Lead with the concrete technical mechanism", prompt)
-        self.assertIn("directive must begin with an imperative action verb", prompt)
-        self.assertIn("cross-check every candidate against all findings", prompt)
-        self.assertIn("praise must be universally true across the reviewed context", prompt)
-        self.assertIn("exactly `auditSummary`, `strengths`, `findings`, and `directives`", prompt)
-        self.assertNotIn("impactArea", prompt)
+        self.assertTrue(prompt.startswith("You are an elite, industry-leading Senior Security Architect"))
+        self.assertIn("supportive, constructive, and highly professional", prompt)
+        self.assertIn("EXHAUSTIVE ANALYSIS", prompt)
+        self.assertIn("ROOT CAUSE & REAL-WORLD BLAST RADIUS", prompt)
+        self.assertIn("ABSOLUTE EXCLUSIVITY", prompt)
+        self.assertIn("NO NUMERICAL RATINGS IN TEXT", prompt)
+        self.assertIn("SEVERITY CLASSIFICATION CRITERIA", prompt)
+        self.assertIn("`pros`", prompt)
+        self.assertIn("`weaknesses`", prompt)
+        self.assertIn("`recommendations`", prompt)
+        self.assertIn("`severity`, `title`, `root_cause`, and `file_path`", prompt)
+        self.assertNotIn("Top 5", prompt)
+        self.assertNotIn("return 5", prompt.lower())
+        self.assertNotIn("penalty", prompt.lower())
 
         finding_schema = main.AuditTelemetryResponse.model_json_schema()["$defs"]["AuditTelemetryFinding"]
         self.assertIn("severityTier", finding_schema["properties"])
         self.assertNotIn("severityTier", finding_schema["required"])
+        provider_schema = main.GeminiAuditResponse.model_json_schema()
+        self.assertEqual(set(provider_schema["properties"]), {"pros", "weaknesses", "recommendations"})
+        provider_weakness = provider_schema["$defs"]["GeminiAuditWeakness"]
+        self.assertEqual(
+            set(provider_weakness["properties"]),
+            {"severity", "title", "root_cause", "file_path"},
+        )
 
         for contract in ("file", "workspace", "standalone", "incremental", "dashboard"):
             with self.subTest(contract=contract):
-                rendered = main.build_meliusai_security_audit_prompt(contract)
-                self.assertTrue(rendered.startswith(prompt))
-                self.assertIn("SCHEMA BINDING", rendered)
-                self.assertIn("`auditSummary`", rendered)
-                self.assertNotIn("`score_delta`", rendered)
-                self.assertNotIn("`impactArea`", rendered)
+                self.assertEqual(main.build_meliusai_security_audit_prompt(contract, "ignored"), prompt)
 
         file_prompt = main.generate_single_file_audit_prompt(
             asset_name="app/api/users/route.ts",
@@ -135,9 +123,9 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             },
             user_context_description="",
         )
-        self.assertIn("lowercase severityTier of critical, high, medium, or low", file_prompt)
+        self.assertIn("lowercase `severity`, `title`, `root_cause`, and `file_path`", file_prompt)
         self.assertIn("returning every", file_prompt)
-        self.assertNotIn("five strongest strengths and five highest-priority", file_prompt)
+        self.assertNotIn("Top 5", file_prompt)
         self.assertNotIn("required `penalty` field", file_prompt)
 
     def test_canonical_telemetry_validates_evidence_and_adapts_legacy_fields(self):
@@ -279,6 +267,53 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
             {"F1", "F2", "F3", "F4", "F5", "F6"},
         )
 
+    def test_exhaustive_response_scores_all_evidence_but_exposes_only_five(self):
+        payload = {
+            "pros": [f"Verified strength {index} in app/service{index}.ts." for index in range(1, 7)],
+            "weaknesses": [
+                {
+                    "severity": tier,
+                    "title": f"Weakness {index}",
+                    "root_cause": f"Concrete production root cause {index}.",
+                    "file_path": f"app/source{index}.ts",
+                }
+                for index, tier in enumerate(("low", "medium", "critical", "high", "low", "critical"), start=1)
+            ],
+            "recommendations": [
+                {
+                    "target_title": f"Weakness {index}",
+                    "actionable_fix": f"Apply the concrete fix for weakness {index}.",
+                }
+                for index in range(1, 7)
+            ],
+        }
+
+        report = main.parse_folder_audit_response(json.dumps(payload), previous_score=100)
+        self.assertEqual(report["evaluated_score"], 29)
+        self.assertEqual(len(report["pros"]), 5)
+        self.assertEqual(len(report["cons"]), 5)
+        self.assertEqual(len(report["recommendations"]), 5)
+        self.assertEqual(
+            [finding["severityTier"] for finding in report["finding_impacts"]["cons"]],
+            ["critical", "critical", "high", "medium", "low"],
+        )
+        self.assertEqual(report["finding_impacts"]["cons"][0]["title"], "Weakness 3")
+        self.assertEqual(
+            report["finding_impacts"]["cons"][0]["root_cause"],
+            "Concrete production root cause 3.",
+        )
+        self.assertEqual(report["finding_impacts"]["cons"][0]["file_path"], "app/source3.ts")
+        self.assertEqual(len(report["finding_impacts"]["all_pros"]), 6)
+        self.assertEqual(len(report["finding_impacts"]["all_cons"]), 6)
+        self.assertEqual(len(report["finding_impacts"]["all_recommendations"]), 6)
+
+        persisted = main.build_project_folder_audit_update_payload(report)
+        self.assertEqual(persisted["score"], 29)
+        self.assertEqual(persisted["evaluation_score"], 29)
+        self.assertEqual(len(persisted["pros"]), 5)
+        self.assertEqual(len(persisted["cons"]), 5)
+        self.assertEqual(len(persisted["audit_findings"]["all_cons"]), 6)
+
     def test_verified_score_uses_only_severity_tiers_and_hard_ceilings(self):
         self.assertEqual(main.calculate_verified_score([]), 100)
         self.assertEqual(main.calculate_verified_score([{"severityTier": "low"}]), 98)
@@ -338,7 +373,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["evaluated_score"], 95)
         self.assertEqual(result["cons"], [telemetry.findings[0].text])
         self.assertEqual(result["finding_impacts"]["recommendations"][0]["directiveId"], "D1")
-        self.assertIn("auditSummary", generate_audit.await_args.args[1])
+        self.assertEqual(generate_audit.await_args.args[1], main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)
 
     def test_incremental_adapter_derives_changed_file_counts_without_model_impacts(self):
         telemetry = main.AuditTelemetryResponse.model_validate(self.telemetry_payload())
