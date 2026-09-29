@@ -1,4 +1,6 @@
 import json
+import logging
+import random
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
@@ -195,7 +197,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.directives[0].findingId, "F1")
         adapted = main.adapt_audit_telemetry(telemetry)
         impacts = main.build_finding_impacts(adapted["pros"], adapted["cons"], adapted["recommendations"])
-        self.assertEqual(main.calculate_audit_score(impacts), 98)
+        self.assertEqual(
+            main.calculate_audit_score(impacts),
+            main.calculate_verified_score(impacts["cons"]),
+        )
 
     def test_telemetry_preserves_every_ranked_finding_and_directive(self):
         payload = self.telemetry_payload()
@@ -300,7 +305,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         }
 
         report = main.parse_folder_audit_response(json.dumps(payload), previous_score=100)
-        self.assertEqual(report["evaluated_score"], 66)
+        expected_score = main.calculate_verified_score(
+            report["finding_impacts"]["all_cons"]
+        )
+        self.assertEqual(report["evaluated_score"], expected_score)
         self.assertEqual(report["executive_summary"], payload["executive_summary"])
         self.assertEqual(len(report["pros"]), 5)
         self.assertEqual(len(report["cons"]), 5)
@@ -320,36 +328,153 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report["finding_impacts"]["all_recommendations"]), 6)
 
         persisted = main.build_project_folder_audit_update_payload(report)
-        self.assertEqual(persisted["score"], 66)
-        self.assertEqual(persisted["evaluation_score"], 66)
+        self.assertEqual(persisted["score"], expected_score)
+        self.assertEqual(persisted["evaluation_score"], expected_score)
         self.assertEqual(persisted["executive_summary"], payload["executive_summary"])
         self.assertEqual(persisted["audit_summary"], payload["executive_summary"])
         self.assertEqual(len(persisted["pros"]), 5)
         self.assertEqual(len(persisted["cons"]), 5)
         self.assertEqual(len(persisted["audit_findings"]["all_cons"]), 6)
 
-    def test_verified_score_uses_linear_severity_deductions_and_a_floor(self):
+    def test_verified_score_uses_stable_dynamic_severity_penalties(self):
         self.assertEqual(main.calculate_verified_score([]), 100)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "low"}]), 99)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "medium"}]), 98)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "high"}]), 94)
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}]), 88)
-        self.assertEqual(
-            main.calculate_verified_score([{"severityTier": "critical"}, {"severityTier": "critical"}]),
-            76,
+        for tier, (minimum, maximum) in main.PENALTY_RANGES.items():
+            finding = {"severityTier": tier, "title": f"{tier} finding"}
+            expected = 100 - random.Random(f"{tier} finding").randint(
+                minimum,
+                maximum,
+            )
+            self.assertEqual(main.calculate_verified_score([finding]), expected)
+            self.assertEqual(main.calculate_verified_score([finding]), expected)
+
+        unknown_tier = {"severityTier": "unexpected", "title": "unknown finding"}
+        expected_medium = 100 - random.Random("unknown finding").randint(2, 4)
+        self.assertEqual(main.calculate_verified_score([unknown_tier]), expected_medium)
+
+        root_cause_only = {
+            "severityTier": "high",
+            "root_cause": "Authorization is skipped before changing account state.",
+        }
+        expected_high = 100 - random.Random(root_cause_only["root_cause"]).randint(5, 7)
+        self.assertEqual(main.calculate_verified_score([root_cause_only]), expected_high)
+
+    def test_verified_score_uses_standard_and_catastrophic_floors(self):
+        def findings(tier, count):
+            return [
+                {"severityTier": tier, "title": f"{tier} finding {index}"}
+                for index in range(count)
+            ]
+
+        standard_floor_findings = (
+            findings("critical", 4)
+            + findings("high", 4)
+            + findings("medium", 15)
         )
-        self.assertEqual(
-            main.calculate_verified_score([{"severityTier": "high"}, {"severityTier": "high"}]),
-            88,
+        self.assertEqual(main.calculate_verified_score(standard_floor_findings), 30)
+
+        five_critical_findings = findings("critical", 5) + findings("high", 20)
+        self.assertEqual(main.calculate_verified_score(five_critical_findings), 20)
+
+        combined_catastrophic_findings = (
+            findings("critical", 4)
+            + findings("high", 5)
+            + findings("medium", 20)
         )
-        self.assertEqual(main.calculate_verified_score([{"severityTier": "critical"}] * 8), 10)
+        self.assertEqual(main.calculate_verified_score(combined_catastrophic_findings), 20)
 
     def test_model_penalties_cannot_change_verified_score(self):
-        findings = [{"severityTier": "high", "penalty": 0}, {"severityTier": "medium", "penalty": 99}]
-        self.assertEqual(main.calculate_verified_score(findings), 92)
+        findings = [
+            {"severityTier": "high", "title": "session authorization", "penalty": 0},
+            {"severityTier": "medium", "title": "input validation", "penalty": 99},
+        ]
+        expected_score = main.calculate_verified_score(findings)
         findings[0]["penalty"] = 999
         findings[1]["penalty"] = -999
-        self.assertEqual(main.calculate_verified_score(findings), 92)
+        self.assertEqual(main.calculate_verified_score(findings), expected_score)
+
+    def test_google_genai_afc_filter_removes_only_the_known_advisory(self):
+        warning = logging.LogRecord(
+            "google_genai.models",
+            logging.WARNING,
+            __file__,
+            1,
+            "Direct use of automatic function calling (AFC) in AsyncModels.generate_content is not recommended.",
+            (),
+            None,
+        )
+        unrelated_warning = logging.LogRecord(
+            "google_genai.models",
+            logging.WARNING,
+            __file__,
+            1,
+            "Gemini request failed after retrying.",
+            (),
+            None,
+        )
+        warning_filter = main._GoogleGenAIAFCWarningFilter()
+        self.assertFalse(warning_filter.filter(warning))
+        self.assertTrue(warning_filter.filter(unrelated_warning))
+
+    async def test_stored_file_full_audit_finalizes_a_repository_baseline(self):
+        state = {
+            "id": "state-1",
+            "workspace_id": "folder-1",
+            "user_id": "owner-1",
+            "repository": "owner/repository",
+            "branch": "main",
+            "last_verified_commit_sha": "a" * 40,
+            "baseline_version": 0,
+        }
+        folder_audit = {
+            "delta_summary": "Full audit completed from synced source files.",
+            "executive_summary": "The synced repository has a verified full baseline.",
+            "pros": ["The routing boundary is isolated."],
+            "cons": ["The route interpolates untrusted input into SQL."],
+            "recommendations": ["Use a parameterized query in the route."],
+            "finding_impacts": {
+                "pros": [{"text": "The routing boundary is isolated."}],
+                "cons": [{
+                    "text": "The route interpolates untrusted input into SQL.",
+                    "severityTier": "critical",
+                }],
+                "recommendations": [{"text": "Use a parameterized query in the route."}],
+                "all_pros": [{"text": "The routing boundary is isolated."}],
+                "all_cons": [{
+                    "text": "The route interpolates untrusted input into SQL.",
+                    "severityTier": "critical",
+                }],
+                "all_recommendations": [{"text": "Use a parameterized query in the route."}],
+            },
+        }
+        initialize = AsyncMock(return_value=state)
+        save = AsyncMock(return_value={"id": "diff-1"})
+        finalize = AsyncMock(side_effect=lambda _client, _state, _diff_id, report: report)
+
+        with patch.object(main.github_diffs, "get_repository_state", new=AsyncMock(return_value=None)), patch.object(
+            main.github_diffs, "initialize_repository_baseline", new=initialize
+        ), patch.object(main.github_diffs, "save_workspace_diff", new=save), patch.object(
+            main.github_diffs, "finalize_verified_audit", new=finalize
+        ):
+            report = await main.persist_full_github_audit_baseline(
+                object(),
+                folder_id="folder-1",
+                user_id="owner-1",
+                repository="owner/repository",
+                branch="main",
+                commit_sha="a" * 40,
+                folder_audit=folder_audit,
+            )
+
+        initialize.assert_awaited_once()
+        save.assert_awaited_once()
+        self.assertEqual(save.await_args.args[2], "a" * 40)
+        self.assertEqual(save.await_args.kwargs["audit_kind"], "baseline")
+        self.assertEqual(
+            report["score"],
+            main.calculate_verified_score(folder_audit["finding_impacts"]["all_cons"]),
+        )
+        self.assertEqual(report["finding_impacts"]["cons"], folder_audit["finding_impacts"]["all_cons"])
+        finalize.assert_awaited_once()
 
     async def test_test_assets_are_omitted_before_native_or_model_audit(self):
         generate_audit = AsyncMock()
@@ -385,7 +510,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
                 detected_language="TypeScript",
             )
 
-        self.assertEqual(result["evaluated_score"], 98)
+        self.assertEqual(
+            result["evaluated_score"],
+            main.calculate_verified_score(result["finding_impacts"]["cons"]),
+        )
         self.assertEqual(result["cons"], [telemetry.findings[0].text])
         self.assertEqual(result["finding_impacts"]["recommendations"][0]["directiveId"], "D1")
         self.assertEqual(generate_audit.await_args.args[1], main.MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT)

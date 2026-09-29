@@ -5,7 +5,15 @@ from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from backend import main
+try:
+    from backend import main
+except ModuleNotFoundError as error:
+    if error.name != "google":
+        raise
+    from backend.test_gemini_audit_prompts import install_google_genai_test_stub
+
+    install_google_genai_test_stub()
+    from backend import main
 from backend.github_diff_service import CumulativeDiff, DiffServiceError
 
 BASE, HEAD, NEXT = "a" * 40, "b" * 40, "c" * 40
@@ -19,8 +27,18 @@ REPORT = {
     "recommendations": ["Existing Recommendation: Add cache invalidation tests."],
     "finding_impacts": {
         "pros": [{"text": "Existing Strength: Input validation is consistent.", "impactScore": 10}],
-        "cons": [{"text": "Existing Weakness: Cache invalidation is incomplete.", "impactScore": -8}],
-        "recommendations": [{"text": "Existing Recommendation: Add cache invalidation tests.", "impactScore": 8}],
+        "cons": [{
+            "findingId": "F1",
+            "text": "Existing Weakness: Cache invalidation is incomplete.",
+            "severityTier": "medium",
+            "impactScore": -8,
+        }],
+        "recommendations": [{
+            "directiveId": "D1",
+            "findingId": "F1",
+            "text": "Existing Recommendation: Add cache invalidation tests.",
+            "impactScore": 8,
+        }],
     },
 }
 
@@ -189,7 +207,8 @@ class GeminiDeltaTests(unittest.TestCase):
         result = main.build_incremental_folder_audit_result(
             main.IncrementalAuditReport.model_validate(MODEL_REPORT),
         )
-        self.assertEqual(result["folder_score"], 93)
+        expected_score = main.calculate_verified_score(MODEL_REPORT["cons"])
+        self.assertEqual(result["folder_score"], expected_score)
         self.assertNotIn("score_delta", result)
         self.assertEqual(
             result["folder_audit"]["pros"],
@@ -278,14 +297,18 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         files = [{"filename": "new.py", "insertions": 1, "deletions": 0, "patch": "+new", "status": "added"}]
         with self.assertLogs(main.logger, level="INFO") as logs:
             result, save, finalize, _, ai = await self.exercise(files=files)
-        self.assertEqual(result["folder_score"], 93)
+        expected_score = main.calculate_verified_score(MODEL_REPORT["cons"])
+        self.assertEqual(result["folder_score"], expected_score)
         self.assertEqual(ai.call_args.args[0]["files"], files)
         self.assertEqual(ai.call_args.args[1], REPORT)
         self.assertEqual(save.call_args.args[2], HEAD)
         self.assertEqual(finalize.call_args.args[1]["baseline_version"], 7)
         output = "\n".join(logs.output)
         self.assertIn("GEMINI RESPONSE: Extracted highlights: 2, Improvements: 1", output)
-        self.assertIn("DATABASE UPDATE: Successfully saved score 93 for workspace. workspace_id=folder", output)
+        self.assertIn(
+            f"DATABASE UPDATE: Successfully saved score {expected_score} for workspace. workspace_id=folder",
+            output,
+        )
 
     async def test_failed_ai_preserves_saved_delta_without_finalizing(self):
         result, save, finalize, failed, _ = await self.exercise(files=[{"filename": "x"}], provider_error=DiffServiceError("GEMINI_RATE_LIMITED", "Retry", 429))
@@ -329,6 +352,9 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
             def maybe_single(self):
                 return self
 
+            def limit(self, *_args):
+                return self
+
             def update(self, *_args):
                 return self
 
@@ -342,6 +368,8 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
             "name": "main.py",
             "github_repository": "owner/repo",
             "github_file_path": "src/main.py",
+            "github_ref": "main",
+            "github_commit_sha": HEAD,
             "raw_content": "print('synced source')",
             "status": "draft",
         }]
@@ -373,6 +401,11 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         fallback_response = main._tracking_error_response(
             DiffServiceError("BASELINE_REQUIRED", "Baseline required.", 409)
         )
+        audit_inputs = []
+
+        async def capture_full_audit(inputs, **_kwargs):
+            audit_inputs.extend(dict(item) for item in inputs)
+            return full_result
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(main, "PROJECT_AUDIT_SEMAPHORE", main.asyncio.Semaphore(2)))
@@ -380,11 +413,33 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(
                 patch.object(main.github_diffs, "get_repository_state", new=AsyncMock(return_value=None))
             )
+            stack.enter_context(patch.object(main, "_tracking_service_client", return_value=Mock()))
+            stack.enter_context(
+                patch.object(
+                    main.github_diffs,
+                    "initialize_repository_baseline",
+                    new=AsyncMock(return_value={
+                        "id": "state",
+                        "workspace_id": "folder",
+                        "user_id": "owner",
+                        "repository": "owner/repo",
+                        "branch": "main",
+                        "last_verified_commit_sha": HEAD,
+                        "baseline_version": 0,
+                    }),
+                )
+            )
+            stack.enter_context(
+                patch.object(main.github_diffs, "save_workspace_diff", new=AsyncMock(return_value={"id": "diff"}))
+            )
+            stack.enter_context(
+                patch.object(main.github_diffs, "finalize_verified_audit", new=AsyncMock(side_effect=lambda _client, _state, _diff_id, report: report))
+            )
             incremental = stack.enter_context(
                 patch.object(main, "_run_repository_verification", new=AsyncMock(return_value=fallback_response))
             )
             orchestrate = stack.enter_context(
-                patch.object(main, "orchestrate_audit", new=AsyncMock(return_value=full_result))
+                patch.object(main, "orchestrate_audit", new=AsyncMock(side_effect=capture_full_audit))
             )
             mark_file = stack.enter_context(
                 patch.object(main, "mark_project_file_audited", new=AsyncMock(return_value=True))
@@ -397,8 +452,9 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["folder_score"], 82)
         incremental.assert_awaited_once()
-        self.assertEqual(orchestrate.await_args.args[0][0]["filename"], "src/main.py")
-        self.assertEqual(orchestrate.await_args.args[0][0]["content"], "print('synced source')")
+        orchestrate.assert_awaited_once()
+        self.assertEqual(audit_inputs[0]["filename"], "src/main.py")
+        self.assertEqual(audit_inputs[0]["content"], "print('synced source')")
         mark_file.assert_awaited_once()
 
     async def test_incomplete_baseline_never_advances(self):

@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import mimetypes
+import random
 import re
 import time
 import uuid
@@ -119,6 +120,25 @@ async def enforce_cors_origin_whitelist(request: Request, call_next):
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+
+_GOOGLE_GENAI_AFC_WARNING = "Direct use of automatic function calling (AFC)"
+
+
+class _GoogleGenAIAFCWarningFilter(logging.Filter):
+    """Keep the intentional stateless JSON extraction warning out of server logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _GOOGLE_GENAI_AFC_WARNING not in record.getMessage()
+
+
+# The SDK has used both logger names across releases.  Filter only this known
+# advisory, leaving all other provider warnings and errors visible.
+for _google_genai_logger_name in ("google_genai.models", "google.genai.models"):
+    logging.getLogger(_google_genai_logger_name).addFilter(
+        _GoogleGenAIAFCWarningFilter()
+    )
+
 client = AsyncOpenAI()
 async_client = client
 openai_client = async_client
@@ -6630,21 +6650,52 @@ def build_finding_impacts(
     }
 
 
-PENALTY_WEIGHTS = {"critical": 12, "high": 6, "medium": 2, "low": 1}
+PENALTY_RANGES = {
+    "critical": (11, 13),
+    "high": (5, 7),
+    "medium": (2, 4),
+    "low": (0, 1),
+}
 AUDIT_VISIBLE_ITEMS_LIMIT = 5
 
 
 def calculate_verified_score(findings):
+    """Score complete verified evidence with stable, finding-specific penalties."""
     score = 100
+    critical_count = 0
+    high_count = 0
 
     for finding in findings:
-        # Fallback to 'medium' if the model forgets the tier
-        tier = finding.get("severityTier", finding.get("severity", "medium")).lower()
-        score -= PENALTY_WEIGHTS.get(tier, PENALTY_WEIGHTS["medium"])
+        if not isinstance(finding, dict):
+            continue
 
-    # A linear model rewards every verified remediation immediately while
-    # retaining a non-zero baseline for a report with many weaknesses.
-    return max(15, score)
+        # Fallback to medium if an older model response omits or corrupts its tier.
+        tier = str(
+            finding.get("severityTier", finding.get("severity", "medium"))
+        ).lower()
+        if tier not in PENALTY_RANGES:
+            tier = "medium"
+
+        # A local seeded generator keeps the organic range stable for identical
+        # evidence without changing global random state used by other requests.
+        seed_value = str(
+            finding.get("title")
+            or finding.get("root_cause")
+            or finding.get("text")
+            or finding.get("findingId")
+            or ""
+        )
+        score -= random.Random(seed_value).randint(*PENALTY_RANGES[tier])
+
+        if tier == "critical":
+            critical_count += 1
+        elif tier == "high":
+            high_count += 1
+
+    catastrophic = critical_count >= 5 or (
+        critical_count >= 4 and high_count >= 5
+    )
+    return max(20 if catastrophic else 30, score)
 
 
 def calculate_audit_score(finding_impacts: Dict[str, List[Dict[str, Any]]]) -> int:
@@ -9939,6 +9990,156 @@ def get_folder_github_context(project_rows: List[Dict[str, Any]]) -> tuple[str, 
     return next(iter(repositories)), next(iter(refs))
 
 
+def get_folder_github_commit_sha(project_rows: List[Dict[str, Any]]) -> str:
+    """Return the single immutable commit represented by synced workspace files."""
+    commit_shas = {
+        str(row.get("github_commit_sha") or "").strip().lower()
+        for row in project_rows
+        if str(row.get("github_commit_sha") or "").strip()
+    }
+    if len(commit_shas) != 1:
+        raise ValueError(
+            "A full GitHub audit requires one synced commit SHA per folder."
+        )
+    return github_diffs.validate_sha(next(iter(commit_shas)))
+
+
+def build_verified_repository_report(folder_audit: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a completed full or incremental audit into the tracking contract.
+
+    The report deliberately retains every normalized finding in
+    ``finding_impacts``.  Folder columns continue to contain the bounded
+    dashboard projection, while repository state retains the complete baseline
+    needed by the next incremental comparison.
+    """
+    impacts = folder_audit.get("full_finding_impacts") or folder_audit.get(
+        "finding_impacts"
+    ) or {"pros": [], "cons": [], "recommendations": []}
+    if isinstance(impacts, dict) and any(key.startswith("all_") for key in impacts):
+        impacts = {
+            "pros": impacts.get("all_pros", []),
+            "cons": impacts.get("all_cons", []),
+            "recommendations": impacts.get("all_recommendations", []),
+        }
+    if not isinstance(impacts, dict):
+        impacts = {"pros": [], "cons": [], "recommendations": []}
+
+    full_impacts = {
+        "pros": impacts.get("pros", []) if isinstance(impacts.get("pros"), list) else [],
+        "cons": impacts.get("cons", []) if isinstance(impacts.get("cons"), list) else [],
+        "recommendations": (
+            impacts.get("recommendations", [])
+            if isinstance(impacts.get("recommendations"), list)
+            else []
+        ),
+    }
+    return {
+        "score": calculate_audit_score(full_impacts),
+        "delta_summary": str(
+            folder_audit.get("delta_summary") or "Repository audit completed."
+        ),
+        "executive_summary": str(folder_audit.get("executive_summary") or ""),
+        "pros": folder_audit.get("pros") or [],
+        "cons": folder_audit.get("cons") or [],
+        "recommendations": folder_audit.get("recommendations") or [],
+        "finding_impacts": full_impacts,
+    }
+
+
+async def add_github_audit_anchor_to_folder_payload(
+    supabase_client: Any,
+    payload: Dict[str, Any],
+    *,
+    branch: str,
+    commit_sha: str,
+) -> None:
+    """Persist optional folder metadata without requiring a schema migration."""
+    github_ref_supported, github_commit_sha_supported = await asyncio.gather(
+        _project_folder_column_supported(supabase_client, "github_ref"),
+        _project_folder_column_supported(supabase_client, "github_commit_sha"),
+    )
+    if github_ref_supported:
+        payload["github_ref"] = branch
+    if github_commit_sha_supported:
+        payload["github_commit_sha"] = commit_sha
+
+
+async def persist_github_audit_anchor_metadata(
+    supabase_client: Any,
+    *,
+    folder_id: str,
+    user_id: str,
+    branch: str,
+    commit_sha: str,
+) -> None:
+    """Mirror a completed verified audit's immutable revision onto its folder."""
+    payload: Dict[str, Any] = {}
+    await add_github_audit_anchor_to_folder_payload(
+        supabase_client,
+        payload,
+        branch=branch,
+        commit_sha=commit_sha,
+    )
+    if not payload:
+        return
+    await run_in_audit_thread(
+        lambda: supabase_client.table("project_folders")
+        .update(payload)
+        .eq("id", folder_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+
+async def persist_full_github_audit_baseline(
+    service_client: Any,
+    *,
+    folder_id: str,
+    user_id: str,
+    repository: str,
+    branch: str,
+    commit_sha: str,
+    folder_audit: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Finalize a stored-file full audit as the next incremental audit anchor."""
+    normalized_repository = github_diffs.normalize_repository(repository)
+    validated_commit_sha = github_diffs.validate_sha(commit_sha)
+    state = await github_diffs.get_repository_state(service_client, folder_id, user_id)
+    if state is None:
+        state = await github_diffs.initialize_repository_baseline(
+            service_client,
+            folder_id,
+            user_id,
+            normalized_repository,
+            branch,
+            validated_commit_sha,
+        )
+    elif (
+        github_diffs.normalize_repository(str(state.get("repository") or ""))
+        != normalized_repository
+        or str(state.get("branch") or "") != branch
+    ):
+        raise github_diffs.DiffServiceError(
+            "REPOSITORY_BINDING_CONFLICT",
+            "The stored repository baseline belongs to a different repository or branch.",
+            409,
+        )
+
+    diff_record = await github_diffs.save_workspace_diff(
+        service_client,
+        state,
+        validated_commit_sha,
+        github_diffs.CumulativeDiff(0, 0, []),
+        audit_kind="baseline",
+    )
+    return await github_diffs.finalize_verified_audit(
+        service_client,
+        state,
+        diff_record["id"],
+        build_verified_repository_report(folder_audit),
+    )
+
+
 async def persist_folder_audit_snapshots(
     supabase_client: Any,
     project_rows: List[Dict[str, Any]],
@@ -10255,23 +10456,25 @@ async def _run_repository_verification(payload: AuditRequest, request: Request, 
             )
             result = build_incremental_folder_audit_result(incremental_report)
         if baseline or not no_changes:
-            audit = result["folder_audit"]
-            full_impacts = audit.get("full_finding_impacts") or audit.get("finding_impacts") or {
-                "pros": [], "cons": [], "recommendations": []
-            }
-            if isinstance(full_impacts, dict) and any(key.startswith("all_") for key in full_impacts):
-                full_impacts = {
-                    "pros": full_impacts.get("all_pros", []),
-                    "cons": full_impacts.get("all_cons", []),
-                    "recommendations": full_impacts.get("all_recommendations", []),
-                }
-            verified_score = calculate_audit_score(full_impacts)
-            report = {"score": verified_score,
-                      "delta_summary": str(audit.get("delta_summary") or "Repository audit completed."),
-                      "executive_summary": str(audit.get("executive_summary") or ""),
-                      "pros": audit.get("pros") or [], "cons": audit.get("cons") or [], "recommendations": audit.get("recommendations") or [],
-                      "finding_impacts": full_impacts}
+            report = build_verified_repository_report(result["folder_audit"])
         committed = await github_diffs.finalize_verified_audit(service, state, diff_record["id"], report)
+        if baseline:
+            try:
+                await persist_github_audit_anchor_metadata(
+                    service,
+                    folder_id=folder_id,
+                    user_id=current_user_id,
+                    branch=branch,
+                    commit_sha=head,
+                )
+            except Exception:
+                # Repository state is the authoritative anchor. This optional
+                # projection must not undo a verified audit on older schemas.
+                logger.warning(
+                    "github_tracking.folder_anchor_projection_failed folder_id=%s",
+                    folder_id,
+                    exc_info=True,
+                )
         logger.info(
             "DATABASE UPDATE: Successfully saved score %s for workspace. workspace_id=%s",
             committed["score"],
@@ -10392,6 +10595,8 @@ async def run_project_baseline_audit(
     orchestration_result = None
     previous_folder_score = 0
     folder_row: dict[str, Any] = {}
+    is_github_workspace = False
+    github_audit_anchor: tuple[str, str, str] | None = None
 
     try:
         try:
@@ -10460,6 +10665,22 @@ async def run_project_baseline_audit(
 
         if not files:
             raise HTTPException(status_code=404, detail="No files found in this folder.")
+
+        if is_github_workspace:
+            try:
+                github_audit_anchor = (
+                    *get_folder_github_context(files),
+                    get_folder_github_commit_sha(files),
+                )
+            except (ValueError, github_diffs.DiffServiceError) as anchor_error:
+                # Keep a manual full audit available for a partially synced
+                # workspace, but never pretend that it established a diff base.
+                logger.warning(
+                    "project_audit.baseline_anchor_metadata_unavailable "
+                    "folder_id=%s error=%s",
+                    folder_id,
+                    anchor_error,
+                )
 
         async with httpx.AsyncClient(
             follow_redirects=True,
@@ -10573,6 +10794,14 @@ async def run_project_baseline_audit(
             parsed_project_summary,
             summary=folder_summary,
         )
+        if github_audit_anchor is not None:
+            _, branch, commit_sha = github_audit_anchor
+            await add_github_audit_anchor_to_folder_payload(
+                supabase_client,
+                db_payload,
+                branch=branch,
+                commit_sha=commit_sha,
+            )
 
         try:
             folder_update_response = await run_in_audit_thread(
@@ -10598,10 +10827,53 @@ async def run_project_baseline_audit(
             )
 
         snapshot_failures: list[str] = []
+        baseline_anchor_failures: list[str] = []
+        if github_audit_anchor is not None:
+            repository, branch, commit_sha = github_audit_anchor
+            try:
+                committed_baseline = await persist_full_github_audit_baseline(
+                    _tracking_service_client(),
+                    folder_id=folder_id,
+                    user_id=current_user_id,
+                    repository=repository,
+                    branch=branch,
+                    commit_sha=commit_sha,
+                    folder_audit=parsed_project_summary,
+                )
+                logger.info(
+                    "project_audit.full_baseline_saved folder_id=%s repository=%s "
+                    "commit_sha=%s score=%s",
+                    folder_id,
+                    repository,
+                    commit_sha,
+                    committed_baseline.get("score"),
+                )
+            except github_diffs.DiffServiceError as baseline_anchor_error:
+                logger.error(
+                    "project_audit.full_baseline_persist_failed folder_id=%s "
+                    "repository=%s commit_sha=%s code=%s",
+                    folder_id,
+                    repository,
+                    commit_sha,
+                    baseline_anchor_error.code,
+                    exc_info=True,
+                )
+                baseline_anchor_failures.append(baseline_anchor_error.code)
+            except Exception:
+                logger.exception(
+                    "project_audit.full_baseline_persist_failed folder_id=%s "
+                    "repository=%s commit_sha=%s",
+                    folder_id,
+                    repository,
+                    commit_sha,
+                )
+                baseline_anchor_failures.append("DIFF_PERSISTENCE_FAILED")
+
         orchestration_result["persistence_warnings"] = {
             "file_update_failures": file_update_failures,
             "deferred_file_updates": deferred_file_updates,
             "snapshot_failures": snapshot_failures,
+            "baseline_anchor_failures": baseline_anchor_failures,
         }
         orchestration_result["delta_summary"] = db_payload["delta_summary"]
 
