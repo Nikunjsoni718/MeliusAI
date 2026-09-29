@@ -159,7 +159,7 @@ AUDIT_GRADING_RUBRIC = """ENGINEERING REVIEW SCOPE:
   security, correctness, or reliability failure solely from a missing README."""
 MELIUSAI_SECURITY_AUDIT_SYSTEM_PROMPT = """You are an elite, industry-leading Senior Security Architect and Engineering Mentor conducting an in-depth static code analysis and architectural audit.
 
-Your tone is supportive, constructive, and highly professional. Act as an engineering mentor guiding a peer toward production-grade systems. Point out real architectural realities clearly, framing defects as concrete opportunities to harden the codebase. Do not be harsh or dismissive, but never invent praise or use false flattery. If a codebase lacks notable strengths, return an empty array for `pros`.
+Your tone is supportive, constructive, and highly professional. Act as an engineering mentor guiding a peer toward production-grade systems. Point out real architectural realities clearly, framing defects as concrete opportunities to harden the codebase. Do not be harsh or dismissive, but never invent praise or use false flattery.
 
 YOUR CORE MANDATE:
 1. EXHAUSTIVE ANALYSIS: Analyze the entire codebase comprehensively. Identify EVERY genuine strength and EVERY defect across the full codebase to establish a complete baseline.
@@ -176,7 +176,8 @@ Classify every identified weakness strictly according to these operational crite
 - LOW: Non-critical hygiene defects, configuration omissions, or maintainability anti-patterns. Violations of hardening best practices that carry negligible direct exploitability in isolation, such as overly permissive communication policies, missing baseline security headers, or logging unredacted non-sensitive runtime state.
 
 OUTPUT FORMATTING (Valid JSON only):
-- `pros`: A list of the codebase's strongest verified architectural, cryptographic, or infrastructural strengths, ordered from most impactful to least.
+- `executive_summary`: A 2-3 sentence high-level overview of the codebase's overall security posture, architectural maturity, and primary business risks. It must translate the technical flaws into business impact without using numerical scores.
+- `pros`: A list of the codebase's strengths, ordered from most impactful to least. If the codebase is highly vulnerable, acknowledge basic foundational engineering practices (e.g., 'Modular file structure', 'Use of standard framework routing'). Only return an empty list if the code has absolutely zero structural merit.
 - `weaknesses`: A list of all identified flaws, containing `severity`, `title`, `root_cause`, and `file_path`.
 - `recommendations`: A list of concrete, technical fixes that strictly map to the identified weaknesses (using `target_title` and `actionable_fix`)."""
 
@@ -5789,6 +5790,7 @@ class GeminiAuditRecommendation(BaseModel):
 class GeminiAuditResponse(BaseModel):
     """Exact Gemini JSON contract; adapters add legacy compatibility fields server-side."""
 
+    executive_summary: str = Field(..., min_length=20)
     pros: List[str]
     weaknesses: List[GeminiAuditWeakness]
     recommendations: List[GeminiAuditRecommendation]
@@ -5948,7 +5950,15 @@ class AuditTelemetryResponse(BaseModel):
             raise ValueError("Audit telemetry must be a JSON object.")
         source = dict(value)
         audit_summary = _clean_audit_telemetry_text(
-            _audit_telemetry_value(source, "auditSummary", "audit_summary", "summary", "description")
+            _audit_telemetry_value(
+                source,
+                "executive_summary",
+                "executiveSummary",
+                "auditSummary",
+                "audit_summary",
+                "summary",
+                "description",
+            )
         )
         if len(audit_summary) < 20 or _contains_non_production_telemetry_evidence(audit_summary):
             audit_summary = "Production audit completed with the available verified code context."
@@ -6758,6 +6768,9 @@ def build_project_folder_audit_update_payload(
         "evaluation_score": views["score"],
         "delta_summary": str(report.get("delta_summary") or "Repository audit completed."),
         "executive_summary": executive_summary,
+        # project_folders exposes both established summary fields. Keeping them
+        # synchronized lets existing dashboard consumers use the model overview.
+        "audit_summary": executive_summary,
         "pros": views["pros"],
         # `cons` is the deployed project_folders weakness column. Keep the
         # semantic `weaknesses` name above the database boundary.

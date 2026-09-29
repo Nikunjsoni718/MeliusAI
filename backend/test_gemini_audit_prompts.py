@@ -90,6 +90,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`pros`", prompt)
         self.assertIn("`weaknesses`", prompt)
         self.assertIn("`recommendations`", prompt)
+        self.assertIn("`executive_summary`", prompt)
+        self.assertIn("overall security posture, architectural maturity, and primary business risks", prompt)
+        self.assertIn("acknowledge basic foundational engineering practices", prompt)
+        self.assertIn("Only return an empty list if the code has absolutely zero structural merit", prompt)
         self.assertIn("`severity`, `title`, `root_cause`, and `file_path`", prompt)
         self.assertNotIn("Top 5", prompt)
         self.assertNotIn("return 5", prompt.lower())
@@ -99,7 +103,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("severityTier", finding_schema["properties"])
         self.assertNotIn("severityTier", finding_schema["required"])
         provider_schema = main.GeminiAuditResponse.model_json_schema()
-        self.assertEqual(set(provider_schema["properties"]), {"pros", "weaknesses", "recommendations"})
+        self.assertEqual(
+            set(provider_schema["properties"]),
+            {"executive_summary", "pros", "weaknesses", "recommendations"},
+        )
         provider_weakness = provider_schema["$defs"]["GeminiAuditWeakness"]
         self.assertEqual(
             set(provider_weakness["properties"]),
@@ -269,6 +276,10 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
 
     def test_exhaustive_response_scores_all_evidence_but_exposes_only_five(self):
         payload = {
+            "executive_summary": (
+                "The codebase has several material security weaknesses that could expose customer data and "
+                "interrupt core workflows. Its modular structure provides a foundation for targeted hardening."
+            ),
             "pros": [f"Verified strength {index} in app/service{index}.ts." for index in range(1, 7)],
             "weaknesses": [
                 {
@@ -290,6 +301,7 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
 
         report = main.parse_folder_audit_response(json.dumps(payload), previous_score=100)
         self.assertEqual(report["evaluated_score"], 29)
+        self.assertEqual(report["executive_summary"], payload["executive_summary"])
         self.assertEqual(len(report["pros"]), 5)
         self.assertEqual(len(report["cons"]), 5)
         self.assertEqual(len(report["recommendations"]), 5)
@@ -310,6 +322,8 @@ class GeminiAuditPromptTests(unittest.IsolatedAsyncioTestCase):
         persisted = main.build_project_folder_audit_update_payload(report)
         self.assertEqual(persisted["score"], 29)
         self.assertEqual(persisted["evaluation_score"], 29)
+        self.assertEqual(persisted["executive_summary"], payload["executive_summary"])
+        self.assertEqual(persisted["audit_summary"], payload["executive_summary"])
         self.assertEqual(len(persisted["pros"]), 5)
         self.assertEqual(len(persisted["cons"]), 5)
         self.assertEqual(len(persisted["audit_findings"]["all_cons"]), 6)
