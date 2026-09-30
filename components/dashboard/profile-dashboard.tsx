@@ -7041,7 +7041,7 @@ export function ProfileDashboard({
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            {loading && !hasInitialSpectatorProfile ? (
+            {loading ? (
               <DashboardSkeleton projectIds={projects.map((project) => project.id)} />
             ) : isProjectUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
