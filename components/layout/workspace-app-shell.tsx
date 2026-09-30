@@ -49,20 +49,24 @@ function profileUsernameFromPathname(pathname: string) {
 export function WorkspaceAppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { loading, profile, supabase, user } = useViewerProfile();
+  const { profile, session, supabase, user } = useViewerProfile();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [, forceTourStateRefresh] = useState(0);
   const targetUsername = profileUsernameFromPathname(pathname);
+  const authenticatedUser = session?.user ?? user;
   const viewerUsername =
-    profile?.username ??
-    (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : null);
+    (typeof authenticatedUser?.user_metadata?.username === 'string'
+      ? authenticatedUser.user_metadata.username
+      : typeof authenticatedUser?.user_metadata?.preferred_username === 'string'
+        ? authenticatedUser.user_metadata.preferred_username
+        : null) ??
+    (profile?.id === authenticatedUser?.id ? profile.username : null);
   const isOwner =
-    !loading &&
     Boolean(
-      user &&
+      authenticatedUser &&
         (!targetUsername ||
           isViewerProfileOwner({
-            viewerId: user.id,
+            viewerId: authenticatedUser.id,
             viewerUsername,
             // This shell has the viewer profile, not the profile being
             // viewed. Only the normalized route handle is safe here.

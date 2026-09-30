@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { X } from 'lucide-react';
 import {
   ACTIONS,
@@ -17,12 +17,12 @@ const ACTIVE_TOUR_USER_KEY = 'meliusai:product-tour:active-user';
 export const PRODUCT_TOUR_CHANGE_EVENT_NAME = 'meliusai:product-tour:change';
 export const PRODUCT_TOUR_COMPLETE_EVENT_NAME = 'meliusai:product-tour:complete';
 export const PRODUCT_TOUR_MOBILE_SIDEBAR_EVENT_NAME = 'meliusai:product-tour:mobile-sidebar';
-const PRODUCT_TOUR_VERSION = 4;
-const PRODUCT_TOUR_FINAL_STEP_INDEX = 13;
+const PRODUCT_TOUR_VERSION = 5;
+const PRODUCT_TOUR_FINAL_STEP_INDEX = 12;
 const TOUR_STATE_PREFIX = 'meliusai:product-tour:state:';
 const TOUR_COMPLETED_PREFIX = 'meliusai:product-tour:completed:';
 
-export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+export type ProductTourStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 type ProductTourJoyrideStep = Step & {
   /**
@@ -66,6 +66,28 @@ function shiftForGitHubLinkStep(stepIndex: number) {
   return stepIndex >= 8 ? stepIndex + 1 : stepIndex;
 }
 
+function removeShareScoreStep(stepIndex: number) {
+  return Math.min(stepIndex, PRODUCT_TOUR_FINAL_STEP_INDEX);
+}
+
+function routeForProductTourStep(stepIndex: ProductTourStep) {
+  if ((stepIndex >= 1 && stepIndex <= 2) || (stepIndex >= 8 && stepIndex <= 11)) {
+    return '/profile';
+  }
+
+  if (stepIndex >= 3 && stepIndex <= 7) {
+    return '/resume';
+  }
+
+  return null;
+}
+
+function isOnProductTourRoute(pathname: string, route: string) {
+  return route === '/profile'
+    ? pathname === route || pathname.startsWith(`${route}/`)
+    : pathname === route;
+}
+
 function readTourStateForUser(userId: string): StoredProductTourState | null {
   try {
     const value = window.localStorage.getItem(getTourStateKey(userId));
@@ -80,23 +102,28 @@ function readTourStateForUser(userId: string): StoredProductTourState | null {
       return null;
     }
 
+    const resumeRemovedShareScoreStep = parsed.version === 4 && parsed.stepIndex === 12;
     let migratedStepIndex: number;
     if (parsed.version === PRODUCT_TOUR_VERSION) {
       migratedStepIndex = parsed.stepIndex;
+    } else if (parsed.version === 4) {
+      // Version 5 removes the hidden share-score handoff between the report
+      // action and the completion card.
+      migratedStepIndex = removeShareScoreStep(parsed.stepIndex);
     } else if (parsed.version === 3) {
       // Version 4 inserts the GitHub connection action immediately before the
       // former project-upload step. Preserve every completed prior action.
-      migratedStepIndex = shiftForGitHubLinkStep(parsed.stepIndex);
+      migratedStepIndex = removeShareScoreStep(shiftForGitHubLinkStep(parsed.stepIndex));
     } else if (parsed.version === 2) {
-      migratedStepIndex = shiftForGitHubLinkStep(parsed.stepIndex + 1);
+      migratedStepIndex = removeShareScoreStep(shiftForGitHubLinkStep(parsed.stepIndex + 1));
     } else {
       const expandedLegacyStep = parsed.stepIndex < 2
         ? parsed.stepIndex
         : parsed.stepIndex + 5;
-      migratedStepIndex = shiftForGitHubLinkStep(expandedLegacyStep + 1);
+      migratedStepIndex = removeShareScoreStep(shiftForGitHubLinkStep(expandedLegacyStep + 1));
     }
 
-    if (migratedStepIndex < 0 || migratedStepIndex > 13) {
+    if (migratedStepIndex < 0 || migratedStepIndex > PRODUCT_TOUR_FINAL_STEP_INDEX) {
       return null;
     }
 
@@ -104,7 +131,7 @@ function readTourStateForUser(userId: string): StoredProductTourState | null {
       version: PRODUCT_TOUR_VERSION,
       userId,
       stepIndex: migratedStepIndex as ProductTourStep,
-      run: Boolean(parsed.run),
+      run: resumeRemovedShareScoreStep || Boolean(parsed.run),
       projectId: typeof parsed.projectId === 'string' ? parsed.projectId : null,
     };
   } catch {
@@ -421,6 +448,7 @@ function resolveTourTarget(step: Step | undefined) {
 
 export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [tourState, setTourState] = useState<StoredProductTourState | null>(null);
   const [consecutiveSkips, setConsecutiveSkips] = useState(0);
   const [showSkipModal, setShowSkipModal] = useState(false);
@@ -520,13 +548,17 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     }
 
     const nextStep = (tourState.stepIndex + 1) as ProductTourStep;
+    const nextStepRoute = routeForProductTourStep(nextStep);
     skipAdvanceRef.current = true;
     if (advanceProductTour(tourState.stepIndex, nextStep)) {
       setConsecutiveSkips(newSkipCount);
+      if (nextStepRoute && !isOnProductTourRoute(pathname, nextStepRoute)) {
+        router.push(nextStepRoute);
+      }
     } else {
       skipAdvanceRef.current = false;
     }
-  }, [consecutiveSkips, tourState]);
+  }, [consecutiveSkips, pathname, router, tourState]);
 
   const handlePrimaryStep = useCallback(() => {
     setConsecutiveSkips(0);
@@ -692,34 +724,6 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
         ),
         placement: 'top',
         buttons: [],
-      },
-      {
-        id: 'share-score',
-        target: '[data-tour="share-score"]',
-        title: 'Share the Audit Report',
-        content: (
-          <div>
-            <p className="m-0 text-sm leading-6 text-slate-200">
-              Share the verified findings and engineering directives with your network.
-            </p>
-          </div>
-        ),
-        placement: 'top-end',
-        disableOverlay: true,
-        hideOverlay: true,
-        hideFooter: true,
-        buttons: [],
-        styles: {
-          tooltip: {
-            backgroundColor: 'transparent',
-            border: 'none',
-            boxShadow: 'none',
-            padding: 0,
-          },
-          tooltipContainer: {
-            display: 'none',
-          },
-        },
       },
       {
         id: 'completion',

@@ -2679,6 +2679,7 @@ export function ProfileDashboard({
   const isGitHubOAuthStartingRef = useRef(false);
   const currentUser = user;
   const activeAuthUser = session?.user ?? user;
+  const authenticatedViewerId = activeAuthUser?.id ?? null;
   const isGithubConnected = Boolean(
     isGitHubConnectionHydrated &&
       hasPersistedGitHubConnection &&
@@ -2757,23 +2758,36 @@ export function ProfileDashboard({
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [usernameSaveError, setUsernameSaveError] = useState<string | null>(null);
   const [backendIsOwner, setBackendIsOwner] = useState(initialSpectatorState.isOwner);
+  const [backendOwnerContext, setBackendOwnerContext] = useState<{
+    targetUsername: string;
+    viewerId: string;
+  } | null>(() =>
+    initialSpectatorState.isOwner && authenticatedViewerId && targetUsername
+      ? { targetUsername, viewerId: authenticatedViewerId }
+      : null
+  );
   const viewerUsername =
-    profile?.username ??
-    (typeof user?.user_metadata?.username === 'string'
-      ? user.user_metadata.username
-      : typeof user?.user_metadata?.preferred_username === 'string'
-        ? user.user_metadata.preferred_username
-        : null);
+    (typeof activeAuthUser?.user_metadata?.username === 'string'
+      ? activeAuthUser.user_metadata.username
+      : typeof activeAuthUser?.user_metadata?.preferred_username === 'string'
+        ? activeAuthUser.user_metadata.preferred_username
+        : null) ??
+    (profile?.id === authenticatedViewerId ? profile.username : null);
   const identityOwnsProfile = isViewerProfileOwner({
-    viewerId: user?.id ?? profile?.id,
+    viewerId: authenticatedViewerId,
     viewerUsername,
     profileId: profileData?.id ?? null,
     targetUsername,
   });
-  // Keep owner controls hidden until the viewer session settles. Once it has,
-  // local immutable identity matching avoids a stale public response hiding an
-  // owner's workspace while the authenticated spectator request revalidates.
-  const isOwner = !loading && (backendIsOwner || identityOwnsProfile);
+  const backendOwnsCurrentProfile = Boolean(
+    backendIsOwner &&
+      authenticatedViewerId &&
+      backendOwnerContext?.viewerId === authenticatedViewerId &&
+      backendOwnerContext.targetUsername === targetUsername
+  );
+  // Preserve owner access through client auth refreshes, but only for the
+  // authenticated viewer and profile that the server response confirmed.
+  const isOwner = identityOwnsProfile || backendOwnsCurrentProfile;
   const isSpectator = !isOwner;
   const activeProfileHydrationKey = targetUsername
     ? `${targetUsername}:${user?.id ?? 'public'}`
@@ -3972,6 +3986,7 @@ export function ProfileDashboard({
     if (shouldBlockForInitialProfileLoad) {
       setProfileLoading(true);
       setBackendIsOwner(false);
+      setBackendOwnerContext(null);
       setIsEditing(false);
       setSettingsOpen(false);
       setResolvedProfileId(null);
@@ -4013,6 +4028,7 @@ export function ProfileDashboard({
     if (spectatorProfileError) {
       console.error('Error running security guard verification:', spectatorProfileError);
       setBackendIsOwner(false);
+      setBackendOwnerContext(null);
       setLoadingState(false);
       setProfileLoading(false);
       setFetchError(spectatorProfileError instanceof Error ? spectatorProfileError.message : 'Unable to load profile.');
@@ -4049,9 +4065,8 @@ export function ProfileDashboard({
           ? user.user_metadata.preferred_username.trim()
           : null);
       const isOwnProfile =
-        spectatorProfilePayload.isOwner === true ||
         isViewerProfileOwner({
-          viewerId: user?.id ?? profile?.id,
+          viewerId: authenticatedViewerId,
           viewerUsername: authenticatedUsername,
           profileId: savedProfile.id,
           targetUsername,
@@ -4151,7 +4166,14 @@ export function ProfileDashboard({
       const storedPortfolioLinks =
         sessionUserMetadata?.portfolio_links ?? undefined;
 
-      setBackendIsOwner(spectatorProfilePayload.isOwner === true);
+      const payloadConfirmsOwner =
+        spectatorProfilePayload.isOwner === true && Boolean(authenticatedViewerId);
+      setBackendIsOwner(payloadConfirmsOwner);
+      setBackendOwnerContext(
+        payloadConfirmsOwner && authenticatedViewerId
+          ? { targetUsername, viewerId: authenticatedViewerId }
+          : null
+      );
       if (storedPortfolioLinks && isOwnProfile) {
         setPortfolioLinks((currentLinks) => ({
           ...currentLinks,
@@ -4192,6 +4214,7 @@ export function ProfileDashboard({
     } catch (err) {
       console.error('Error running security guard verification:', err);
       setBackendIsOwner(false);
+      setBackendOwnerContext(null);
       setLoadingState(false);
       setProfileLoading(false);
       setFetchError(err instanceof Error ? err.message : 'Unable to load profile.');
@@ -4203,6 +4226,7 @@ export function ProfileDashboard({
     spectatorProfileLoading,
     spectatorProfilePayload,
     activeProfileHydrationKey,
+    authenticatedViewerId,
     targetUsername,
     user,
     user?.id,

@@ -8,7 +8,6 @@ import remarkGfm from 'remark-gfm';
 import { ChevronDown } from 'lucide-react';
 
 import { ShareScoreModal } from '@/components/dashboard/share-score-modal';
-import { advanceProductTour, pauseProductTour } from '@/components/onboarding/product-tour';
 import {
   normalizeAuditReport,
   resolveAuditDirective,
@@ -77,10 +76,6 @@ const auditTextFileExtensions = new Set([
 const AUDIT_REPORT_VISIBLE_ITEMS_LIMIT = 5;
 const previewProjectSelect =
   'id, name, title, file_url, file_type, description, evaluation_score, logic_score, score, delta_summary, ai_summary, audit_summary, pros, cons, recommendations, audit_findings, updated_at, github_synced_at';
-
-function advanceReportTourToCompletion() {
-  return advanceProductTour(12, 13) || advanceProductTour(11, 13);
-}
 
 export type PreviewProject = {
   id?: string;
@@ -699,12 +694,10 @@ export function AssetPreviewModal({
       if (event.key === 'Escape') {
         if (isShareModalOpen) {
           setIsShareModalOpen(false);
-          advanceReportTourToCompletion();
           return;
         }
 
         setIsExpandedViewer(false);
-        advanceReportTourToCompletion();
         onClose();
       }
     };
@@ -877,7 +870,6 @@ export function AssetPreviewModal({
             onClick={() => {
               setIsShareModalOpen(false);
               setIsExpandedViewer(false);
-              advanceReportTourToCompletion();
               onClose();
             }}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-950/80 text-slate-400 shadow-xl backdrop-blur transition hover:border-rose-500/50 hover:text-rose-200 max-md:h-11 max-md:w-11"
@@ -998,11 +990,9 @@ export function AssetPreviewModal({
             <button
               type="button"
               onClick={() => {
-                pauseProductTour(12);
                 setIsShareModalOpen(true);
               }}
               disabled={!publicProjectShareUrl}
-              data-tour="share-score"
               className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={`Share your ${score} out of 100 MeliusAI engineering audit`}
             >
@@ -1128,7 +1118,6 @@ export function AssetPreviewModal({
           shareUrl={publicProjectShareUrl}
           onClose={() => {
             setIsShareModalOpen(false);
-            advanceReportTourToCompletion();
           }}
         />
       ) : null}
