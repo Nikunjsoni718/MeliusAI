@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { X } from 'lucide-react';
 import {
   ACTIONS,
   EVENTS,
@@ -314,10 +315,14 @@ function ProductTourTooltip({
   backProps,
   index,
   primaryProps,
-  skipProps,
   step,
   tooltipProps,
-}: TooltipRenderProps) {
+  onPrimaryStep,
+  onSkipStep,
+}: TooltipRenderProps & {
+  onPrimaryStep: () => void;
+  onSkipStep: () => void;
+}) {
   const { buttons, content, styles, title } = step;
   const showBackButton = buttons.includes('back') && index > 0;
   const showPrimaryButton = buttons.includes('primary');
@@ -349,30 +354,37 @@ function ProductTourTooltip({
           {content}
         </div>
       </div>
-      {!hideFooter && (showSkipButton || hasNavigationButtons) ? (
+      {showSkipButton ? (
+        <button
+          type="button"
+          onClick={onSkipStep}
+          aria-label="Skip this tour step"
+          className="absolute top-3 right-3 rounded-md p-1 text-gray-400 transition-colors hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+        >
+          <X aria-hidden="true" className="h-4 w-4" />
+        </button>
+      ) : null}
+      {!hideFooter && hasNavigationButtons ? (
         <div
           className="flex w-full items-center justify-between gap-4 pt-4"
           style={styles.tooltipFooter}
         >
-          {showSkipButton ? (
-            <button
-              type="button"
-              {...skipProps}
-              className={`px-4 py-2 text-sm text-red-500 border border-red-500/30 rounded-md bg-transparent hover:bg-red-500/10 hover:border-red-500/50 transition-all duration-200${hasNavigationButtons ? '' : ' ml-auto'}`}
-            >
-              Skip Tour
-            </button>
-          ) : null}
-          {hasNavigationButtons ? (
-            <div className="ml-auto flex items-center gap-2">
-              {showBackButton ? (
-                <button type="button" style={styles.buttonBack} {...backProps} />
-              ) : null}
-              {showPrimaryButton ? (
-                <button type="button" style={styles.buttonPrimary} {...primaryProps} />
-              ) : null}
-            </div>
-          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {showBackButton ? (
+              <button type="button" style={styles.buttonBack} {...backProps} />
+            ) : null}
+            {showPrimaryButton ? (
+              <button
+                type="button"
+                style={styles.buttonPrimary}
+                {...primaryProps}
+                onClick={(event) => {
+                  onPrimaryStep();
+                  primaryProps.onClick(event);
+                }}
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
@@ -410,6 +422,8 @@ function resolveTourTarget(step: Step | undefined) {
 export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourProps) {
   const pathname = usePathname();
   const [tourState, setTourState] = useState<StoredProductTourState | null>(null);
+  const [consecutiveSkips, setConsecutiveSkips] = useState(0);
+  const [showSkipModal, setShowSkipModal] = useState(false);
   const [targetReadyStep, setTargetReadyStep] = useState<ProductTourStep | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(
     () => typeof window !== 'undefined' && window.innerWidth < 768
@@ -417,6 +431,7 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
   const [mobileSidebarReadyStep, setMobileSidebarReadyStep] = useState<ProductTourStep | null>(null);
   const mobileSidebarOpenedByTourRef = useRef(false);
   const centeredScrollRef = useRef<{ step: ProductTourStep; target: HTMLElement } | null>(null);
+  const skipAdvanceRef = useRef(false);
 
   useEffect(() => {
     const syncMobileViewport = () => {
@@ -448,6 +463,22 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     };
   }, [userId]);
 
+  useEffect(() => {
+    const resetAfterNormalTourInteraction = () => {
+      if (skipAdvanceRef.current) {
+        skipAdvanceRef.current = false;
+        return;
+      }
+
+      setConsecutiveSkips(0);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, resetAfterNormalTourInteraction);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_CHANGE_EVENT_NAME, resetAfterNormalTourInteraction);
+    };
+  }, []);
+
   const hasPersistedActiveTour = Boolean(
     isAuthenticated && userId && tourState?.userId === userId
   );
@@ -475,6 +506,30 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
 
   const skipGitHubLinkStep = useCallback(() => {
     advanceProductTour(8, 9);
+  }, []);
+
+  const handleSkipStep = useCallback(() => {
+    if (!tourState || tourState.stepIndex >= PRODUCT_TOUR_FINAL_STEP_INDEX) {
+      return;
+    }
+
+    const newSkipCount = consecutiveSkips + 1;
+    if (newSkipCount === 3) {
+      setShowSkipModal(true);
+      return;
+    }
+
+    const nextStep = (tourState.stepIndex + 1) as ProductTourStep;
+    skipAdvanceRef.current = true;
+    if (advanceProductTour(tourState.stepIndex, nextStep)) {
+      setConsecutiveSkips(newSkipCount);
+    } else {
+      skipAdvanceRef.current = false;
+    }
+  }, [consecutiveSkips, tourState]);
+
+  const handlePrimaryStep = useCallback(() => {
+    setConsecutiveSkips(0);
   }, []);
 
   const steps = useMemo<ProductTourJoyrideStep[]>(
@@ -843,18 +898,41 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
     }
   }
 
+  const tooltipComponent = useCallback(
+    (props: TooltipRenderProps) => (
+      <ProductTourTooltip
+        {...props}
+        onPrimaryStep={handlePrimaryStep}
+        onSkipStep={handleSkipStep}
+      />
+    ),
+    [handlePrimaryStep, handleSkipStep]
+  );
+
+  const handleConfirmSkip = useCallback(() => {
+    setShowSkipModal(false);
+    setConsecutiveSkips(0);
+    finishProductTour();
+  }, []);
+
+  const handleCancelSkip = useCallback(() => {
+    setShowSkipModal(false);
+    setConsecutiveSkips(0);
+  }, []);
+
   if (!canRunTour) {
     return null;
   }
 
   return (
-    <Joyride
+    <>
+      <Joyride
       run={canRunTour}
       stepIndex={tourState?.stepIndex ?? 0}
       steps={steps}
       continuous={true}
       scrollToFirstStep={false}
-      tooltipComponent={ProductTourTooltip}
+      tooltipComponent={tooltipComponent}
       portalElement="body"
       floatingOptions={{
         // Floating UI uses these paddings as the viewport boundary for flip
@@ -866,7 +944,6 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
       locale={{
         next: 'Next',
         last: 'Finish',
-        skip: 'Skip Tour',
       }}
       options={{
         arrowColor: '#0f172a',
@@ -942,6 +1019,37 @@ export function ProductTour({ isAuthenticated, isNewUser, userId }: ProductTourP
           strokeWidth: 2,
         },
       }}
-    />
+      />
+      {showSkipModal ? (
+        <div
+          className="fixed inset-0 z-[20001] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skip-tour-modal-title"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <h2 id="skip-tour-modal-title" className="text-lg font-semibold text-white">
+              Do you want to skip the tour?
+            </h2>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCancelSkip}
+                className="rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSkip}
+                className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+              >
+                Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
