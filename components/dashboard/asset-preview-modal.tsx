@@ -1044,7 +1044,7 @@ export function AssetPreviewModal({
 
           {isWorkspaceAuditEmptyState ? (
             <div className="flex flex-col items-center gap-4">
-              <div className="flex w-full max-w-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+              <div className="flex w-full max-w-[240px] flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                 <div className="relative flex h-32 w-32 items-center justify-center">
                   <div
                     data-audit-score-arc="css"
@@ -1063,11 +1063,6 @@ export function AssetPreviewModal({
                     <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
                   </div>
                 </div>
-                {score >= 96 ? (
-                  <p className="text-center text-[10px] leading-4 text-slate-400">
-                    Baseline engineering standards met. Continued architectural review is recommended.
-                  </p>
-                ) : null}
               </div>
 
               <section className="w-full rounded-xl border border-cyan-400/20 bg-cyan-500/[0.04] px-6 py-8 text-center shadow-[0_0_28px_rgba(34,211,238,0.06)]">
@@ -1090,7 +1085,7 @@ export function AssetPreviewModal({
           ) : (
             <div className="space-y-4">
               <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
-                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                   <div className="relative flex h-32 w-32 items-center justify-center">
                     <div
                       data-audit-score-arc="css"
@@ -1109,11 +1104,6 @@ export function AssetPreviewModal({
                       <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">/100</span>
                     </div>
                   </div>
-                  {score >= 96 ? (
-                    <p className="text-center text-[10px] leading-4 text-slate-400">
-                      Baseline engineering standards met. Continued architectural review is recommended.
-                    </p>
-                  ) : null}
                 </div>
 
                 <MetricList title="Verified Strengths" items={pros} />
