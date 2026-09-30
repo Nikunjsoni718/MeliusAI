@@ -60,7 +60,7 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
       : typeof authenticatedUser?.user_metadata?.preferred_username === 'string'
         ? authenticatedUser.user_metadata.preferred_username
         : null) ??
-    (profile?.id === authenticatedUser?.id ? profile.username : null);
+    (profile?.id === authenticatedUser?.id ? profile?.username : null);
   const isOwner =
     Boolean(
       authenticatedUser &&
