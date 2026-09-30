@@ -7545,7 +7545,7 @@ export function ProfileDashboard({
                     <button
                       type="button"
                       onClick={() => setShowAllWork((value) => !value)}
-                      className="w-full cursor-pointer rounded-full border border-sky-500/35 bg-sky-500/10 px-4 py-2 text-center text-[11px] font-medium tracking-wide text-sky-100 transition-all duration-200 hover:border-sky-400/60 hover:bg-sky-500/15"
+                      className="mt-6 mx-auto block px-5 py-2 bg-blue-950/40 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-900/60 hover:border-blue-500 rounded-lg font-mono text-xs tracking-wider uppercase transition-all duration-200 cursor-pointer"
                     >
                       {showAllWork ? 'COLLAPSE ASSETS' : 'SEE ALL UPLOADED ASSETS'}
                     </button>

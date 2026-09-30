@@ -166,7 +166,7 @@ export function ProjectFolderCard({
                 onAuditClick();
               }}
               data-tour="view-audit-report"
-              className="w-full cursor-pointer rounded-full border border-sky-500/35 bg-sky-500/10 px-4 py-2 text-center text-[11px] font-medium tracking-wide text-sky-100 transition-all duration-200 hover:border-sky-400/60 hover:bg-sky-500/15"
+              className="w-full cursor-pointer rounded-full border border-slate-800/60 bg-[#11162d] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-700 hover:text-white"
             >
               View Audit Report
             </button>
@@ -192,7 +192,7 @@ export function ProjectFolderCard({
                 disabled={isVerifying}
                 aria-busy={isVerifying}
                 data-tour="run-workspace-audit"
-                className="w-full cursor-pointer rounded-full border border-sky-500/35 bg-sky-500/10 px-4 py-2 text-center text-[11px] font-medium tracking-wide text-sky-100 transition-all duration-200 hover:border-sky-400/60 hover:bg-sky-500/15"
+                className="w-full cursor-pointer rounded-full border border-slate-900 bg-[#070a19] px-4 py-2 text-center text-[11px] font-medium tracking-wide text-slate-400 transition-all duration-200 hover:bg-[#11162d]/50 hover:text-slate-200 disabled:cursor-not-allowed disabled:bg-slate-950/20 disabled:text-slate-700"
               >
                 {isVerifying ? 'Verifying...' : 'Verify with MeliusAI'}
               </button>
