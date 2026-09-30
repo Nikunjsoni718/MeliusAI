@@ -145,9 +145,17 @@ export function WorkspaceAppShell({ children }: { children: ReactNode }) {
   }, [isOwner, profileHref, targetUsername]);
 
   const signOut = async () => {
-    await supabase?.auth.signOut();
+    if (supabase) {
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        console.error('Unable to sign out:', error);
+        return;
+      }
+    }
+
     clearPersistedAuthState();
-    router.replace('/auth');
+    router.push('/');
   };
 
   return (
