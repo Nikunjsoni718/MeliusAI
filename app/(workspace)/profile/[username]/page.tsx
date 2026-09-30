@@ -10,16 +10,35 @@ export const dynamic = 'force-dynamic';
 
 export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
   const { username: encodedUsername } = await params;
-  const username = decodeURIComponent(encodedUsername).trim().replace(/^@+/, '');
+  let username = '';
+
+  try {
+    username = decodeURIComponent(encodedUsername).trim().replace(/^@+/, '');
+  } catch {
+    notFound();
+  }
+
   const bootstrap = await loadWorkspaceBootstrap();
   const result = username
     ? await loadServerSpectatorProfile(username, bootstrap.accessToken)
     : { kind: 'not-found' as const };
 
   if (result.kind === 'not-found') notFound();
+  if (result.kind === 'unavailable') {
+    return (
+      <main className="flex min-h-full items-center justify-center px-6 py-16 text-center text-slate-100">
+        <div className="max-w-md rounded-2xl border border-slate-800 bg-slate-950/70 p-8 shadow-2xl">
+          <h1 className="text-xl font-semibold">Profile temporarily unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            This public profile could not be loaded right now. Please refresh and try again.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   const viewerId = bootstrap.viewer.user?.id ?? null;
-  const initialPayload = result.kind === 'success' ? result.payload : null;
+  const initialPayload = result.payload;
 
   return (
     <WorkspaceDataHydration

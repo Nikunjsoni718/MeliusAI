@@ -2,7 +2,11 @@ import 'server-only';
 
 import { PROFILE_SPECTATOR_BASE_URL } from '@/lib/spectate-profile-shared';
 
-const PROFILE_SERVER_TIMEOUT_MS = 1_200;
+// The public endpoint may spend up to 12 seconds completing its bounded
+// profile, folder, and workspace queries. Keep the server-render timeout just
+// beyond that budget so a normal slow response still produces populated HTML
+// instead of falling back to a second client-side request.
+const PROFILE_SERVER_TIMEOUT_MS = 14_000;
 
 export type ServerSpectatorProfileResult =
   | { kind: 'success'; payload: unknown }

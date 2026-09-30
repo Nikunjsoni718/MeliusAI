@@ -2515,6 +2515,53 @@ type ProfileDashboardProps = {
   variant?: 'profile' | 'organization';
 };
 
+type InitialSpectatorDashboardState = {
+  isOwner: boolean;
+  profile: SavedProfileItem | null;
+  profileAssets: ProjectRow[];
+  projectFolders: ProjectFolderRow[];
+  projects: ProjectItem[];
+};
+
+function getInitialSpectatorDashboardState(payload: unknown): InitialSpectatorDashboardState {
+  const response = asRecord(payload) as NormalizedSpectateProfileResponse | null;
+  const profile = response?.profile?.id ? response.profile : null;
+
+  if (!response || !profile) {
+    return {
+      isOwner: false,
+      profile: null,
+      profileAssets: [],
+      projectFolders: [],
+      projects: [],
+    };
+  }
+
+  const profileAssets = extractSpectatorProjects(response);
+  const projects = profileAssets.map(mapProjectRowToProjectItem);
+  const projectFolders = stitchSpectatorProjectFolders(
+    extractSpectatorProjectFolders(response),
+    extractSpectatorFolderFiles(response)
+  ).map((folder) => {
+    const nestedProjects = getFolderNestedProjects(folder);
+
+    return {
+      ...folder,
+      nested_projects: nestedProjects,
+      assets: nestedProjects,
+      files: nestedProjects,
+    };
+  });
+
+  return {
+    isOwner: response.isOwner === true,
+    profile,
+    profileAssets,
+    projectFolders,
+    projects,
+  };
+}
+
 function getGitHubOAuthIdentity(authUser: User | null | undefined) {
   return authUser?.identities?.find((identity) => identity.provider === 'github') ?? null;
 }
@@ -2638,17 +2685,21 @@ export function ProfileDashboard({
       !isGitHubConnectionExpired &&
       !isLinkingGitHub
   );
-  const initialProfileData = useMemo(() => {
-    if (!initialSpectatorProfile || typeof initialSpectatorProfile !== 'object') return null;
-    const candidate = (initialSpectatorProfile as { profile?: unknown }).profile;
-    return candidate && typeof candidate === 'object' && 'id' in candidate
-      ? (candidate as SavedProfileItem)
-      : null;
-  }, [initialSpectatorProfile]);
-  const [profileData, setProfileData] = useState<SavedProfileItem | null>(initialProfileData);
-  const [profileAssets, setProfileAssets] = useState<ProjectRow[]>([]);
-  const [projects, setProjects] = useState<ProjectItem[]>([]);
-  const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>([]);
+  const initialSpectatorState = useMemo(
+    () => getInitialSpectatorDashboardState(initialSpectatorProfile),
+    [initialSpectatorProfile]
+  );
+  const hasInitialSpectatorProfile = initialSpectatorState.profile !== null;
+  const [profileData, setProfileData] = useState<SavedProfileItem | null>(
+    initialSpectatorState.profile
+  );
+  const [profileAssets, setProfileAssets] = useState<ProjectRow[]>(
+    initialSpectatorState.profileAssets
+  );
+  const [projects, setProjects] = useState<ProjectItem[]>(initialSpectatorState.projects);
+  const [projectFolders, setProjectFolders] = useState<ProjectFolderRow[]>(
+    initialSpectatorState.projectFolders
+  );
   const pendingProjectAuditUpdatesRef = useRef<Map<string, PendingAuditProjection>>(new Map());
   const pendingFolderAuditUpdatesRef = useRef<Map<string, PendingAuditProjection>>(new Map());
   const [newlyAddedProject, setNewlyAddedProject] = useState<NewlyAddedProject | null>(null);
@@ -2678,7 +2729,7 @@ export function ProfileDashboard({
   const [projectDescription, setProjectDescription] = useState('');
   const [projectDescriptions, setProjectDescriptions] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<LiveOpportunityItem[]>([]);
-  const [loadingState, setLoadingState] = useState(true);
+  const [loadingState, setLoadingState] = useState(!hasInitialSpectatorProfile);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isIngestionModalOpen, setIsIngestionModalOpen] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
@@ -2690,7 +2741,7 @@ export function ProfileDashboard({
   const [activePreviewFolderId, setActivePreviewFolderId] = useState<string | null>(null);
   const [activePreviewName, setActivePreviewName] = useState<string | null>(null);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
-  const [profileLoading, setProfileLoading] = useState(!initialProfileData);
+  const [profileLoading, setProfileLoading] = useState(!hasInitialSpectatorProfile);
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -2701,15 +2752,11 @@ export function ProfileDashboard({
     username: '',
     birthDate: '',
   });
-  const [profileHydrated, setProfileHydrated] = useState(false);
+  const [profileHydrated, setProfileHydrated] = useState(hasInitialSpectatorProfile);
   const [profileSyncState, setProfileSyncState] = useState<SyncState>('idle');
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [usernameSaveError, setUsernameSaveError] = useState<string | null>(null);
-  const [backendIsOwner, setBackendIsOwner] = useState<boolean>(() =>
-    initialSpectatorProfile && typeof initialSpectatorProfile === 'object'
-      ? (initialSpectatorProfile as { isOwner?: unknown }).isOwner === true
-      : false
-  );
+  const [backendIsOwner, setBackendIsOwner] = useState(initialSpectatorState.isOwner);
   const viewerUsername =
     profile?.username ??
     (typeof user?.user_metadata?.username === 'string'
@@ -2774,7 +2821,9 @@ export function ProfileDashboard({
   const projectFolderInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionSaveTimersRef = useRef<Record<string, number>>({});
   const verifyErrorTimerRef = useRef<number | null>(null);
-  const hydratedProfileKeyRef = useRef<string | null>(null);
+  const hydratedProfileKeyRef = useRef<string | null>(
+    hasInitialSpectatorProfile ? activeProfileHydrationKey : null
+  );
   const activeNewlyAddedProjectRef = useRef<NewlyAddedProject | null>(null);
   const announcedNewProjectIdsRef = useRef<Set<string>>(new Set());
   const recentlyToastedRepositoryNamesRef = useRef<Set<string>>(new Set());
@@ -3283,8 +3332,8 @@ export function ProfileDashboard({
       return payload;
     },
     {
-      revalidateIfStale: !initialSpectatorProfile,
-      revalidateOnMount: !initialSpectatorProfile,
+      revalidateIfStale: !hasInitialSpectatorProfile,
+      revalidateOnMount: !hasInitialSpectatorProfile,
     }
   );
 
@@ -3364,7 +3413,7 @@ export function ProfileDashboard({
     Boolean(targetUsername) &&
     !profileData &&
     !spectatorProfileError &&
-    !initialSpectatorProfile;
+    !hasInitialSpectatorProfile;
   const dashboardNavigation = useMemo<DashboardNavigationItem[]>(
     () => {
       const items = [
@@ -6968,7 +7017,7 @@ export function ProfileDashboard({
                 </motion.div>
               ) : null}
             </AnimatePresence>
-            {loading && !initialSpectatorProfile ? (
+            {loading && !hasInitialSpectatorProfile ? (
               <DashboardSkeleton projectIds={projects.map((project) => project.id)} />
             ) : isProjectUploading ? (
               <div className="flex min-h-full items-center justify-center px-4 text-slate-300">
