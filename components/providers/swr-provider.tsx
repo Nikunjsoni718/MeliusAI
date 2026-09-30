@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { SWRConfig, useSWRConfig } from 'swr';
 
+import { clearPersistedAuthState, persistAuthenticatedUser } from '@/lib/auth-session-routing';
 import { createSupabaseBrowserClient, hasSupabaseBrowserEnv } from '@/lib/supabase/client';
 import { workspaceCacheKeys } from '@/lib/workspace-cache';
 
@@ -15,10 +16,18 @@ function WorkspaceAuthCacheBoundary({ children }: { children: ReactNode }) {
     if (!hasSupabaseBrowserEnv()) return;
 
     const supabase = createSupabaseBrowserClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       const nextViewerId = session?.user?.id ?? null;
       const previousViewerId = previousViewerIdRef.current;
       previousViewerIdRef.current = nextViewerId;
+
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        clearPersistedAuthState();
+      } else {
+        // TOKEN_REFRESHED has the same authenticated user with a new access
+        // token. Keep the route hint in sync without clearing workspace data.
+        persistAuthenticatedUser(session.user);
+      }
 
       // The first INITIAL_SESSION event is expected after a server-rendered
       // fallback has already populated this provider. Treat it as a baseline

@@ -38,6 +38,24 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
     }
 
     let isMounted = true;
+    const authStateSubscription = supabase?.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        clearPersistedAuthState();
+        setIsSessionChecking(false);
+        return;
+      }
+
+      persistAuthenticatedUser(session.user);
+
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        router.replace(getAuthenticatedDestination(session.user));
+      }
+    });
+    const subscription = authStateSubscription?.data.subscription ?? null;
 
     async function resolveSessionDestination() {
       if (!supabase) {
@@ -94,6 +112,7 @@ export function SessionRouteGuard({ children }: SessionRouteGuardProps) {
 
     return () => {
       isMounted = false;
+      subscription?.unsubscribe();
     };
   }, [router, supabase]);
 

@@ -455,6 +455,16 @@ export function useViewerProfile() {
         setLoading(true);
       }
 
+      if (event === 'TOKEN_REFRESHED' && nextSession?.user) {
+        // The browser client has already saved the rotated session cookie.
+        // Avoid a second profile request here: a transient getSession failure
+        // during token rotation must never clear an otherwise valid viewer.
+        persistAuthenticatedUser(nextSession.user);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
       const refreshDelay = event === 'SIGNED_IN' || event === 'SIGNED_OUT' ? 0 : 350;
       authRefreshTimerRef.current = window.setTimeout(() => {
         void loadViewer({ showLoading: event === 'SIGNED_IN' });
