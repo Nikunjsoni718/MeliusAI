@@ -129,6 +129,7 @@ export type AuditPreviewAsset = PreviewProject & {
 type AssetPreviewModalProps = {
   asset: AuditPreviewAsset | null;
   canVerify?: boolean;
+  canViewRecommendations?: boolean;
   hideAudit?: boolean;
   isReAuditing?: boolean;
   onReAudit?: () => void;
@@ -344,10 +345,12 @@ function MetricList({ title, items }: { title: string; items: AuditFinding[] }) 
 function EngineeringFindings({
   weaknesses,
   directives,
+  canViewRecommendations = false,
   expandAllForExport = false,
 }: {
   weaknesses: AuditFinding[];
   directives: AuditFinding[];
+  canViewRecommendations?: boolean;
   expandAllForExport?: boolean;
 }) {
   const [openFindingKey, setOpenFindingKey] = useState<string | null>(null);
@@ -370,7 +373,7 @@ function EngineeringFindings({
           return (
             <article key={findingKey} className="rounded-lg border border-rose-500/10 bg-rose-500/[0.025] p-4">
               <p className="text-sm leading-relaxed text-white">{item.text}</p>
-              {directive ? (
+              {canViewRecommendations && directive ? (
                 <>
                   <button
                     type="button"
@@ -390,6 +393,8 @@ function EngineeringFindings({
                     <div
                       id={directiveRegionId}
                       role="region"
+                      data-html2canvas-ignore="true"
+                      data-image-export-ignore="true"
                       className="mt-3 rounded-r-md rounded-bl-md border-l-4 border-cyan-500 bg-cyan-900/10 p-4"
                     >
                       <p className="text-sm leading-relaxed text-gray-300">{directive.text}</p>
@@ -423,6 +428,7 @@ function EngineeringFindings({
 export function AssetPreviewModal({
   asset,
   canVerify = true,
+  canViewRecommendations = false,
   hideAudit = false,
   isReAuditing = false,
   onReAudit,
@@ -1117,6 +1123,7 @@ export function AssetPreviewModal({
                 key={findingsReportKey}
                 weaknesses={weaknesses}
                 directives={recommendations}
+                canViewRecommendations={canViewRecommendations && !isDownloadingReport}
                 expandAllForExport={isCapturingFullReport}
               />
             </div>

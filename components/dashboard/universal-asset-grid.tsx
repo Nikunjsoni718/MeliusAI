@@ -1376,6 +1376,7 @@ export function UniversalAssetGrid({
           !isSpectator &&
           (activePreviewModalAsset?.kind === 'folder' ? Boolean(onVerifyFolder) : Boolean(onVerify))
         }
+        canViewRecommendations={!isSpectator}
         isReAuditing={
           activePreviewModalAsset?.kind === 'folder'
             ? verifyingFolderIds.includes(activePreviewModalAsset.id ?? '')

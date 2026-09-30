@@ -1767,6 +1767,7 @@ function DashboardResumePageContent() {
         asset={activeFeaturedPreview}
         hideAudit={false}
         canVerify={Boolean(activeFeaturedPreview?.kind === 'file' && isOwner)}
+        canViewRecommendations={isOwner}
         onClose={() => setActiveFeaturedPreview(null)}
         publicProfileUsername={publicProfileUsername}
       />
