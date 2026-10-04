@@ -10,7 +10,16 @@ const navItems = [
   { href: '/difference', label: 'What makes us different' },
   { href: '/about-us', label: 'About Us' },
 ];
-const publicMarketingRoutes = ['/', '/how-it-works', '/difference', '/about-us'];
+const publicMarketingRoutes = [
+  '/',
+  '/how-it-works',
+  '/difference',
+  '/about-us',
+  '/terms',
+  '/privacy',
+  '/faq',
+  '/support',
+];
 
 export function Navbar() {
   const [logoFailed, setLogoFailed] = useState(false);

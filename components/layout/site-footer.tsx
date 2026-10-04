@@ -22,10 +22,13 @@ export function SiteFooter() {
             </div>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Protected workspace</p>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
-              Private Vault and AI Scrutiny remain inside the authenticated dashboard routes.
-            </p>
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Trust & support</p>
+            <div className="mt-3 flex flex-col gap-2 text-sm text-slate-300">
+              <Link href="/terms" className="transition hover:text-white">Terms of Service</Link>
+              <Link href="/privacy" className="transition hover:text-white">Privacy Policy</Link>
+              <Link href="/faq" className="transition hover:text-white">FAQ</Link>
+              <Link href="/support" className="transition hover:text-white">Contact & Support</Link>
+            </div>
           </div>
         </div>
       </div>

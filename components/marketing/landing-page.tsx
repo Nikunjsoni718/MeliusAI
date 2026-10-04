@@ -1,13 +1,15 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SiteFooter } from '@/components/layout/site-footer';
 
 export function LandingPage() {
   return (
-    <main
-      id="introduction"
-      className="mx-auto flex w-full max-w-7xl flex-col px-4 pb-10 pt-32 sm:px-6 lg:px-8"
-    >
-      <section className="grid min-h-[calc(100vh-8rem)] grid-cols-1 items-center gap-12 lg:grid-cols-2">
+    <>
+      <main
+        id="introduction"
+        className="mx-auto flex w-full max-w-7xl flex-col px-4 pb-10 pt-32 sm:px-6 lg:px-8"
+      >
+        <section className="grid min-h-[calc(100vh-8rem)] grid-cols-1 items-center gap-12 lg:grid-cols-2">
         <div className="flex flex-col items-start text-left max-w-4xl">
           <Badge variant="accent" className="mb-2">
             Introduction
@@ -67,15 +69,16 @@ export function LandingPage() {
                 <span className="text-slate-300"> score</span>
               </code>
             </pre>
-          </div>
+        </div>
           <div className="absolute -bottom-6 -right-6 rounded-full border border-teal-300/40 bg-slate-950/90 px-5 py-3 shadow-[0_0_34px_rgba(45,212,191,0.22)]">
             <p className="bg-gradient-to-r from-emerald-300 to-teal-300 bg-clip-text text-sm font-semibold text-transparent">
               AI Audit Score: 94/100
             </p>
           </div>
-        </div>
-      </section>
-
-    </main>
+          </div>
+        </section>
+      </main>
+      <SiteFooter />
+    </>
   );
 }
