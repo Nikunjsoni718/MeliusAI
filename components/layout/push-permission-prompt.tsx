@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { BellRing } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
+import { PRODUCT_TOUR_COMPLETE_EVENT_NAME } from '@/components/onboarding/product-tour';
 import { enableWebPush, getWebPushPreference, syncPreviouslyEnabledWebPush, WEB_PUSH_PREFERENCE_KEY } from '@/lib/web-push';
 
 type PushPermissionPromptProps = {
@@ -24,6 +25,29 @@ export function PushPermissionPrompt({ userId, onboardingBlocked }: PushPermissi
         console.warn('Unable to restore the previous Web Push subscription:', syncError);
       });
     }
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !('Notification' in window)) return;
+
+    const showAfterTourCompletion = (event: Event) => {
+      const completedTour = event as CustomEvent<{ userId?: string }>;
+      if (completedTour.detail?.userId !== userId) return;
+
+      const preference = getWebPushPreference();
+      if (preference) return;
+      if (Notification.permission === 'denied') {
+        window.localStorage.setItem(WEB_PUSH_PREFERENCE_KEY, 'later');
+        return;
+      }
+
+      setVisible(true);
+    };
+
+    window.addEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, showAfterTourCompletion);
+    return () => {
+      window.removeEventListener(PRODUCT_TOUR_COMPLETE_EVENT_NAME, showAfterTourCompletion);
+    };
   }, [userId]);
 
   useEffect(() => {
