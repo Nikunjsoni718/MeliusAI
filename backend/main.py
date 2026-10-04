@@ -1587,7 +1587,9 @@ async def _schedule_repository_cooldown(
     lines_changed: int,
     qualifying_commit_at: datetime,
 ) -> None:
-    scheduled_at = qualifying_commit_at + timedelta(minutes=25)
+    scheduled_at = qualifying_commit_at + timedelta(
+        minutes=NOTIFICATION_COOLDOWN_MINUTES
+    )
     await _run_supabase(
         lambda: supabase_client.table("notification_cooldowns")
         .upsert(
@@ -1612,8 +1614,10 @@ async def _record_push_notification_activity(
     repository: str,
     user_ids: set[str],
     access_token: str | None,
+    workspace_ids: set[str] | None = None,
 ) -> None:
     committed_at = _notification_timestamp()
+    workspace_label = ", ".join(sorted(workspace_ids or user_ids))
     for user_id in sorted(user_ids):
         await _update_repository_commit_tracking(
             supabase_client,
@@ -1630,7 +1634,6 @@ async def _record_push_notification_activity(
     if lines_changed is None or lines_changed < NOTIFICATION_MINIMUM_CHANGED_LINES:
         return
 
-    cooldown_scheduled = False
     for user_id in sorted(user_ids):
         await _schedule_repository_cooldown(
             supabase_client,
@@ -1639,9 +1642,9 @@ async def _record_push_notification_activity(
             lines_changed=lines_changed,
             qualifying_commit_at=committed_at,
         )
-        cooldown_scheduled = True
-    if cooldown_scheduled:
-        logger.info(f"Started 25-minute debounce timer for {repository}")
+        logger.info(
+            f"25-minute notification timer started for workspace ID {workspace_label} ({repository})"
+        )
 
 
 def _notification_error_is_unique(error: Exception) -> bool:
@@ -3968,8 +3971,8 @@ async def process_github_push_event(
         )
         workspace_folder_maps = dict(zip(workspace_contexts.keys(), folder_map_results))
 
-    # A push synchronizes repository metadata and source assets only. It never
-    # schedules a cooldown, a debounce job, or an AI audit; verification is
+    # A push synchronizes repository metadata and source assets only. A
+    # successful sync can schedule a delayed notification, but verification is
     # exclusively initiated by the user's explicit Audit action.
     access_token = await _get_repository_sync_access_token(workspace_contexts)
     owns_http_client = http_client is None
@@ -4107,6 +4110,29 @@ async def process_github_push_event(
         except Exception as score_error:
             result.errors.append(
                 f"profile score refresh failed for {workspace_user_id}: {score_error}"
+            )
+
+    if result.failed_files == 0:
+        try:
+            workspace_ids = {
+                str(folder.get("id")).strip()
+                for folder in workspace_folders
+                if folder.get("id")
+            }
+            await _record_push_notification_activity(
+                supabase_client,
+                payload=payload,
+                repository=repository,
+                user_ids=set(workspace_contexts),
+                access_token=access_token,
+                workspace_ids=workspace_ids,
+            )
+        except Exception:
+            # A notification scheduling failure must not make an otherwise
+            # successful source sync look like a failed GitHub delivery.
+            logger.exception(
+                "github_webhook.notification_timer_failed repository=%s",
+                repository,
             )
 
     return result

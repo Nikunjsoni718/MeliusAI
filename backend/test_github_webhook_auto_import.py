@@ -200,7 +200,7 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
             main, "_update_github_workspace_folder_push_metadata", AsyncMock(return_value=1)
         ) as update_folder_metadata, patch.object(
             main, "_get_repository_sync_access_token", AsyncMock(return_value=None)
-        ), patch.object(main, "_schedule_repository_cooldown", AsyncMock()) as schedule_cooldown, patch.object(
+        ), patch.object(main, "_record_push_notification_activity", AsyncMock()) as record_notification_activity, patch.object(
             main, "run_incremental_audit", AsyncMock()
         ) as run_incremental_audit:
             result = await main.process_github_push_event(
@@ -218,7 +218,14 @@ class GitHubWebhookAutoImportTests(unittest.IsolatedAsyncioTestCase):
             branch="main",
             commit_sha=commit_sha,
         )
-        schedule_cooldown.assert_not_awaited()
+        record_notification_activity.assert_awaited_once_with(
+            client,
+            payload=payload,
+            repository="owner/new-repository",
+            user_ids={"user-1"},
+            access_token=None,
+            workspace_ids={"folder-1"},
+        )
         run_incremental_audit.assert_not_awaited()
 
     def test_installation_account_is_an_owner_lookup_candidate(self):

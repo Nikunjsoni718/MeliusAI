@@ -59,7 +59,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
             )
 
         captured_logger.info.assert_called_once_with(
-            "Started 25-minute debounce timer for owner/repository"
+            "25-minute notification timer started for workspace ID user-a (owner/repository)"
         )
 
     async def test_batch_deadline_uses_150_minutes(self):
@@ -84,7 +84,7 @@ class NotificationSystemTests(unittest.IsolatedAsyncioTestCase):
         source = Path(main.__file__).read_text(encoding="utf-8")
         self.assertNotIn("_notification_log", source)
         self.assertNotIn("notification.lifecycle", source)
-        self.assertIn('logger.info(f"Started 25-minute debounce timer for {repository}")', source)
+        self.assertIn("25-minute notification timer started for workspace ID", source)
         self.assertIn('logger.info(f"Timer expired for {repository}: Desktop push queued")', source)
         self.assertIn('logger.info(f"Manual audit completed for {repository}: Timer bypassed")', source)
 
